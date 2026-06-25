@@ -1,0 +1,33 @@
+{
+  "name": "@platforma-open/milaboratories.feature-integration.per-cell-metrics",
+  "version": "1.0.0",
+  "files": ["./dist/**/*"],
+  "type": "module",
+  "scripts": {
+    "build": "pl-pkg build",
+    "prepublishOnly": "pl-pkg prepublish",
+    "software:reqs": "uv --directory .. pip compile --group per-cell-metrics --no-deps --no-annotate --custom-compile-command \"pnpm software:reqs\" -o per-cell-metrics/src/requirements.txt",
+    "changeset": "changeset",
+    "version-packages": "changeset version"
+  },
+  "devDependencies": {
+    "@platforma-open/milaboratories.runenv-python-3": "catalog:",
+    "@platforma-sdk/package-builder": "catalog:"
+  },
+  "block-software": {
+    "entrypoints": {
+      "main": {
+        "binary": {
+          "artifact": {
+            "type": "python",
+            "registry": "platforma-open",
+            "environment": "@platforma-open/milaboratories.runenv-python-3:3.12.10",
+            "dependencies": { "toolset": "pip", "requirements": "requirements.txt" },
+            "root": "./src"
+          },
+          "cmd": ["python", "{pkg}/per_cell_metrics.py"]
+        }
+      }
+    }
+  }
+}
