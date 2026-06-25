@@ -8,3 +8,13 @@ block-pack/
 **/.ruff_cache/
 **/.hypothesis/
 *.tgz
+.test_auth.json
+dev/
+work/
+log/
+.turbo
+vite.config.*.timestamp-*
+software/**/*.tgz
+.DS_Store
+.vscode/sftp.json
+test-dry-run.json

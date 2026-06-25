@@ -3,7 +3,6 @@ on:
   workflow_dispatch: {}
 jobs:
   init:
-    if: github.repository != 'milaboratory/platforma-Feature Integration'
     runs-on: ubuntu-latest
     steps:
       - uses: milaboratory/github-ci/actions/context/init@v4
@@ -11,7 +10,6 @@ jobs:
           version-canonize: false
           branch-versioning: main
   run:
-    if: github.repository != 'milaboratory/platforma-Feature Integration'
     needs:
       - init
     uses: milaboratory/github-ci/.github/workflows/block-mark-stable.yaml@v4
@@ -32,5 +30,5 @@ jobs:
         { "NPMJS_TOKEN": ${{ toJSON(secrets.NPMJS_TOKEN) }},
           "AWS_CI_IAM_MONOREPO_SIMPLE_ROLE": ${{ toJSON(secrets.AWS_CI_IAM_MONOREPO_SIMPLE_ROLE) }} }
 
-      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
       SLACK_CHANNEL: ${{ secrets.SLACK_BLOCKS_CI_CHANNEL }}
+      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}

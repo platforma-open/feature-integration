@@ -1,7 +1,9 @@
 {
   "name": "@platforma-open/milaboratories.feature-integration.per-cell-metrics",
   "version": "1.0.0",
-  "files": ["./dist/**/*"],
+  "files": [
+    "./dist/**/*"
+  ],
   "type": "module",
   "scripts": {
     "build": "pl-pkg build",
@@ -22,10 +24,16 @@
             "type": "python",
             "registry": "platforma-open",
             "environment": "@platforma-open/milaboratories.runenv-python-3:3.12.10",
-            "dependencies": { "toolset": "pip", "requirements": "requirements.txt" },
+            "dependencies": {
+              "toolset": "pip",
+              "requirements": "requirements.txt"
+            },
             "root": "./src"
           },
-          "cmd": ["python", "{pkg}/per_cell_metrics.py"]
+          "cmd": [
+            "python",
+            "{pkg}/per_cell_metrics.py"
+          ]
         }
       }
     }

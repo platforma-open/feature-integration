@@ -11,7 +11,6 @@ on:
   workflow_dispatch: {}
 jobs:
   init:
-    if: github.repository != 'milaboratory/platforma-Feature Integration'
     runs-on: ubuntu-latest
     steps:
       - uses: milaboratory/github-ci/actions/context/init@v4
@@ -19,47 +18,38 @@ jobs:
           version-canonize: false
           branch-versioning: main
   run:
-    if: github.repository != 'milaboratory/platforma-Feature Integration'
     needs:
       - init
-
     uses: milaboratory/github-ci/.github/workflows/node-simple-pnpm.yaml@v4
     with:
       app-name: 'Block: Feature Integration'
-      app-name-slug: 'block-Feature Integration'
-
+      app-name-slug: 'block-feature-integration'
       node-version: '20.x'
       build-script-name: 'build'
       pnpm-recursive-build: false
 
-      test: false
+      test: true
       test-script-name: 'test'
       pnpm-recursive-tests: false
       team-id: 'ciplopen'
 
+      publish-to-public: 'true'
       package-path: 'block'
-      publish-to-public: true
-      create-tag: true
+      create-tag: 'true'
 
       npmrc-config: |
         {
           "registries": {
             "https://registry.npmjs.org/": {
-              "scopes": ["milaboratories", "platforma-open", "platforma-sdk"],
+              "scopes": ["milaboratories", "platforma-sdk", "platforma-open"],
               "tokenVar": "NPMJS_TOKEN"
-            },
-            "https://npm.pkg.github.com/": {
-              "scopes": ["milaboratory"],
-              "tokenVar": "NODE_AUTH_TOKEN"
             }
           }
         }
-
     secrets:
       env: |
         { "PL_LICENSE": ${{ toJSON(secrets.MI_LICENSE) }},
           "MI_LICENSE": ${{ toJSON(secrets.MI_LICENSE) }},
-
           "NPMJS_TOKEN": ${{ toJSON(secrets.NPMJS_TOKEN) }},
           "PL_CI_TEST_USER": ${{ toJSON(secrets.PL_CI_TEST_USER) }},
           "PL_CI_TEST_PASSWORD": ${{ toJSON(secrets.PL_CI_TEST_PASSWORD) }},
@@ -70,8 +60,8 @@ jobs:
           "QUAY_USERNAME": ${{ toJSON(secrets.QUAY_USERNAME) }},
           "QUAY_ROBOT_TOKEN": ${{ toJSON(secrets.QUAY_ROBOT_TOKEN) }} }
 
-      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
       SLACK_CHANNEL: ${{ secrets.SLACK_BLOCKS_CI_CHANNEL }}
+      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
 
       GH_ZEN_APP_ID: ${{ secrets.GH_ZEN_APP_ID }}
       GH_ZEN_APP_PRIVATE_KEY: ${{ secrets.GH_ZEN_APP_PRIVATE_KEY }}
