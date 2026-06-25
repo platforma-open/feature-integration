@@ -1,0 +1,26 @@
+packages:
+  - workflow
+  - model
+  - ui
+  - test
+  - software/per-cell-metrics
+  - block
+
+catalog:
+  "@milaboratories/ts-builder": 1.3.1
+  "@milaboratories/ts-configs": 1.2.3
+  "@platforma-sdk/workflow-tengo": 5.13.1
+  "@platforma-sdk/block-tools": 2.7.7
+  "@platforma-sdk/model": 1.64.0
+  "@platforma-sdk/ui-vue": 1.64.0
+  "@platforma-sdk/test": 1.64.0
+  "@platforma-sdk/tengo-builder": 2.5.8
+  "@platforma-sdk/package-builder": 3.12.0
+  "@platforma-sdk/blocks-deps-updater": 2.2.0
+
+  "@platforma-open/milaboratories.runenv-python-3": 1.7.8
+
+  "turbo": 2.8.11
+
+  "shx": 0.4.0
+  "@changesets/cli": 2.29.8

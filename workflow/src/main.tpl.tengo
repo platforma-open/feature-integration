@@ -1,0 +1,12 @@
+// Placeholder workflow. The real feature-barcode pipeline (mitool parse -> refine-tags -> tag-stat
+// -> per-cell-metrics python) lands in plan Tasks 3-4, which are blocked on the Task-0 design spike
+// (assay tag pattern + cell-barcode source). Until then this stub builds and produces no outputs, so
+// the model, UI and block compose and build end to end.
+wf := import("@platforma-sdk/workflow-tengo:workflow")
+
+wf.body(func(args) {
+	return {
+		outputs: {},
+		exports: {}
+	}
+})

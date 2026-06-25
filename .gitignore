@@ -1,8 +1,10 @@
 node_modules/
 dist/
 .turbo/
+block-pack/
 **/.venv/
 **/__pycache__/
 **/.pytest_cache/
 **/.ruff_cache/
+**/.hypothesis/
 *.tgz
