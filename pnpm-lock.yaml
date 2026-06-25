@@ -9,6 +9,9 @@ catalogs:
     '@changesets/cli':
       specifier: 2.29.8
       version: 2.29.8
+    '@milaboratories/helpers':
+      specifier: 1.14.2
+      version: 1.14.2
     '@milaboratories/ts-builder':
       specifier: 1.5.2
       version: 1.5.2
@@ -103,6 +106,9 @@ importers:
 
   model:
     dependencies:
+      '@milaboratories/helpers':
+        specifier: 'catalog:'
+        version: 1.14.2
       '@platforma-sdk/model':
         specifier: 'catalog:'
         version: 1.79.17

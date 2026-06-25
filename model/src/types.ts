@@ -1,4 +1,4 @@
-import type { PlRef } from "@platforma-sdk/model";
+import type { PlDataTableStateV2, PlRef } from "@platforma-sdk/model";
 
 /** Workflow inputs (projected from BlockData by the args lambda; validated there). */
 export type BlockArgs = {
@@ -14,4 +14,5 @@ export type BlockData = {
   tagFeatureCsvRef?: PlRef;
   controlFeature?: string;
   dominanceThreshold: number;
+  tableState: PlDataTableStateV2; // PlAgDataTableV2 grid state (UI-only, never projected to args)
 };

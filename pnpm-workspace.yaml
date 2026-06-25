@@ -7,6 +7,7 @@ packages:
   - workflow
 
 catalog:
+  "@milaboratories/helpers": 1.14.2
   "@milaboratories/ts-builder": 1.5.2
   "@milaboratories/ts-configs": 1.2.3
   "@platforma-sdk/workflow-tengo": 6.6.5
