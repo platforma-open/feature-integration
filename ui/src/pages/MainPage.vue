@@ -6,6 +6,7 @@ import {
   PlBtnGhost,
   PlDropdown,
   PlDropdownRef,
+  PlFileInput,
   PlNumberField,
   PlSlideModal,
   usePlDataTableSettingsV2,
@@ -35,8 +36,7 @@ const tableSettings = usePlDataTableSettingsV2({
       show-export-button
     />
     <PlAlert v-else type="info">
-      Per-cell results appear once the feature-barcode workflow is implemented (pending the assay /
-      mitool design spike). Configure inputs via Settings.
+      Per-cell feature results appear after you set the inputs in Settings and run the block.
     </PlAlert>
 
     <PlSlideModal v-model="settingsOpen">
@@ -46,10 +46,12 @@ const tableSettings = usePlDataTableSettingsV2({
         :options="app.model.outputs.fastqOptions"
         label="Feature-barcode FASTQ"
       />
-      <PlDropdownRef
-        v-model="app.model.data.tagFeatureCsvRef"
-        :options="app.model.outputs.csvOptions"
+      <PlFileInput
+        v-model="app.model.data.tagFeatureCsvHandle"
         label="Tag → feature CSV"
+        placeholder="tags.csv"
+        :extensions="['csv']"
+        required
       />
       <PlDropdown
         v-model="app.model.data.controlFeature"
@@ -57,6 +59,26 @@ const tableSettings = usePlDataTableSettingsV2({
         label="Negative-control feature (optional)"
       />
       <PlNumberField v-model="app.model.data.dominanceThreshold" label="Dominance threshold" />
+
+      <!-- Read geometry (DP-1): 10x 5' v2 defaults; confirm against the actual assay FASTQs. -->
+      <PlNumberField
+        v-model="app.model.data.cellLen"
+        :min-value="1"
+        :step="1"
+        label="Cell barcode length (R1)"
+      />
+      <PlNumberField
+        v-model="app.model.data.umiLen"
+        :min-value="1"
+        :step="1"
+        label="UMI length (R1)"
+      />
+      <PlNumberField
+        v-model="app.model.data.featureLen"
+        :min-value="1"
+        :step="1"
+        label="Feature barcode length (R2)"
+      />
     </PlSlideModal>
   </PlBlockPage>
 </template>

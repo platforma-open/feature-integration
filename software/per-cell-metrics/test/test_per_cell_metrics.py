@@ -157,6 +157,31 @@ def test_cli_consensus_golden(tagstat_tsv, tags_csv, tmp_path):
 
 
 @pytest.mark.slow
+def test_cli_abundance_uses_unique_umi(tagstat_tsv, tags_csv, tmp_path):
+    # DP-2: the matrix must use mitool's deduplicated `unique_UMI` (cell1/AGX = 3 distinct UMIs),
+    # NOT the raw read `count` (which is 7 in the bed). Guards against reading the wrong column.
+    subprocess.run(
+        [
+            sys.executable,
+            str(SRC),
+            str(tagstat_tsv),
+            str(tags_csv),
+            "--sample-id",
+            "s1",
+            "--output-prefix",
+            str(tmp_path / "result"),
+        ],
+        check=True,
+        cwd=tmp_path,
+    )
+    with open(tmp_path / "result_abundance.csv", newline="") as f:
+        umi = {(r["cellId"], r["feature"]): int(r["umiCount"]) for r in csv.DictReader(f)}
+    assert umi[("cell1", "AGX")] == 3  # unique_UMI, not count=7
+    assert umi[("cell1", "BGX")] == 1
+    assert umi[("cell3", "AGX")] == 2
+
+
+@pytest.mark.slow
 def test_cli_with_control_writes_specificity(tagstat_tsv, tags_csv, tmp_path):
     subprocess.run(
         [

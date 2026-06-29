@@ -1,18 +1,27 @@
-import type { PlDataTableStateV2, PlRef } from "@platforma-sdk/model";
+import type { ImportFileHandle, PlDataTableStateV2, PlRef } from "@platforma-sdk/model";
 
 /** Workflow inputs (projected from BlockData by the args lambda; validated there). */
 export type BlockArgs = {
-  fbFastqRef: PlRef; // feature-barcode FASTQ column
-  tagFeatureCsvRef: PlRef; // tag->feature CSV (spec A-0004, A-0009)
+  fbFastqRef: PlRef; // feature-barcode FASTQ column (from samples-and-data, result pool)
+  tagFeatureCsvHandle: ImportFileHandle; // tag->feature CSV, user-uploaded (spec A-0004, A-0009)
   controlFeature?: string; // negative-control feature name (spec A-0014); omitted -> no score
   dominanceThreshold: number; // spec A-0012, default 0.6, floor 0.5
+  // Read geometry for the mitool tag pattern (DP-1 "parameterize + proceed"; 10x 5' v2 defaults).
+  // The exact assay geometry must be confirmed against real FASTQs (Task 0); it is configurable here
+  // rather than hardcoded, with a clean seam for a future whitelist-translation step.
+  cellLen: number; // cell barcode length on R1 (10x 5' v2: 16)
+  umiLen: number; // UMI length on R1 (10x 5' v2: 10)
+  featureLen: number; // feature barcode length on R2 (assay-specific; default 15)
 };
 
 /** Unified persisted UI state. */
 export type BlockData = {
   fbFastqRef?: PlRef;
-  tagFeatureCsvRef?: PlRef;
+  tagFeatureCsvHandle?: ImportFileHandle;
   controlFeature?: string;
   dominanceThreshold: number;
+  cellLen: number;
+  umiLen: number;
+  featureLen: number;
   tableState: PlDataTableStateV2; // PlAgDataTableV2 grid state (UI-only, never projected to args)
 };

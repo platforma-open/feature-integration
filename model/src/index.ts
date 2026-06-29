@@ -9,27 +9,39 @@ import {
 } from "@platforma-sdk/model";
 import type { BlockArgs, BlockData } from "./types";
 
+export type { BlockArgs, BlockData } from "./types";
+
 const DOMINANCE_FLOOR = 0.5; // spec A-0012: threshold is user-adjustable down to 0.5, never lower
 
-const dataModel = new DataModelBuilder()
-  .from<BlockData>("v1")
-  .init(() => ({ dominanceThreshold: 0.6, tableState: createPlDataTableStateV2() }));
+const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
+  dominanceThreshold: 0.6,
+  // 10x 5' v2 read geometry defaults (cell 16 + UMI 10 on R1; feature barcode 15 on R2). DP-1:
+  // configurable per-assay, confirm against real FASTQs (Task 0).
+  cellLen: 16,
+  umiLen: 10,
+  featureLen: 15,
+  tableState: createPlDataTableStateV2(),
+}));
 
 export const platforma = BlockModelV3.create(dataModel)
   .args((data): BlockArgs => {
     if (!data.fbFastqRef) throw new Error("Select the feature-barcode FASTQ");
-    if (!data.tagFeatureCsvRef) throw new Error("Select the tag→feature CSV");
+    if (!data.tagFeatureCsvHandle) throw new Error("Upload the tag→feature CSV");
     return {
       fbFastqRef: data.fbFastqRef,
-      tagFeatureCsvRef: data.tagFeatureCsvRef,
+      tagFeatureCsvHandle: data.tagFeatureCsvHandle,
       controlFeature: data.controlFeature,
       // canonicalize + clamp to the 0.5 floor
       dominanceThreshold: Math.max(DOMINANCE_FLOOR, data.dominanceThreshold ?? 0.6),
+      // read geometry (DP-1); fall back to 10x 5' v2 defaults if unset
+      cellLen: data.cellLen ?? 16,
+      umiLen: data.umiLen ?? 10,
+      featureLen: data.featureLen ?? 15,
     };
   })
   .prerunArgs((data) => ({
     fbFastqRef: data.fbFastqRef,
-    tagFeatureCsvRef: data.tagFeatureCsvRef,
+    tagFeatureCsvHandle: data.tagFeatureCsvHandle,
   }))
   // feature-barcode FASTQ options (file-valued sequencing columns, fastq / fastq.gz)
   .output("fastqOptions", (ctx) =>
@@ -42,12 +54,6 @@ export const platforma = BlockModelV3.create(dataModel)
         (ext === "fastq" || ext === "fastq.gz")
       );
     }),
-  )
-  // tag->feature CSV options
-  .output("csvOptions", (ctx) =>
-    ctx.resultPool.getOptions(
-      (spec) => isPColumnSpec(spec) && spec.domain?.["pl7.app/fileExtension"] === "csv",
-    ),
   )
   // Negative-control dropdown: the antigens defined in the chosen CSV (spec A-0014). Populated once
   // the workflow emits the feature names (plan Task 4); empty until then.

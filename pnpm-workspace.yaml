@@ -20,6 +20,13 @@ catalog:
   "@platforma-sdk/blocks-deps-updater": 2.2.0
 
   "@platforma-open/milaboratories.runenv-python-3": 1.7.8
+  "@platforma-open/milaboratories.software-mitool": 2.3.1-63-main
+
+  # blocks used in integration tests. SND pinned EXACT to the last V1 (modelAPIVersion 1) release:
+  # 1.14+ are V3 and reject setBlockArgs. 1.13.3 + model 1.11.2 is the V1 pairing
+  # mixcr-amplicon-alignment locks. A caret here resolves forward into the V3 line and breaks the test.
+  "@platforma-open/milaboratories.samples-and-data": 1.13.3
+  "@platforma-open/milaboratories.samples-and-data.model": 1.11.2
 
   "turbo": 2.8.11
 

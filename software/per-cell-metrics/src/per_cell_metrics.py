@@ -44,19 +44,28 @@ def specificity_score(antigen_umi: float, control_umi: float) -> float:
     return (1.0 - float(beta.cdf(0.925, antigen_umi + 1, control_umi + 3))) * 100.0
 
 
-def _load(tag_stat_tsv: str, tag_feature_csv: str, cell_col: str, feature_tag_col: str) -> pl.DataFrame:
-    """tag-stat rows -> (cellId, feature, umiCount) long frame.
+def _load(
+    tag_stat_tsv: str,
+    tag_feature_csv: str,
+    cell_col: str,
+    feature_tag_col: str,
+    umi_count_col: str,
+) -> pl.DataFrame:
+    """Aggregated mitool ``tag-stat -u`` rows -> (cellId, feature, umiCount) long frame.
 
-    The tag-stat TSV has one row per observed (cell, feature-barcode, UMI) combination. umiCount per
-    (cell, feature) is the number of distinct UMIs. The tag->feature CSV maps the feature barcode to
-    its feature/antigen name (spec A-0004, A-0009).
+    ``mitool tag-stat -t CELL -t FEATURE -u UMI`` emits one row per (cell, feature-barcode) group:
+    columns ``CELL FEATURE count totalWeight unique_UMI``. ``unique_UMI`` is the distinct-UMI
+    (molecule) count for the group -- mitool does the deduplication, so we take that column directly
+    rather than counting raw UMI rows ourselves. The tag->feature CSV maps the feature barcode to its
+    feature/antigen name (spec A-0004, A-0009); we sum the distinct-UMI counts across barcodes that
+    map to the same feature.
     """
     stat = pl.read_csv(tag_stat_tsv, separator="\t")
     mapping = pl.read_csv(tag_feature_csv)  # columns: tag (feature barcode), feature
     return (
         stat.join(mapping, left_on=feature_tag_col, right_on="tag", how="inner")
         .group_by([cell_col, "feature"])
-        .agg(pl.col("umi").n_unique().alias("umiCount"))
+        .agg(pl.col(umi_count_col).sum().alias("umiCount"))
         .rename({cell_col: "cellId"})
     )
 
@@ -68,12 +77,23 @@ def main() -> None:
     p.add_argument("--sample-id", required=True)
     p.add_argument("--cell-col", default="CELL")
     p.add_argument("--feature-tag-col", default="FEATURE")
+    p.add_argument(
+        "--umi-count-col",
+        default="unique_UMI",
+        help="mitool tag-stat -u distinct-UMI column (unique_<umiTag>, default UMI)",
+    )
     p.add_argument("--dominance-threshold", type=float, default=0.6)
     p.add_argument("--control", default=None, help="negative-control feature name (spec A-0014)")
     p.add_argument("--output-prefix", default="result")
     args = p.parse_args()
 
-    counts = _load(args.tag_stat_tsv, args.tag_feature_csv, args.cell_col, args.feature_tag_col)
+    counts = _load(
+        args.tag_stat_tsv,
+        args.tag_feature_csv,
+        args.cell_col,
+        args.feature_tag_col,
+        args.umi_count_col,
+    )
     counts = counts.with_columns(pl.lit(args.sample_id).alias("sampleId"))
 
     # abundance matrix (cell x feature) UMI counts

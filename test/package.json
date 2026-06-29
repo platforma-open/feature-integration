@@ -12,6 +12,10 @@
     "check": "ts-builder check --target block-test"
   },
   "dependencies": {
+    "@platforma-open/milaboratories.feature-integration.model": "workspace:*",
+    "@platforma-open/milaboratories.samples-and-data": "catalog:",
+    "@platforma-open/milaboratories.samples-and-data.model": "catalog:",
+    "@platforma-sdk/model": "catalog:",
     "this-block": "workspace:@platforma-open/milaboratories.feature-integration@*"
   },
   "devDependencies": {

@@ -1,12 +1,259 @@
-// Placeholder workflow. The real feature-barcode pipeline (mitool parse -> refine-tags -> tag-stat
-// -> per-cell-metrics python) lands in plan Tasks 3-4, which are blocked on the Task-0 design spike
-// (assay tag pattern + cell-barcode source). Until then this stub builds and produces no outputs, so
-// the model, UI and block compose and build end to end.
+// Feature Integration — main workflow template.
+//
+// FASTQ (feature-barcode) -> per-sample mitool (parse/refine/tag-stat -u) + per-cell-metrics Python
+// (processColumn -> fb-pipeline.tpl.tengo) -> import the per-cell result CSVs as the A-0010 contract
+// p-columns keyed [pl7.app/sampleId, pl7.app/sc/cellId, pl7.app/feature/featureId], exported to the
+// result pool (consumed by VDJ Multiomic Integration) and surfaced as a results table.
+//
+// processColumn's `Xsv` outputs import each per-sample CSV and prepend the sample axis from the
+// iteration key (so the per-sample CSVs need only cell/feature columns). Modeled on
+// blocks/peptide-extraction main.tpl.tengo + blocks/cell-ranger process.tpl.tengo.
+
 wf := import("@platforma-sdk/workflow-tengo:workflow")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+pframes := import("@platforma-sdk/workflow-tengo:pframes")
+pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+file := import("@platforma-sdk/workflow-tengo:file")
+tagPattern := import(":tag-pattern")
+
+json := import("json")
+
+fbPipelineTpl := assets.importTemplate(":fb-pipeline")
+prerunTpl := assets.importTemplate(":prerun")
+
+// 10x 5' v2 read geometry defaults (CELL 16 + UMI 10 on R1; feature barcode 15 on R2). Configurable
+// per-assay via block args (DP-1 "parameterize + proceed"); exact geometry must be confirmed against
+// real FASTQs (Task 0).
+defaultCellLen := 16
+defaultUmiLen := 10
+defaultFeatureLen := 15
+defaultMitoolMemGB := 16
+defaultMitoolCPUs := 4
+
+// Staging imports + exports the CSV to drive its upload before production needs it (see prerun.tpl).
+wf.setPreRun(prerunTpl)
+
+wf.prepare(func(args) {
+	return {
+		resolvedFastq: wf.resolve(args.fbFastqRef)
+	}
+})
 
 wf.body(func(args) {
+	blockId := wf.blockId().getDataAsJson()
+
+	inputSpec := args.resolvedFastq.spec
+	inputData := args.resolvedFastq.data
+	sampleAxis := inputSpec.axesSpec[0] // pl7.app/sampleId — inherited verbatim
+	fileExtension := inputSpec.domain["pl7.app/fileExtension"]
+
+	// Import the user-uploaded tag->feature CSV and share its blob across every per-sample body
+	// invocation (the mapping is identical for all samples). The model guarantees the handle is set.
+	csvImport := file.importFile(args.tagFeatureCsvHandle)
+	csvFile := csvImport.file
+
+	// Build the mitool tag pattern from the read geometry (defensive defaults if args omit them).
+	geom := {
+		cellLen: is_undefined(args.cellLen) ? defaultCellLen : args.cellLen,
+		umiLen: is_undefined(args.umiLen) ? defaultUmiLen : args.umiLen,
+		featureLen: is_undefined(args.featureLen) ? defaultFeatureLen : args.featureLen,
+		paired: true
+	}
+	pattern := tagPattern.build(geom)
+
+	control := args.controlFeature
+	hasControl := !is_undefined(control) && control != ""
+	dominanceThreshold := is_undefined(args.dominanceThreshold) ? 0.6 : args.dominanceThreshold
+
+	// Per-sample body inputs. processColumn binds EVERY extra key as a body input field and waits for
+	// each to be set before firing the body (pframes/index.lib.tengo: `renderInputs["__extra_"+k]=v`),
+	// so a key whose value is `undefined` creates a field that never resolves and stalls the body.
+	// Therefore `control` is added only when a control feature is configured.
+	extraInputs := {
+		pattern: pattern,
+		tagsCsv: csvFile,
+		dominanceThreshold: dominanceThreshold,
+		fileExtension: fileExtension
+	}
+	if hasControl {
+		extraInputs.control = control
+	}
+
+	// --- A-0010 contract axes ---
+	cellAxis := {
+		name: "pl7.app/sc/cellId",
+		type: "String",
+		annotations: {
+			"pl7.app/label": "Cell ID",
+			"pl7.app/table/fontFamily": "monospace",
+			"pl7.app/parents": string(json.encode([sampleAxis.name]))
+		}
+	}
+	featureAxis := {
+		name: "pl7.app/feature/featureId",
+		type: "String",
+		domain: { "pl7.app/blockId": blockId },
+		annotations: { "pl7.app/label": "Feature" }
+	}
+
+	// --- A-0010 contract value columns (processColumn prepends the sample axis) ---
+	abundanceOutput := {
+		type: "Xsv",
+		xsvType: "csv",
+		settings: {
+			axes: [
+				{ column: "cellId", spec: cellAxis },
+				{ column: "feature", spec: featureAxis }
+			],
+			columns: [{
+				column: "umiCount", id: "umiCount",
+				spec: {
+					name: "pl7.app/feature/umiCount",
+					valueType: "Int",
+					annotations: {
+						"pl7.app/label": "Feature UMI count",
+						"pl7.app/isAbundance": "true",
+						"pl7.app/table/visibility": "default"
+					}
+				}
+			}],
+			storageFormat: "Parquet",
+			partitionKeyLength: 0
+		},
+		name: "abundance",
+		path: ["abundance"]
+	}
+
+	fractionsOutput := {
+		type: "Xsv",
+		xsvType: "csv",
+		settings: {
+			axes: [
+				{ column: "cellId", spec: cellAxis },
+				{ column: "feature", spec: featureAxis }
+			],
+			columns: [{
+				column: "fraction", id: "fraction",
+				spec: {
+					name: "pl7.app/feature/fraction",
+					valueType: "Double",
+					annotations: {
+						"pl7.app/label": "Feature fraction",
+						"pl7.app/format": ".3f"
+					}
+				}
+			}],
+			storageFormat: "Parquet",
+			partitionKeyLength: 0
+		},
+		name: "fractions",
+		path: ["fractions"]
+	}
+
+	consensusOutput := {
+		type: "Xsv",
+		xsvType: "csv",
+		settings: {
+			axes: [{ column: "cellId", spec: cellAxis }],
+			columns: [{
+				column: "consensusFeature", id: "consensusFeature",
+				spec: {
+					name: "pl7.app/feature/consensusFeature",
+					valueType: "String",
+					annotations: {
+						"pl7.app/label": "Consensus feature",
+						"pl7.app/isDiscreteFilter": "true"
+					}
+				}
+			}],
+			storageFormat: "Parquet",
+			partitionKeyLength: 0
+		},
+		name: "consensus",
+		path: ["consensus"]
+	}
+
+	outputs := [abundanceOutput, fractionsOutput, consensusOutput]
+
+	if hasControl {
+		outputs = append(outputs, {
+			type: "Xsv",
+			xsvType: "csv",
+			settings: {
+				axes: [
+					{ column: "cellId", spec: cellAxis },
+					{ column: "feature", spec: featureAxis }
+				],
+				columns: [{
+					column: "specificityScore", id: "specificityScore",
+					spec: {
+						name: "pl7.app/feature/specificityScore",
+						valueType: "Double",
+						annotations: {
+							"pl7.app/label": "Specificity score",
+							"pl7.app/isScore": "true"
+						}
+					}
+				}],
+				storageFormat: "Parquet",
+				partitionKeyLength: 0
+			},
+			name: "specificity",
+			path: ["specificity"]
+		})
+	}
+
+	perSampleResults := pframes.processColumn(
+		{ spec: inputSpec, data: inputData },
+		fbPipelineTpl,
+		outputs,
+		{
+			aggregate: [
+				{ name: "pl7.app/sequencing/lane", optional: true },
+				{ name: "pl7.app/sequencing/readIndex", optional: true }
+			],
+			passAggregationAxesNames: true,
+			extra: extraInputs,
+			metaExtra: {
+				mitoolMemGB: is_undefined(args.perProcessMemGB) ? defaultMitoolMemGB : args.perProcessMemGB,
+				mitoolCPUs: is_undefined(args.perProcessCPUs) ? defaultMitoolCPUs : args.perProcessCPUs
+			}
+		}
+	)
+
+	// --- assemble the per-cell p-frame, injecting a single trace ---
+	trace := pSpec.makeTrace(inputSpec, {
+		type: "milaboratories.feature-integration",
+		id: blockId,
+		importance: 30,
+		label: "Feature Integration"
+	})
+
+	fb := pframes.pFrameBuilder()
+	addXsv := func(outputName) {
+		for col in perSampleResults.listXsvColumns(outputName) {
+			fb.add(
+				outputName + "/" + col,
+				trace.inject(perSampleResults.outputSpec(outputName, col)),
+				perSampleResults.outputData(outputName, col)
+			)
+		}
+	}
+	addXsv("abundance")
+	addXsv("fractions")
+	addXsv("consensus")
+	if hasControl {
+		addXsv("specificity")
+	}
+	finalPf := fb.build()
+
 	return {
-		outputs: {},
-		exports: {}
+		outputs: {
+			perCellTable: pframes.exportFrame(finalPf)
+		},
+		exports: {
+			perCellFeatures: finalPf
+		}
 	}
 })
