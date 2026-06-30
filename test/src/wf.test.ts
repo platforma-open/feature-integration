@@ -6,7 +6,7 @@ import { awaitStableState, blockTest } from "@platforma-sdk/test";
 import { blockSpec as samplesAndDataBlockSpec } from "@platforma-open/milaboratories.samples-and-data";
 import type { BlockArgs as SamplesAndDataBlockArgs } from "@platforma-open/milaboratories.samples-and-data.model";
 import { uniquePlId } from "@platforma-open/milaboratories.samples-and-data.model";
-import { blockSpec as myBlockSpec } from "this-block";
+import { FeatureIntegrationBlockPointer as myBlockSpec } from "this-block";
 import type { InferBlockState, PTableHandle } from "@platforma-sdk/model";
 import { createPlDataTableStateV2, wrapOutputs } from "@platforma-sdk/model";
 
@@ -42,18 +42,12 @@ blockTest("empty inputs", { timeout: 20000 }, async ({ rawPrj: project, expect }
   expect(stableState.outputs).toMatchObject({ fastqOptions: { ok: true, value: [] } });
 });
 
-// SKIPPED pending mitool PR #84 (`tag-stat -u`) being published.
-//
-// The block currently consumes mitool via a DEV-ONLY local `file:` override (an unpublished build with
-// `tag-stat -u`). The per-sample mitool exec is dispatched from a dev-local software package, and the
-// prebuilt local backend used by `run-platforma.sh` stalls assembling the exec workdir for local-path
-// dev software (the command never runs; block stays `Running` with no error). Published-software blocks
-// (mixcr-clonotyping, peptide-extraction) run their mitool execs fine on the same backend, so this is
-// specific to the local override — not the block or this test. Everything up to the exec is verified
-// live: SND FASTQ chain, fastqOptions, args derivation, the CSV upload (driven by prerun.tpl), and the
-// processColumn + export structure all build. Once #84 publishes, drop the override in the root
-// package.json `pnpm.overrides`, bump the `software-mitool` catalog version, and un-skip this test.
-blockTest.skip(
+// Level-4 end-to-end run against the published mitool (software-mitool 2.3.1-129-main, carrying the
+// FEATURE tag type #86 + tag-stat -u #84). Exercises the full per-sample chain: SND FASTQ upload,
+// fastqOptions, args derivation, the tag->feature CSV upload (driven by prerun.tpl), the mitool
+// parse -> refine-tags -> tag-stat -u exec chain, the per-cell-metrics Python, and the processColumn
+// export emitting pl7.app/feature/umiCount.
+blockTest(
   "feature integration end-to-end emits per-cell umiCount",
   { timeout: 300000 },
   async ({ rawPrj: project, ml, helpers, expect }) => {

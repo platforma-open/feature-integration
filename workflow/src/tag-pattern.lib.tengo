@@ -1,11 +1,11 @@
 // Builds the mitool `--pattern` for single-cell feature-barcode reads from the read geometry.
 //
-// Empirically validated against the local mitool build (tag-stat -u spike, 2.3.1-74): mitool keeps
-// only group names beginning with CELL / UMI(MI) / S / R as queryable tags — a `(FEATURE:...)` group
-// is parsed but dropped (`tag-stat -t FEATURE` => "Tag not found"). The feature barcode is therefore
-// captured as a SECOND cell-style tag, `CELLFB`; the cell barcode is `CELL`; the molecule is `UMI`.
-// Downstream: `refine-tags -t CELL -t UMI -t CELLFB`, then `tag-stat -t CELL -t CELLFB -u UMI` yields
-// per-(cell, feature-barcode) distinct-UMI counts (columns CELL CELLFB count totalWeight unique_UMI).
+// mitool (>= 2.3.1-129-main, PR milaboratory/mitool#86) recognises FEATURE as a first-class tag type:
+// a group name beginning with FEATURE / FB registers as type Feature, ordered CELL < FEATURE < UMI in
+// the grouping hierarchy. The cell barcode is `CELL`, the feature barcode is `FEATURE`, the molecule
+// is `UMI`. Downstream: `refine-tags -t CELL -t FEATURE -t UMI` (FEATURE corrected within each cell;
+// UMI deduped within each (cell, feature)), then `tag-stat -t CELL -t FEATURE -u UMI` yields
+// per-(cell, feature-barcode) distinct-UMI counts (columns CELL FEATURE count totalWeight unique_UMI).
 //
 // Geometry defaults are 10x 5' v2 (CELL 16 + UMI 10 on R1; feature barcode 15 on R2), with the
 // feature barcode assumed to start at R2 position 0. The exact geometry for a given BEAM assay must
@@ -15,7 +15,7 @@
 // Tag names mitool registers for this pipeline (see above). Exported so the workflow templates and
 // the Python invocation stay in sync with the names baked into the pattern.
 CELL_TAG := "CELL"
-FEATURE_TAG := "CELLFB"
+FEATURE_TAG := "FEATURE"
 UMI_TAG := "UMI"
 
 // build assembles the mitool tag pattern from the cell / UMI / feature-barcode geometry.

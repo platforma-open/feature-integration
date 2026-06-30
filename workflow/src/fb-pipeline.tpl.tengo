@@ -85,7 +85,7 @@ self.body(func(inputs) {
 	ll.assert(len(R1Files) > 0, "no R1 FASTQ files found")
 	ll.assert(len(R2Files) > 0, "no R2 FASTQ files found (feature barcode is read from R2)")
 
-	// Step 1: mitool parse — extract CELL + UMI (R1) and the feature barcode CELLFB (R2).
+	// Step 1: mitool parse — extract CELL + UMI (R1) and the feature barcode FEATURE (R2).
 	parse := exec.builder().
 		software(mitoolSw).
 		cpu(mitoolCPUs).
@@ -101,23 +101,24 @@ self.body(func(inputs) {
 		arg(inputArg).arg("parsed.mic").saveFile("parsed.mic").
 		printErrStreamToStdout().saveStdoutStream().run()
 
-	// Step 2: refine-tags — error-correct cell, UMI, and feature barcodes against the observed
-	// distribution (collapses sequencing errors onto the true high-frequency barcodes).
+	// Step 2: refine-tags — error-correct cell, feature, and UMI barcodes against the observed
+	// distribution. Tag order sets correction scope: CELL de-novo (global), FEATURE within each cell
+	// (recovers errored feature barcodes onto the cell's true barcode), UMI within each (cell, feature).
 	refine := exec.builder().
 		software(mitoolSw).
 		cpu(mitoolCPUs).
 		mem(mitoolMem).
 		arg("refine-tags").
 		arg("-t").arg(tagPattern.CELL_TAG).
-		arg("-t").arg(tagPattern.UMI_TAG).
 		arg("-t").arg(tagPattern.FEATURE_TAG).
+		arg("-t").arg(tagPattern.UMI_TAG).
 		arg("--report").arg("refine_report.txt").saveFile("refine_report.txt").
 		addFile("parsed.mic", parse.getFile("parsed.mic")).
 		arg("parsed.mic").arg("refined.mic").saveFile("refined.mic").
 		printErrStreamToStdout().saveStdoutStream().run()
 
 	// Step 3: tag-stat -u — per-(cell, feature-barcode) distinct-UMI counts.
-	// Output columns: CELL CELLFB count totalWeight unique_UMI
+	// Output columns: CELL FEATURE count totalWeight unique_UMI
 	tagStat := exec.builder().
 		software(mitoolSw).
 		cpu(2).

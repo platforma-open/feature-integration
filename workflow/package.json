@@ -1,11 +1,11 @@
 {
   "name": "@platforma-open/milaboratories.feature-integration.workflow",
   "version": "1.0.0",
+  "private": true,
   "description": "Block Workflow",
   "type": "module",
   "scripts": {
     "build": "shx rm -rf dist && pl-tengo build",
-    "test": "vitest",
     "format": "/usr/bin/env emacs --script ./format.el || echo 'No emacs.'",
     "check": "pl-tengo check"
   },
