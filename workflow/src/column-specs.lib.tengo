@@ -215,9 +215,34 @@ tagstatQcOutput := func(blockId, sampleAxisName) {
 	}
 }
 
-// qcSummaryOutput: per-sample QC scalars (keyLength 0 within-sample; processColumn prepends the
-// sample axis). Not part of the A-0010 export contract; outputs-only.
-qcSummaryOutput := func(blockId, sampleAxisName) {
+// qcFileMapOutput: collect the per-sample QC CSV (fb-pipeline `qc` output) into a resource map keyed
+// [sampleId]. A per-sample QC row is a SCALAR (0 within-sample axes); an xsv import cannot emit that
+// (it requires >=1 within-file axis: xsv-import-file.lib.tengo asserts partitionKeyLength < len(axes)),
+// which is why the old empty-axes Xsv output crashed the SHARED processColumn render and took the whole
+// perCellTable down with it. Instead the per-sample one-row CSVs are concatenated (real sampleId
+// injected per row) and imported ONCE, keyed [sampleId], by qc-summary.tpl.tengo. `type: "Resource"`
+// yields a [sampleId] -> file map (same mechanism as blocks/mixcr-clonotyping's `clns`/`qc` outputs);
+// the default path ["qc"] matches the fb-pipeline body's `qc:` return (the old path ["qcSummary"] was
+// itself wrong — no such body output exists). Not part of the A-0010 export contract; outputs-only.
+qcFileMapOutput := func(blockId) {
+	return {
+		type: "Resource",
+		spec: {
+			kind: "PColumn",
+			name: "pl7.app/feature/qcSummaryFile",
+			domain: { "pl7.app/blockId": blockId },
+			valueType: "File"
+		},
+		name: "qc"
+	}
+}
+
+// qcSummaryColumnsSpec: the xsv.importFile spec for the COMBINED per-sample QC table (one row per
+// sample), used by qc-summary.tpl.tengo. Keyed [sampleId] with the axis spec inherited verbatim from
+// the block's sampleId axis, so the QC table's sampleId axis unifies with the A-0010 contract columns.
+// Each metric keeps its own valueType/label/orderPriority/format. Not part of the A-0010 export
+// contract; outputs-only.
+qcSummaryColumnsSpec := func(sampleAxisSpec) {
 	numCol := func(id, colName, label, order, fmt) {
 		spec := {
 			name: "pl7.app/qc/" + id,
@@ -230,25 +255,19 @@ qcSummaryOutput := func(blockId, sampleAxisName) {
 		return { column: colName, id: id, spec: spec }
 	}
 	return {
-		type: "Xsv",
-		xsvType: "csv",
-		settings: {
-			axes: [],
-			columns: [
-				numCol("readsTotal", "readsTotal", "Reads parsed", 90000, undefined),
-				numCol("readsMatched", "readsMatched", "Reads matched", 89000, undefined),
-				numCol("matchedFraction", "matchedFraction", "Matched fraction", 88000, ".2p"),
-				numCol("cellsDetected", "cellsDetected", "Cells detected", 87000, undefined),
-				numCol("featuresDetected", "featuresDetected", "Features detected", 86000, undefined),
-				numCol("totalUniqueUmis", "totalUniqueUmis", "Total distinct UMIs", 85000, undefined),
-				numCol("medianUmisPerCell", "medianUmisPerCell", "Median UMIs / cell", 84000, ".1f"),
-				numCol("panelAssignedFraction", "panelAssignedFraction", "Panel-assigned fraction", 83000, ".2p")
-			],
-			storageFormat: "Parquet",
-			partitionKeyLength: 0
-		},
-		name: "qcSummary",
-		path: ["qcSummary"]
+		axes: [{ column: "sampleId", spec: sampleAxisSpec }],
+		columns: [
+			numCol("readsTotal", "readsTotal", "Reads parsed", 90000, undefined),
+			numCol("readsMatched", "readsMatched", "Reads matched", 89000, undefined),
+			numCol("matchedFraction", "matchedFraction", "Matched fraction", 88000, ".2p"),
+			numCol("cellsDetected", "cellsDetected", "Cells detected", 87000, undefined),
+			numCol("featuresDetected", "featuresDetected", "Features detected", 86000, undefined),
+			numCol("totalUniqueUmis", "totalUniqueUmis", "Total distinct UMIs", 85000, undefined),
+			numCol("medianUmisPerCell", "medianUmisPerCell", "Median UMIs / cell", 84000, ".1f"),
+			numCol("panelAssignedFraction", "panelAssignedFraction", "Panel-assigned fraction", 83000, ".2p")
+		],
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
 	}
 }
 
@@ -258,5 +277,6 @@ export {
 	featureBarcodeAxis: featureBarcodeAxis,
 	valueOutputs: valueOutputs,
 	tagstatQcOutput: tagstatQcOutput,
-	qcSummaryOutput: qcSummaryOutput
+	qcFileMapOutput: qcFileMapOutput,
+	qcSummaryColumnsSpec: qcSummaryColumnsSpec
 }
