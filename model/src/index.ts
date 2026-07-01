@@ -2,6 +2,7 @@ import type { InferOutputsType } from "@platforma-sdk/model";
 import {
   BlockModelV3,
   createPlDataTableStateV2,
+  createPlDataTableV2,
   createPlDataTableV3,
   DataModelBuilder,
   isPColumnSpec,
@@ -132,66 +133,39 @@ export const platforma = BlockModelV3.create(dataModel)
   // separate feature-MATRIX table [sampleId, cellId, featureId]. We deliberately keep ONE unified
   // perCellTable instead: it is coherent, the (cell x feature) rows already let a user read off the
   // strongest features (spec A-0017 forbids a redundant top-N), and PlAgDataTableV2 handles the mixed
-  // granularity. Per-cell aggregate columns (totalUmi, featuresDetected) were NOT added. Revisit only
-  // if users ask for a one-row-per-cell overview; if so, add aggregates in per_cell_metrics and a
-  // second createPlDataTableV3 output rather than reshaping this one.
+  // granularity (umiCount/fraction per [sampleId,cellId,featureId] + consensus broadcast per
+  // [sampleId,cellId]). Per-cell aggregate columns (totalUmi, featuresDetected) were NOT added.
   //
   // Per-cell results table. Resolves the workflow's exported perCellTable PFrame; undefined until the
-  // workflow emits it, so the UI guards it.
+  // workflow emits it (guarded by the UI).
   //
-  // Use the discoverColumnOptions (object) form of createPlDataTableV3 with `sources` scoped to our
-  // OWN exported PFrame. This is deliberate: the array-columns form runs discoverLabelColumnVariants,
-  // which enumerates the ENTIRE result pool to find axis labels and blocks forever on the upstream
-  // Samples&Data FASTQ File-dataset's non-PFrame-queryable data (unstable marker
-  // no_data:<sndBlock>:pf.dataset.*). Passing `sources: [OutputColumnProvider(acc)]` confines column +
-  // label discovery to this block's own columns (resolveProviders uses only the given sources), and
-  // maxHops:0 disables linker traversal since the PFrame is self-contained. Mirrors
-  // 3d-structure-prediction / 3d-structure-clustering.
-  //
-  // retentive + withStatus: retentive avoids blanking the grid to undefined on recompute (cell-browser
-  // pattern; no V3 builder shortcut for the combo — long-form), withStatus feeds PlAgDataTableV2 the
-  // OutputWithStatus envelope it renders loading/error from.
+  // Uses createPlDataTableV2 (columns passed directly via getPColumns), NOT V3. This frame is our OWN
+  // self-contained, non-batch processColumn output with MIXED granularity. createPlDataTableV3's
+  // discovery cannot render it: the object (scoped-sources) form returns undefined for this frame
+  // regardless of anchor/maxHops config (verified 2026-07-01), and the array-columns form runs
+  // discoverLabelColumnVariants over the ENTIRE result pool and hangs forever on the upstream
+  // Samples&Data FASTQ File-dataset (no_data:<sndBlock>:pf.dataset.*). V2 takes the columns as-is and
+  // renders the mixed-granularity join — the pattern blocks/peptide-extraction uses for the same
+  // non-batch processColumn + samples-and-data setup. retentive avoids blanking the grid on recompute;
+  // withStatus feeds PlAgDataTableV2 the OutputWithStatus envelope it renders loading/error from.
   .output(
     "perCellTable",
     (ctx) => {
-      const acc = ctx.outputs?.resolve("perCellTable");
-      if (acc === undefined) return undefined;
-      const snapshots = new OutputColumnProvider(acc).getAllColumns();
-      if (snapshots.length === 0) return undefined;
-      // Anchor on any value-bearing column — discovery is axis-driven, so only its axesSpec matters.
-      const anchorSpec = (snapshots.find((s) => s.spec.name !== "pl7.app/label") ?? snapshots[0])
-        .spec;
-      return createPlDataTableV3(ctx, {
-        columns: {
-          sources: [new OutputColumnProvider(acc)],
-          anchors: { main: anchorSpec },
-          selector: { mode: "enrichment", maxHops: 0 },
-        },
-        tableState: ctx.data.tableState,
-      });
+      const pCols = ctx.outputs?.resolve("perCellTable")?.getPColumns();
+      if (pCols === undefined || pCols.length === 0) return undefined;
+      return createPlDataTableV2(ctx, pCols, ctx.data.tableState);
     },
     { retentive: true, withStatus: true },
   )
   // Raw tag-stat QC table: per (cell, feature-barcode) distinct-UMI counts before the CSV-driven
-  // collapse to feature names. Same self-contained discovery form as perCellTable (avoids the
-  // whole-pool label-discovery hang described above).
+  // collapse to feature names. Same non-batch processColumn frame as perCellTable, so it uses
+  // createPlDataTableV2 for the same reason (V3 discovery can't render these frames — see perCellTable).
   .output(
     "tagstatQcTable",
     (ctx) => {
-      const acc = ctx.outputs?.resolve("tagstatQcTable");
-      if (acc === undefined) return undefined;
-      const snapshots = new OutputColumnProvider(acc).getAllColumns();
-      if (snapshots.length === 0) return undefined;
-      const anchorSpec = (snapshots.find((s) => s.spec.name !== "pl7.app/label") ?? snapshots[0])
-        .spec;
-      return createPlDataTableV3(ctx, {
-        columns: {
-          sources: [new OutputColumnProvider(acc)],
-          anchors: { main: anchorSpec },
-          selector: { mode: "enrichment", maxHops: 0 },
-        },
-        tableState: ctx.data.tagstatTableState,
-      });
+      const pCols = ctx.outputs?.resolve("tagstatQcTable")?.getPColumns();
+      if (pCols === undefined || pCols.length === 0) return undefined;
+      return createPlDataTableV2(ctx, pCols, ctx.data.tagstatTableState);
     },
     { retentive: true, withStatus: true },
   )
