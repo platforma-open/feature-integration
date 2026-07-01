@@ -37,6 +37,13 @@ const featureCount = computed(() => app.model.outputs.controlOptions?.length ?? 
       <PlBtnGhost @click.stop="settingsOpen = true">Settings</PlBtnGhost>
     </template>
 
+    <PlAlert v-if="app.model.outputs.perCellTable && !app.model.data.controlFeature" type="info">
+      No negative control selected — specificity scores are not computed. Pick a "Negative-control
+      feature" in Settings to add them. Consensus feature shows the assigned antigen,
+      <b>ambiguous</b> when no feature passes the dominance threshold, and is empty when the cell
+      has no feature signal.
+    </PlAlert>
+
     <PlAgDataTableV2
       v-if="app.model.outputs.perCellTable"
       v-model="app.model.data.tableState"
