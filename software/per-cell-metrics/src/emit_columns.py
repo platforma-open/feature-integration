@@ -23,7 +23,7 @@ def main() -> None:
         raise SystemExit(f"no header row found in {args.tag_feature_csv}")
 
     with open(args.output, "w") as out:
-        json.dump([h.strip() for h in header], out)
+        json.dump([h.strip() for h in header if h.strip()], out)
 
 
 if __name__ == "__main__":

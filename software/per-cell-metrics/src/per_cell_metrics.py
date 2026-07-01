@@ -10,6 +10,7 @@ dedup canonical.
 """
 
 import argparse
+import csv
 import sys
 
 import polars as pl
@@ -126,6 +127,27 @@ def main() -> None:
     p.add_argument("--control", default=None, help="negative-control feature name (spec A-0014)")
     p.add_argument("--output-prefix", default="result")
     args = p.parse_args()
+
+    # Guard the user-mapped CSV column names (D4): the two roles must be distinct, and neither may
+    # collide with a tag-stat column. On the inner join, every tag-stat column is carried into the
+    # joined frame -- so a --csv-feature-col that names ANY tag-stat column (e.g. `count`,
+    # `totalWeight`, `unique_UMI`, or the CELL/FEATURE keys) would otherwise pass through the
+    # join/group silently and put the WRONG data (e.g. numeric counts) into the output `feature`
+    # column; a collision on the cell key also crashes group_by/rename with a raw polars
+    # DuplicateError. Read the real tag-stat header so we reject every collision, not just the three
+    # flag-named columns.
+    with open(args.tag_stat_tsv, newline="") as fh:
+        reserved = set(next(csv.reader(fh, delimiter="\t"), []))
+    if args.csv_barcode_col == args.csv_feature_col:
+        raise SystemExit("--csv-barcode-col and --csv-feature-col must differ")
+    for name, val in (
+        ("--csv-barcode-col", args.csv_barcode_col),
+        ("--csv-feature-col", args.csv_feature_col),
+    ):
+        if val in reserved:
+            raise SystemExit(
+                f"{name}={val!r} collides with a tag-stat column ({sorted(reserved)}); choose a different CSV column"
+            )
 
     counts = _load(
         args.tag_stat_tsv,

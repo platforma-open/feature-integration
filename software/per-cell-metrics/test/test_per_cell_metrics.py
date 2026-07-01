@@ -216,6 +216,33 @@ def test_cli_with_renamed_csv_columns(tagstat_tsv, tmp_path):
 
 
 @pytest.mark.slow
+def test_cli_rejects_colliding_feature_col(tagstat_tsv, tmp_path):
+    # D4 guard: mapping --csv-feature-col onto a tag-stat column name (e.g. `count`) would otherwise
+    # silently corrupt the output `feature` column with the wrong data. It must exit non-zero instead.
+    renamed_csv = tmp_path / "renamed_tags.csv"
+    renamed_csv.write_text("barcode,count\nAAAA,AGX\nCCCC,BGX\n")
+
+    r = subprocess.run(
+        [
+            sys.executable,
+            str(SRC),
+            str(tagstat_tsv),
+            str(renamed_csv),
+            "--sample-id",
+            "s1",
+            "--csv-barcode-col",
+            "barcode",
+            "--csv-feature-col",
+            "count",
+            "--output-prefix",
+            str(tmp_path / "result"),
+        ],
+        cwd=tmp_path,
+    )
+    assert r.returncode != 0
+
+
+@pytest.mark.slow
 def test_cli_with_control_writes_specificity(tagstat_tsv, tags_csv, tmp_path):
     subprocess.run(
         [
