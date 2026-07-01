@@ -23,6 +23,7 @@ const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
   umiLen: 10,
   featureLen: 15,
   cellWhitelist: "", // de-novo CELL correction by default (spec A-0018 defers the scheme)
+  controlInfoDismissed: false,
   tableState: createPlDataTableStateV2(),
   tagstatTableState: createPlDataTableStateV2(),
   qcSummaryTableState: createPlDataTableStateV2(),

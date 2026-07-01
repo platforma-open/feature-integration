@@ -8,6 +8,7 @@ import {
   PlDropdown,
   PlDropdownRef,
   PlFileInput,
+  PlLogView,
   PlNumberField,
   PlSlideModal,
   usePlDataTableSettingsV2,
@@ -23,11 +24,22 @@ const tableSettings = usePlDataTableSettingsV2({
   model: () => app.model.outputs.perCellTable,
 });
 
-// Post-staging CSV preview: how many distinct features staging parsed from the tag→feature CSV.
-// A positive count confirms the CSV was read and has a valid 'feature' column. A malformed CSV
-// (missing tag/feature column) makes the staging emit-panel/emit-features step fail loudly — that
-// error surfaces in the block error banner and the QC page logs.
-const featureCount = computed(() => app.model.outputs.controlOptions?.length ?? 0);
+// Per-sample × per-step mitool/Python log streams (key = [sampleId, step]; value = log handle),
+// surfaced in a Logs slide-over so the run isn't a black box.
+const logEntries = computed(() => app.model.outputs.stepLogs?.data ?? []);
+const logsOpen = ref(false);
+
+// No-negative-control info banner: shown when results exist and no control is set, until the user
+// dismisses it (dismissal persisted in data so it stays hidden).
+const controlInfoVisible = computed(
+  () =>
+    app.model.outputs.perCellTable !== undefined &&
+    !app.model.data.controlFeature &&
+    !app.model.data.controlInfoDismissed,
+);
+function dismissControlInfo() {
+  app.model.data.controlInfoDismissed = true;
+}
 
 // Cell-barcode whitelist options for refine-tags CELL correction. "" = de-novo (default), which keeps
 // non-10x / synthetic data working; selecting the chemistry's list makes cellIds match the VDJ block
@@ -53,10 +65,11 @@ const cellWhitelistOptions = [
   <PlBlockPage>
     <template #title>Feature Integration</template>
     <template #append>
+      <PlBtnGhost v-if="logEntries.length > 0" @click.stop="logsOpen = true">Logs</PlBtnGhost>
       <PlBtnGhost @click.stop="settingsOpen = true">Settings</PlBtnGhost>
     </template>
 
-    <PlAlert v-if="app.model.outputs.perCellTable && !app.model.data.controlFeature" type="info">
+    <PlAlert v-if="controlInfoVisible" type="info" closable @close="dismissControlInfo">
       No negative control selected — specificity scores are not computed. Pick a "Negative-control
       feature" in Settings to add them. Consensus feature shows the assigned antigen,
       <b>ambiguous</b> when no feature passes the dominance threshold, and is empty when the cell
@@ -78,7 +91,7 @@ const cellWhitelistOptions = [
       <PlDropdownRef
         v-model="app.model.data.fbFastqRef"
         :options="app.model.outputs.fastqOptions"
-        label="Feature-barcode FASTQ"
+        label="Select dataset"
       />
       <PlFileInput
         v-model="app.model.data.tagFeatureCsvHandle"
@@ -87,12 +100,6 @@ const cellWhitelistOptions = [
         :extensions="['csv']"
         required
       />
-      <span
-        v-if="app.model.data.tagFeatureCsvHandle && featureCount > 0"
-        style="color: var(--txt-success, green); font-size: 12px"
-      >
-        ✓ {{ featureCount }} feature{{ featureCount === 1 ? "" : "s" }} detected
-      </span>
       <PlDropdown
         v-if="app.model.data.tagFeatureCsvHandle"
         v-model="app.model.data.barcodeSeqColumn"
@@ -142,9 +149,23 @@ const cellWhitelistOptions = [
           v-model="app.model.data.cellWhitelist"
           :options="cellWhitelistOptions"
           label="Cell barcode whitelist (10x)"
-          helper="Snap cell barcodes to a 10x whitelist so cellIds match the VDJ block exactly. Leave as de-novo for non-10x or synthetic data."
-        />
+        >
+          <template #tooltip>
+            Snap cell barcodes to a 10x whitelist so cellIds match the VDJ block exactly. Leave as
+            de-novo for non-10x or synthetic data.
+          </template>
+        </PlDropdown>
       </PlAccordionSection>
+    </PlSlideModal>
+
+    <PlSlideModal v-model="logsOpen">
+      <template #title>Logs</template>
+      <PlLogView
+        v-for="entry in logEntries"
+        :key="entry.key.join('/')"
+        :label="entry.key.join(' / ')"
+        :log-handle="entry.value"
+      />
     </PlSlideModal>
   </PlBlockPage>
 </template>
