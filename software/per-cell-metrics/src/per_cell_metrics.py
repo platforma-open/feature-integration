@@ -51,6 +51,8 @@ def _load(
     cell_col: str,
     feature_tag_col: str,
     umi_count_col: str,
+    csv_barcode_col: str = "tag",
+    csv_feature_col: str = "feature",
 ) -> pl.DataFrame:
     """Aggregated mitool ``tag-stat -u`` rows -> (cellId, feature, umiCount) long frame.
 
@@ -58,11 +60,13 @@ def _load(
     columns ``CELL FEATURE count totalWeight unique_UMI``. ``unique_UMI`` is the distinct-UMI
     (molecule) count for the group -- mitool does the deduplication, so we take that column directly
     rather than counting raw UMI rows ourselves. The tag->feature CSV maps the feature barcode to its
-    feature/antigen name (spec A-0004, A-0009); we sum the distinct-UMI counts across barcodes that
-    map to the same feature.
+    feature/antigen name (spec A-0004, A-0009); ``csv_barcode_col``/``csv_feature_col`` let the user
+    map arbitrary CSV header names to that barcode/feature role (D4). We sum the distinct-UMI counts
+    across barcodes that map to the same feature. The output column is always named ``feature``
+    regardless of the source CSV's header, since downstream Xsv import depends on that name.
     """
     stat = pl.read_csv(tag_stat_tsv, separator="\t")
-    mapping = pl.read_csv(tag_feature_csv)  # columns: tag (feature barcode), feature
+    mapping = pl.read_csv(tag_feature_csv)  # columns: csv_barcode_col (feature barcode), csv_feature_col
     print(
         f"[per-cell-metrics] tag-stat: {stat.height} rows, columns={stat.columns}",
         file=sys.stderr,
@@ -71,22 +75,23 @@ def _load(
         f"[per-cell-metrics] tag->feature CSV: {mapping.height} rows, columns={mapping.columns}",
         file=sys.stderr,
     )
-    joined = stat.join(mapping, left_on=feature_tag_col, right_on="tag", how="inner")
+    joined = stat.join(mapping, left_on=feature_tag_col, right_on=csv_barcode_col, how="inner")
     print(
-        f"[per-cell-metrics] inner-join {feature_tag_col}=tag -> {joined.height} rows",
+        f"[per-cell-metrics] inner-join {feature_tag_col}={csv_barcode_col} -> {joined.height} rows",
         file=sys.stderr,
     )
     if joined.height == 0 and stat.height > 0:
         print(
             f"[per-cell-metrics] JOIN EMPTY: sample {feature_tag_col}="
-            f"{stat[feature_tag_col].unique().to_list()[:8]} ; CSV tag="
-            f"{mapping['tag'].unique().to_list()[:8]}",
+            f"{stat[feature_tag_col].unique().to_list()[:8]} ; CSV {csv_barcode_col}="
+            f"{mapping[csv_barcode_col].unique().to_list()[:8]}",
             file=sys.stderr,
         )
+    rename = {cell_col: "cellId"}
+    if csv_feature_col != "feature":
+        rename[csv_feature_col] = "feature"
     counts = (
-        joined.group_by([cell_col, "feature"])
-        .agg(pl.col(umi_count_col).sum().alias("umiCount"))
-        .rename({cell_col: "cellId"})
+        joined.group_by([cell_col, csv_feature_col]).agg(pl.col(umi_count_col).sum().alias("umiCount")).rename(rename)
     )
     print(
         f"[per-cell-metrics] counts (cell x feature): {counts.height} rows",
@@ -107,6 +112,16 @@ def main() -> None:
         default="unique_UMI",
         help="mitool tag-stat -u distinct-UMI column (unique_<umiTag>, default UMI)",
     )
+    p.add_argument(
+        "--csv-barcode-col",
+        default="tag",
+        help="CSV column holding the feature barcode (join key; spec A-0004)",
+    )
+    p.add_argument(
+        "--csv-feature-col",
+        default="feature",
+        help="CSV column holding the feature/antigen name (spec A-0004, A-0009)",
+    )
     p.add_argument("--dominance-threshold", type=float, default=0.6)
     p.add_argument("--control", default=None, help="negative-control feature name (spec A-0014)")
     p.add_argument("--output-prefix", default="result")
@@ -118,6 +133,8 @@ def main() -> None:
         args.cell_col,
         args.feature_tag_col,
         args.umi_count_col,
+        args.csv_barcode_col,
+        args.csv_feature_col,
     )
     counts = counts.with_columns(pl.lit(args.sample_id).alias("sampleId"))
 

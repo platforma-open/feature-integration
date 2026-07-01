@@ -182,6 +182,40 @@ def test_cli_abundance_uses_unique_umi(tagstat_tsv, tags_csv, tmp_path):
 
 
 @pytest.mark.slow
+def test_cli_with_renamed_csv_columns(tagstat_tsv, tmp_path):
+    # D4: the CSV's barcode/feature columns can be named anything -- --csv-barcode-col /
+    # --csv-feature-col map them to the join key and output "feature" column. Barcode values
+    # (AAAA, CCCC) match the committed tagstat_main.tsv bed; mapped to the same AGX/BGX names the
+    # golden test expects, just via a differently-named CSV.
+    renamed_csv = tmp_path / "renamed_tags.csv"
+    renamed_csv.write_text("barcode,antigen\nAAAA,AGX\nCCCC,BGX\n")
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(SRC),
+            str(tagstat_tsv),
+            str(renamed_csv),
+            "--sample-id",
+            "s1",
+            "--csv-barcode-col",
+            "barcode",
+            "--csv-feature-col",
+            "antigen",
+            "--output-prefix",
+            str(tmp_path / "result"),
+        ],
+        check=True,
+        cwd=tmp_path,
+    )
+    out = tmp_path / "result_abundance.csv"
+    assert out.exists()
+    with open(out, newline="") as f:
+        features = {row["feature"] for row in csv.DictReader(f)}
+    assert features == {"AGX", "BGX"}
+
+
+@pytest.mark.slow
 def test_cli_with_control_writes_specificity(tagstat_tsv, tags_csv, tmp_path):
     subprocess.run(
         [
