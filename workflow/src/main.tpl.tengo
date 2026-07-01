@@ -157,7 +157,7 @@ wf.body(func(args) {
 	// QC-only frame: the raw tag-stat per-(cell, feature-barcode) distinct-UMI counts, before the
 	// CSV-driven collapse to feature names. Surfaced as a block output (not exported to the pool).
 	qcFb := pframes.pFrameBuilder()
-	addXsvTo(qcFb, "tagstat")
+	addXsvTo(qcFb, "tagstatQc")
 	qcPf := qcFb.build()
 
 	// Per-sample QC summary frame (outputs-only).
