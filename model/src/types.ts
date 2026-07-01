@@ -4,6 +4,8 @@ import type { ImportFileHandle, PlDataTableStateV2, PlRef } from "@platforma-sdk
 export type BlockArgs = {
   fbFastqRef: PlRef; // feature-barcode FASTQ column (from samples-and-data, result pool)
   tagFeatureCsvHandle: ImportFileHandle; // tag->feature CSV, user-uploaded (spec A-0004, A-0009)
+  barcodeSeqColumn: string; // CSV column holding the feature barcode (whitelist/panel; spec A-0023)
+  featureNameColumn: string; // CSV column holding the feature/antigen name (spec A-0009)
   controlFeature?: string; // negative-control feature name (spec A-0014); omitted -> no score
   dominanceThreshold: number; // spec A-0012, default 0.6, floor 0.5
   // Read geometry for the mitool tag pattern (DP-1 "parameterize + proceed"; 10x 5' v2 defaults).
@@ -18,6 +20,8 @@ export type BlockArgs = {
 export type BlockData = {
   fbFastqRef?: PlRef;
   tagFeatureCsvHandle?: ImportFileHandle;
+  barcodeSeqColumn?: string;
+  featureNameColumn?: string;
   controlFeature?: string;
   dominanceThreshold: number;
   cellLen: number;

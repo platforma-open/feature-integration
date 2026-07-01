@@ -75,7 +75,9 @@ wf.body(func(args) {
 		pattern: pattern,
 		tagsCsv: csvFile,
 		dominanceThreshold: dominanceThreshold,
-		fileExtension: fileExtension
+		fileExtension: fileExtension,
+		barcodeSeqColumn: args.barcodeSeqColumn,
+		featureNameColumn: args.featureNameColumn
 	}
 	if hasControl {
 		extraInputs.control = control

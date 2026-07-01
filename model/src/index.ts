@@ -29,9 +29,13 @@ export const platforma = BlockModelV3.create(dataModel)
   .args((data): BlockArgs => {
     if (!data.fbFastqRef) throw new Error("Select the feature-barcode FASTQ");
     if (!data.tagFeatureCsvHandle) throw new Error("Upload the tag→feature CSV");
+    if (!data.barcodeSeqColumn) throw new Error("Select the barcode-sequence column in the CSV");
+    if (!data.featureNameColumn) throw new Error("Select the feature-name column in the CSV");
     return {
       fbFastqRef: data.fbFastqRef,
       tagFeatureCsvHandle: data.tagFeatureCsvHandle,
+      barcodeSeqColumn: data.barcodeSeqColumn,
+      featureNameColumn: data.featureNameColumn,
       controlFeature: data.controlFeature,
       // canonicalize + clamp to the 0.5 floor
       dominanceThreshold: Math.max(DOMINANCE_FLOOR, data.dominanceThreshold ?? 0.6),
@@ -44,6 +48,7 @@ export const platforma = BlockModelV3.create(dataModel)
   .prerunArgs((data) => ({
     fbFastqRef: data.fbFastqRef,
     tagFeatureCsvHandle: data.tagFeatureCsvHandle,
+    featureNameColumn: data.featureNameColumn,
   }))
   // NOTE on enrichments (.enriches): intentionally NOT declared. `.enriches(args => PlRef[])` is for a
   // block that produces columns sharing the key space of a ref it holds (clonotype-browser enriches its
@@ -75,6 +80,14 @@ export const platforma = BlockModelV3.create(dataModel)
       ?.resolve({ field: "featureNames", allowPermanentAbsence: true })
       ?.getDataAsJson<string[]>();
     return (names ?? []).map((name) => ({ value: name, label: name }));
+  })
+  // CSV column headers (from the prerun emit-columns step) → the barcode/feature column dropdowns
+  // (D4). Retentive so the dropdowns don't blank on rerun; empty until the CSV is uploaded + parsed.
+  .retentiveOutput("csvColumnOptions", (ctx): { value: string; label: string }[] => {
+    const cols = ctx.prerun
+      ?.resolve({ field: "csvColumns", allowPermanentAbsence: true })
+      ?.getDataAsJson<string[]>();
+    return (cols ?? []).map((c) => ({ value: c, label: c }));
   })
   // Drives the tag→feature CSV upload: getImportProgress() registers the import handle with the
   // middle-layer upload driver so the CSV bytes are actually pushed; isActive keeps it computing even

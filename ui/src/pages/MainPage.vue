@@ -75,6 +75,18 @@ const featureCount = computed(() => app.model.outputs.controlOptions?.length ?? 
         ✓ {{ featureCount }} feature{{ featureCount === 1 ? "" : "s" }} detected
       </span>
       <PlDropdown
+        v-if="app.model.data.tagFeatureCsvHandle"
+        v-model="app.model.data.barcodeSeqColumn"
+        :options="app.model.outputs.csvColumnOptions"
+        label="Barcode-sequence column"
+      />
+      <PlDropdown
+        v-if="app.model.data.tagFeatureCsvHandle"
+        v-model="app.model.data.featureNameColumn"
+        :options="app.model.outputs.csvColumnOptions"
+        label="Feature-name column"
+      />
+      <PlDropdown
         v-model="app.model.data.controlFeature"
         :options="app.model.outputs.controlOptions"
         label="Negative-control feature (optional)"

@@ -40,6 +40,8 @@ self.body(func(inputs) {
 	control := inputs.control // may be undefined / "" -> no specificity score
 	fileExtension := inputs.fileExtension
 	mitoolCPUs := inputs.mitoolCPUs
+	barcodeSeqColumn := inputs.barcodeSeqColumn
+	featureNameColumn := inputs.featureNameColumn
 
 	// mitool memory (mixcr semantics): an explicit per-process override (Advanced Settings) is a hard
 	// fixed request; otherwise size RAM from the input reads' stored (compressed) blob size on top of a
@@ -138,6 +140,7 @@ self.body(func(inputs) {
 		mem("2GiB").
 		addFile("tags.csv", tagsCsv).
 		arg("tags.csv").arg("panel.txt").
+		arg("--tag-col").arg(barcodeSeqColumn).
 		saveFile("panel.txt").
 		printErrStreamToStdout().saveStdoutStream().run()
 
@@ -192,6 +195,8 @@ self.body(func(inputs) {
 		arg("--cell-col").arg(tagPattern.CELL_TAG).
 		arg("--feature-tag-col").arg(tagPattern.FEATURE_TAG).
 		arg("--umi-count-col").arg("unique_" + tagPattern.UMI_TAG).
+		arg("--csv-barcode-col").arg(barcodeSeqColumn).
+		arg("--csv-feature-col").arg(featureNameColumn).
 		arg("--dominance-threshold").arg(string(dominanceThreshold)).
 		arg("--output-prefix").arg("result").
 		saveFile("result_abundance.csv").
