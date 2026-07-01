@@ -10,6 +10,7 @@ dedup canonical.
 """
 
 import argparse
+import sys
 
 import polars as pl
 from scipy.stats import beta
@@ -62,12 +63,36 @@ def _load(
     """
     stat = pl.read_csv(tag_stat_tsv, separator="\t")
     mapping = pl.read_csv(tag_feature_csv)  # columns: tag (feature barcode), feature
-    return (
-        stat.join(mapping, left_on=feature_tag_col, right_on="tag", how="inner")
-        .group_by([cell_col, "feature"])
+    print(
+        f"[per-cell-metrics] tag-stat: {stat.height} rows, columns={stat.columns}",
+        file=sys.stderr,
+    )
+    print(
+        f"[per-cell-metrics] tag->feature CSV: {mapping.height} rows, columns={mapping.columns}",
+        file=sys.stderr,
+    )
+    joined = stat.join(mapping, left_on=feature_tag_col, right_on="tag", how="inner")
+    print(
+        f"[per-cell-metrics] inner-join {feature_tag_col}=tag -> {joined.height} rows",
+        file=sys.stderr,
+    )
+    if joined.height == 0 and stat.height > 0:
+        print(
+            f"[per-cell-metrics] JOIN EMPTY: sample {feature_tag_col}="
+            f"{stat[feature_tag_col].unique().to_list()[:8]} ; CSV tag="
+            f"{mapping['tag'].unique().to_list()[:8]}",
+            file=sys.stderr,
+        )
+    counts = (
+        joined.group_by([cell_col, "feature"])
         .agg(pl.col(umi_count_col).sum().alias("umiCount"))
         .rename({cell_col: "cellId"})
     )
+    print(
+        f"[per-cell-metrics] counts (cell x feature): {counts.height} rows",
+        file=sys.stderr,
+    )
+    return counts
 
 
 def main() -> None:
@@ -140,6 +165,18 @@ def main() -> None:
         pl.DataFrame(spec_rows).sort(["sampleId", "cellId", "feature"]).write_csv(
             f"{args.output_prefix}_specificity.csv"
         )
+    else:
+        # No negative control: still emit an (empty, header-only) specificity CSV so the workflow's
+        # fixed output set is satisfied. It is not imported when no control is set (main.tpl and the
+        # model gate the specificity column on hasControl).
+        pl.DataFrame(
+            schema={
+                "sampleId": pl.Utf8,
+                "cellId": pl.Utf8,
+                "feature": pl.Utf8,
+                "specificityScore": pl.Float64,
+            }
+        ).write_csv(f"{args.output_prefix}_specificity.csv")
 
 
 if __name__ == "__main__":

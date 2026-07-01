@@ -18,3 +18,17 @@ software/**/*.tgz
 .DS_Store
 .vscode/sftp.json
 test-dry-run.json
+
+# Large manual-exploration datasets (regenerate with software/test-data/manual-run/generate.py).
+# The tiny CI fixtures in test/assets/ stay tracked; these do not.
+software/test-data/manual-run/
+
+# Multiomics manual-test synthetic data (regenerate with generate_multiomics.py)
+software/test-data/multiomics-run/
+
+# Realistic 2-donor antigen dataset (moved from local-artifacts; antigen arm for multiomics-run)
+software/test-data/feature-integration-synthetic/
+
+# Local working docs — not version-controlled
+docs/feature-integration-frontend-plan.md
+docs/cell-barcode-whitelist-correction.md

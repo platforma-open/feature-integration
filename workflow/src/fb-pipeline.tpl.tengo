@@ -5,9 +5,11 @@
 // distinct-UMI counts, then hands that table plus the user's tag->feature CSV to the per-cell-metrics
 // Python software, which collapses to the (cell x feature) outputs (spec A-0010/A-0012/A-0014).
 //
-// Tag names (CELL / CELLFB / UMI) are baked into the pattern by tag-pattern.lib.tengo and reused here
-// for refine-tags / tag-stat / the Python column args, empirically validated against the local mitool
-// build. R1/R2 file-group handling follows blocks/peptide-extraction mitool-pipeline.tpl.tengo.
+// refine-tags corrects the FEATURE barcode against the panel whitelist (the tag column of the user's
+// CSV, emitted as panel.txt by the emit-panel step): reads within Hamming-1 of a panel barcode snap
+// onto it, off-panel reads are dropped (mitool#87 fixed the `-t TAG#file:` CLI; spec A-0018 leaves the
+// scheme to implementation). Tag names (CELL / FEATURE / UMI) are baked into the pattern by
+// tag-pattern.lib.tengo and reused here. R1/R2 file-group handling follows blocks/peptide-extraction.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
@@ -15,16 +17,18 @@ assets := import("@platforma-sdk/workflow-tengo:assets")
 maps := import("@platforma-sdk/workflow-tengo:maps")
 ll := import("@platforma-sdk/workflow-tengo:ll")
 pConstants := import("@platforma-sdk/workflow-tengo:pframes.constants")
+pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
 tagPattern := import(":tag-pattern")
 
 json := import("json")
 
-self.defineOutputs("abundance", "fractions", "consensus", "specificity", "tagstat")
+self.defineOutputs("abundance", "fractions", "consensus", "specificity", "tagstat", "stepLogs")
 
 // :memory-from-limits sizes the JVM heap from the granted limits — avoids end-of-parse OOM when many
 // tag writers flush (see demultiplex-fastq).
 mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
 metricsSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:main")
+emitPanelSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:emit-panel")
 
 self.body(func(inputs) {
 	inputData := inputs[pConstants.VALUE_FIELD_NAME]
@@ -35,8 +39,21 @@ self.body(func(inputs) {
 	dominanceThreshold := inputs.dominanceThreshold
 	control := inputs.control // may be undefined / "" -> no specificity score
 	fileExtension := inputs.fileExtension
-	mitoolMem := string(inputs.mitoolMemGB) + "GiB"
 	mitoolCPUs := inputs.mitoolCPUs
+
+	// Size mitool RAM from the input reads' stored (compressed) blob size on top of a floor, instead of
+	// a fixed request — the parse step OOMs at end-of-parse when many tag writers flush, and that scales
+	// with input volume (see mixcr-clonotyping mixcr-analyze.tpl / blocks/demultiplex-fastq). The floor
+	// is the metaExtra mitoolMemGB (a per-process override raises it); the linear term scales with size;
+	// the cap bounds the largest inputs. On backends that cannot evaluate formulas, memFormula falls back
+	// to the floor. `size("reads")` reads only blob metadata (no decompress, no pre-exec).
+	formula := exec.formula
+	memBaseGB := inputs.mitoolMemGB
+	mitoolMemFormula := formula.clamp(
+		formula.add(formula.gib(memBaseGB), formula.mul(formula.size("reads"), 4)),
+		formula.gib(memBaseGB),
+		formula.gib(128))
+	mitoolMemFallback := string(memBaseGB) + "GiB"
 
 	ll.assert(!is_undefined(pattern) && pattern != "", "tag pattern is required")
 
@@ -89,41 +106,59 @@ self.body(func(inputs) {
 	parse := exec.builder().
 		software(mitoolSw).
 		cpu(mitoolCPUs).
-		mem(mitoolMem).
+		memFormula(mitoolMemFormula, { fallback: mitoolMemFallback }).
 		env("MI_PROGRESS_PREFIX", "parse").
 		arg("parse").
 		arg("--pattern").arg(pattern).
 		arg("--threads").argWithVar("{system.cpu}")
-	for f in R1Files { parse = parse.addFile(f.name, f.file) }
-	for f in R2Files { parse = parse.addFile(f.name, f.file) }
+	for f in R1Files { parse = parse.addFile(f.name, f.file, { tag: "reads" }) }
+	for f in R2Files { parse = parse.addFile(f.name, f.file, { tag: "reads" }) }
 	parse = parse.
 		arg("--report").arg("parse_report.txt").saveFile("parse_report.txt").
 		arg(inputArg).arg("parsed.mic").saveFile("parsed.mic").
 		printErrStreamToStdout().saveStdoutStream().run()
 
-	// Step 2: refine-tags — error-correct cell, feature, and UMI barcodes against the observed
-	// distribution. Tag order sets correction scope: CELL de-novo (global), FEATURE within each cell
-	// (recovers errored feature barcodes onto the cell's true barcode), UMI within each (cell, feature).
+	// Step 2a: build the feature-barcode panel (panel.txt) from the user's tag->feature CSV. The panel
+	// is sample-independent, so this dedups across samples (pure template, same tags.csv input).
+	panel := exec.builder().
+		software(emitPanelSw).
+		cpu(1).
+		mem("2GiB").
+		addFile("tags.csv", tagsCsv).
+		arg("tags.csv").arg("panel.txt").
+		saveFile("panel.txt").
+		printErrStreamToStdout().saveStdoutStream().run()
+
+	// Step 2b: refine-tags — error-correct cell, feature, and UMI barcodes. FEATURE is corrected against
+	// the panel whitelist (#file:panel.txt): within-Hamming-1 reads snap to a panel barcode and off-panel
+	// reads are dropped. CELL is de-novo corrected (global); the tag order scopes UMI dedup to
+	// (cell, feature).
 	refine := exec.builder().
 		software(mitoolSw).
 		cpu(mitoolCPUs).
-		mem(mitoolMem).
+		memFormula(mitoolMemFormula, { fallback: mitoolMemFallback }).
 		arg("refine-tags").
 		arg("-t").arg(tagPattern.CELL_TAG).
-		arg("-t").arg(tagPattern.FEATURE_TAG).
+		arg("-t").arg(tagPattern.FEATURE_TAG + "#file:panel.txt").
 		arg("-t").arg(tagPattern.UMI_TAG).
 		arg("--report").arg("refine_report.txt").saveFile("refine_report.txt").
-		addFile("parsed.mic", parse.getFile("parsed.mic")).
+		addFile("panel.txt", panel.getFile("panel.txt")).
+		addFile("parsed.mic", parse.getFile("parsed.mic"), { tag: "reads" }).
 		arg("parsed.mic").arg("refined.mic").saveFile("refined.mic").
 		printErrStreamToStdout().saveStdoutStream().run()
 
 	// Step 3: tag-stat -u — per-(cell, feature-barcode) distinct-UMI counts.
 	// Output columns: CELL FEATURE count totalWeight unique_UMI
+	// --use-local-temp puts the count-unique on-disk sort in the exec work dir instead of the shared
+	// system /tmp — team convention for heavy on-disk-sort mitool steps (peptide-extraction mitool sort,
+	// mixcr-shm-trees, miltenyi cite silent /tmp-exhaustion hangs). Supported since mitool #84 (present in
+	// the pinned 2.3.1-131-main). tag-stat -u does exactly such a hierarchical on-disk sort.
 	tagStat := exec.builder().
 		software(mitoolSw).
 		cpu(2).
 		mem("8GiB").
 		arg("tag-stat").
+		arg("--use-local-temp").
 		arg("-t").arg(tagPattern.CELL_TAG).
 		arg("-t").arg(tagPattern.FEATURE_TAG).
 		arg("-u").arg(tagPattern.UMI_TAG).
@@ -150,17 +185,34 @@ self.body(func(inputs) {
 		arg("--output-prefix").arg("result").
 		saveFile("result_abundance.csv").
 		saveFile("result_fractions.csv").
-		saveFile("result_consensus.csv")
+		saveFile("result_consensus.csv").
+		saveFile("result_specificity.csv")
 	if hasControl {
-		metrics = metrics.arg("--control").arg(control).saveFile("result_specificity.csv")
+		metrics = metrics.arg("--control").arg(control)
 	}
 	metrics = metrics.printErrStreamToStdout().saveStdoutStream().run()
 
+	// Per-step stdout log streams, keyed by step -> assembled into the block's `stepLogs` output so the
+	// UI can show what each mitool/Python step did (each builder does printErrStreamToStdout().
+	// saveStdoutStream(), so mitool's stderr progress + report summaries land here too). keyLength 1;
+	// processColumn prepends the sample axis, giving a [sampleId, step] resource map.
+	stepLogs := pcolumn.resourceMapBuilder(1)
+	stepLogs.add(["0-panel"], panel.getStdoutStream())
+	stepLogs.add(["1-parse"], parse.getStdoutStream())
+	stepLogs.add(["2-refine"], refine.getStdoutStream())
+	stepLogs.add(["3-tagstat"], tagStat.getStdoutStream())
+	stepLogs.add(["4-metrics"], metrics.getStdoutStream())
+
+	// The body must return exactly the defineOutputs set and no output may be undefined. specificity is
+	// meaningful only with a control feature, so the Python always writes result_specificity.csv (empty
+	// header-only when no --control) and we always return it. main.tpl and the model still gate the
+	// specificity *import* on hasControl, so the empty file is simply never read when there is no control.
 	return {
 		abundance: metrics.getFile("result_abundance.csv"),
 		fractions: metrics.getFile("result_fractions.csv"),
 		consensus: metrics.getFile("result_consensus.csv"),
-		specificity: hasControl ? metrics.getFile("result_specificity.csv") : undefined,
-		tagstat: tagStat.getFile("tagstat.tsv")
+		specificity: metrics.getFile("result_specificity.csv"),
+		tagstat: tagStat.getFile("tagstat.tsv"),
+		stepLogs: stepLogs.build()
 	}
 })

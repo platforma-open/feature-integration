@@ -1,29 +1,46 @@
 // Prerun (staging) template.
 //
-// Its sole job is to import the user-uploaded tag->feature CSV and export it. Exporting the blob makes
-// the staging phase DEMAND it, which drives the client upload during staging (the same way
-// blocks/immune-assay-data prerun.tpl.tengo drives its file upload).
-//
-// Why this is necessary: the production workflow consumes the CSV only deep inside the processColumn
-// fan-out (as a shared `extra` blob handed to each per-sample body's exec). The upload driver never
-// picks up an upload that is requested only from inside that nested body, so the per-sample mitool exec
-// stalls forever waiting on a blob whose bytes are never pushed. Driving the upload here in staging
-// materialises the blob before production runs, so by the time the body needs it, it is ready.
+// Two jobs, both driven off the user-uploaded tag->feature CSV:
+//   1. Import + export the CSV so the staging phase DEMANDS its blob, which drives the client upload
+//      before production needs it (same as blocks/immune-assay-data prerun.tpl.tengo). The production
+//      workflow consumes the CSV only deep inside the processColumn fan-out, and the upload driver
+//      never picks up an upload requested only from inside that nested body — so without driving it
+//      here the per-sample mitool exec stalls forever waiting on a blob whose bytes are never pushed.
+//   2. Emit the list of feature/antigen names from the CSV (emit-features entrypoint) so the model can
+//      populate the negative-control dropdown (spec A-0014) BEFORE the user runs the block. Staging
+//      auto-reruns on CSV change, so the options stay current without a Run.
 
 wf := import("@platforma-sdk/workflow-tengo:workflow")
 file := import("@platforma-sdk/workflow-tengo:file")
+exec := import("@platforma-sdk/workflow-tengo:exec")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+
+featuresSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:emit-features")
 
 wf.body(func(args) {
-	// Before the user uploads a CSV the handle is absent — nothing to drive yet.
+	// Before the user uploads a CSV the handle is absent — nothing to drive or parse yet.
 	if is_undefined(args.tagFeatureCsvHandle) {
 		return { outputs: {}, exports: {} }
 	}
 
 	csvImport := file.importFile(args.tagFeatureCsvHandle)
 
+	// Parse the CSV feature column into a JSON name array (stdlib-only, trivial staging step).
+	features := exec.builder().
+		software(featuresSw).
+		cpu(1).
+		mem("1GiB").
+		addFile("tags.csv", csvImport.file).
+		arg("tags.csv").arg("feature_names.json").
+		saveFileContent("feature_names.json").
+		printErrStreamToStdout().saveStdoutStream().run()
+
 	return {
 		outputs: {
-			csvFile: file.exportFile(csvImport.file)
+			// exportFile DEMANDS the blob during staging -> drives the client upload.
+			csvFile: file.exportFile(csvImport.file),
+			// Inline JSON array of feature names -> model controlOptions (getDataAsJson<string[]>()).
+			featureNames: features.getFileContent("feature_names.json")
 		},
 		exports: {}
 	}

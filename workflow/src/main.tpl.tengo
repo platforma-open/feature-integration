@@ -7,7 +7,8 @@
 //
 // processColumn's `Xsv` outputs import each per-sample CSV and prepend the sample axis from the
 // iteration key (so the per-sample CSVs need only cell/feature columns). Modeled on
-// blocks/peptide-extraction main.tpl.tengo + blocks/cell-ranger process.tpl.tengo.
+// blocks/peptide-extraction main.tpl.tengo + blocks/cell-ranger process.tpl.tengo. Column/axis specs
+// live in column-specs.lib.tengo (peptide-extraction pattern).
 
 wf := import("@platforma-sdk/workflow-tengo:workflow")
 assets := import("@platforma-sdk/workflow-tengo:assets")
@@ -16,8 +17,7 @@ pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
 ll := import("@platforma-sdk/workflow-tengo:ll")
 file := import("@platforma-sdk/workflow-tengo:file")
 tagPattern := import(":tag-pattern")
-
-json := import("json")
+columnSpecs := import(":column-specs")
 
 fbPipelineTpl := assets.importTemplate(":fb-pipeline")
 prerunTpl := assets.importTemplate(":prerun")
@@ -31,7 +31,8 @@ defaultFeatureLen := 15
 defaultMitoolMemGB := 16
 defaultMitoolCPUs := 4
 
-// Staging imports + exports the CSV to drive its upload before production needs it (see prerun.tpl).
+// Staging imports + exports the CSV to drive its upload before production needs it, and emits the
+// feature-name list for the control dropdown (see prerun.tpl).
 wf.setPreRun(prerunTpl)
 
 wf.prepare(func(args) {
@@ -80,129 +81,21 @@ wf.body(func(args) {
 		extraInputs.control = control
 	}
 
-	// --- A-0010 contract axes ---
-	cellAxis := {
-		name: "pl7.app/sc/cellId",
-		type: "String",
-		annotations: {
-			"pl7.app/label": "Cell ID",
-			"pl7.app/table/fontFamily": "monospace",
-			"pl7.app/parents": string(json.encode([sampleAxis.name]))
-		}
-	}
-	featureAxis := {
-		name: "pl7.app/feature/featureId",
-		type: "String",
-		domain: { "pl7.app/blockId": blockId },
-		annotations: { "pl7.app/label": "Feature" }
-	}
-
-	// --- A-0010 contract value columns (processColumn prepends the sample axis) ---
-	abundanceOutput := {
-		type: "Xsv",
-		xsvType: "csv",
-		settings: {
-			axes: [
-				{ column: "cellId", spec: cellAxis },
-				{ column: "feature", spec: featureAxis }
-			],
-			columns: [{
-				column: "umiCount", id: "umiCount",
-				spec: {
-					name: "pl7.app/feature/umiCount",
-					valueType: "Int",
-					annotations: {
-						"pl7.app/label": "Feature UMI count",
-						"pl7.app/isAbundance": "true",
-						"pl7.app/table/visibility": "default"
-					}
-				}
-			}],
-			storageFormat: "Parquet",
-			partitionKeyLength: 0
+	// processColumn outputs: the A-0010 contract value columns + the raw tag-stat QC table +
+	// the per-step log map. Column/axis specs come from column-specs.lib.tengo.
+	outputs := columnSpecs.valueOutputs(blockId, sampleAxis.name, hasControl)
+	outputs = append(outputs, columnSpecs.tagstatQcOutput(blockId, sampleAxis.name))
+	outputs = append(outputs, {
+		type: "ResourceMap",
+		spec: {
+			kind: "PColumn",
+			name: "pl7.app/log",
+			domain: { "pl7.app/blockId": blockId },
+			valueType: "Log",
+			axesSpec: [{ name: "pl7.app/feature/step", type: "String" }]
 		},
-		name: "abundance",
-		path: ["abundance"]
-	}
-
-	fractionsOutput := {
-		type: "Xsv",
-		xsvType: "csv",
-		settings: {
-			axes: [
-				{ column: "cellId", spec: cellAxis },
-				{ column: "feature", spec: featureAxis }
-			],
-			columns: [{
-				column: "fraction", id: "fraction",
-				spec: {
-					name: "pl7.app/feature/fraction",
-					valueType: "Double",
-					annotations: {
-						"pl7.app/label": "Feature fraction",
-						"pl7.app/format": ".3f"
-					}
-				}
-			}],
-			storageFormat: "Parquet",
-			partitionKeyLength: 0
-		},
-		name: "fractions",
-		path: ["fractions"]
-	}
-
-	consensusOutput := {
-		type: "Xsv",
-		xsvType: "csv",
-		settings: {
-			axes: [{ column: "cellId", spec: cellAxis }],
-			columns: [{
-				column: "consensusFeature", id: "consensusFeature",
-				spec: {
-					name: "pl7.app/feature/consensusFeature",
-					valueType: "String",
-					annotations: {
-						"pl7.app/label": "Consensus feature",
-						"pl7.app/isDiscreteFilter": "true"
-					}
-				}
-			}],
-			storageFormat: "Parquet",
-			partitionKeyLength: 0
-		},
-		name: "consensus",
-		path: ["consensus"]
-	}
-
-	outputs := [abundanceOutput, fractionsOutput, consensusOutput]
-
-	if hasControl {
-		outputs = append(outputs, {
-			type: "Xsv",
-			xsvType: "csv",
-			settings: {
-				axes: [
-					{ column: "cellId", spec: cellAxis },
-					{ column: "feature", spec: featureAxis }
-				],
-				columns: [{
-					column: "specificityScore", id: "specificityScore",
-					spec: {
-						name: "pl7.app/feature/specificityScore",
-						valueType: "Double",
-						annotations: {
-							"pl7.app/label": "Specificity score",
-							"pl7.app/isScore": "true"
-						}
-					}
-				}],
-				storageFormat: "Parquet",
-				partitionKeyLength: 0
-			},
-			name: "specificity",
-			path: ["specificity"]
-		})
-	}
+		name: "stepLogs"
+	})
 
 	perSampleResults := pframes.processColumn(
 		{ spec: inputSpec, data: inputData },
@@ -230,8 +123,7 @@ wf.body(func(args) {
 		label: "Feature Integration"
 	})
 
-	fb := pframes.pFrameBuilder()
-	addXsv := func(outputName) {
+	addXsvTo := func(fb, outputName) {
 		for col in perSampleResults.listXsvColumns(outputName) {
 			fb.add(
 				outputName + "/" + col,
@@ -240,17 +132,36 @@ wf.body(func(args) {
 			)
 		}
 	}
-	addXsv("abundance")
-	addXsv("fractions")
-	addXsv("consensus")
+
+	// Exported A-0010 contract frame (goes to the result pool -> VDJ Multiomic Integration).
+	fb := pframes.pFrameBuilder()
+	addXsvTo(fb, "abundance")
+	addXsvTo(fb, "fractions")
+	addXsvTo(fb, "consensus")
 	if hasControl {
-		addXsv("specificity")
+		addXsvTo(fb, "specificity")
 	}
 	finalPf := fb.build()
 
+	// QC-only frame: the raw tag-stat per-(cell, feature-barcode) distinct-UMI counts, before the
+	// CSV-driven collapse to feature names. Surfaced as a block output (not exported to the pool).
+	qcFb := pframes.pFrameBuilder()
+	addXsvTo(qcFb, "tagstat")
+	qcPf := qcFb.build()
+
 	return {
 		outputs: {
-			perCellTable: pframes.exportFrame(finalPf)
+			perCellTable: pframes.exportFrame(finalPf),
+			// Raw tag-stat QC table (outputs-only) so the pipeline isn't a black box.
+			tagstatQcTable: pframes.exportFrame(qcPf),
+			// Per-sample x per-step mitool/Python log streams (fb-pipeline stepLogs) -> model PlLogView.
+			stepLogs: perSampleResults.outputData("stepLogs"),
+			// Expose the tag->feature CSV import HANDLE so the model can watch it via getImportProgress()
+			// (model/src/index.ts). That model output is the actual upload driver: it registers the import
+			// with the middle-layer so the CSV bytes are pushed. Without it the CSV blob never materialises
+			// and every per-sample body hangs on __extra_tagsCsv. Mirrors immune-assay-data
+			// (`dataImportHandle: importFile.handle` + model getImportProgress).
+			tagFeatureCsvImportHandle: csvImport.handle
 		},
 		exports: {
 			perCellFeatures: finalPf

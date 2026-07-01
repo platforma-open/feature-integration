@@ -35,6 +35,42 @@
             "{pkg}/per_cell_metrics.py"
           ]
         }
+      },
+      "emit-panel": {
+        "binary": {
+          "artifact": {
+            "type": "python",
+            "registry": "platforma-open",
+            "environment": "@platforma-open/milaboratories.runenv-python-3:3.12.10",
+            "dependencies": {
+              "toolset": "pip",
+              "requirements": "requirements.txt"
+            },
+            "root": "./src"
+          },
+          "cmd": [
+            "python",
+            "{pkg}/emit_panel.py"
+          ]
+        }
+      },
+      "emit-features": {
+        "binary": {
+          "artifact": {
+            "type": "python",
+            "registry": "platforma-open",
+            "environment": "@platforma-open/milaboratories.runenv-python-3:3.12.10",
+            "dependencies": {
+              "toolset": "pip",
+              "requirements": "requirements.txt"
+            },
+            "root": "./src"
+          },
+          "cmd": [
+            "python",
+            "{pkg}/emit_features.py"
+          ]
+        }
       }
     }
   }

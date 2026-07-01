@@ -120,6 +120,7 @@ blockTest(
         umiLen: 10,
         featureLen: 15,
         tableState: createPlDataTableStateV2(),
+        tagstatTableState: createPlDataTableStateV2(),
       } satisfies BlockData,
     });
 

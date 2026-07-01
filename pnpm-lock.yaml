@@ -28,8 +28,8 @@ catalogs:
       specifier: 1.11.2
       version: 1.11.2
     '@platforma-open/milaboratories.software-mitool':
-      specifier: 2.3.1-129-main
-      version: 2.3.1-129-main
+      specifier: 2.3.1-131-main
+      version: 2.3.1-131-main
     '@platforma-sdk/block-tools':
       specifier: 2.11.6
       version: 2.11.6
@@ -224,7 +224,7 @@ importers:
         version: link:../software/per-cell-metrics
       '@platforma-open/milaboratories.software-mitool':
         specifier: 'catalog:'
-        version: 2.3.1-129-main
+        version: 2.3.1-131-main
       '@platforma-sdk/workflow-tengo':
         specifier: 'catalog:'
         version: 6.6.5
@@ -1580,8 +1580,8 @@ packages:
   '@platforma-open/milaboratories.samples-and-data@1.13.3':
     resolution: {integrity: sha512-EaUOx5OafVKRxMLuEr8ZFpFUUEr/eVt/hZ1ogVENlGplm02sT2NY8E1dW9CZX2SdZXmJy0AJ1X7IbS5DaTz//w==}
 
-  '@platforma-open/milaboratories.software-mitool@2.3.1-129-main':
-    resolution: {integrity: sha512-Y887Nf/Huwmx68lEwUbPlsqJ3nT4VZ9cb93SupFXFo5zSfRprDxjnyuFNBwhYyDMdXd3bTulcwjPc6cpT/N8gA==}
+  '@platforma-open/milaboratories.software-mitool@2.3.1-131-main':
+    resolution: {integrity: sha512-6lXSYLZ0gWmUwDUxTZ3baDZVN/Ykt2o8xibYAW27/xO1A1ZAGVEr7OEEyOEHLzxbV0DaRG99W9bkTdynrZ75Wg==}
 
   '@platforma-open/milaboratories.software-ptabler.schema@1.13.2':
     resolution: {integrity: sha512-xQ5eD6WNLL490bQY2kEH/Dz+0SE5uyLexwOQzoUpKhBqdYb4eIKGA2NnZ9SDOgfDoiNFzTeYGQhuI+R3W6P0Og==}
@@ -6675,7 +6675,7 @@ snapshots:
       '@platforma-open/milaboratories.samples-and-data.workflow': 2.5.0
       '@platforma-sdk/model': 1.51.2
 
-  '@platforma-open/milaboratories.software-mitool@2.3.1-129-main': {}
+  '@platforma-open/milaboratories.software-mitool@2.3.1-131-main': {}
 
   '@platforma-open/milaboratories.software-ptabler.schema@1.13.2':
     dependencies:

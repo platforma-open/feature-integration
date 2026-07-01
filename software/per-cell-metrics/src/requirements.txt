@@ -2,4 +2,4 @@
 #    pnpm software:reqs
 numpy==2.2.6
 polars-lts-cpu==1.33.1
-scipy==1.14.1
+scipy==1.15.3

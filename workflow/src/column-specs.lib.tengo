@@ -1,0 +1,224 @@
+// Export column + axis specs for the Feature Integration block.
+//
+// Centralised here (mirrors blocks/peptide-extraction column-specs.lib.tengo and
+// blocks/mixcr-clonotyping calculate-export-specs.lib.tengo) so main.tpl.tengo stays readable and the
+// A-0010 contract columns carry the full standard annotation set (abundance flags, order priority,
+// table visibility). Annotations do NOT affect p-column identity (name + domain + axes do), so the
+// downstream discovery contract is unchanged by anything in this file.
+
+maps := import("@platforma-sdk/workflow-tengo:maps")
+
+json := import("json")
+
+// Standard table annotations: order priority + default visibility.
+// visibility: undefined -> hidden, true -> default, false -> optional.
+a := func(order, defaultVisibility, spec) {
+	return maps.merge(spec, {
+		"pl7.app/table/orderPriority": string(order),
+		"pl7.app/table/visibility": is_undefined(defaultVisibility) ? "hidden" : defaultVisibility ? "default" : "optional"
+	})
+}
+
+// --- Axes (A-0010 contract: [pl7.app/sampleId, pl7.app/sc/cellId, pl7.app/feature/featureId]) ---
+// The sample axis is prepended by processColumn from the iteration key; these are the per-sample axes.
+
+// cellAxis: the single-cell barcode. `parents` records the sampleId axis it nests under (the sample
+// axis name is inherited verbatim from the input FASTQ column).
+cellAxis := func(sampleAxisName) {
+	return {
+		name: "pl7.app/sc/cellId",
+		type: "String",
+		annotations: {
+			"pl7.app/label": "Cell ID",
+			"pl7.app/table/fontFamily": "monospace",
+			"pl7.app/parents": string(json.encode([sampleAxisName]))
+		}
+	}
+}
+
+// featureAxis: the feature/antigen name (block-scoped domain so distinct blocks' features don't collide).
+featureAxis := func(blockId) {
+	return {
+		name: "pl7.app/feature/featureId",
+		type: "String",
+		domain: { "pl7.app/blockId": blockId },
+		annotations: { "pl7.app/label": "Feature" }
+	}
+}
+
+// featureBarcodeAxis: the raw feature barcode (pre-collapse) — used only by the tag-stat QC table.
+featureBarcodeAxis := func(blockId) {
+	return {
+		name: "pl7.app/feature/featureBarcode",
+		type: "String",
+		domain: { "pl7.app/blockId": blockId },
+		annotations: {
+			"pl7.app/label": "Feature barcode",
+			"pl7.app/table/fontFamily": "monospace"
+		}
+	}
+}
+
+// valueOutputs: the A-0010 contract value columns, as processColumn `Xsv` output declarations.
+// hasControl gates the specificity score (spec A-0014) — only meaningful with a negative control.
+//
+// umiCount is the primary abundance (abundance/isPrimary). It is deliberately NOT isAnchor: this
+// column is meant to be DISCOVERED under the downstream VDJ single-cell anchor (via the cellLinker),
+// not to be an anchor itself, so marking it isAnchor would be semantically wrong here.
+valueOutputs := func(blockId, sampleAxisName, hasControl) {
+	cell := cellAxis(sampleAxisName)
+	feat := featureAxis(blockId)
+
+	abundance := {
+		type: "Xsv",
+		xsvType: "csv",
+		settings: {
+			axes: [{ column: "cellId", spec: cell }, { column: "feature", spec: feat }],
+			columns: [{
+				column: "umiCount", id: "umiCount",
+				spec: {
+					name: "pl7.app/feature/umiCount",
+					valueType: "Int",
+					annotations: a(90000, true, {
+						"pl7.app/label": "Feature UMI count",
+						"pl7.app/min": "0",
+						"pl7.app/isAbundance": "true",
+						"pl7.app/abundance/unit": "molecules",
+						"pl7.app/abundance/normalized": "false",
+						"pl7.app/abundance/isPrimary": "true"
+					})
+				}
+			}],
+			storageFormat: "Parquet",
+			partitionKeyLength: 0
+		},
+		name: "abundance",
+		path: ["abundance"]
+	}
+
+	fractions := {
+		type: "Xsv",
+		xsvType: "csv",
+		settings: {
+			axes: [{ column: "cellId", spec: cell }, { column: "feature", spec: feat }],
+			columns: [{
+				column: "fraction", id: "fraction",
+				spec: {
+					name: "pl7.app/feature/fraction",
+					valueType: "Double",
+					annotations: a(89000, true, {
+						"pl7.app/label": "Feature fraction",
+						"pl7.app/min": "0",
+						"pl7.app/max": "1",
+						"pl7.app/isAbundance": "true",
+						"pl7.app/abundance/unit": "molecules",
+						"pl7.app/abundance/normalized": "true",
+						"pl7.app/format": ".2p"
+					})
+				}
+			}],
+			storageFormat: "Parquet",
+			partitionKeyLength: 0
+		},
+		name: "fractions",
+		path: ["fractions"]
+	}
+
+	consensus := {
+		type: "Xsv",
+		xsvType: "csv",
+		settings: {
+			axes: [{ column: "cellId", spec: cell }],
+			columns: [{
+				column: "consensusFeature", id: "consensusFeature",
+				spec: {
+					name: "pl7.app/feature/consensusFeature",
+					valueType: "String",
+					annotations: a(88000, true, {
+						"pl7.app/label": "Consensus feature",
+						"pl7.app/isDiscreteFilter": "true"
+					})
+				}
+			}],
+			storageFormat: "Parquet",
+			partitionKeyLength: 0
+		},
+		name: "consensus",
+		path: ["consensus"]
+	}
+
+	outputs := [abundance, fractions, consensus]
+
+	if hasControl {
+		outputs = append(outputs, {
+			type: "Xsv",
+			xsvType: "csv",
+			settings: {
+				axes: [{ column: "cellId", spec: cell }, { column: "feature", spec: feat }],
+				columns: [{
+					column: "specificityScore", id: "specificityScore",
+					spec: {
+						name: "pl7.app/feature/specificityScore",
+						valueType: "Double",
+						annotations: a(87000, true, {
+							"pl7.app/label": "Specificity score",
+							"pl7.app/min": "0",
+							"pl7.app/max": "100",
+							"pl7.app/isScore": "true",
+							"pl7.app/format": ".1f"
+						})
+					}
+				}],
+				storageFormat: "Parquet",
+				partitionKeyLength: 0
+			},
+			name: "specificity",
+			path: ["specificity"]
+		})
+	}
+
+	return outputs
+}
+
+// tagstatQcOutput: the raw mitool tag-stat -u table (per (cell, feature-barcode) distinct-UMI counts,
+// before the CSV-driven collapse to feature names). Surfaced as a QC table so the pipeline is not a
+// black box — you can inspect what mitool actually produced. Keyed [sampleId, cellId, featureBarcode];
+// value = the unique_UMI count. Not part of the A-0010 export contract; outputs-only.
+tagstatQcOutput := func(blockId, sampleAxisName) {
+	return {
+		type: "Xsv",
+		xsvType: "tsv",
+		settings: {
+			axes: [
+				{ column: "CELL", spec: cellAxis(sampleAxisName) },
+				{ column: "FEATURE", spec: featureBarcodeAxis(blockId) }
+			],
+			columns: [{
+				column: "unique_UMI", id: "uniqueUmi",
+				spec: {
+					name: "pl7.app/feature/tagStatUniqueUmi",
+					valueType: "Long",
+					annotations: a(90000, true, {
+						"pl7.app/label": "Distinct UMIs (raw)",
+						"pl7.app/min": "0",
+						"pl7.app/isAbundance": "true",
+						"pl7.app/abundance/unit": "molecules",
+						"pl7.app/abundance/normalized": "false"
+					})
+				}
+			}],
+			storageFormat: "Parquet",
+			partitionKeyLength: 0
+		},
+		name: "tagstatQc",
+		path: ["tagstat"]
+	}
+}
+
+export {
+	cellAxis: cellAxis,
+	featureAxis: featureAxis,
+	featureBarcodeAxis: featureBarcodeAxis,
+	valueOutputs: valueOutputs,
+	tagstatQcOutput: tagstatQcOutput
+}
