@@ -96,6 +96,15 @@ export const platforma = BlockModelV3.create(dataModel)
       ? parseResourceMap(ctx.outputs.resolve("stepLogs"), (acc) => acc.getLogHandle(), false)
       : undefined,
   )
+  // DECISION (2026-07-01, operator): the front-end plan proposed splitting results into a per-cell
+  // SUMMARY table [sampleId, cellId] (consensus + aggregates like total UMI / # features) and a
+  // separate feature-MATRIX table [sampleId, cellId, featureId]. We deliberately keep ONE unified
+  // perCellTable instead: it is coherent, the (cell x feature) rows already let a user read off the
+  // strongest features (spec A-0017 forbids a redundant top-N), and PlAgDataTableV2 handles the mixed
+  // granularity. Per-cell aggregate columns (totalUmi, featuresDetected) were NOT added. Revisit only
+  // if users ask for a one-row-per-cell overview; if so, add aggregates in per_cell_metrics and a
+  // second createPlDataTableV3 output rather than reshaping this one.
+  //
   // Per-cell results table. Resolves the workflow's exported perCellTable PFrame; undefined until the
   // workflow emits it, so the UI guards it.
   //
