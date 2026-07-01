@@ -14,6 +14,10 @@ export type BlockArgs = {
   cellLen: number; // cell barcode length on R1 (10x 5' v2: 16)
   umiLen: number; // UMI length on R1 (10x 5' v2: 10)
   featureLen: number; // feature barcode length on R2 (assay-specific; default 15)
+  // Cell-barcode whitelist for refine-tags CELL correction. "" = de-novo (default; non-10x/synthetic).
+  // A 10x built-in name (e.g. 737K-august-2016) makes cellIds match the VDJ producer by construction.
+  // See docs/cell-whitelist-correction-plan.md.
+  cellWhitelist: string;
 };
 
 /** Unified persisted UI state. */
@@ -27,6 +31,7 @@ export type BlockData = {
   cellLen: number;
   umiLen: number;
   featureLen: number;
+  cellWhitelist?: string; // optional (defaults to "" = de-novo); see BlockArgs.cellWhitelist
   tableState: PlDataTableStateV2; // per-cell results grid state (UI-only, never projected to args)
   tagstatTableState: PlDataTableStateV2; // raw tag-stat QC grid state (UI-only)
   qcSummaryTableState: PlDataTableStateV2; // per-sample QC summary grid state (UI-only)

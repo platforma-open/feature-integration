@@ -66,6 +66,9 @@ wf.body(func(args) {
 	control := args.controlFeature
 	hasControl := !is_undefined(control) && control != ""
 	dominanceThreshold := is_undefined(args.dominanceThreshold) ? 0.6 : args.dominanceThreshold
+	// Cell-barcode whitelist for refine-tags CELL correction. "" = de-novo (default). Always a defined
+	// string so the extra-input field below resolves and never stalls the body.
+	cellWhitelist := is_undefined(args.cellWhitelist) ? "" : args.cellWhitelist
 
 	// Per-sample body inputs. processColumn binds EVERY extra key as a body input field and waits for
 	// each to be set before firing the body (pframes/index.lib.tengo: `renderInputs["__extra_"+k]=v`),
@@ -77,7 +80,8 @@ wf.body(func(args) {
 		dominanceThreshold: dominanceThreshold,
 		fileExtension: fileExtension,
 		barcodeSeqColumn: args.barcodeSeqColumn,
-		featureNameColumn: args.featureNameColumn
+		featureNameColumn: args.featureNameColumn,
+		cellWhitelist: cellWhitelist
 	}
 	if hasControl {
 		extraInputs.control = control

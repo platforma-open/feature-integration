@@ -21,6 +21,7 @@ const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
   cellLen: 16,
   umiLen: 10,
   featureLen: 15,
+  cellWhitelist: "", // de-novo CELL correction by default (spec A-0018 defers the scheme)
   tableState: createPlDataTableStateV2(),
   tagstatTableState: createPlDataTableStateV2(),
   qcSummaryTableState: createPlDataTableStateV2(),
@@ -44,6 +45,8 @@ export const platforma = BlockModelV3.create(dataModel)
       cellLen: data.cellLen ?? 16,
       umiLen: data.umiLen ?? 10,
       featureLen: data.featureLen ?? 15,
+      // CELL whitelist: "" = de-novo (default). See docs/cell-whitelist-correction-plan.md.
+      cellWhitelist: data.cellWhitelist ?? "",
     };
   })
   .prerunArgs((data) => ({

@@ -43,6 +43,7 @@ self.body(func(inputs) {
 	mitoolCPUs := inputs.mitoolCPUs
 	barcodeSeqColumn := inputs.barcodeSeqColumn
 	featureNameColumn := inputs.featureNameColumn
+	cellWhitelist := inputs.cellWhitelist // "" = de-novo CELL correction (default); else a 10x built-in
 
 	// mitool memory (mixcr semantics): an explicit per-process override (Advanced Settings) is a hard
 	// fixed request; otherwise size RAM from the input reads' stored (compressed) blob size on top of a
@@ -148,13 +149,19 @@ self.body(func(inputs) {
 
 	// Step 2b: refine-tags — error-correct cell, feature, and UMI barcodes. FEATURE is corrected against
 	// the panel whitelist (#file:panel.txt): within-Hamming-1 reads snap to a panel barcode and off-panel
-	// reads are dropped. CELL is de-novo corrected (global); the tag order scopes UMI dedup to
-	// (cell, feature).
+	// reads are dropped. CELL is de-novo corrected by default; when a chemistry whitelist is selected it
+	// snaps to that 10x built-in (#builtin:<name>, the same #-address mechanism as the FEATURE panel) so
+	// cellIds match the VDJ producer by construction (docs/cell-whitelist-correction-plan.md). The tag
+	// order scopes UMI dedup to (cell, feature).
+	cellTag := tagPattern.CELL_TAG
+	if !is_undefined(cellWhitelist) && cellWhitelist != "" {
+		cellTag = tagPattern.CELL_TAG + "#builtin:" + cellWhitelist
+	}
 	refine := applyMitoolMem(exec.builder().
 		software(mitoolSw).
 		cpu(mitoolCPUs)).
 		arg("refine-tags").
-		arg("-t").arg(tagPattern.CELL_TAG).
+		arg("-t").arg(cellTag).
 		arg("-t").arg(tagPattern.FEATURE_TAG + "#file:panel.txt").
 		arg("-t").arg(tagPattern.UMI_TAG).
 		arg("--report").arg("refine_report.txt").saveFile("refine_report.txt").

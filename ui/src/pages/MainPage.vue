@@ -28,6 +28,25 @@ const tableSettings = usePlDataTableSettingsV2({
 // (missing tag/feature column) makes the staging emit-panel/emit-features step fail loudly — that
 // error surfaces in the block error banner and the QC page logs.
 const featureCount = computed(() => app.model.outputs.controlOptions?.length ?? 0);
+
+// Cell-barcode whitelist options for refine-tags CELL correction. "" = de-novo (default), which keeps
+// non-10x / synthetic data working; selecting the chemistry's list makes cellIds match the VDJ block
+// exactly. Static enumeration (not output-derived → no hairpin). See docs/cell-whitelist-correction-plan.md.
+//
+// Source of the names + chemistry mapping: 10x Genomics' canonical cell-barcode whitelists, vendored
+// into mitool as built-ins. Registry: tools/mitool/.../pattern/SequenceSetCollection.kt (the
+// `sequenceSetNames` map; the `.bin` sets ship inside the mitool jar). The chemistry→whitelist mapping
+// is 10x's own table copied verbatim into that file's header comment, citing
+// https://kb.10xgenomics.com/hc/en-us/articles/115004506263-What-is-a-barcode-whitelist-
+// NB: 3M-5pgex-jan-2023 postdates that 10x table — its "5' GEM-X" chemistry is read from the
+// barcode-set name, not the vendored table.
+const cellWhitelistOptions = [
+  { value: "", label: "None — de-novo (non-10x / synthetic)" },
+  { value: "737K-august-2016", label: "10x 3' v2 / 5' v1–v2 (737K-august-2016)" },
+  { value: "3M-5pgex-jan-2023", label: "10x 5' GEM-X (3M-5pgex-jan-2023)" },
+  { value: "3M-february-2018", label: "10x 3' v3 / v3.1 (3M-february-2018)" },
+  { value: "737K-arc-v1", label: "10x Multiome ATAC+GEX (737K-arc-v1)" },
+];
 </script>
 
 <template>
@@ -118,6 +137,12 @@ const featureCount = computed(() => app.model.outputs.controlOptions?.length ?? 
           :min-value="1"
           :step="1"
           label="Feature barcode length (R2)"
+        />
+        <PlDropdown
+          v-model="app.model.data.cellWhitelist"
+          :options="cellWhitelistOptions"
+          label="Cell barcode whitelist (10x)"
+          helper="Snap cell barcodes to a 10x whitelist so cellIds match the VDJ block exactly. Leave as de-novo for non-10x or synthetic data."
         />
       </PlAccordionSection>
     </PlSlideModal>
