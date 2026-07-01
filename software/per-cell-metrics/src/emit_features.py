@@ -23,14 +23,9 @@ def main() -> None:
         reader = csv.DictReader(fh)
         if args.feature_col not in (reader.fieldnames or []):
             raise SystemExit(
-                f"column {args.feature_col!r} not found in {args.tag_feature_csv} "
-                f"(columns: {reader.fieldnames})"
+                f"column {args.feature_col!r} not found in {args.tag_feature_csv} (columns: {reader.fieldnames})"
             )
-        names = {
-            row[args.feature_col].strip()
-            for row in reader
-            if row.get(args.feature_col, "").strip()
-        }
+        names = {row[args.feature_col].strip() for row in reader if row.get(args.feature_col, "").strip()}
 
     with open(args.output, "w") as out:
         json.dump(sorted(names), out)

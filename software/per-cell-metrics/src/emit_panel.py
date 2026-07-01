@@ -23,8 +23,7 @@ def main() -> None:
         reader = csv.DictReader(fh)
         if args.tag_col not in (reader.fieldnames or []):
             raise SystemExit(
-                f"column {args.tag_col!r} not found in {args.tag_feature_csv} "
-                f"(columns: {reader.fieldnames})"
+                f"column {args.tag_col!r} not found in {args.tag_feature_csv} (columns: {reader.fieldnames})"
             )
         seqs = {row[args.tag_col].strip() for row in reader if row.get(args.tag_col, "").strip()}
 
