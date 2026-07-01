@@ -1,0 +1,92 @@
+"""Per-sample QC summary for the Feature Integration block.
+
+One row per sample: read-level metrics from mitool's parse JSON report (parseReport.total/.matched),
+cell/feature/UMI metrics from the tag-stat TSV, and -- best-effort -- the panel-assigned fraction from
+the refine-tags JSON report. The refine field path is not asserted: mitool's refine report schema for
+per-tag whitelist acceptance must be confirmed against a real report (see the plan's discovery step);
+until then panelAssignedFraction is left blank rather than guessed. Stdlib + polars only.
+"""
+
+import argparse
+import csv
+import json
+
+import polars as pl
+
+FIELDNAMES = [
+    "sampleId",
+    "readsTotal",
+    "readsMatched",
+    "matchedFraction",
+    "cellsDetected",
+    "featuresDetected",
+    "totalUniqueUmis",
+    "medianUmisPerCell",
+    "panelAssignedFraction",
+]
+
+
+def _parse_report(path: str) -> tuple[int, int]:
+    with open(path) as fh:
+        rep = json.load(fh)
+    pr = rep.get("parseReport", rep)
+    return int(pr.get("total", 0)), int(pr.get("matched", 0))
+
+
+def _refine_assigned_fraction(path: str | None) -> float | None:
+    """Best-effort panel-assigned fraction from the refine-tags JSON report.
+
+    Returns None (blank in the CSV) unless a recognised field is present, so QC never crashes on an
+    absent/renamed field. Reconcile the exact path with a real refine report during integration.
+    """
+    if not path:
+        return None
+    try:
+        with open(path) as fh:
+            json.load(fh)  # confirmed loadable; field extraction finalized in the discovery step
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+    return None
+
+
+def main() -> None:
+    p = argparse.ArgumentParser()
+    p.add_argument("tag_stat_tsv")
+    p.add_argument("--parse-report", required=True)
+    p.add_argument("--refine-report", default=None)
+    p.add_argument("--sample-id", required=True)
+    p.add_argument("--cell-col", default="CELL")
+    p.add_argument("--feature-col", default="FEATURE")
+    p.add_argument("--umi-col", default="unique_UMI")
+    p.add_argument("--output", default="result_qc.csv")
+    args = p.parse_args()
+
+    total, matched = _parse_report(args.parse_report)
+    stat = pl.read_csv(args.tag_stat_tsv, separator="\t")
+
+    cells = int(stat[args.cell_col].n_unique())
+    features = int(stat[args.feature_col].n_unique())
+    total_umis = int(stat[args.umi_col].sum())
+    per_cell = stat.group_by(args.cell_col).agg(pl.col(args.umi_col).sum().alias("u"))
+    median_umis = float(per_cell["u"].median()) if per_cell.height else 0.0
+    assigned = _refine_assigned_fraction(args.refine_report)
+
+    row = {
+        "sampleId": args.sample_id,
+        "readsTotal": total,
+        "readsMatched": matched,
+        "matchedFraction": (matched / total) if total else 0.0,
+        "cellsDetected": cells,
+        "featuresDetected": features,
+        "totalUniqueUmis": total_umis,
+        "medianUmisPerCell": median_umis,
+        "panelAssignedFraction": "" if assigned is None else assigned,
+    }
+    with open(args.output, "w", newline="") as out:
+        w = csv.DictWriter(out, fieldnames=FIELDNAMES)
+        w.writeheader()
+        w.writerow(row)
+
+
+if __name__ == "__main__":
+    main()
