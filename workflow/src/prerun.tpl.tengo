@@ -40,7 +40,13 @@ wf.body(func(args) {
 
 	outputs := {
 		csvFile: file.exportFile(csvImport.file),
-		csvColumns: columns.getFileContent("columns.json")
+		csvColumns: columns.getFileContent("columns.json"),
+		// Import handle exposed so the model can drive the CSV upload during STAGING (via a ctx.prerun
+		// getImportProgress driver, mirroring samples-and-data). The exportFile demand above does NOT
+		// push the bytes on its own; without a staging-side driver the upload only fires from the main
+		// render, which is unreachable until args() passes — and args() needs the D4 dropdowns this
+		// prerun populates from the uploaded CSV. That circular dependency is the deadlock this fixes.
+		tagFeatureCsvImportHandle: csvImport.handle
 	}
 
 	// Feature names for the negative-control dropdown — only once the user has chosen the feature

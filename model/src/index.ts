@@ -102,6 +102,20 @@ export const platforma = BlockModelV3.create(dataModel)
     (ctx) => ctx.outputs?.resolve("tagFeatureCsvImportHandle")?.getImportProgress(),
     { isActive: true },
   )
+  // Same upload driver, but resolved from the PRERUN (staging) render — this is the one that fires
+  // before Run. The D4 dropdowns (csvColumnOptions / controlOptions) are populated by the prerun
+  // reading the uploaded CSV, and their values are REQUIRED by args(). The main driver above only
+  // fires once args() passes, so on its own it deadlocks: no upload → empty dropdowns → args() throws
+  // → no main render → no upload. Driving the upload from staging breaks the cycle (mirrors
+  // samples-and-data's "Drives prerun file uploads" getImportProgress).
+  .output(
+    "tagFeatureCsvImportHandlePrerun",
+    (ctx) =>
+      ctx.prerun
+        ?.resolve({ field: "tagFeatureCsvImportHandle", allowPermanentAbsence: true })
+        ?.getImportProgress(),
+    { isActive: true },
+  )
   // True while the main run is executing (no output/context field settled yet) — drives the block
   // spinner via the app.ts progress callback.
   .output("isRunning", (ctx) => ctx.outputs?.getIsReadyOrError() === false)
