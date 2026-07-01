@@ -41,19 +41,26 @@ self.body(func(inputs) {
 	fileExtension := inputs.fileExtension
 	mitoolCPUs := inputs.mitoolCPUs
 
-	// Size mitool RAM from the input reads' stored (compressed) blob size on top of a floor, instead of
-	// a fixed request — the parse step OOMs at end-of-parse when many tag writers flush, and that scales
-	// with input volume (see mixcr-clonotyping mixcr-analyze.tpl / blocks/demultiplex-fastq). The floor
-	// is the metaExtra mitoolMemGB (a per-process override raises it); the linear term scales with size;
-	// the cap bounds the largest inputs. On backends that cannot evaluate formulas, memFormula falls back
-	// to the floor. `size("reads")` reads only blob metadata (no decompress, no pre-exec).
+	// mitool memory (mixcr semantics): an explicit per-process override (Advanced Settings) is a hard
+	// fixed request; otherwise size RAM from the input reads' stored (compressed) blob size on top of a
+	// floor. parse OOMs at end-of-parse when many tag writers flush, and that scales with input volume
+	// (see mixcr-clonotyping mixcr-analyze.tpl / blocks/demultiplex-fastq). `size("reads")` reads only
+	// blob metadata (no decompress, no pre-exec); on backends that cannot evaluate formulas, memFormula
+	// falls back to the floor.
 	formula := exec.formula
-	memBaseGB := inputs.mitoolMemGB
+	memBaseGB := inputs.mitoolBaseMemGB
 	mitoolMemFormula := formula.clamp(
 		formula.add(formula.gib(memBaseGB), formula.mul(formula.size("reads"), 4)),
 		formula.gib(memBaseGB),
 		formula.gib(128))
 	mitoolMemFallback := string(memBaseGB) + "GiB"
+	// Apply the mem request to a builder: fixed when overridden, else the size formula.
+	applyMitoolMem := func(b) {
+		if is_undefined(inputs.mitoolMemOverrideGB) {
+			return b.memFormula(mitoolMemFormula, { fallback: mitoolMemFallback })
+		}
+		return b.mem(string(inputs.mitoolMemOverrideGB) + "GiB")
+	}
 
 	ll.assert(!is_undefined(pattern) && pattern != "", "tag pattern is required")
 
@@ -103,16 +110,21 @@ self.body(func(inputs) {
 	ll.assert(len(R2Files) > 0, "no R2 FASTQ files found (feature barcode is read from R2)")
 
 	// Step 1: mitool parse — extract CELL + UMI (R1) and the feature barcode FEATURE (R2).
-	parse := exec.builder().
+	parse := applyMitoolMem(exec.builder().
 		software(mitoolSw).
-		cpu(mitoolCPUs).
-		memFormula(mitoolMemFormula, { fallback: mitoolMemFallback }).
+		cpu(mitoolCPUs)).
 		env("MI_PROGRESS_PREFIX", "parse").
 		arg("parse").
 		arg("--pattern").arg(pattern).
 		arg("--threads").argWithVar("{system.cpu}")
 	for f in R1Files { parse = parse.addFile(f.name, f.file, { tag: "reads" }) }
 	for f in R2Files { parse = parse.addFile(f.name, f.file, { tag: "reads" }) }
+	// TODO(feature-integration): parse_report.txt / refine_report.txt are written by mitool (--report)
+	// and saveFile'd so they survive as retrievable exec outputs, but nothing consumes them yet — they
+	// are NOT collected by main.tpl's processColumn or surfaced in the model/UI. They were kept as the
+	// raw material for a future "reports" QC surface (a text/file view distinct from the stepLogs stream,
+	// which already carries mitool's stderr summaries). If no reports UI has been built and these are
+	// still unconsumed, drop the two --report/saveFile pairs to remove the dead work.
 	parse = parse.
 		arg("--report").arg("parse_report.txt").saveFile("parse_report.txt").
 		arg(inputArg).arg("parsed.mic").saveFile("parsed.mic").
@@ -133,10 +145,9 @@ self.body(func(inputs) {
 	// the panel whitelist (#file:panel.txt): within-Hamming-1 reads snap to a panel barcode and off-panel
 	// reads are dropped. CELL is de-novo corrected (global); the tag order scopes UMI dedup to
 	// (cell, feature).
-	refine := exec.builder().
+	refine := applyMitoolMem(exec.builder().
 		software(mitoolSw).
-		cpu(mitoolCPUs).
-		memFormula(mitoolMemFormula, { fallback: mitoolMemFallback }).
+		cpu(mitoolCPUs)).
 		arg("refine-tags").
 		arg("-t").arg(tagPattern.CELL_TAG).
 		arg("-t").arg(tagPattern.FEATURE_TAG + "#file:panel.txt").

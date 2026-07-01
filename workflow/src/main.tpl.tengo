@@ -97,6 +97,17 @@ wf.body(func(args) {
 		name: "stepLogs"
 	})
 
+	// mitool resource meta (mixcr semantics): pass the base memory floor always; add the override key
+	// only when the user set one (Advanced Settings) so fb-pipeline treats it as a hard fixed request.
+	// A distinct meta when overridden is correct — it must not dedup with the formula-sized run.
+	metaExtra := {
+		mitoolBaseMemGB: defaultMitoolMemGB,
+		mitoolCPUs: is_undefined(args.perProcessCPUs) ? defaultMitoolCPUs : args.perProcessCPUs
+	}
+	if !is_undefined(args.perProcessMemGB) {
+		metaExtra.mitoolMemOverrideGB = args.perProcessMemGB
+	}
+
 	perSampleResults := pframes.processColumn(
 		{ spec: inputSpec, data: inputData },
 		fbPipelineTpl,
@@ -108,10 +119,7 @@ wf.body(func(args) {
 			],
 			passAggregationAxesNames: true,
 			extra: extraInputs,
-			metaExtra: {
-				mitoolMemGB: is_undefined(args.perProcessMemGB) ? defaultMitoolMemGB : args.perProcessMemGB,
-				mitoolCPUs: is_undefined(args.perProcessCPUs) ? defaultMitoolCPUs : args.perProcessCPUs
-			}
+			metaExtra: metaExtra
 		}
 	)
 
