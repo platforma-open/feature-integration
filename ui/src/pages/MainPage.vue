@@ -74,7 +74,14 @@ const featureCount = computed(() => app.model.outputs.controlOptions?.length ?? 
       />
       <!-- Less-common params: dominance threshold + read geometry (DP-1: 10x 5' v2 defaults). -->
       <PlAccordionSection label="Advanced Settings">
-        <PlNumberField v-model="app.model.data.dominanceThreshold" label="Dominance threshold" />
+        <PlNumberField
+          v-model="app.model.data.dominanceThreshold"
+          :min-value="0.5"
+          :max-value="1"
+          :step="0.05"
+          label="Dominance threshold"
+          helper="Fraction of a cell's signal one feature must reach to be the consensus. Floor 0.5 (spec A-0012)."
+        />
         <PlNumberField
           v-model="app.model.data.cellLen"
           :min-value="1"
