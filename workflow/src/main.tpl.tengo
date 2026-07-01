@@ -87,6 +87,7 @@ wf.body(func(args) {
 	// the per-step log map. Column/axis specs come from column-specs.lib.tengo.
 	outputs := columnSpecs.valueOutputs(blockId, sampleAxis.name, hasControl)
 	outputs = append(outputs, columnSpecs.tagstatQcOutput(blockId, sampleAxis.name))
+	outputs = append(outputs, columnSpecs.qcSummaryOutput(blockId, sampleAxis.name))
 	outputs = append(outputs, {
 		type: "ResourceMap",
 		spec: {
@@ -159,11 +160,18 @@ wf.body(func(args) {
 	addXsvTo(qcFb, "tagstat")
 	qcPf := qcFb.build()
 
+	// Per-sample QC summary frame (outputs-only).
+	qcSummaryFb := pframes.pFrameBuilder()
+	addXsvTo(qcSummaryFb, "qcSummary")
+	qcSummaryPf := qcSummaryFb.build()
+
 	return {
 		outputs: {
 			perCellTable: pframes.exportFrame(finalPf),
 			// Raw tag-stat QC table (outputs-only) so the pipeline isn't a black box.
 			tagstatQcTable: pframes.exportFrame(qcPf),
+			// Per-sample QC summary table (outputs-only): reads parsed/matched, cells/features, UMIs.
+			qcSummaryTable: pframes.exportFrame(qcSummaryPf),
 			// Per-sample x per-step mitool/Python log streams (fb-pipeline stepLogs) -> model PlLogView.
 			stepLogs: perSampleResults.outputData("stepLogs"),
 			// Expose the tag->feature CSV import HANDLE so the model can watch it via getImportProgress()

@@ -23,6 +23,7 @@ const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
   featureLen: 15,
   tableState: createPlDataTableStateV2(),
   tagstatTableState: createPlDataTableStateV2(),
+  qcSummaryTableState: createPlDataTableStateV2(),
 }));
 
 export const platforma = BlockModelV3.create(dataModel)
@@ -173,6 +174,28 @@ export const platforma = BlockModelV3.create(dataModel)
           selector: { mode: "enrichment", maxHops: 0 },
         },
         tableState: ctx.data.tagstatTableState,
+      });
+    },
+    { retentive: true, withStatus: true },
+  )
+  // Per-sample QC summary table: reads parsed/matched, cells/features detected, UMI totals, and
+  // panel-assigned fraction. Same self-contained discovery form as perCellTable/tagstatQcTable.
+  .output(
+    "qcSummaryTable",
+    (ctx) => {
+      const acc = ctx.outputs?.resolve("qcSummaryTable");
+      if (acc === undefined) return undefined;
+      const snapshots = new OutputColumnProvider(acc).getAllColumns();
+      if (snapshots.length === 0) return undefined;
+      const anchorSpec = (snapshots.find((s) => s.spec.name !== "pl7.app/label") ?? snapshots[0])
+        .spec;
+      return createPlDataTableV3(ctx, {
+        columns: {
+          sources: [new OutputColumnProvider(acc)],
+          anchors: { main: anchorSpec },
+          selector: { mode: "enrichment", maxHops: 0 },
+        },
+        tableState: ctx.data.qcSummaryTableState,
       });
     },
     { retentive: true, withStatus: true },

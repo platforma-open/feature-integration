@@ -121,6 +121,7 @@ blockTest(
         featureLen: 15,
         tableState: createPlDataTableStateV2(),
         tagstatTableState: createPlDataTableStateV2(),
+        qcSummaryTableState: createPlDataTableStateV2(),
       } satisfies BlockData,
     });
 

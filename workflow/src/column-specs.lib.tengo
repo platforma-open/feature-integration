@@ -215,10 +215,48 @@ tagstatQcOutput := func(blockId, sampleAxisName) {
 	}
 }
 
+// qcSummaryOutput: per-sample QC scalars (keyLength 0 within-sample; processColumn prepends the
+// sample axis). Not part of the A-0010 export contract; outputs-only.
+qcSummaryOutput := func(blockId, sampleAxisName) {
+	numCol := func(id, colName, label, order, fmt) {
+		spec := {
+			name: "pl7.app/qc/" + id,
+			valueType: "Double",
+			annotations: a(order, true, { "pl7.app/label": label })
+		}
+		if !is_undefined(fmt) {
+			spec.annotations["pl7.app/format"] = fmt
+		}
+		return { column: colName, id: id, spec: spec }
+	}
+	return {
+		type: "Xsv",
+		xsvType: "csv",
+		settings: {
+			axes: [],
+			columns: [
+				numCol("readsTotal", "readsTotal", "Reads parsed", 90000, undefined),
+				numCol("readsMatched", "readsMatched", "Reads matched", 89000, undefined),
+				numCol("matchedFraction", "matchedFraction", "Matched fraction", 88000, ".2p"),
+				numCol("cellsDetected", "cellsDetected", "Cells detected", 87000, undefined),
+				numCol("featuresDetected", "featuresDetected", "Features detected", 86000, undefined),
+				numCol("totalUniqueUmis", "totalUniqueUmis", "Total distinct UMIs", 85000, undefined),
+				numCol("medianUmisPerCell", "medianUmisPerCell", "Median UMIs / cell", 84000, ".1f"),
+				numCol("panelAssignedFraction", "panelAssignedFraction", "Panel-assigned fraction", 83000, ".2p")
+			],
+			storageFormat: "Parquet",
+			partitionKeyLength: 0
+		},
+		name: "qcSummary",
+		path: ["qcSummary"]
+	}
+}
+
 export {
 	cellAxis: cellAxis,
 	featureAxis: featureAxis,
 	featureBarcodeAxis: featureBarcodeAxis,
 	valueOutputs: valueOutputs,
-	tagstatQcOutput: tagstatQcOutput
+	tagstatQcOutput: tagstatQcOutput,
+	qcSummaryOutput: qcSummaryOutput
 }

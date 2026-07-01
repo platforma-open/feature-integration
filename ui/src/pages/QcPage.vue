@@ -15,6 +15,10 @@ const tagstatSettings = usePlDataTableSettingsV2({
   model: () => app.model.outputs.tagstatQcTable,
 });
 
+const qcSummarySettings = usePlDataTableSettingsV2({
+  model: () => app.model.outputs.qcSummaryTable,
+});
+
 // Per-sample × per-step mitool/Python log streams. key = [sampleId, step]; value = log handle.
 const logEntries = computed(() => app.model.outputs.stepLogs?.data ?? []);
 </script>
@@ -22,6 +26,18 @@ const logEntries = computed(() => app.model.outputs.stepLogs?.data ?? []);
 <template>
   <PlBlockPage>
     <template #title>QC</template>
+
+    <h3>Per-sample QC summary</h3>
+    <PlAgDataTableV2
+      v-if="app.model.outputs.qcSummaryTable"
+      v-model="app.model.data.qcSummaryTableState"
+      :settings="qcSummarySettings"
+      show-export-button
+    />
+    <PlAlert v-else type="info">
+      Per-sample QC metrics (reads parsed/matched, cells, features, UMIs) appear here once the block
+      has run.
+    </PlAlert>
 
     <h3>Raw tag-stat counts</h3>
     <PlAgDataTableV2

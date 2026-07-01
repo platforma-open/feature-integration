@@ -29,4 +29,5 @@ export type BlockData = {
   featureLen: number;
   tableState: PlDataTableStateV2; // per-cell results grid state (UI-only, never projected to args)
   tagstatTableState: PlDataTableStateV2; // raw tag-stat QC grid state (UI-only)
+  qcSummaryTableState: PlDataTableStateV2; // per-sample QC summary grid state (UI-only)
 };

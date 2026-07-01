@@ -22,13 +22,14 @@ tagPattern := import(":tag-pattern")
 
 json := import("json")
 
-self.defineOutputs("abundance", "fractions", "consensus", "specificity", "tagstat", "stepLogs")
+self.defineOutputs("abundance", "fractions", "consensus", "specificity", "tagstat", "qc", "stepLogs")
 
 // :memory-from-limits sizes the JVM heap from the granted limits — avoids end-of-parse OOM when many
 // tag writers flush (see demultiplex-fastq).
 mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
 metricsSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:main")
 emitPanelSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:emit-panel")
+qcReportSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:qc-report")
 
 self.body(func(inputs) {
 	inputData := inputs[pConstants.VALUE_FIELD_NAME]
@@ -129,6 +130,7 @@ self.body(func(inputs) {
 	// still unconsumed, drop the two --report/saveFile pairs to remove the dead work.
 	parse = parse.
 		arg("--report").arg("parse_report.txt").saveFile("parse_report.txt").
+		arg("--json-report").arg("parse_report.json").saveFile("parse_report.json").
 		arg(inputArg).arg("parsed.mic").saveFile("parsed.mic").
 		printErrStreamToStdout().saveStdoutStream().run()
 
@@ -156,6 +158,7 @@ self.body(func(inputs) {
 		arg("-t").arg(tagPattern.FEATURE_TAG + "#file:panel.txt").
 		arg("-t").arg(tagPattern.UMI_TAG).
 		arg("--report").arg("refine_report.txt").saveFile("refine_report.txt").
+		arg("--json-report").arg("refine_report.json").saveFile("refine_report.json").
 		addFile("panel.txt", panel.getFile("panel.txt")).
 		addFile("parsed.mic", parse.getFile("parsed.mic"), { tag: "reads" }).
 		arg("parsed.mic").arg("refined.mic").saveFile("refined.mic").
@@ -178,6 +181,24 @@ self.body(func(inputs) {
 		arg("-u").arg(tagPattern.UMI_TAG).
 		addFile("refined.mic", refine.getFile("refined.mic")).
 		arg("refined.mic").arg("tagstat.tsv").saveFile("tagstat.tsv").
+		printErrStreamToStdout().saveStdoutStream().run()
+
+	// Per-sample QC summary: reads parsed/matched (parse JSON report) + cell/feature/UMI metrics
+	// (tag-stat) + best-effort panel-assigned fraction (refine JSON report).
+	qc := exec.builder().
+		software(qcReportSw).
+		cpu(1).mem("2GiB").
+		addFile("tagstat.tsv", tagStat.getFile("tagstat.tsv")).
+		addFile("parse_report.json", parse.getFile("parse_report.json")).
+		addFile("refine_report.json", refine.getFile("refine_report.json")).
+		arg("tagstat.tsv").
+		arg("--parse-report").arg("parse_report.json").
+		arg("--refine-report").arg("refine_report.json").
+		arg("--sample-id").arg("sample").
+		arg("--cell-col").arg(tagPattern.CELL_TAG).
+		arg("--feature-col").arg(tagPattern.FEATURE_TAG).
+		arg("--umi-col").arg("unique_" + tagPattern.UMI_TAG).
+		arg("--output").arg("result_qc.csv").saveFile("result_qc.csv").
 		printErrStreamToStdout().saveStdoutStream().run()
 
 	// Step 4: per-cell metrics (Python). sampleId is irrelevant here — processColumn prepends the
@@ -218,6 +239,7 @@ self.body(func(inputs) {
 	stepLogs.add(["2-refine"], refine.getStdoutStream())
 	stepLogs.add(["3-tagstat"], tagStat.getStdoutStream())
 	stepLogs.add(["4-metrics"], metrics.getStdoutStream())
+	stepLogs.add(["5-qc"], qc.getStdoutStream())
 
 	// The body must return exactly the defineOutputs set and no output may be undefined. specificity is
 	// meaningful only with a control feature, so the Python always writes result_specificity.csv (empty
@@ -229,6 +251,7 @@ self.body(func(inputs) {
 		consensus: metrics.getFile("result_consensus.csv"),
 		specificity: metrics.getFile("result_specificity.csv"),
 		tagstat: tagStat.getFile("tagstat.tsv"),
+		qc: qc.getFile("result_qc.csv"),
 		stepLogs: stepLogs.build()
 	}
 })
