@@ -18,13 +18,11 @@ from scipy.stats import beta
 
 DOMINANCE_FLOOR = 0.5  # spec A-0012: threshold is user-adjustable down to 0.5, never lower
 
-# Output CSV schemas, passed explicitly to pl.DataFrame at every write. consensus and specificity are
-# built from Python lists (row dicts), so an empty result -- no cells survive the tag->feature join,
-# e.g. a wrong read geometry or a sample with no on-panel reads -- yields pl.DataFrame([]), which is
-# schema-less; the following .sort() then raises ColumnNotFoundError and fails the whole per-sample
-# run. With an explicit schema the empty case writes a header-only CSV instead, matching how the
-# schema-bearing abundance/fractions frames already behave. Non-empty output is unchanged.
-_CONSENSUS_SCHEMA = {"sampleId": pl.Utf8, "cellId": pl.Utf8, "consensusFeature": pl.Utf8}
+# Schema for the no-control specificity output only. When no negative control is set we still emit a
+# header-only specificity CSV (the workflow's output set is fixed), and that frame has no source rows,
+# so it needs an explicit schema. Every other output is a pure-polars transform of `counts`, which
+# carries its schema through the empty case natively (an empty join writes a header-only CSV, not a
+# crash).
 _SPECIFICITY_SCHEMA = {
     "sampleId": pl.Utf8,
     "cellId": pl.Utf8,
@@ -53,11 +51,14 @@ def consensus_category(counts: dict[str, float], threshold: float) -> str | None
     return "ambiguous"
 
 
-def specificity_score(antigen_umi: float, control_umi: float) -> float:
+def specificity_score(antigen_umi, control_umi):
     """Cell Ranger BEAM specificity score (spec A-0014), constants are Cell Ranger's:
     (1 - betaCDF(0.925, antigenUMI + 1, controlUMI + 3)) * 100.
+
+    Accepts scalars or numpy arrays. scipy's beta.cdf is vectorized, so the CLI passes whole columns
+    (the array path avoids a per-row Python loop); returns a numpy float or float array accordingly.
     """
-    return (1.0 - float(beta.cdf(0.925, antigen_umi + 1, control_umi + 3))) * 100.0
+    return (1.0 - beta.cdf(0.925, antigen_umi + 1, control_umi + 3)) * 100.0
 
 
 def _load(
@@ -192,38 +193,46 @@ def main() -> None:
     ).select(["sampleId", "cellId", "feature", "fraction"])
     fractions.sort(["sampleId", "cellId", "feature"]).write_csv(f"{args.output_prefix}_fractions.csv")
 
-    # consensus feature per cell (dominant-category rule)
-    consensus_rows = []
-    for (cell,), grp in counts.group_by(["cellId"]):
-        per_feature = dict(zip(grp["feature"].to_list(), grp["umiCount"].to_list()))
-        consensus_rows.append(
-            {
-                "sampleId": args.sample_id,
-                "cellId": cell,
-                "consensusFeature": consensus_category(per_feature, args.dominance_threshold),
-            }
+    # consensus feature per cell (dominant-category rule, spec A-0012), vectorized in polars: the
+    # dominant feature is the unique per-cell max whose share of the cell's total is >= the threshold
+    # (clamped to the 0.5 floor); otherwise "ambiguous". No-signal cells never occur here (tag-stat
+    # counts are all > 0), so None is never produced. Mirrors consensus_category, which the tests pin
+    # (and an oracle test cross-checks this vectorized path against it).
+    threshold = max(args.dominance_threshold, DOMINANCE_FLOOR)
+    (
+        counts.group_by(["sampleId", "cellId"])
+        .agg(
+            pl.col("umiCount").sum().alias("_total"),
+            pl.col("umiCount").max().alias("_max"),
+            (pl.col("umiCount") == pl.col("umiCount").max()).sum().alias("_nAtMax"),
+            pl.col("feature").sort_by("umiCount", descending=True).first().alias("_top"),
         )
-    pl.DataFrame(consensus_rows, schema=_CONSENSUS_SCHEMA).sort(["sampleId", "cellId"]).write_csv(
-        f"{args.output_prefix}_consensus.csv"
+        .with_columns(
+            pl.when((pl.col("_nAtMax") == 1) & (pl.col("_max") / pl.col("_total") >= threshold))
+            .then(pl.col("_top"))
+            .otherwise(pl.lit("ambiguous"))
+            .alias("consensusFeature")
+        )
+        .select(["sampleId", "cellId", "consensusFeature"])
+        .sort(["sampleId", "cellId"])
+        .write_csv(f"{args.output_prefix}_consensus.csv")
     )
 
-    # optional specificity score per (cell, feature) vs the negative control
+    # optional specificity score per (cell, feature) vs the negative control (spec A-0014).
+    # specificity_score broadcasts over numpy arrays (scipy beta.cdf is vectorized), so the whole
+    # column is computed at once instead of a per-row Python loop. An empty join carries the schema
+    # through natively -> header-only CSV.
     if args.control is not None:
         ctrl = counts.filter(pl.col("feature") == args.control).select(
             ["cellId", pl.col("umiCount").alias("controlUmi")]
         )
         spec = counts.join(ctrl, on="cellId", how="left").with_columns(pl.col("controlUmi").fill_null(0))
-        spec_rows = [
-            {
-                "sampleId": args.sample_id,
-                "cellId": r["cellId"],
-                "feature": r["feature"],
-                "specificityScore": specificity_score(r["umiCount"], r["controlUmi"]),
-            }
-            for r in spec.iter_rows(named=True)
-        ]
-        pl.DataFrame(spec_rows, schema=_SPECIFICITY_SCHEMA).sort(["sampleId", "cellId", "feature"]).write_csv(
-            f"{args.output_prefix}_specificity.csv"
+        scores = specificity_score(spec["umiCount"].to_numpy(), spec["controlUmi"].to_numpy())
+        (
+            spec.with_columns(pl.Series("specificityScore", scores, dtype=pl.Float64))
+            .select(["sampleId", "cellId", "feature", "specificityScore"])
+            .sort(["sampleId", "cellId", "feature"])
+            .write_csv(f"{args.output_prefix}_specificity.csv")
         )
     else:
         # No negative control: still emit an (empty, header-only) specificity CSV so the workflow's

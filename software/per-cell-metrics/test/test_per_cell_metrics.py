@@ -275,8 +275,8 @@ def test_cli_with_control_writes_specificity(tagstat_tsv, tags_csv, tmp_path):
 def test_cli_empty_join_writes_header_only_not_crash(tags_csv, tmp_path, tagstat_body):
     # Regression: when no (cell, feature) pair survives the tag->feature join -- a wrong read geometry,
     # or a sample with no on-panel reads -- the run must still emit all four CSVs header-only, never
-    # crash. --control exercises the specificity write too: it and consensus both build from Python
-    # row-lists, the two sites that died on pl.DataFrame([]).sort() (ColumnNotFoundError) before the fix.
+    # crash. --control exercises the specificity write too. (consensus and specificity are pure-polars
+    # transforms that carry their schema through the empty case; this guards that they stay header-only.)
     tagstat = tmp_path / "tagstat.tsv"
     tagstat.write_text("CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\n" + tagstat_body)
 
@@ -308,3 +308,83 @@ def test_cli_empty_join_writes_header_only_not_crash(tags_csv, tmp_path, tagstat
             reader = csv.DictReader(f)
             assert reader.fieldnames == header  # schema/header preserved
             assert list(reader) == []  # zero data rows (empty result)
+
+
+@pytest.mark.slow
+def test_cli_consensus_matches_pure_rule(tmp_path):
+    # Oracle: the vectorized CLI consensus must equal the pure consensus_category rule across cases the
+    # committed golden bed doesn't cover (unique winner, exact tie, sub-threshold spread, single feature).
+    tags = tmp_path / "tags.csv"
+    tags.write_text("tag,feature\nAAAA,AGX\nCCCC,BGX\nGGGG,CGX\n")
+    tagstat = tmp_path / "tagstat.tsv"
+    tagstat.write_text(
+        "CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\n"
+        "cellW\tAAAA\t8\t8\t8\n"
+        "cellW\tCCCC\t1\t1\t1\n"
+        "cellW\tGGGG\t1\t1\t1\n"  # AGX 8 / BGX 1 / CGX 1 -> unique winner AGX (0.8 >= 0.6)
+        "cellX\tAAAA\t5\t5\t5\n"
+        "cellX\tCCCC\t5\t5\t5\n"  # AGX 5 / BGX 5 -> tie, 0.5 < 0.6 -> ambiguous
+        "cellY\tAAAA\t4\t4\t4\n"
+        "cellY\tCCCC\t3\t3\t3\n"
+        "cellY\tGGGG\t3\t3\t3\n"  # max share 0.4 < 0.6 -> ambiguous
+        "cellZ\tAAAA\t6\t6\t6\n"  # single feature -> AGX
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            str(SRC),
+            str(tagstat),
+            str(tags),
+            "--sample-id",
+            "s1",
+            "--dominance-threshold",
+            "0.6",
+            "--output-prefix",
+            str(tmp_path / "result"),
+        ],
+        check=True,
+        cwd=tmp_path,
+    )
+    with open(tmp_path / "result_consensus.csv", newline="") as f:
+        got = {r["cellId"]: r["consensusFeature"] for r in csv.DictReader(f)}
+    expected = {
+        "cellW": consensus_category({"AGX": 8, "BGX": 1, "CGX": 1}, 0.6),
+        "cellX": consensus_category({"AGX": 5, "BGX": 5}, 0.6),
+        "cellY": consensus_category({"AGX": 4, "BGX": 3, "CGX": 3}, 0.6),
+        "cellZ": consensus_category({"AGX": 6}, 0.6),
+    }
+    assert got == expected  # vectorized CLI == the pure rule
+    # ...and the pure rule is what we think (guards against a vacuous match to a wrong rule)
+    assert expected == {"cellW": "AGX", "cellX": "ambiguous", "cellY": "ambiguous", "cellZ": "AGX"}
+
+
+@pytest.mark.slow
+def test_cli_specificity_matches_pure_score(tagstat_tsv, tags_csv, tmp_path):
+    # Oracle: the vectorized specificity column must equal the pure specificity_score per (cell, feature)
+    # vs the cell's control (CTRL) UMIs -- 0 when the cell has no control reads. Guards the array path
+    # (scipy beta.cdf over whole columns) against the scalar formula, including the fill_null(0) case.
+    subprocess.run(
+        [
+            sys.executable,
+            str(SRC),
+            str(tagstat_tsv),
+            str(tags_csv),
+            "--sample-id",
+            "s1",
+            "--control",
+            "CTRL",
+            "--output-prefix",
+            str(tmp_path / "result"),
+        ],
+        check=True,
+        cwd=tmp_path,
+    )
+    with open(tmp_path / "result_abundance.csv", newline="") as f:
+        umi = {(r["cellId"], r["feature"]): int(r["umiCount"]) for r in csv.DictReader(f)}
+    control_umi = {cell: umi.get((cell, "CTRL"), 0) for (cell, _feat) in umi}
+    with open(tmp_path / "result_specificity.csv", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert rows  # non-empty: the committed bed has cells and features
+    for r in rows:
+        expected = specificity_score(umi[(r["cellId"], r["feature"])], control_umi[r["cellId"]])
+        assert float(r["specificityScore"]) == pytest.approx(float(expected))
