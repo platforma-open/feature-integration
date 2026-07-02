@@ -36,6 +36,11 @@ export const platforma = BlockModelV3.create(dataModel)
     if (!data.tagFeatureCsvHandle) throw new Error("Upload the tag→feature CSV");
     if (!data.barcodeSeqColumn) throw new Error("Select the barcode-sequence column in the CSV");
     if (!data.featureNameColumn) throw new Error("Select the feature-name column in the CSV");
+    // The barcode-sequence and feature-name roles must map to different CSV columns. The Python guards
+    // this too (per_cell_metrics.py), but only after the full mitool chain runs; rejecting it here
+    // disables Run up front instead of burning the pipeline to fail at the end.
+    if (data.barcodeSeqColumn === data.featureNameColumn)
+      throw new Error("Barcode-sequence and feature-name columns must be different");
     return {
       fbFastqRef: data.fbFastqRef,
       tagFeatureCsvHandle: data.tagFeatureCsvHandle,
@@ -110,7 +115,7 @@ export const platforma = BlockModelV3.create(dataModel)
   .retentiveOutput("controlOptions", (ctx): { value: string; label: string }[] => {
     const names = ctx.prerun
       ?.resolve({ field: "featureNames", allowPermanentAbsence: true })
-      ?.getDataAsJson<string[]>();
+      ?.getDataAsJsonOrUndefined<string[]>();
     return (names ?? []).map((name) => ({ value: name, label: name }));
   })
   // CSV column headers (from the prerun emit-columns step) → the barcode/feature column dropdowns
@@ -118,7 +123,7 @@ export const platforma = BlockModelV3.create(dataModel)
   .retentiveOutput("csvColumnOptions", (ctx): { value: string; label: string }[] => {
     const cols = ctx.prerun
       ?.resolve({ field: "csvColumns", allowPermanentAbsence: true })
-      ?.getDataAsJson<string[]>();
+      ?.getDataAsJsonOrUndefined<string[]>();
     return (cols ?? []).map((c) => ({ value: c, label: c }));
   })
   // Drives the tag→feature CSV upload: getImportProgress() registers the import handle with the
