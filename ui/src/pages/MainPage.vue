@@ -36,7 +36,11 @@ const logSamples = computed(() => {
   for (const e of logEntries.value) ids.add(String(e.key[0]));
   return [...ids].sort();
 });
-const sampleOptions = computed(() => logSamples.value.map((s) => ({ value: s, label: s })));
+// sampleId (key[0]) is a hashed id; show the human label from the model when available.
+const sampleLabel = (id: string) => app.model.outputs.sampleLabels?.[id] ?? id;
+const sampleOptions = computed(() =>
+  logSamples.value.map((s) => ({ value: s, label: sampleLabel(s) })),
+);
 
 // Selected sample is local view state (a ref, never written to data — output→ref is not a hairpin).
 const selectedLogSample = ref<string>();

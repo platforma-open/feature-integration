@@ -159,6 +159,37 @@ export const platforma = BlockModelV3.create(dataModel)
       ? parseResourceMap(ctx.outputs.resolve("stepLogs"), (acc) => acc.getLogHandle(), false)
       : undefined,
   )
+  // Map sampleId -> human label (the upstream `pl7.app/label` column keyed on the dataset's sample
+  // axis) so the logs sample selector shows sample names, not the raw hashed sampleId. Mirrors
+  // mixcr-clonotyping's sampleLabels output.
+  .output("sampleLabels", (ctx): Record<string, string> | undefined => {
+    const inputRef = ctx.data.fbFastqRef;
+    if (inputRef === undefined) return undefined;
+    const inputSpec = ctx.resultPool.getSpecByRef(inputRef);
+    if (inputSpec === undefined || !isPColumnSpec(inputSpec)) return undefined;
+    const sampleAxisSpec = inputSpec.axesSpec[0];
+
+    const sampleLabelsObj = ctx.resultPool.getData().entries.find((f) => {
+      const spec = f.obj.spec;
+      if (!isPColumnSpec(spec)) return false;
+      if (spec.name !== "pl7.app/label" || spec.axesSpec.length !== 1) return false;
+      const axisSpec = spec.axesSpec[0];
+      if (axisSpec.name !== sampleAxisSpec.name) return false;
+      if (sampleAxisSpec.domain === undefined || Object.keys(sampleAxisSpec.domain).length === 0)
+        return true;
+      if (axisSpec.domain === undefined) return false;
+      for (const [domainName, domainValue] of Object.entries(sampleAxisSpec.domain))
+        if (axisSpec.domain[domainName] !== domainValue) return false;
+      return true;
+    });
+    if (sampleLabelsObj === undefined) return undefined;
+
+    return Object.fromEntries(
+      Object.entries(
+        sampleLabelsObj.obj.data.getDataAsJson<{ data: Record<string, string> }>().data,
+      ).map((e) => [JSON.parse(e[0])[0], e[1]]),
+    ) as Record<string, string>;
+  })
   // DECISION (2026-07-01, operator): the front-end plan proposed splitting results into a per-cell
   // SUMMARY table [sampleId, cellId] (consensus + aggregates like total UMI / # features) and a
   // separate feature-MATRIX table [sampleId, cellId, featureId]. We deliberately keep ONE unified
