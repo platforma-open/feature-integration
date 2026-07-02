@@ -40,25 +40,6 @@ const controlInfoVisible = computed(
 function dismissControlInfo() {
   app.model.data.controlInfoDismissed = true;
 }
-
-// Cell-barcode whitelist options for refine-tags CELL correction. "" = de-novo (default), which keeps
-// non-10x / synthetic data working; selecting the chemistry's list makes cellIds match the VDJ block
-// exactly. Static enumeration (not output-derived → no hairpin). See docs/cell-whitelist-correction-plan.md.
-//
-// Source of the names + chemistry mapping: 10x Genomics' canonical cell-barcode whitelists, vendored
-// into mitool as built-ins. Registry: tools/mitool/.../pattern/SequenceSetCollection.kt (the
-// `sequenceSetNames` map; the `.bin` sets ship inside the mitool jar). The chemistry→whitelist mapping
-// is 10x's own table copied verbatim into that file's header comment, citing
-// https://kb.10xgenomics.com/hc/en-us/articles/115004506263-What-is-a-barcode-whitelist-
-// NB: 3M-5pgex-jan-2023 postdates that 10x table — its "5' GEM-X" chemistry is read from the
-// barcode-set name, not the vendored table.
-const cellWhitelistOptions = [
-  { value: "", label: "None — de-novo (non-10x / synthetic)" },
-  { value: "737K-august-2016", label: "10x 3' v2 / 5' v1–v2 (737K-august-2016)" },
-  { value: "3M-5pgex-jan-2023", label: "10x 5' GEM-X (3M-5pgex-jan-2023)" },
-  { value: "3M-february-2018", label: "10x 3' v3 / v3.1 (3M-february-2018)" },
-  { value: "737K-arc-v1", label: "10x Multiome ATAC+GEX (737K-arc-v1)" },
-];
 </script>
 
 <template>
@@ -69,7 +50,12 @@ const cellWhitelistOptions = [
       <PlBtnGhost @click.stop="settingsOpen = true">Settings</PlBtnGhost>
     </template>
 
-    <PlAlert v-if="controlInfoVisible" type="info" closable @close="dismissControlInfo">
+    <PlAlert
+      v-if="controlInfoVisible"
+      type="info"
+      closeable
+      @update:model-value="dismissControlInfo"
+    >
       No negative control selected — specificity scores are not computed. Pick a "Negative-control
       feature" in Settings to add them. Consensus feature shows the assigned antigen,
       <b>ambiguous</b> when no feature passes the dominance threshold, and is empty when the cell
@@ -95,7 +81,7 @@ const cellWhitelistOptions = [
       />
       <PlFileInput
         v-model="app.model.data.tagFeatureCsvHandle"
-        label="Tag → feature CSV"
+        label="Tag-feature CSV"
         placeholder="tags.csv"
         :extensions="['csv']"
         required
@@ -104,18 +90,18 @@ const cellWhitelistOptions = [
         v-if="app.model.data.tagFeatureCsvHandle"
         v-model="app.model.data.barcodeSeqColumn"
         :options="app.model.outputs.csvColumnOptions"
-        label="Barcode-sequence column"
+        label="Barcode sequence column"
       />
       <PlDropdown
         v-if="app.model.data.tagFeatureCsvHandle"
         v-model="app.model.data.featureNameColumn"
         :options="app.model.outputs.csvColumnOptions"
-        label="Feature-name column"
+        label="Feature name column"
       />
       <PlDropdown
         v-model="app.model.data.controlFeature"
         :options="app.model.outputs.controlOptions"
-        label="Negative-control feature (optional)"
+        label="Negative control feature (optional)"
       />
       <!-- Less-common params: dominance threshold + read geometry (DP-1: 10x 5' v2 defaults). -->
       <PlAccordionSection label="Advanced Settings">
@@ -145,16 +131,6 @@ const cellWhitelistOptions = [
           :step="1"
           label="Feature barcode length (R2)"
         />
-        <PlDropdown
-          v-model="app.model.data.cellWhitelist"
-          :options="cellWhitelistOptions"
-          label="Cell barcode whitelist (10x)"
-        >
-          <template #tooltip>
-            Snap cell barcodes to a 10x whitelist so cellIds match the VDJ block exactly. Leave as
-            de-novo for non-10x or synthetic data.
-          </template>
-        </PlDropdown>
       </PlAccordionSection>
     </PlSlideModal>
 
