@@ -135,7 +135,7 @@ self.body(func(inputs) {
 	parse := applyMitoolMem(exec.builder().
 		software(mitoolSw).
 		cpu(mitoolCPUs)).
-		env("MI_PROGRESS_PREFIX", "[==PROGRESS==]").
+		env("MI_PROGRESS_PREFIX", "parse").
 		arg("parse").
 		arg("--pattern").arg(pattern).
 		arg("--threads").argWithVar("{system.cpu}")
@@ -178,7 +178,6 @@ self.body(func(inputs) {
 	refine := applyMitoolMem(exec.builder().
 		software(mitoolSw).
 		cpu(mitoolCPUs)).
-		env("MI_PROGRESS_PREFIX", "[==PROGRESS==]").
 		arg("refine-tags").
 		arg("-t").arg(cellTag).
 		arg("-t").arg(tagPattern.FEATURE_TAG + "#file:panel.txt").
@@ -200,7 +199,6 @@ self.body(func(inputs) {
 		software(mitoolSw).
 		cpu(2).
 		memFormula(tagStatMemFormula, { fallback: string(tagStatBaseGB) + "GiB" }).
-		env("MI_PROGRESS_PREFIX", "[==PROGRESS==]").
 		arg("tag-stat").
 		arg("--use-local-temp").
 		arg("-t").arg(tagPattern.CELL_TAG).
@@ -256,17 +254,14 @@ self.body(func(inputs) {
 	}
 	metrics = metrics.printErrStreamToStdout().saveStdoutStream().run()
 
-	// Per-step stdout log streams, keyed by step -> assembled into the block's `stepLogs` output so the
-	// UI can show what each mitool/Python step did (each builder does printErrStreamToStdout().
-	// saveStdoutStream(), so mitool's stderr progress + report summaries land here too). keyLength 1;
-	// processColumn prepends the sample axis, giving a [sampleId, step] resource map.
+	// One high-level analysis log per sample, surfaced as the block's single "Analysis logs" view. The
+	// qc step runs last and has every stage's numbers, so qc_report.py prints a milestone narrative of
+	// the whole run to stdout; that stream is the analysis log. The individual mitool/Python step
+	// streams are deliberately NOT surfaced — one readable log, not a box per tool step (per-step stdout
+	// is still saved on each exec for backend retrieval / debugging). keyLength 1; processColumn
+	// prepends the sample axis, giving a [sampleId, step] resource map with the single "analysis" key.
 	stepLogs := pcolumn.resourceMapBuilder(1)
-	stepLogs.add(["0-panel"], panel.getStdoutStream())
-	stepLogs.add(["1-parse"], parse.getStdoutStream())
-	stepLogs.add(["2-refine"], refine.getStdoutStream())
-	stepLogs.add(["3-tagstat"], tagStat.getStdoutStream())
-	stepLogs.add(["4-metrics"], metrics.getStdoutStream())
-	stepLogs.add(["5-qc"], qc.getStdoutStream())
+	stepLogs.add(["analysis"], qc.getStdoutStream())
 
 	// The body must return exactly the defineOutputs set and no output may be undefined. specificity is
 	// meaningful only with a control feature, so the Python always writes result_specificity.csv (empty

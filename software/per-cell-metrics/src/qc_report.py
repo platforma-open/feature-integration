@@ -98,6 +98,20 @@ def main() -> None:
         w.writeheader()
         w.writerow(row)
 
+    # High-level analysis log -> stdout, surfaced as the block's single "Analysis logs" view. qc runs
+    # last and has every stage's numbers, so it narrates the whole run at milestone level with one key
+    # figure per step; full per-sample statistics live on the QC page.
+    assigned_txt = "n/a" if assigned is None else f"{assigned:.0%}"
+    matched_pct = f"{(matched / total):.0%}" if total else "n/a"
+    print("Feature Integration — analysis log")
+    print()
+    print(f"Parsed feature-barcode reads — {total:,} reads ({matched_pct} matched the read pattern).")
+    print(f"Corrected feature barcodes against the panel — {assigned_txt} of reads assigned.")
+    print(f"Computed per-cell metrics — {cells:,} cells across {features} features.")
+    print("QC report ready.")
+    print()
+    print("Analysis complete. See the QC page for full per-sample statistics.")
+
 
 if __name__ == "__main__":
     main()

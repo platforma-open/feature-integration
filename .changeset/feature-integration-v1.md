@@ -97,10 +97,11 @@ Implement the feature-barcode workflow (plan Tasks 3–4).
   unaffected.
 - Mark the barcode-sequence and feature-name column dropdowns as `required` (red-star indicator),
   matching their `args()` validation — both must be set before Run enables.
-- Rework the pipeline logs view: a wide (80%) slide-over that shows the run's steps in pipeline order
-  as general progress (no per-sample selector for v1). mitool steps (parse/refine/tag-stat) now emit
-  the `[==PROGRESS==]` marker (`MI_PROGRESS_PREFIX`) so `PlLogView` renders a compact progress bar
-  instead of a raw stream; step keys get human labels. Detailed per-sample metrics stay on the QC page.
+- Rework the logs into a single "Analysis logs": a wide (80%) slide-over showing one high-level
+  milestone narrative of the run instead of a box per tool step. qc_report.py (the last step, which
+  has every stage's numbers) prints the narrative — reads parsed, panel-assigned %, cells/features —
+  to stdout, and that stream is surfaced as the block's single analysis log; the raw per-step streams
+  are no longer shown in the UI. Detailed per-sample statistics stay on the QC page.
 
 ## Cell-barcode whitelist (added, then UI removed for v1)
 
