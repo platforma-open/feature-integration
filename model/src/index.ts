@@ -53,7 +53,7 @@ export const platforma = BlockModelV3.create(dataModel)
       cellLen: data.cellLen ?? 16,
       umiLen: data.umiLen ?? 10,
       featureLen: data.featureLen ?? 15,
-      // CELL whitelist: "" = de-novo (default). See docs/cell-whitelist-correction-plan.md.
+      // CELL whitelist: "" = de-novo (default). See docs/dormant-features/cell-whitelist-correction-plan.md.
       cellWhitelist: data.cellWhitelist ?? "",
     };
   })

@@ -187,4 +187,4 @@ Remaining risks / live checks:
 - Convergence: `vdj-multiomic-integration/.../model/src/index.ts`, `.../workflow/src/{main,aggregate}.tpl.tengo`, `.../software/aggregate-clonotypes/`.
 - VDJ import: `blocks/import-vdj-data/workflow/src/{process-single-cell.tpl,infer-columns-airr.lib,formats.lib}.tengo`.
 - GEX import: `blocks/import-sc-rnaseq-data/workflow/src/libs/pf-counts-conv.lib.tengo`.
-- Antigen: this block (`feature-integration`) + `docs/cell-whitelist-correction-plan.md`.
+- Antigen: this block (`feature-integration`) + `docs/dormant-features/cell-whitelist-correction-plan.md`.

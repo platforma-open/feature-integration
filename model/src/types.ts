@@ -16,7 +16,7 @@ export type BlockArgs = {
   featureLen: number; // feature barcode length on R2 (assay-specific; default 15)
   // Cell-barcode whitelist for refine-tags CELL correction. "" = de-novo (default; non-10x/synthetic).
   // A 10x built-in name (e.g. 737K-august-2016) makes cellIds match the VDJ producer by construction.
-  // See docs/cell-whitelist-correction-plan.md.
+  // See docs/dormant-features/cell-whitelist-correction-plan.md.
   cellWhitelist: string;
 };
 

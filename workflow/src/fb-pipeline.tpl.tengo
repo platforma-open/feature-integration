@@ -169,7 +169,7 @@ self.body(func(inputs) {
 	// the panel whitelist (#file:panel.txt): within-Hamming-1 reads snap to a panel barcode and off-panel
 	// reads are dropped. CELL is de-novo corrected by default; when a chemistry whitelist is selected it
 	// snaps to that 10x built-in (#builtin:<name>, the same #-address mechanism as the FEATURE panel) so
-	// cellIds match the VDJ producer by construction (docs/cell-whitelist-correction-plan.md). The tag
+	// cellIds match the VDJ producer by construction (docs/dormant-features/cell-whitelist-correction-plan.md). The tag
 	// order scopes UMI dedup to (cell, feature).
 	cellTag := tagPattern.CELL_TAG
 	if !is_undefined(cellWhitelist) && cellWhitelist != "" {

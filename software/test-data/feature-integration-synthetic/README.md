@@ -105,7 +105,7 @@ The **cell** barcode has two modes (Advanced → "Cell barcode whitelist (10x)")
   `scenarios/errors/expected-abundance.tsv` is the *ideal*; the de-novo output shows phantom cells).
 - **A 10x built-in** (e.g. `737K-august-2016`) — snaps cells to that real 10x list; off-list barcodes
   drop. This makes cellIds match the VDJ producer by construction (see
-  `../../../docs/cell-whitelist-correction-plan.md`; smoke-tested on real BEAM-T: ~9% off-list tail dropped,
+  `../../../docs/dormant-features/cell-whitelist-correction-plan.md`; smoke-tested on real BEAM-T: ~9% off-list tail dropped,
   ~98% of records kept). The `default`/`realistic` fixtures use **random** barcodes → keep this **`None`**
   for them (a whitelist would drop every cell). To exercise the whitelist, use the **`whitelist737k`**
   profile (real 737K barcodes + ambient tail) with whitelist = **`737K-august-2016`** — verified to keep
