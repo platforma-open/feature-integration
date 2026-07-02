@@ -95,12 +95,14 @@ function dismissControlInfo() {
         v-model="app.model.data.barcodeSeqColumn"
         :options="app.model.outputs.csvColumnOptions"
         label="Barcode sequence column"
+        required
       />
       <PlDropdown
         v-if="app.model.data.tagFeatureCsvHandle"
         v-model="app.model.data.featureNameColumn"
         :options="app.model.outputs.csvColumnOptions"
         label="Feature name column"
+        required
       />
       <PlDropdown
         v-model="app.model.data.controlFeature"

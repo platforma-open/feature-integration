@@ -95,6 +95,8 @@ Implement the feature-barcode workflow (plan Tasks 3–4).
   Consensus feature, Specificity score; Per-sample QC: Panel-assigned fraction; Raw tag-stat: Distinct
   UMIs (raw)). Annotations only — column identity is unchanged, so the A-0010 downstream contract is
   unaffected.
+- Mark the barcode-sequence and feature-name column dropdowns as `required` (red-star indicator),
+  matching their `args()` validation — both must be set before Run enables.
 
 ## Cell-barcode whitelist (added, then UI removed for v1)
 
