@@ -8,29 +8,50 @@ whose panel-swap fixtures are still referenced below).
 
 ## What it models
 
-10x **BEAM-Ab** (Barcode Enabled Antigen Mapping, B cells), 10x 5′ v2 geometry. The antigen panel is the
-**real** panel from 10x's public *"2k transgenic HEL mouse splenocytes (BEAM-Ab)"* dataset — 4 antigens +
-1 negative control, verbatim barcodes:
+10x **BEAM-Ab** (Barcode Enabled Antigen Mapping, B cells), 10x 5′ v2 geometry. Each cell has one dominant
+antigen plus low ambient signal; ~12% are deliberately ambiguous (two antigens tied) to exercise the
+consensus rule. Every molecule is 1–4 PCR-duplicate reads (realistic profile: median ~1.3), so `count` >
+`unique_UMI` and the `tag-stat -u` dedup does something.
 
-| antigen | feature barcode (15 bp) |
-|---|---|
-| SARS-TRI-S_WT | `CGATGCCGGACGATC` |
-| Anti-Hen_Egg_Lysozyme | `CCGTCTCACCGATAT` |
-| gp120 | `GATTGGCTACTCAAT` |
-| H5N1 | `CGGCTCACCGCGTCT` |
-| negative_control | `CTATCTACCGGCTCG` |
+### Scale (parameterized)
 
-Two samples (`donorA`, `donorB`), 80 cells each, ~5k reads each. Each cell has one dominant antigen plus
-low ambient signal; ~12% are deliberately ambiguous (two antigens tied) to exercise the consensus rule.
-Every molecule is 1–4 PCR-duplicate reads, so `count` > `unique_UMI` and the `tag-stat -u` dedup does
-something.
+Scale is set by CLI flags so the fixture can range from a toy bed to a cohort-scale run. Defaults target a
+realistic multi-donor BEAM cohort:
+
+| flag | default | meaning | corroboration |
+|---|---|---|---|
+| `--samples N` | `24` | donor samples (`donor01`…`donorNN`) | verified cohort high-water ~22–50 donors |
+| `--panel-size M` | `64` | antigens, **excluding** the control | verified BEAM feature ceiling = 64 (BEAM-proper alone is ~6) |
+| `--cells-per-sample K` | `2000` | cells per donor | a real GEM well is 2k–10k cells |
+
+At the defaults that is ~48k cells and (realistic profile) ~42M read pairs → **~870 MB gzipped FASTQ**
+(~1 GB for the full realistic multiomics chain incl. VDJ+GEX); generation measured **~6 min** end to end
+(machine-dependent). Dial any flag down for a quick bed (e.g. `--samples 2 --panel-size 6
+--cells-per-sample 50`). See `real-data-calibration.md` for the per-cell shapes.
+
+### Antigen panel
+
+The first up-to-4 barcodes are the **real** 10x BEAM-Ab panel from the public *"2k transgenic HEL mouse
+splenocytes (BEAM-Ab)"* dataset; the rest are synthesized as distinct 15-mers (pairwise Hamming ≥ 3 from
+each other and the anchors + control) so the panel scales to `--panel-size` while keeping authentic
+anchors. The negative control is always the real `negative_control` barcode.
+
+| antigen | feature barcode (15 bp) | source |
+|---|---|---|
+| SARS-TRI-S_WT | `CGATGCCGGACGATC` | real 10x anchor |
+| Anti-Hen_Egg_Lysozyme | `CCGTCTCACCGATAT` | real 10x anchor |
+| gp120 | `GATTGGCTACTCAAT` | real 10x anchor |
+| H5N1 | `CGGCTCACCGCGTCT` | real 10x anchor |
+| `antigen_005` … `antigen_NNN` | synthetic (deterministic) | fills the panel to `--panel-size` |
+| negative_control | `CTATCTACCGGCTCG` | real 10x anchor |
 
 **Profiles:** `default` is simple/hand-verifiable; `--profile realistic` (→ `realistic/`) is calibrated to
 a real 5k BEAM-T dataset (`real-data-calibration.md`) and is what the multiomics run uses (random
 barcodes → run with cell whitelist = None); `--profile whitelist737k` (→ `whitelist737k/`) uses **real
-`737K-august-2016`-compliant cell barcodes** (`whitelist_cells.txt`, harvested from real BEAM-T) + a
-realistic ambient off-list tail, so the **cell-barcode whitelist knob** can be exercised (run with cell
-whitelist = `737K-august-2016`). All profiles share the same panel + dominant-antigen logic.
+`737K-august-2016`-compliant cell barcodes** (sampled from the full 10x inclusion list `737K-august-2016.txt`,
+fetched on demand; falls back to the harvested `whitelist_cells.txt`) + a realistic ambient off-list tail,
+so the **cell-barcode whitelist knob** can be exercised (run with cell whitelist = `737K-august-2016`). All
+profiles share the same panel + dominant-antigen logic.
 
 ## Read geometry (matches the block defaults exactly)
 
@@ -49,18 +70,19 @@ This is exactly what `workflow/src/tag-pattern.lib.tengo` builds:
 
 | file | what it is |
 |---|---|
-| `donorA_R{1,2}.fastq.gz`, `donorB_R{1,2}.fastq.gz` | paired antigen-capture reads, 2 samples |
-| `tags.csv` | **the block's required upload** — `tag,feature` (feature barcode → antigen name). This *is* the feature/antigen panel whitelist. |
+| `donor01_R{1,2}.fastq.gz` … `donorNN_R{1,2}.fastq.gz` | paired antigen-capture reads, one pair per donor (`--samples` of them) |
+| `tags.csv` | **the block's required upload** — `tag,feature` (feature barcode → antigen name). This *is* the feature/antigen panel whitelist (`--panel-size` antigens + control). |
 | `feature_reference.csv` | the real 10x BEAM-Ab format; `tags.csv` is its `sequence→name` projection |
-| `samples-metadata.tsv` | optional sample metadata (`Sample, Donor, Condition`) for Samples & Data |
+| `samples-metadata.tsv` | sample metadata (`Sample, Donor, Condition`) for Samples & Data — one row per donor, alternating `baseline`/`stimulated` |
 | `expected-abundance.tsv` | ground truth: planted distinct-UMI per `(sample, cellId, feature)` |
 | `expected-consensus.tsv` | ground truth: planted dominant antigen per `(sample, cellId)` |
 | `example-mitool-tagstat-donorA.tsv` | a real `tag-stat -u` output (what the block's Python consumes) |
 | `realistic/` | the `--profile realistic` variant (used by the multiomics run) |
 | `whitelist737k/` | the `--profile whitelist737k` variant: real 737K cell barcodes + ambient tail (exercises the cell whitelist) |
-| `whitelist_cells.txt` | real `737K-august-2016` cell barcodes harvested from real BEAM-T — the whitelist737k cell pool |
+| `737K-august-2016.txt` | the full 10x `737K-august-2016` inclusion list (~737k barcodes), **fetched on demand, gitignored** — the whitelist737k cell pool at scale |
+| `whitelist_cells.txt` | ~800 real `737K-august-2016` cell barcodes harvested from real BEAM-T — a committed fallback pool (used only if the full list above is absent) |
 | `scenarios/{errors,multilane,offpanel,control}/` | edge-case datasets (see below); `control/` also has `expected-specificity.tsv` |
-| `generate.py` | the generator (seeded; edit `SAMPLES`, `CELLS_PER_SAMPLE`, the panel, etc.) |
+| `generate.py` | the generator (seeded; scale via `--samples`/`--panel-size`/`--cells-per-sample`) |
 
 > Ground truth is the *planted* values; the block's live output may differ slightly because `refine-tags`
 > error-corrects barcodes. For this data the barcodes are well-separated so correction is ~0.
@@ -72,7 +94,7 @@ The block's per-sample pipeline (`parse → emit-panel → refine-tags → tag-s
 ```bash
 JAR=<path to published mitool.jar, e.g. .cache/backend/.../mitool/2.3.1-131-main.*/mitool.jar>
 mkdir -p /tmp/fi-dryrun && cd /tmp/fi-dryrun
-cp <thisdir>/donorA_R1.fastq.gz input_R1.fastq.gz && cp <thisdir>/donorA_R2.fastq.gz input_R2.fastq.gz
+cp <thisdir>/donor01_R1.fastq.gz input_R1.fastq.gz && cp <thisdir>/donor01_R2.fastq.gz input_R2.fastq.gz
 # panel.txt = the tag column of tags.csv (the feature whitelist)
 tail -n +2 <thisdir>/tags.csv | cut -d, -f1 > panel.txt
 java -jar "$JAR" parse --pattern '^(CELL:N{16})(UMI:N{10})\^(FEATURE:N{15})(R2:*)' --threads 4 'input_{{R}}.fastq.gz' parsed.mic
@@ -101,23 +123,26 @@ reads drop.
 
 The **cell** barcode has two modes (Advanced → "Cell barcode whitelist (10x)"):
 - **`None — de-novo`** (default) — clusters observed barcodes; does **not** snap 1 bp errors to a
-  reference. In the `errors` scenario this leaves ~1600 phantom low-count cells (so
-  `scenarios/errors/expected-abundance.tsv` is the *ideal*; the de-novo output shows phantom cells).
+  reference. In the `errors` scenario this leaves phantom low-count cells (~ the injected error rate ×
+  reads), so `scenarios/errors/expected-abundance.tsv` is the *ideal*; the de-novo output shows extras.
 - **A 10x built-in** (e.g. `737K-august-2016`) — snaps cells to that real 10x list; off-list barcodes
   drop. This makes cellIds match the VDJ producer by construction (see
   `../../../docs/dormant-features/cell-whitelist-correction-plan.md`; smoke-tested on real BEAM-T: ~9% off-list tail dropped,
   ~98% of records kept). The `default`/`realistic` fixtures use **random** barcodes → keep this **`None`**
   for them (a whitelist would drop every cell). To exercise the whitelist, use the **`whitelist737k`**
-  profile (real 737K barcodes + ambient tail) with whitelist = **`737K-august-2016`** — verified to keep
-  the ~80 real cells/donor and drop the ambient (de-novo instead leaves ~12k phantom cells).
+  profile (real 737K barcodes + ambient tail) with whitelist = **`737K-august-2016`** — it keeps the
+  `--cells-per-sample` real cells/donor and drops the ~15% ambient off-list tail (de-novo instead keeps
+  the ambient as phantom low-count cells).
 
 ## Running it in the app (Samples & Data → Feature Integration)
 
 1. Start a backend + build the block (`pnpm build:dev`); the block now uses **published**
    `software-mitool 2.3.1-131-main`, so the in-app mitool step runs on a prebuilt backend (no more #84
    local-override hang).
-2. Add **Samples & Data**. Create samples `donorA`, `donorB`; add a **Fastq** dataset (paired R1/R2,
-   gzipped) and upload each donor's R1/R2. Optionally import `samples-metadata.tsv`.
+2. Add **Samples & Data**. Create one sample per donor (`donor01`…`donorNN`, `--samples` of them); add a
+   **Fastq** dataset (paired R1/R2, gzipped) and upload each donor's R1/R2. Optionally import
+   `samples-metadata.tsv`. (For a hand test use a small `--samples`; the 24-donor default is a lot to
+   upload manually.)
 3. Add **Feature Integration** → Settings:
    - **Feature-barcode FASTQ** → the dataset from step 2.
    - **Tag → feature CSV** → upload `tags.csv`.
@@ -148,8 +173,9 @@ donors here, or by `../manual-run/multisample/` (two samples with different domi
 
 ## Tuning
 
-Constants near the top of `generate.py`: `SEED`, geometry lengths, panel barcodes, per-kind UMI ranges,
-cell counts, error/junk rates. Change and re-run.
+Scale via CLI: `--samples`, `--panel-size`, `--cells-per-sample` (see the Scale table above). Everything
+else is constants near the top of `generate.py`: `SEED`, geometry lengths, the real-anchor panel,
+per-kind UMI ranges, error/junk rates, `GZIP_LEVEL`. Change and re-run (seeded → reproducible).
 
 ## Sources
 

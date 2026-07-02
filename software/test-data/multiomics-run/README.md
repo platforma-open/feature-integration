@@ -60,17 +60,24 @@ The convergence join is a silent inner-join on `[sampleId, cellId]`. All three a
 
 ## Data manifest (realistic profile) — what to upload where
 
-2 samples (`donorA`, `donorB`), ~161 cells/sample, real 10x BEAM-Ab 4-antigen panel + control.
+Scale is set by the antigen generator's flags (`--samples`/`--panel-size`/`--cells-per-sample`) and the
+VDJ/GEX arms follow it automatically. Defaults: **24 donors** (`donor01`…`donor24`), **2000 cells/donor**,
+a **64-antigen panel + control** (4 real 10x anchors + 60 synthetic). One Fastq pair / VDJ TSV / GEX CSV
+per donor:
 
-| Arm | Dataset type in Samples & Data | donorA file | donorB file |
-|---|---|---|---|
-| **Antigen** | Fastq (R1, R2; gzipped) | `../feature-integration-synthetic/realistic/donorA_R1.fastq.gz` + `_R2` | `…/donorB_R1.fastq.gz` + `_R2` |
-| **VDJ** | Table / Xsv (**tsv**) | `vdj/realistic/donorA_airr_sc.tsv` | `vdj/realistic/donorB_airr_sc.tsv` |
-| **GEX** | Table / Xsv (**csv**) | `gex/realistic/donorA_counts.csv` | `gex/realistic/donorB_counts.csv` |
+| Arm | Dataset type in Samples & Data | per-donor file (`donor01`…`donorNN`) |
+|---|---|---|
+| **Antigen** | Fastq (R1, R2; gzipped) | `../feature-integration-synthetic/realistic/donorNN_R{1,2}.fastq.gz` |
+| **VDJ** | Table / Xsv (**tsv**) | `vdj/realistic/donorNN_airr_sc.tsv` |
+| **GEX** | Table / Xsv (**csv**) | `gex/realistic/donorNN_counts.csv` |
+
+> The 24×2000 default is a big manual upload — for a hand run, regenerate at a smaller scale first
+> (e.g. `python3 ../feature-integration-synthetic/generate.py --profile realistic --samples 2
+> --cells-per-sample 80`, then the VDJ/GEX arms), which is closer to the old 2-donor bed.
 
 Supporting files (uploaded inside a block, not as a Samples & Data dataset):
 - **Tag → feature panel CSV** (Feature Integration upload): `../feature-integration-synthetic/realistic/tags.csv`
-  — 5 rows: `SARS-TRI-S_WT`, `Anti-Hen_Egg_Lysozyme`, `gp120`, `H5N1`, `negative_control`.
+  — `--panel-size` antigens + `negative_control` (default 65 rows; first 4 are the real anchors).
 - **Sample metadata (optional)**: `../feature-integration-synthetic/realistic/samples-metadata.tsv`
   (`Sample / Donor / Condition`). Import in Samples & Data only if you want grouping labels downstream —
   the pipeline and the join do **not** need it.
@@ -80,7 +87,7 @@ Supporting files (uploaded inside a block, not as a Samples & Data dataset):
 ## Per-block settings (run each block, in order; press **Run** before adding the next)
 
 ### 0 · Samples & Data
-- Create samples `donorA`, `donorB`.
+- Create one sample per donor (`donor01`…`donorNN`).
 - **Dataset 1 — Fastq** (read indices **R1, R2**; **gzipped ✓**): upload each donor's antigen R1/R2.
 - **Dataset 2 — Table / Xsv (tsv)**: each donor's VDJ `*_airr_sc.tsv`.
 - **Dataset 3 — Table / Xsv (csv)**: each donor's GEX `*_counts.csv`.
@@ -170,35 +177,33 @@ Per-clonotype outputs (keyed on `scClonotypeKey`, no sample axis): `dominantFeat
 
 ## Expected results (ground truth)
 
-The realistic dataset plants **4 lead clones**, each binding one antigen. After block 5 you should see
-those clones with their target antigen dominant and high specificity:
+The realistic dataset plants a **lead clone per (donor, clear antigen)** — so up to `--panel-size` lead
+clones per donor, each binding one antigen — plus minor/ambiguous clones. The invariant to check:
 
-| Lead clone binds | in block-5 dominant antigen | target vs control UMI (validation) |
-|---|---|---|
-| SARS-TRI-S_WT | SARS-TRI-S_WT | 8575 vs 12 |
-| Anti-Hen_Egg_Lysozyme | Anti-Hen_Egg_Lysozyme | 9177 vs 19 |
-| gp120 | gp120 | 5518 vs 15 |
-| H5N1 | H5N1 | 7201 vs 6 |
+- **every clear-antigen clonotype's dominant antigen == its planted antigen** (target UMIs ≫ control), and
+- **plasma-marker expression is higher in binder clonotypes than naive/ambiguous ones**.
 
-Plasma-marker expression is higher in binder clonotypes than naive/ambiguous (validation: 65.0 vs 4.5).
-Total ~61 clonotypes across both donors.
-
-Ground-truth files: `vdj/realistic/truth_clonotypes.csv` (clone → target antigen),
-`gex/realistic/truth_cells_gex.csv`, `../feature-integration-synthetic/realistic/expected-consensus.tsv`.
+`validate_multiomics.py` asserts both offline and prints the exact clonotype count, per-donor lead-clone
+previews, and the binder-vs-naive plasma means for the current scale (they scale with
+`--samples`/`--panel-size`/`--cells-per-sample`, so don't hardcode them). Ground-truth files:
+`vdj/realistic/truth_clonotypes.csv` (clone → target antigen), `gex/realistic/truth_cells_gex.csv`,
+`../feature-integration-synthetic/realistic/expected-consensus.tsv`.
 
 ---
 
 ## Offline validation (no backend)
 
 ```bash
-# antigen (in ../feature-integration-synthetic/)
+# antigen (in ../feature-integration-synthetic/) — scale flags optional (defaults 24/64/2000)
 python3 generate.py --profile realistic
-# arms (here)
+# arms (here) — no scale flags; they follow the antigen arm automatically
 python3 generate_vdj.py --realistic && python3 generate_gex.py --realistic
-python3 validate_multiomics.py --realistic     # → ALL PASS (38/38)
+python3 validate_multiomics.py --realistic     # → ALL PASS (check count scales with the data)
 ```
-All three generators and the validator are **stdlib-only** (no numpy/polars). The data is in place and
-validated, so regenerate only if you change the generators.
+All three generators and the validator are **stdlib-only** (no numpy/polars). The validator streams the
+FASTQs and indexes the join by cell, so it stays tractable at scale. Measured at the 24×2000 default: the
+full chain (generate antigen + VDJ + GEX, then validate) ran in **~6 min** end to end. Regenerate whenever
+you change the generators or the scale flags.
 
 `validate_multiomics.py --realistic` re-derives per-(cell, antigen) UMIs from the antigen FASTQ, joins to
 the VDJ linker, and confirms every clear-antigen clonotype's dominant antigen matches the planted biology
@@ -211,17 +216,18 @@ the data.
 
 The guide above uses the `realistic` profile (random barcodes; run with cell whitelist = None). To
 exercise the **cell-barcode whitelist** end to end, use the **`whitelist737k`** profile instead: its cell
-barcodes are **real `737K-august-2016` members** (harvested from a real 5′ v2 BEAM-T run — see
-`../feature-integration-synthetic/whitelist_cells.txt`), plus a realistic **ambient off-list read tail**,
-so the whitelist does real work.
+barcodes are **real `737K-august-2016` members** — sampled from the full 10x inclusion list
+(`../feature-integration-synthetic/737K-august-2016.txt`, fetched on demand; falls back to the harvested
+`whitelist_cells.txt` pool) — plus a realistic **ambient off-list read tail**, so the whitelist does real
+work.
 
 Generate it:
 ```bash
-# antigen (in ../feature-integration-synthetic/)
+# antigen (in ../feature-integration-synthetic/) — same scale flags as realistic
 python3 generate.py --profile whitelist737k
 # arms (here)
 python3 generate_vdj.py --profile whitelist737k && python3 generate_gex.py --profile whitelist737k
-python3 validate_multiomics.py --profile whitelist737k     # → ALL PASS (38/38)
+python3 validate_multiomics.py --profile whitelist737k     # → ALL PASS
 ```
 
 Run it exactly like the guide above, with two changes:
@@ -229,12 +235,11 @@ Run it exactly like the guide above, with two changes:
   `../feature-integration-synthetic/whitelist737k/…`, VDJ `vdj/whitelist737k/…`, GEX `gex/whitelist737k/…`).
 - **Feature Integration → Advanced → Cell barcode whitelist = `737K-august-2016`** (not None).
 
-What it demonstrates (verified offline with mitool 2.3.1-131-main on donorA): `refine-tags
--t CELL#builtin:737K-august-2016` keeps the ~80 real cells and **drops the ambient tail** (84 distinct
-cells), whereas de-novo keeps it as **~12,000 phantom low-count cells**. With the whitelist on, FI's
-`cellId`s are the canonical 737K strings that match the VDJ/GEX arms by construction — the same
-normalization real Cell Ranger/mixcr apply. (The synthetic barcodes are real 737K members, so this is
-"737K-compliant to the extent real data is.")
+What it demonstrates (verified offline with mitool 2.3.1-131-main): `refine-tags
+-t CELL#builtin:737K-august-2016` keeps the real cells (the `--cells-per-sample` planted per donor) and
+**drops the ~15% ambient off-list tail**, whereas de-novo keeps that tail as phantom low-count cells. With
+the whitelist on, FI's `cellId`s are the canonical 737K strings that match the VDJ/GEX arms by construction
+— the same normalization real Cell Ranger/mixcr apply.
 
 ## Background
 

@@ -28,8 +28,7 @@ HERE = Path(__file__).resolve().parent
 ANTIGEN_DIR = HERE.parent / "feature-integration-synthetic"
 VDJ_DIR = HERE / "vdj"
 GEX_DIR = HERE / "gex"
-DONORS = ["donorA", "donorB"]
-CLEAR_ANTIGENS = {"SARS-TRI-S_WT", "Anti-Hen_Egg_Lysozyme", "gp120", "H5N1"}
+CONTROL_NAME = "negative_control"
 CELL_LEN, UMI_LEN, FEATURE_LEN = 16, 10, 15
 ENSG_RE = re.compile(r"^ENSG\d{11}$")
 # Verified plasma-cell markers (from the pipeline's homo_sapiens gene map): MZB1, XBP1, PRDM1, CD38,
@@ -77,17 +76,20 @@ def read_fastq(path):
 
 
 def derive_antigen_umis(donor, panel):
-    """Per-(cell, antigen) distinct-UMI, re-derived from the FASTQ (mirrors tag-stat -u + the block)."""
-    r1 = list(read_fastq(ANTIGEN_DIR / f"{donor}_R1.fastq.gz"))
-    r2 = list(read_fastq(ANTIGEN_DIR / f"{donor}_R2.fastq.gz"))
-    geom_ok = (len(r1) == len(r2)
-               and all(len(s) == CELL_LEN + UMI_LEN for _, s in r1)
-               and all(len(s) >= FEATURE_LEN for _, s in r2)
-               and all(a[0] == b[0] for a, b in zip(r1, r2)))
+    """Per-(cell, antigen) distinct-UMI, re-derived from the FASTQ (mirrors tag-stat -u + the block).
+    Streams R1/R2 in lockstep instead of materializing them — at cohort scale the FASTQs are millions
+    of reads each."""
+    g1 = read_fastq(ANTIGEN_DIR / f"{donor}_R1.fastq.gz")
+    g2 = read_fastq(ANTIGEN_DIR / f"{donor}_R2.fastq.gz")
     molecules = defaultdict(set)  # (cell, antigen) -> {umi}
     cells = set()
     off_panel = 0
-    for (_, s1), (_, s2) in zip(r1, r2):
+    reads = 0
+    geom_ok = True
+    for (n1, s1), (n2, s2) in zip(g1, g2):
+        reads += 1
+        if n1 != n2 or len(s1) != CELL_LEN + UMI_LEN or len(s2) < FEATURE_LEN:
+            geom_ok = False
         cell, umi, feat = s1[:CELL_LEN], s1[CELL_LEN:CELL_LEN + UMI_LEN], s2[:FEATURE_LEN]
         cells.add(cell)
         antigen = panel.get(feat)
@@ -95,8 +97,11 @@ def derive_antigen_umis(donor, panel):
             off_panel += 1
             continue
         molecules[(cell, antigen)].add(umi)
+    # zip stops at the shorter stream; unequal read counts (R1 vs R2) => geometry mismatch
+    if next(g1, None) is not None or next(g2, None) is not None:
+        geom_ok = False
     umi_counts = {k: len(v) for k, v in molecules.items()}
-    return {"cells": cells, "reads": len(r1), "geom_ok": geom_ok,
+    return {"cells": cells, "reads": reads, "geom_ok": geom_ok,
             "off_panel": off_panel, "umi_counts": umi_counts}
 
 
@@ -189,19 +194,23 @@ def main():
         print(f"(validating {profile.upper()} profile chain)\n")
     panel = load_panel()
     planted = load_planted_consensus()
+    # donors + clear antigens are DERIVED from the data (no hardcoded 2-donor / 4-antigen assumptions)
+    donors = sorted({sample for sample, _cell in planted})
+    clear_antigens = {f for f in panel.values() if f != CONTROL_NAME}
+    print(f"({len(donors)} donors, {len(panel)} panel features, {len(clear_antigens)} clear antigens)\n")
 
     # Panel sanity: barcodes pairwise Hamming >= 3
     seqs = list(panel)
     min_h = min((hamming(seqs[i], seqs[j]) for i in range(len(seqs)) for j in range(i + 1, len(seqs))),
                 default=99)
     check(min_h >= 3, "panel feature barcodes pairwise Hamming >= 3", f"min={min_h}, {len(seqs)} barcodes")
-    check("negative_control" in panel.values(), "panel includes a negative control")
+    check(CONTROL_NAME in panel.values(), "panel includes a negative control")
 
     total_clono = 0
     total_clear = 0
     join_mismatches = []
 
-    for donor in DONORS:
+    for donor in donors:
         print(f"\n{donor}:")
         ag = derive_antigen_umis(donor, panel)
         vdj = load_vdj(donor)
@@ -236,14 +245,17 @@ def main():
 
         # JOIN SIMULATION: linker (cell->clone) x antigen UMIs -> per-clonotype dominant antigen;
         # and x GEX -> per-clonotype plasma-marker expression.
+        # Index the antigen UMIs by cell first so the join is O(cells), not O(cells x umi_keys).
+        ag_by_cell = defaultdict(dict)  # cell -> {antigen: umi}
+        for (c, antigen), n in ag["umi_counts"].items():
+            ag_by_cell[c][antigen] = n
         clono_umis = defaultdict(lambda: defaultdict(int))  # cloneKey -> antigen -> umi
         clono_cells = defaultdict(list)
         binder_plasma, naive_plasma = [], []
         for cell, ckey in vdj["clone_key"].items():
             clono_cells[ckey].append(cell)
-            for (c, antigen), n in ag["umi_counts"].items():
-                if c == cell:
-                    clono_umis[ckey][antigen] += n
+            for antigen, n in ag_by_cell.get(cell, {}).items():
+                clono_umis[ckey][antigen] += n
 
         donor_clono = len(clono_umis)
         total_clono += donor_clono
@@ -255,7 +267,7 @@ def main():
             planted_set = {planted.get((donor, c)) for c in cells}
             umi = clono_umis[ckey]
             dominant = max(umi, key=umi.get) if umi else None
-            if len(planted_set) == 1 and next(iter(planted_set)) in CLEAR_ANTIGENS:
+            if len(planted_set) == 1 and next(iter(planted_set)) in clear_antigens:
                 target = next(iter(planted_set))
                 clear_total += 1
                 if dominant == target:
@@ -263,10 +275,10 @@ def main():
                 else:
                     join_mismatches.append((donor, target, dominant, len(cells)))
                 if len(cells) >= 5:  # preview the lead clones
-                    preview.append((target, len(cells), dominant, umi.get(target, 0), umi.get("negative_control", 0)))
+                    preview.append((target, len(cells), dominant, umi.get(target, 0), umi.get(CONTROL_NAME, 0)))
             # GEX coherence: per-clonotype mean plasma-marker expression, bucketed by class
             clono_plasma = sum(gex["plasma_mean"].get(c, 0.0) for c in cells) / len(cells)
-            if len(planted_set) == 1 and next(iter(planted_set)) in CLEAR_ANTIGENS:
+            if len(planted_set) == 1 and next(iter(planted_set)) in clear_antigens:
                 binder_plasma.append(clono_plasma)
             elif planted_set == {"ambiguous"}:
                 naive_plasma.append(clono_plasma)

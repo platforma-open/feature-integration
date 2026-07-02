@@ -70,4 +70,15 @@ python3 validate_multiomics.py --realistic        # 38/38
   inner-join drop). The default keeps 100% overlap for a clean, maximal join.
 - **Dynamic range:** one antigen was 90% of the whole BEAM-T library. BEAM-Ab discovery is more even, so
   we keep a spread — but a "single-dominant-antigen" scenario would mirror BEAM-T.
-- Optionally add `CATGTCTACGTTAAG` to widen the panel to 5 antigens + control.
+
+## Scale (samples / panel / cells) — parameterized 2026-07-02
+
+The depth/dominance calibration above is orthogonal to *scale*. Sample count, antigen-panel size, and
+cells-per-sample are now CLI flags (`--samples` / `--panel-size` / `--cells-per-sample`, defaults
+24 / 64 / 2000), so the fixture spans a toy bed to a cohort-scale run without touching this calibration.
+Targets are corroborated by the BEAM dataset-scale survey (deep-research, adversarially verified
+2026-06-30): cohort high-water ~22–50 donors; verified feature ceiling = 64 (BEAM-proper alone is ~6);
+a real GEM well is 2k–10k cells. The panel keeps the 4
+real 10x anchor barcodes and synthesizes the rest (15-mers, Hamming ≥ 3). The `whitelist737k` cell pool
+now samples the full 10x `737K-august-2016` inclusion list (737,280 barcodes) rather than the ~800
+harvested pool, so it scales with `--samples`/`--cells-per-sample`.

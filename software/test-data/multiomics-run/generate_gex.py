@@ -34,7 +34,20 @@ ANTIGEN_DIR = HERE.parent / "feature-integration-synthetic"
 GEX_DIR = HERE / "gex"
 ANNOT_CSV = GEX_DIR / "homo_sapiens_gene_annotations.csv"
 N_FILLER = 300
-CLEAR_ANTIGENS = {"SARS-TRI-S_WT", "Anti-Hen_Egg_Lysozyme", "gp120", "H5N1"}
+CONTROL_NAME = "negative_control"
+
+
+def load_clear_antigens(antigen_dir):
+    """Clear (real) antigens = every feature in the antigen arm's panel except the negative control.
+    Panel-derived so this scales with --panel-size instead of a hardcoded 4-antigen set."""
+    path = antigen_dir / "tags.csv"
+    if not path.exists():
+        raise SystemExit(f"panel not found: {path}\nGenerate the antigen arm first.")
+    names = set()
+    with open(path, newline="") as fh:
+        for row in csv.DictReader(fh):
+            names.add(row["feature"])
+    return {n for n in names if n != CONTROL_NAME}
 
 # Marker programs (gene symbols). Means are per (program, cell class): (binder, naive).
 PROGRAMS = {
@@ -82,12 +95,12 @@ def load_gene_map():
     return sym2ens, protein_coding
 
 
-def read_cell_classes(antigen_dir):
+def read_cell_classes(antigen_dir, clear_antigens):
     """{donor: [(cellId, 'binder'|'naive'), ...]} from the antigen ground truth."""
     by_donor = defaultdict(list)
     with open(antigen_dir / "expected-consensus.tsv", newline="") as fh:
         for row in csv.DictReader(fh, delimiter="\t"):
-            cls = "binder" if row["planted_consensus"] in CLEAR_ANTIGENS else "naive"
+            cls = "binder" if row["planted_consensus"] in clear_antigens else "naive"
             by_donor[row["sample"]].append((row["cellId"], cls))
     return by_donor
 
@@ -153,7 +166,8 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     sym2ens, protein_coding = load_gene_map()
     genes = build_gene_table(rng, sym2ens, protein_coding, n_filler)
-    by_donor = read_cell_classes(antigen_dir)
+    clear = load_clear_antigens(antigen_dir)
+    by_donor = read_cell_classes(antigen_dir, clear)
 
     n_marker = sum(1 for _, p, _ in genes if p != "filler")
     tag = profile

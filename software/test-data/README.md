@@ -14,7 +14,7 @@ The block's own CI workflow fixtures live separately at the block root in `test/
 | Directory | Purpose | Tracked | Used by |
 |---|---|---|---|
 | `feature-synthetic/` | Minimal bed: one mitool `tag-stat` TSV + a tag→feature CSV | **Fully tracked** (data included) | `software/conftest.py` → per-cell-metrics pytest |
-| `feature-integration-synthetic/` | Canonical FI-standalone manual bed: realistic 10x BEAM-Ab antigen reads (2 donors), 3 profiles + scenarios | Recipe only | Manual runs; antigen arm of `multiomics-run` |
+| `feature-integration-synthetic/` | Canonical FI-standalone manual bed: realistic 10x BEAM-Ab antigen reads at parameterized scale (default 24 donors × 2000 cells × 64-antigen panel + control), 3 profiles + scenarios | Recipe only | Manual runs; antigen arm of `multiomics-run` |
 | `multiomics-run/` | Full BEAM-Ab multiomics manual e2e: GEX + VDJ arms that join the antigen arm above | Recipe only | Manual 3-block e2e |
 | `manual-run/` | Superseded antigen-only bed; kept for its panel-swap and multi-sample fixtures | Recipe only | Manual panel-merge exploration |
 
@@ -33,8 +33,10 @@ For `manual-run/`, `feature-integration-synthetic/`, and `multiomics-run/`, git 
   tag and panel CSVs, and profile/scenario subdirectories.
 
 Regenerate any dataset with its directory's generator (each has a README with the exact command and
-what it models). One asset is fetched, not generated: `multiomics-run/gex/homo_sapiens_gene_annotations.csv`
-(~21 MB) — `generate_gex.py` prints a `curl` command to fetch it if missing.
+what it models). Two assets are fetched, not generated (both gitignored, with a `curl` hint printed if
+missing): `multiomics-run/gex/homo_sapiens_gene_annotations.csv` (~21 MB, human gene map) and
+`feature-integration-synthetic/737K-august-2016.txt` (~12 MB, the full 10x cell-barcode inclusion list —
+the `whitelist737k` cell pool at scale).
 
 ## Regenerating
 

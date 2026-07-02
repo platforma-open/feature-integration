@@ -27,8 +27,21 @@ HERE = Path(__file__).resolve().parent
 ANTIGEN_DIR = HERE.parent / "feature-integration-synthetic"
 OUT_DIR = HERE / "vdj"
 
-CLEAR_ANTIGENS = {"SARS-TRI-S_WT", "Anti-Hen_Egg_Lysozyme", "gp120", "H5N1"}
+CONTROL_NAME = "negative_control"
 DOMINANT_FRACTION = 0.6  # fraction of a (donor, antigen) group that forms the lead clone
+
+
+def load_clear_antigens(antigen_dir) -> set[str]:
+    """Clear (real) antigens = every feature in the antigen arm's panel except the negative control.
+    Panel-derived so this scales with --panel-size instead of a hardcoded 4-antigen set."""
+    path = antigen_dir / "tags.csv"
+    if not path.exists():
+        raise SystemExit(f"panel not found: {path}\nGenerate the antigen arm first.")
+    names = set()
+    with open(path, newline="") as fh:
+        for row in csv.DictReader(fh):
+            names.add(row["feature"])
+    return {n for n in names if n != CONTROL_NAME}
 
 # Real IMGT gene names (human BCR). Light chain modeled as kappa for simplicity.
 HEAVY_V = ["IGHV1-2", "IGHV1-69", "IGHV3-23", "IGHV3-30", "IGHV4-34", "IGHV4-59", "IGHV5-51"]
@@ -93,7 +106,7 @@ def read_cells(antigen_dir) -> dict[str, list[tuple[str, str]]]:
     return by_donor
 
 
-def build_clones(rng: random.Random, cells: list[tuple[str, str]]) -> list[dict]:
+def build_clones(rng: random.Random, cells: list[tuple[str, str]], clear_antigens: set[str]) -> list[dict]:
     """Group a donor's cells into clonotypes. Clear-antigen cells → one lead clone (~60%) + singletons,
     all binding that antigen (coherent). Ambiguous cells → singleton clones (no clear target)."""
     by_antigen: dict[str, list[str]] = {}
@@ -104,7 +117,7 @@ def build_clones(rng: random.Random, cells: list[tuple[str, str]]) -> list[dict]
     cidx = 0
     for antigen, members in sorted(by_antigen.items()):
         rng.shuffle(members)
-        is_clear = antigen in CLEAR_ANTIGENS
+        is_clear = antigen in clear_antigens
         if is_clear:
             n_lead = max(1, round(DOMINANT_FRACTION * len(members)))
             lead, rest = members[:n_lead], members[n_lead:]
@@ -176,11 +189,13 @@ def main() -> None:
     rng = random.Random(SEED)
     out_dir.mkdir(parents=True, exist_ok=True)
     by_donor = read_cells(antigen_dir)
+    clear = load_clear_antigens(antigen_dir)
 
     all_clones = {}
-    print(f"Generated VDJ (airr-sc) arm ({profile}) on the antigen ground truth:")
+    print(f"Generated VDJ (airr-sc) arm ({profile}) on the antigen ground truth "
+          f"({len(by_donor)} donors, {len(clear)} clear antigens):")
     for donor in sorted(by_donor):
-        clones = build_clones(rng, by_donor[donor])
+        clones = build_clones(rng, by_donor[donor], clear)
         all_clones[donor] = clones
         n_rows = write_airr(out_dir / f"{donor}_airr_sc.tsv", clones, rng)
         n_cells = sum(len(c["cells"]) for c in clones)
@@ -189,7 +204,7 @@ def main() -> None:
               f"({n_lead} lead) -> {n_rows} contig rows ({out_dir.name}/{donor}_airr_sc.tsv)")
     write_truth(out_dir / "truth_clonotypes.csv", all_clones)
     print(f"  truth -> {out_dir.name}/truth_clonotypes.csv")
-    print(f"\nAntigen arm (reused): {antigen_dir}/{{donorA,donorB}}_R{{1,2}}.fastq.gz + tags.csv")
+    print(f"\nAntigen arm (reused): {antigen_dir}/<donor>_R{{1,2}}.fastq.gz + tags.csv")
 
 
 if __name__ == "__main__":

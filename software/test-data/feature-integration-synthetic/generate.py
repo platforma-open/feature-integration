@@ -6,8 +6,16 @@ Geometry matches the block defaults (10x 5' v2):
   R1 = CELL(16) + UMI(10)          -> 26 bp
   R2 = feature barcode(15) + filler -> 25 bp   (block reads first 15 bp as CELLFB; rest is R2:* ignored)
 
-Antigen panel is the REAL 10x BEAM-Ab panel from the public "2k transgenic HEL mouse splenocytes"
-example dataset (4 antigens + 1 negative control).
+Scale is parameterized (a real BEAM run is far bigger than a toy fixture). Defaults target a realistic
+multi-donor cohort with a large antigen panel:
+
+  --samples N            number of donor samples          (default 24; verified cohort high-water ~22-50)
+  --panel-size M         number of ANTIGENS, excl. control (default 64; verified feature ceiling = 64)
+  --cells-per-sample K   cells per donor                  (default 2000; a real GEM well is 2k-10k)
+
+Antigen panel: the first (up to) 4 barcodes are the REAL 10x BEAM-Ab panel from the public "2k
+transgenic HEL mouse splenocytes" dataset; the rest are synthesized as distinct 15-mers (Hamming >= 3
+from each other and the anchors) so the panel scales to any size while keeping authentic anchors.
 
 Scenarios (--scenario), each a self-contained dataset targeting ONE untested behavior. The consensus
 and specificity *math* is already covered by the Python unit tests (test_per_cell_metrics.py); these
@@ -18,7 +26,7 @@ fixtures exist to exercise the mitool + integration layer that the unit tests ca
              correct them, so the per-(cell,feature) distinct-UMI counts ~= the baseline truth.
   offpanel   adds reads with off-panel feature barcodes (NOT in tags.csv) + a few malformed reads.
              EXPECT the off-panel barcodes to be dropped by the tags.csv inner join, and malformed
-             reads dropped at parse -> output contains only the 5 panel features.
+             reads dropped at parse -> output contains only the panel features.
   multilane  the same reads split across two lanes (L001/L002). EXPECT lane-merged per-cell totals to
              equal the single-lane baseline (exercises the fb-pipeline keyLength==2 branch).
   control    binders + a ~30% TRUE non-binder population (all antigens at control level). Exercises the
@@ -30,7 +38,9 @@ Non-baseline scenarios are written to scenarios/<name>/. Each carries the same g
 (planted, panel-only) — for errors/offpanel/multilane the EXPECTED block output equals that truth, so
 the scenario is a behavioral assertion: "this perturbation must not change the result."
 
-Run:  python3 generate.py [--scenario baseline|errors|offpanel|multilane|all]
+Run:  python3 generate.py [--profile default|realistic|whitelist737k]
+                          [--scenario baseline|errors|offpanel|multilane|control|all]
+                          [--samples N] [--panel-size M] [--cells-per-sample K]
 """
 
 import argparse
@@ -48,13 +58,16 @@ UMI_LEN = 10
 FEAT_LEN = 15
 R2_FILLER = "CAACTGGTAC"  # fixed 10 bp after the feature barcode; captured by R2:* and ignored
 QUAL_CHAR = "I"  # Phred 40
+GZIP_LEVEL = 6  # level 6 (not 9): ~half the time at these volumes, marginally larger files
 
-SAMPLES = ["donorA", "donorB"]
-CELLS_PER_SAMPLE = 80
+# Scale (defaults; overridden by CLI, set into these globals in main() before generate() runs).
+SAMPLES = ["donor01", "donor02"]
+CELLS_PER_SAMPLE = 2000
 
-# Real 10x BEAM-Ab antigen panel (4 antigens + negative control), 15 bp, read R2, pattern ^(BC).
+# Real 10x BEAM-Ab antigen anchors (4 antigens), 15 bp, read R2, pattern ^(BC). The panel is filled to
+# --panel-size with synthetic barcodes beyond these.
 # https://www.10xgenomics.com/datasets/2k-transgenic-hel-mouse-splenocytes-beam-ab-2-standard
-FEATURE_PANEL = [
+REAL_ANTIGENS = [
     ("SARS-TRI-S_WT", "CGATGCCGGACGATC"),
     ("Anti-Hen_Egg_Lysozyme", "CCGTCTCACCGATAT"),
     ("gp120", "GATTGGCTACTCAAT"),
@@ -62,10 +75,11 @@ FEATURE_PANEL = [
 ]
 CONTROL_NAME = "negative_control"
 CONTROL_BC = "CTATCTACCGGCTCG"
-ANTIGEN_NAMES = [n for n, _ in FEATURE_PANEL]
-FEATURES = {n: bc for n, bc in FEATURE_PANEL}
-FEATURES[CONTROL_NAME] = CONTROL_BC
-assert all(len(bc) == FEAT_LEN for bc in FEATURES.values()), "feature barcodes must be 15 bp"
+
+# Filled by build_panel() in main() (kept as module globals: assign_features/build_sample/add_ambient
+# read them by name at call time).
+ANTIGEN_NAMES = []
+FEATURES = {}
 
 BASES = "ACGT"
 
@@ -79,7 +93,8 @@ def hamming(a, b):
 
 
 def gen_distinct(rng, count, length, min_dist, avoid=()):
-    """Generate `count` sequences pairwise >= min_dist apart and >= min_dist from every `avoid`."""
+    """Generate `count` sequences pairwise >= min_dist apart and >= min_dist from every `avoid`.
+    O(count^2) — fine for the small panel; NOT used for cell barcodes (see gen_cells)."""
     out = []
     guard = 0
     while len(out) < count:
@@ -92,6 +107,50 @@ def gen_distinct(rng, count, length, min_dist, avoid=()):
     return out
 
 
+def gen_cells(rng, count):
+    """Distinct random 16-mer cell barcodes, O(count) via a set (the panel's gen_distinct is O(n^2) and
+    does not scale to tens of thousands of cells). Hamming spacing is NOT enforced: at cohort scale a
+    1 bp error colliding with a *different* real barcode is astronomically unlikely (~count * 48 / 4^16),
+    so the `errors` scenario's clean-correction guarantee still holds, and real barcodes are Hamming-close
+    anyway."""
+    seen = set()
+    out = []
+    while len(out) < count:
+        c = rand_seq(rng, CELL_LEN)
+        if c not in seen:
+            seen.add(c)
+            out.append(c)
+    return out
+
+
+def build_panel(panel_size):
+    """Return (antigen_names, features_dict). `features_dict` maps name -> 15 bp barcode and INCLUDES the
+    negative control. The first min(panel_size, 4) antigens are the real 10x anchors; the rest are
+    synthetic 15-mers (Hamming >= 3 from each other and the anchors + control). Uses an independent RNG
+    so the panel is identical regardless of --samples / --cells-per-sample."""
+    if panel_size < 1:
+        raise SystemExit("--panel-size must be >= 1")
+    prng = _random.Random(SEED + 7)
+    antigens = list(REAL_ANTIGENS[:panel_size])
+    n_real = len(antigens)
+    if panel_size > n_real:
+        existing = [bc for _, bc in antigens] + [CONTROL_BC]
+        extra = gen_distinct(prng, panel_size - n_real, FEAT_LEN, min_dist=3, avoid=existing)
+        for i, bc in enumerate(extra):
+            antigens.append((f"antigen_{n_real + i + 1:03d}", bc))
+    names = [n for n, _ in antigens]
+    feats = {n: bc for n, bc in antigens}
+    feats[CONTROL_NAME] = CONTROL_BC
+    assert all(len(bc) == FEAT_LEN for bc in feats.values()), "feature barcodes must be 15 bp"
+    return names, feats
+
+
+def sample_names(n):
+    if n < 1:
+        raise SystemExit("--samples must be >= 1")
+    return [f"donor{i + 1:02d}" for i in range(n)]
+
+
 def mutate(rng, seq, n_subs=1):
     """Return `seq` with `n_subs` single-base substitutions at distinct positions."""
     s = list(seq)
@@ -101,17 +160,24 @@ def mutate(rng, seq, n_subs=1):
 
 
 def load_whitelist_cells(rng, count):
-    """Draw `count` distinct real 737K-august-2016-compliant cell barcodes from whitelist_cells.txt
-    (harvested from a real 5' v2 BEAM-T run via `refine-tags -t CELL#builtin:737K-august-2016` →
-    `tag-stat -t CELL`, so every barcode is a 737K member). Lets the whitelist737k profile be corrected
-    against the real 10x list without dropping cells."""
-    path = os.path.join(HERE, "whitelist_cells.txt")
+    """Draw `count` distinct real 737K-august-2016 cell barcodes. Prefers the full 10x inclusion list
+    (737K-august-2016.txt, ~737k barcodes, fetched on demand — gitignored); falls back to the small
+    harvested pool (whitelist_cells.txt, ~800). Every barcode is a 737K member, so the whitelist737k
+    profile can be corrected against the real 10x list without dropping cells."""
+    big = os.path.join(HERE, "737K-august-2016.txt")
+    small = os.path.join(HERE, "whitelist_cells.txt")
+    path = big if os.path.exists(big) else small
     if not os.path.exists(path):
-        raise SystemExit(f"missing {path} — the harvested 737K-compliant cell-barcode pool")
+        raise SystemExit(
+            "no cell whitelist found. Fetch the full 10x 737K-august-2016 inclusion list:\n"
+            "  curl -sSL -o 737K-august-2016.txt https://raw.githubusercontent.com/10XGenomics/"
+            "supernova/master/tenkit/lib/python/tenkit/barcodes/737K-august-2016.txt")
     with open(path) as f:
         pool = [ln.strip() for ln in f if ln.strip() and not ln.startswith("#")]
     if len(pool) < count:
-        raise SystemExit(f"whitelist_cells.txt has {len(pool)} barcodes; need {count}")
+        raise SystemExit(
+            f"{os.path.basename(path)} has {len(pool)} barcodes; need {count}. Fetch the full "
+            "737K-august-2016 list (see load_whitelist_cells) or reduce --samples/--cells-per-sample.")
     return rng.sample(pool, count)
 
 
@@ -194,7 +260,7 @@ def build_sample(rng, sample, cells, realistic=False, nonbinder_frac=0.0):
     reads = list of [name, r1, r2, lane(=1)]. truth_class = per-cell (sample, cell, class, dominant) with
     class in {binder, ambiguous, nonbinder}. `nonbinder_frac`>0 (the control scenario) makes that fraction
     of cells true non-binders. The `nonbinder_frac > 0 and ...` short-circuit means frac=0 consumes NO
-    extra RNG, so the default/realistic/whitelist737k baselines stay byte-identical."""
+    extra RNG, so the default/realistic/whitelist737k baselines stay reproducible."""
     reads = []
     truth_ab = []
     truth_con = []
@@ -271,26 +337,31 @@ def assign_lanes(rng, reads, n_lanes=2):
 def _write_gz(path, text):
     # Deterministic gzip: no embedded mtime or filename, so a re-run with the same seed produces
     # byte-identical fixtures.
-    with open(path, "wb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as gz:
+    with open(path, "wb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", mtime=0, compresslevel=GZIP_LEVEL) as gz:
         gz.write(text.encode())
 
 
-def write_fastqs(outdir, sample, reads, multilane):
-    def join(idx, subset):
-        return "".join(fq_record(r[0], r[idx]) for r in subset)
+def _write_fastq_gz(path, reads, idx):
+    """Stream FASTQ records straight into gzip (never materialize the whole file as one string — at
+    cohort scale that is hundreds of MB per file)."""
+    with open(path, "wb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", mtime=0, compresslevel=GZIP_LEVEL) as gz:
+        for r in reads:
+            gz.write(fq_record(r[0], r[idx]).encode())
 
+
+def write_fastqs(outdir, sample, reads, multilane):
     if not multilane:
-        _write_gz(os.path.join(outdir, f"{sample}_R1.fastq.gz"), join(1, reads))
-        _write_gz(os.path.join(outdir, f"{sample}_R2.fastq.gz"), join(2, reads))
+        _write_fastq_gz(os.path.join(outdir, f"{sample}_R1.fastq.gz"), reads, 1)
+        _write_fastq_gz(os.path.join(outdir, f"{sample}_R2.fastq.gz"), reads, 2)
     else:
         for lane in sorted({r[3] for r in reads}):
             tag = f"L{lane:03d}"
             lane_reads = [r for r in reads if r[3] == lane]
-            _write_gz(os.path.join(outdir, f"{sample}_{tag}_R1.fastq.gz"), join(1, lane_reads))
-            _write_gz(os.path.join(outdir, f"{sample}_{tag}_R2.fastq.gz"), join(2, lane_reads))
+            _write_fastq_gz(os.path.join(outdir, f"{sample}_{tag}_R1.fastq.gz"), lane_reads, 1)
+            _write_fastq_gz(os.path.join(outdir, f"{sample}_{tag}_R2.fastq.gz"), lane_reads, 2)
 
 
-def write_metadata(outdir):
+def write_metadata(outdir, samples):
     with open(os.path.join(outdir, "tags.csv"), "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["tag", "feature"])
@@ -304,8 +375,9 @@ def write_metadata(outdir):
     with open(os.path.join(outdir, "samples-metadata.tsv"), "w", newline="") as f:
         w = csv.writer(f, delimiter="\t")
         w.writerow(["Sample", "Donor", "Condition"])
-        w.writerow(["donorA", "Donor A", "baseline"])
-        w.writerow(["donorB", "Donor B", "stimulated"])
+        for i, s in enumerate(samples):
+            # alternate a simple 2-arm condition so downstream grouping has something to split on
+            w.writerow([s, f"Donor {i + 1}", "baseline" if i % 2 == 0 else "stimulated"])
 
 
 def write_truth(outdir, truth_ab, truth_con):
@@ -333,10 +405,9 @@ def write_specificity(outdir, truth_class):
 
 
 def generate(scenario, profile="default"):
-    """Generate one scenario. Baseline RNG order (seed -> gen cells -> per-sample build+shuffle) is
-    preserved exactly for the `default` `baseline`, so its files stay byte-identical. `realistic` and
-    `whitelist737k` write to their own dir so the default fixtures are untouched. whitelist737k = realistic
-    depths + real 737K-compliant cell barcodes + an ambient off-list read tail (baseline only)."""
+    """Generate one scenario. `realistic` and `whitelist737k` write to their own dir so the default
+    fixtures are untouched. whitelist737k = realistic depths + real 737K-compliant cell barcodes + an
+    ambient off-list read tail (baseline only)."""
     realistic = profile in ("realistic", "whitelist737k")
     use_whitelist = profile == "whitelist737k"
     rng = _random.Random(SEED)
@@ -344,10 +415,11 @@ def generate(scenario, profile="default"):
     outdir = root if scenario == "baseline" else os.path.join(root, "scenarios", scenario)
     os.makedirs(outdir, exist_ok=True)
 
+    n_total = len(SAMPLES) * CELLS_PER_SAMPLE
     if use_whitelist:
-        all_cells = load_whitelist_cells(rng, len(SAMPLES) * CELLS_PER_SAMPLE)
+        all_cells = load_whitelist_cells(rng, n_total)
     else:
-        all_cells = gen_distinct(rng, len(SAMPLES) * CELLS_PER_SAMPLE, CELL_LEN, min_dist=4)
+        all_cells = gen_cells(rng, n_total)
     cells_by_sample = {
         s: all_cells[i * CELLS_PER_SAMPLE:(i + 1) * CELLS_PER_SAMPLE] for i, s in enumerate(SAMPLES)
     }
@@ -361,6 +433,7 @@ def generate(scenario, profile="default"):
 
     nonbinder_frac = 0.3 if scenario == "control" else 0.0
     all_ab, all_con, all_cls = [], [], []
+    total_reads = 0
     for sample in SAMPLES:
         cells = cells_by_sample[sample]
         reads, ab, con, cls = build_sample(rng, sample, cells, realistic, nonbinder_frac)
@@ -379,9 +452,10 @@ def generate(scenario, profile="default"):
 
         rng.shuffle(reads)
         write_fastqs(outdir, sample, reads, multilane=(scenario == "multilane"))
+        total_reads += len(reads)
         print(f"  {sample}: {len(cells)} cells, {len(reads)} reads")
 
-    write_metadata(outdir)
+    write_metadata(outdir, SAMPLES)
     write_truth(outdir, all_ab, all_con)
     if scenario == "control":
         write_specificity(outdir, all_cls)
@@ -391,7 +465,7 @@ def generate(scenario, profile="default"):
         with open(os.path.join(outdir, "offpanel-barcodes.txt"), "w") as f:
             f.write("# feature barcodes injected into R2 that are NOT in tags.csv — the block must drop them\n")
             f.write("\n".join(off_bcs) + "\n")
-    print(f"[{scenario}] -> {outdir}")
+    print(f"[{scenario}] {len(SAMPLES)} samples, {n_total} cells, {total_reads} reads -> {outdir}")
 
 
 def main():
@@ -405,17 +479,30 @@ def main():
         "--profile", default="default", choices=["default", "realistic", "whitelist737k"],
         help="'realistic' calibrates UMI depth/dup/dominance to the real BEAM-T library "
              "(real-data-calibration.md) and writes to realistic/. 'whitelist737k' = realistic depths + "
-             "real 737K-august-2016-compliant cell barcodes (whitelist_cells.txt) + an ambient off-list "
-             "read tail, written to whitelist737k/ (run the block with cell whitelist = 737K-august-2016). "
-             "The default fixtures are left untouched.",
+             "real 737K-august-2016-compliant cell barcodes (737K-august-2016.txt / whitelist_cells.txt) "
+             "+ an ambient off-list read tail, written to whitelist737k/ (run the block with cell "
+             "whitelist = 737K-august-2016). The default fixtures are left untouched.",
     )
+    ap.add_argument("--samples", type=int, default=24, help="number of donor samples (default 24)")
+    ap.add_argument("--panel-size", type=int, default=64,
+                    help="number of antigens, excluding the negative control (default 64)")
+    ap.add_argument("--cells-per-sample", type=int, default=2000,
+                    help="cells per donor (default 2000; a real GEM well is 2k-10k)")
     args = ap.parse_args()
+
+    global ANTIGEN_NAMES, FEATURES, SAMPLES, CELLS_PER_SAMPLE
+    ANTIGEN_NAMES, FEATURES = build_panel(args.panel_size)
+    SAMPLES = sample_names(args.samples)
+    CELLS_PER_SAMPLE = args.cells_per_sample
+
     scenarios = ["baseline", "errors", "offpanel", "multilane", "control"] if args.scenario == "all" else [args.scenario]
     if args.profile == "whitelist737k":
         scenarios = ["baseline"]  # the 737K profile is the coherent multiomics antigen arm (baseline only)
     for s in scenarios:
         generate(s, args.profile)
-    print("features:", FEATURES, "| control:", CONTROL_NAME, "| profile:", args.profile)
+    print(f"panel: {len(ANTIGEN_NAMES)} antigens + 1 control ({len(FEATURES)} features) "
+          f"| control: {CONTROL_NAME} | samples: {len(SAMPLES)} | cells/sample: {CELLS_PER_SAMPLE} "
+          f"| profile: {args.profile}")
 
 
 if __name__ == "__main__":
