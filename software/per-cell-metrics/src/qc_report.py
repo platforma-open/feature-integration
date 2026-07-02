@@ -1,10 +1,10 @@
 """Per-sample QC summary for the Feature Integration block.
 
 One row per sample: read-level metrics from mitool's parse JSON report (parseReport.total/.matched),
-cell/feature/UMI metrics from the tag-stat TSV, and -- best-effort -- the panel-assigned fraction from
-the refine-tags JSON report. The refine field path is not asserted: mitool's refine report schema for
-per-tag whitelist acceptance must be confirmed against a real report (see the plan's discovery step);
-until then panelAssignedFraction is left blank rather than guessed. Stdlib + polars only.
+cell/feature/UMI metrics from the tag-stat TSV, and the panel-assigned fraction from the refine-tags
+JSON report (the FEATURE correction step's outputCount / inputCount — the fraction of reads kept after
+correcting the feature barcode against the panel whitelist). panelAssignedFraction is left blank only
+when no refine report is available. Stdlib + polars only.
 """
 
 import argparse
@@ -34,18 +34,29 @@ def _parse_report(path: str) -> tuple[int, int]:
 
 
 def _refine_assigned_fraction(path: str | None) -> float | None:
-    """Best-effort panel-assigned fraction from the refine-tags JSON report.
+    """Panel-assigned fraction from the refine-tags JSON report.
 
-    Returns None (blank in the CSV) unless a recognised field is present, so QC never crashes on an
-    absent/renamed field. Reconcile the exact path with a real refine report during integration.
+    The FEATURE refine step corrects each feature barcode against the panel whitelist and drops reads
+    whose barcode is not within correction distance of any panel entry. The panel-assigned fraction is
+    that step's ``outputCount / inputCount`` — the fraction of reads entering feature correction that
+    were kept (assigned to a panel feature).
+
+    Returns None (blank in the CSV) when the report is absent/unreadable, carries no FEATURE step, or
+    that step has zero input reads, so QC never crashes on a missing or edge-case report.
     """
     if not path:
         return None
     try:
         with open(path) as fh:
-            json.load(fh)  # confirmed loadable; field extraction finalized in the discovery step
+            rep = json.load(fh)
     except (FileNotFoundError, json.JSONDecodeError):
         return None
+    for step in rep.get("steps", []):
+        if step.get("tagName") == "FEATURE":
+            input_count = step.get("inputCount", 0)
+            if not input_count:
+                return None
+            return step.get("outputCount", 0) / input_count
     return None
 
 
