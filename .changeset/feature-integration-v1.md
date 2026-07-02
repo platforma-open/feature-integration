@@ -1,0 +1,136 @@
+---
+'@platforma-open/milaboratories.feature-integration': major
+'@platforma-open/milaboratories.feature-integration.model': major
+'@platforma-open/milaboratories.feature-integration.ui': major
+'@platforma-open/milaboratories.feature-integration.workflow': major
+'@platforma-open/milaboratories.feature-integration.per-cell-metrics': major
+---
+
+Feature Integration v1 — consolidated notes (all prior changesets combined into one; everything
+major-bumped).
+
+## Feature-barcode workflow (core)
+
+Implement the feature-barcode workflow (plan Tasks 3–4).
+
+- Workflow: per-sample mitool pipeline (`parse → refine-tags → tag-stat -u`) over the feature-barcode
+  FASTQs, then the per-cell-metrics Python software, importing the per-cell results as the A-0010
+  contract p-columns keyed `[pl7.app/sampleId, pl7.app/sc/cellId, pl7.app/feature/featureId]`
+  (`umiCount` / `fraction` / `consensusFeature` / optional `specificityScore`), exported to the result
+  pool for VDJ Multiomic Integration.
+- Tag pattern: cell barcode `CELL`, feature barcode `FEATURE` (mitool's first-class feature tag type,
+  mitool#86), molecule `UMI`. Read geometry is configurable (cellLen/umiLen/featureLen, 10x 5' v2
+  defaults) — DP-1 "parameterize + proceed".
+- Feature-barcode error correction: `refine-tags` corrects `FEATURE` against the panel whitelist (the
+  tag column of the user's tag→feature CSV, emitted as `panel.txt` by the per-cell-metrics `emit-panel`
+  entrypoint) — within-Hamming-1 reads snap to a panel barcode and off-panel reads are dropped
+  (mitool#87 fixed the `-t TAG#file:` whitelist CLI). `CELL` is de-novo corrected; the tag order scopes
+  UMI deduplication to `(cell, feature)`.
+- Python `per_cell_metrics._load()` consumes mitool's aggregated `tag-stat -u` output (the pre-computed
+  `unique_UMI` distinct-molecule count) instead of counting raw UMI rows — DP-2.
+
+## Per-cell metrics (Python)
+
+- Front-end plan gaps: enforce the dominance 0.5 floor in the UI; user-mapped CSV barcode/feature
+  columns (D4); per-sample QC summary table (reads parsed/matched, cells, features, UMIs); specificity
+  + consensus hints on the results page; fix a pre-existing raw tag-stat QC output-name panic.
+- Compute `panelAssignedFraction` in the per-sample QC report (was always blank). It now reads the
+  FEATURE correction step's `outputCount / inputCount` — the fraction of reads kept after correcting
+  the feature barcode against the panel whitelist — falling back to blank when no refine report is
+  available, the report has no FEATURE step, or that step has zero input reads. Covered by new
+  behavioral tests in `test_qc_report.py`.
+- Fix a crash when no (cell, feature) pair survives the tag→feature join (a wrong read geometry, or a
+  sample with no on-panel reads): both empty-input paths now write header-only CSVs instead of failing
+  the whole per-sample run (the UMI-count column is coerced to numeric on read so a header-only
+  tag-stat, which polars would infer as String, doesn't break the fraction division).
+- Vectorize the consensus and specificity computations. Both previously looped in Python over every
+  cell (consensus) and every (cell, feature) row (specificity, via `iter_rows` + a list of dicts),
+  which was slow and held a Python-object copy of the data on top of the polars frame — the first thing
+  to OOM on large samples. They are now pure-polars/numpy column operations (group-by + window for the
+  dominant-category rule; scipy `beta.cdf` applied to whole columns for the score). Output is
+  byte-identical, guarded by the golden consensus test plus oracle tests that cross-check both
+  vectorized paths against the pure `consensus_category`/`specificity_score` rules. Measured: 1.2M
+  (cell, feature) rows with a control process in ~0.9 s at ~0.7 GB. Empty input stays header-only via
+  polars schema-preservation.
+
+## Model & UI
+
+- Feature-parity enhancements from a review against recent blocks:
+  - Negative-control dropdown now works: staging parses the tag→feature CSV (`emit-features`
+    entrypoint) and the model exposes the discovered feature names as `controlOptions` (was an empty
+    stub).
+  - Robustness: `tag-stat -u` runs with `--use-local-temp` (avoids shared /tmp exhaustion on the
+    on-disk sort); mitool `parse`/`refine-tags` memory is sized from the input reads' blob size via
+    `memFormula` (clamped, with the metaExtra floor as fallback) instead of a fixed request.
+  - Observability: per-sample × per-step mitool/Python logs, an `isRunning` spinner signal, and a raw
+    `tag-stat` QC table surfaced on a QC page (`PlLogView` + `PlAgDataTableV2`).
+  - UI/model polish: results table is `retentive` + `withStatus` (no flicker on recompute); the
+    tag→feature CSV is validated client-side (required columns) with a feature-count preview; a dynamic
+    subtitle reflects the chosen control feature. Export column specs moved to `column-specs.lib.tengo`
+    with the standard abundance/order/visibility annotations (identity-neutral).
+- Render `perCellTable` and `tagstatQcTable` with `createPlDataTableV2` instead of V3: both are the
+  block's own self-contained, non-batch `processColumn` frames that V3's discovery cannot render (the
+  scoped-sources form returns undefined; the array-columns form hangs on the upstream Samples & Data
+  FASTQ File-dataset). V2 takes the columns directly and renders the mixed-granularity join
+  (`umiCount`/`fraction` per `[sampleId, cellId, featureId]` with `consensusFeature` broadcast per
+  `[sampleId, cellId]`). `qcSummaryTable` stays on V3.
+- Harden the model: read the prerun feature/column lists with `getDataAsJsonOrUndefined` instead of
+  `getDataAsJson` (the latter throws "Resource has no content." while staging is still computing), and
+  reject in `args()` when the barcode-sequence and feature-name columns map to the same CSV column
+  (previously only caught by the Python after the full mitool chain ran).
+- Standardize the sidebar subtitle to the block-label pattern: the subtitle reads
+  `data.defaultBlockLabel` (falling back to a static string), which a UI watchEffect mirrors from a new
+  `suggestedBlockLabel` model output — a dynamic `"<dataset> · <barcode> → <feature>"` string derived
+  from the selected FASTQ dataset, the barcode-sequence column, and the feature-name column (each part
+  dropped until set). The derivation lives in the output because the subtitle context has no result
+  pool.
+- Split the QC page into two full-height single-table sections — "Per-sample QC" and "Raw tag-stat" —
+  the standard one-table-per-page pattern.
+- UI tidy-up on the Main and QC pages: whitelist help text moved into a `#tooltip` slot; dataset input
+  label renamed to "Select dataset" (block convention); removed the "N features detected" hint; the
+  no-negative-control info banner made dismissable (persisted via a `controlInfoDismissed` UI-only
+  field); pipeline logs moved into a "Logs" slide-over; fixed the stacked QC tables collapsing to their
+  footers.
+- Add column-header tooltips (`pl7.app/description`) to the results tables (Main: Feature fraction,
+  Consensus feature, Specificity score; Per-sample QC: Panel-assigned fraction; Raw tag-stat: Distinct
+  UMIs (raw)). Annotations only — column identity is unchanged, so the A-0010 downstream contract is
+  unaffected.
+
+## Cell-barcode whitelist (added, then UI removed for v1)
+
+- Added an optional, chemistry-selected cell-barcode whitelist for CELL correction: a "Cell barcode
+  whitelist (10x)" setting pointing `refine-tags` at a 10x built-in (`#builtin:<name>`, e.g.
+  `737K-august-2016`) so the emitted `pl7.app/sc/cellId` strings match the VDJ producer by
+  construction; default `""` = de-novo.
+- Then removed the UI selector for v1 (Feature Integration is de-novo only): it was not spec-required,
+  de-novo already yields the ~99% cross-block join empirically, only the 5' v2 option was verified, and
+  the others carried footguns (whitelist/UMI-length could disagree; non-5'v2 VDJ-side alignment
+  unconfirmed). Aligning cell barcodes across producers is a chain-level concern to revisit once the
+  downstream join is verified end to end. The `#builtin:` workflow/model plumbing is kept dormant
+  (`cellWhitelist` stays `""`) as a documented seam. See `docs/cell-whitelist-correction-plan.md` and
+  `docs/cell-calling-and-ambient-barcodes.md`.
+
+## Robustness / performance / fixes
+
+- Fix a pre-Run deadlock introduced with the D4 column-mapping UI: the barcode/feature dropdowns
+  (`csvColumnOptions` / `controlOptions`) are populated by the prerun reading the uploaded CSV, and
+  their values are required by `args()`, but the CSV upload was driven only from the main render (which
+  is unreachable until `args()` passes) — a circular dependency. The prerun now exposes the CSV import
+  handle and the model adds a second `getImportProgress` driver resolved from `ctx.prerun`
+  (`isActive: true`), mirroring `samples-and-data`, so the CSV uploads during staging, the dropdowns
+  populate, and Run enables.
+- Fix `perCellTable` failing to render with `partitionKeyLength (0) must be strictly less than the
+  number of axes (0)`: the per-sample QC summary was an `Xsv` output with empty axes emitted in the
+  same `processColumn` as the contract columns, tripping `xsv.importFile`'s assertion and crashing the
+  shared render. It is now collected as a `[sampleId]` file map and concatenated + imported once by a
+  child template `qc-summary.tpl.tengo` (injecting the real `sampleId` per row), keeping the 8 typed
+  metric columns. Also fixes a latent output-name mismatch (`qcSummary` vs the body's `qc` key).
+- Size the `tag-stat` and `per-cell-metrics` steps' memory from input volume (memFormula, base 8 GiB +
+  input-blob × multiplier, clamped to 128 GiB) instead of a fixed 8 GiB, mirroring parse/refine
+  (tag-stat by the refined.mic blob, per-cell-metrics by the tag-stat TSV). Prevents the two
+  input-sized steps from OOMing on large samples. The Advanced-Settings per-process override still
+  applies to parse/refine only.
+
+## Assets
+
+- Update the block and organization logos.
