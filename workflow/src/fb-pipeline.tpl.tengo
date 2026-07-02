@@ -66,6 +66,24 @@ self.body(func(inputs) {
 		return b.mem(string(inputs.mitoolMemOverrideGB) + "GiB")
 	}
 
+	// tag-stat's distinct-UMI on-disk sort and the per-cell-metrics polars read both scale with input
+	// volume, so size their RAM from the relevant input blob instead of a fixed 8 GiB (same mixcr-style
+	// size formula as parse/refine). Sizing inputs differ: tag-stat by refined.mic (molecules),
+	// per-cell-metrics by tagstat.tsv (the (cell, feature) rows it reads into polars); the metrics
+	// multiplier is larger because that step also materialises Python row-objects on top of the frame.
+	// Both fall back to the floor where formulas can't be evaluated and clamp at 128 GiB. NOTE: the
+	// Advanced-Settings per-process memory override applies to parse/refine only, not to these two.
+	tagStatBaseGB := 8
+	tagStatMemFormula := formula.clamp(
+		formula.add(formula.gib(tagStatBaseGB), formula.mul(formula.size("mic"), 4)),
+		formula.gib(tagStatBaseGB),
+		formula.gib(128))
+	metricsBaseGB := 8
+	metricsMemFormula := formula.clamp(
+		formula.add(formula.gib(metricsBaseGB), formula.mul(formula.size("tagstat"), 8)),
+		formula.gib(metricsBaseGB),
+		formula.gib(128))
+
 	ll.assert(!is_undefined(pattern) && pattern != "", "tag pattern is required")
 
 	meta := inputData.getDataAsJson()
@@ -180,13 +198,13 @@ self.body(func(inputs) {
 	tagStat := exec.builder().
 		software(mitoolSw).
 		cpu(2).
-		mem("8GiB").
+		memFormula(tagStatMemFormula, { fallback: string(tagStatBaseGB) + "GiB" }).
 		arg("tag-stat").
 		arg("--use-local-temp").
 		arg("-t").arg(tagPattern.CELL_TAG).
 		arg("-t").arg(tagPattern.FEATURE_TAG).
 		arg("-u").arg(tagPattern.UMI_TAG).
-		addFile("refined.mic", refine.getFile("refined.mic")).
+		addFile("refined.mic", refine.getFile("refined.mic"), { tag: "mic" }).
 		arg("refined.mic").arg("tagstat.tsv").saveFile("tagstat.tsv").
 		printErrStreamToStdout().saveStdoutStream().run()
 
@@ -215,8 +233,8 @@ self.body(func(inputs) {
 	metrics := exec.builder().
 		software(metricsSw).
 		cpu(2).
-		mem("8GiB").
-		addFile("tagstat.tsv", tagStat.getFile("tagstat.tsv")).
+		memFormula(metricsMemFormula, { fallback: string(metricsBaseGB) + "GiB" }).
+		addFile("tagstat.tsv", tagStat.getFile("tagstat.tsv"), { tag: "tagstat" }).
 		addFile("tags.csv", tagsCsv).
 		arg("tagstat.tsv").arg("tags.csv").
 		arg("--sample-id").arg("sample").
