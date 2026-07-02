@@ -1,12 +1,13 @@
-import type { InferOutputsType } from "@platforma-sdk/model";
+import type { InferOutputsType, PColumnIdAndSpec } from "@platforma-sdk/model";
 import {
   BlockModelV3,
   createPlDataTableStateV2,
   createPlDataTableV2,
-  createPlDataTableV3,
   DataModelBuilder,
+  getRelatedColumns,
+  isHiddenFromGraphColumn,
+  isHiddenFromUIColumn,
   isPColumnSpec,
-  OutputColumnProvider,
   parseResourceMap,
 } from "@platforma-sdk/model";
 import type { BlockArgs, BlockData } from "./types";
@@ -49,6 +50,10 @@ const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
   tableState: createPlDataTableStateV2(),
   tagstatTableState: createPlDataTableStateV2(),
   qcSummaryTableState: createPlDataTableStateV2(),
+  // Violin-plot graph tab: feature-fraction distribution per sample, faceted by feature. Defaults
+  // (y = fraction, primary grouping = sample, facet = feature) are seeded by the Graph page's
+  // default-options; here we only fix the chart template.
+  graphState: { title: "Feature fractions", template: "violin", currentTab: null },
 }));
 
 export const platforma = BlockModelV3.create(dataModel)
@@ -292,26 +297,25 @@ export const platforma = BlockModelV3.create(dataModel)
     lines.push("", "Analysis complete. Full per-sample statistics are on the QC page.");
     return lines;
   })
-  // DECISION (2026-07-01, operator): the front-end plan proposed splitting results into a per-cell
-  // SUMMARY table [sampleId, cellId] (consensus + aggregates like total UMI / # features) and a
-  // separate feature-MATRIX table [sampleId, cellId, featureId]. We deliberately keep ONE unified
-  // perCellTable instead: it is coherent, the (cell x feature) rows already let a user read off the
-  // strongest features (spec A-0017 forbids a redundant top-N), and PlAgDataTableV2 handles the mixed
-  // granularity (umiCount/fraction per [sampleId,cellId,featureId] + consensus broadcast per
-  // [sampleId,cellId]). Per-cell aggregate columns (totalUmi, featuresDetected) were NOT added.
-  //
-  // Per-cell results table. Resolves the workflow's exported perCellTable PFrame; undefined until the
-  // workflow emits it (guarded by the UI).
+  // DECISION (2026-07-02, operator): the Main table is now ONE ROW PER CELL [sampleId, cellId].
+  // Supersedes the 2026-07-01 "single unified matrix table" decision — the per-(cell x feature) rows
+  // moved OUT of this table into the collapsed workflow frame (consensus + the per-cell summary
+  // columns: Max Feature UMI count, Max Feature Fraction, Max Specificity score, and a "Features"
+  // string listing every feature as "feature : umi : fraction" sorted by descending fraction). The
+  // per-feature matrix is not lost: it is still exported to the result pool (perCellFeatures, the
+  // A-0010 contract) for VDJ Multiomic Integration and still drives the violin graph tab (graphPf /
+  // the `pf` output). This output resolves the workflow's collapsed perCellTable PFrame; undefined
+  // until the workflow emits it (guarded by the UI).
   //
   // Uses createPlDataTableV2 (columns passed directly via getPColumns), NOT V3. This frame is our OWN
-  // self-contained, non-batch processColumn output with MIXED granularity. createPlDataTableV3's
-  // discovery cannot render it: the object (scoped-sources) form returns undefined for this frame
-  // regardless of anchor/maxHops config (verified 2026-07-01), and the array-columns form runs
-  // discoverLabelColumnVariants over the ENTIRE result pool and hangs forever on the upstream
-  // Samples&Data FASTQ File-dataset (no_data:<sndBlock>:pf.dataset.*). V2 takes the columns as-is and
-  // renders the mixed-granularity join — the pattern blocks/peptide-extraction uses for the same
-  // non-batch processColumn + samples-and-data setup. retentive avoids blanking the grid on recompute;
-  // withStatus feeds PlAgDataTableV2 the OutputWithStatus envelope it renders loading/error from.
+  // self-contained, non-batch processColumn output. createPlDataTableV3's discovery cannot render it:
+  // the object (scoped-sources) form returns undefined for this frame regardless of anchor/maxHops
+  // config (verified 2026-07-01), and the array-columns form runs discoverLabelColumnVariants over the
+  // ENTIRE result pool and hangs forever on the upstream Samples&Data FASTQ File-dataset
+  // (no_data:<sndBlock>:pf.dataset.*). V2 takes the columns as-is and auto-joins the sampleId label —
+  // the pattern blocks/peptide-extraction uses for the same non-batch processColumn + samples-and-data
+  // setup. retentive avoids blanking the grid on recompute; withStatus feeds PlAgDataTableV2 the
+  // OutputWithStatus envelope it renders loading/error from.
   .output(
     "perCellTable",
     (ctx) => {
@@ -334,27 +338,45 @@ export const platforma = BlockModelV3.create(dataModel)
     { retentive: true, withStatus: true },
   )
   // Per-sample QC summary table: reads parsed/matched, cells/features detected, UMI totals, and
-  // panel-assigned fraction. Same self-contained discovery form as perCellTable/tagstatQcTable.
+  // panel-assigned fraction. Uses createPlDataTableV2 (columns passed directly via getPColumns) like
+  // perCellTable/tagstatQcTable. The earlier V3 form used selector { mode: "enrichment", maxHops: 0 },
+  // which never traverses to the upstream pl7.app/label column — so the sampleId axis rendered the raw
+  // sample hash instead of the human sample name. createPlDataTableV2 runs getAllLabelColumns over the
+  // result pool and auto-joins the matching sampleId label, giving the real sample name.
   .output(
     "qcSummaryTable",
     (ctx) => {
-      const acc = ctx.outputs?.resolve("qcSummaryTable");
-      if (acc === undefined) return undefined;
-      const snapshots = new OutputColumnProvider(acc).getAllColumns();
-      if (snapshots.length === 0) return undefined;
-      const anchorSpec = (snapshots.find((s) => s.spec.name !== "pl7.app/label") ?? snapshots[0])
-        .spec;
-      return createPlDataTableV3(ctx, {
-        columns: {
-          sources: [new OutputColumnProvider(acc)],
-          anchors: { main: anchorSpec },
-          selector: { mode: "enrichment", maxHops: 0 },
-        },
-        tableState: ctx.data.qcSummaryTableState,
-      });
+      const pCols = ctx.outputs?.resolve("qcSummaryTable")?.getPColumns();
+      if (pCols === undefined || pCols.length === 0) return undefined;
+      return createPlDataTableV2(ctx, pCols, ctx.data.qcSummaryTableState);
     },
     { retentive: true, withStatus: true },
   )
+  // Violin graph tab (fix 4): the FULL per-(cell x feature) matrix (workflow graphPf output), NOT the
+  // collapsed Main table — the violin plots each feature's per-cell fraction distribution, grouped by
+  // sample. We build the frame from this block's columns plus axis-compatible pool columns (this is what
+  // createPFrameForGraphs does under the hood — getRelatedColumns), so the sampleId pl7.app/label rides
+  // along and the sample grouping shows real names, not the hash. The File-valued predicate drops
+  // File-typed columns from the picker; note it does NOT prevent the upstream Samples & Data FASTQ
+  // File-dataset (keyed on sampleId) from being pulled in via its linker, so pf resolves only after that
+  // dataset's blob loads — a live await can transiently report no_data:<snd>:pf.dataset.* before the
+  // block settles to Done. Verified: it does settle and the violin renders with sample labels.
+  // outputWithStatus feeds GraphMaker its loading/error UI.
+  .outputWithStatus("pf", (ctx) => {
+    const pCols = ctx.outputs?.resolve("graphPf")?.getPColumns();
+    if (pCols === undefined) return undefined;
+    const graphColumn = (spec: (typeof pCols)[number]["spec"]) =>
+      !isHiddenFromUIColumn(spec) &&
+      !isHiddenFromGraphColumn(spec) &&
+      (spec.valueType as string) !== "File";
+    return ctx.createPFrame(getRelatedColumns(ctx, { columns: pCols, predicate: graphColumn }));
+  })
+  // Column id+spec list for the Graph page's default-options (find the fraction column, map its axes).
+  .output("pfPcols", (ctx): PColumnIdAndSpec[] | undefined => {
+    const pCols = ctx.outputs?.resolve("graphPf")?.getPColumns();
+    if (pCols === undefined) return undefined;
+    return pCols.map((c) => ({ columnId: c.id, spec: c.spec }) satisfies PColumnIdAndSpec);
+  })
   .title(() => "Feature Integration")
   // Standard block-label subtitle. The subtitle render context is args-only (no result pool / outputs
   // — touching them renders "Invalid subtitle"), so the dynamic "<dataset> · <barcode> - <feature>"
@@ -366,6 +388,7 @@ export const platforma = BlockModelV3.create(dataModel)
     { type: "link" as const, href: "/" as const, label: "Main" },
     { type: "link" as const, href: "/qc" as const, label: "Per-sample QC" },
     { type: "link" as const, href: "/tagstat" as const, label: "Raw tag-stat" },
+    { type: "link" as const, href: "/graph" as const, label: "Graph" },
   ])
   .done();
 

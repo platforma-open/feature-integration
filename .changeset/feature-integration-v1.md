@@ -68,12 +68,12 @@ Implement the feature-barcode workflow (plan Tasks 3–4).
     tag→feature CSV is validated client-side (required columns) with a feature-count preview; a dynamic
     subtitle reflects the chosen control feature. Export column specs moved to `column-specs.lib.tengo`
     with the standard abundance/order/visibility annotations (identity-neutral).
-- Render `perCellTable` and `tagstatQcTable` with `createPlDataTableV2` instead of V3: both are the
-  block's own self-contained, non-batch `processColumn` frames that V3's discovery cannot render (the
-  scoped-sources form returns undefined; the array-columns form hangs on the upstream Samples & Data
-  FASTQ File-dataset). V2 takes the columns directly and renders the mixed-granularity join
-  (`umiCount`/`fraction` per `[sampleId, cellId, featureId]` with `consensusFeature` broadcast per
-  `[sampleId, cellId]`). `qcSummaryTable` stays on V3.
+- Render all three results tables (`perCellTable`, `tagstatQcTable`, `qcSummaryTable`) with
+  `createPlDataTableV2` instead of V3: they are the block's own self-contained, non-batch
+  `processColumn` frames that V3's discovery cannot render (the scoped-sources form returns undefined;
+  the array-columns form hangs on the upstream Samples & Data FASTQ File-dataset). V2 takes the columns
+  directly and auto-joins the `pl7.app/label` sample name onto the sample axis (so tables show the real
+  sample name, not the internal sample hash).
 - Harden the model: read the prerun feature/column lists with `getDataAsJsonOrUndefined` instead of
   `getDataAsJson` (the latter throws "Resource has no content." while staging is still computing), and
   reject in `args()` when the barcode-sequence and feature-name columns map to the same CSV column
@@ -140,6 +140,28 @@ Implement the feature-barcode workflow (plan Tasks 3–4).
   (tag-stat by the refined.mic blob, per-cell-metrics by the tag-stat TSV). Prevents the two
   input-sized steps from OOMing on large samples. The Advanced-Settings per-process override still
   applies to parse/refine only.
+
+## Per-cell results table, QC labels, graph tab
+
+- The Main results table is now ONE ROW PER CELL `[sampleId, cellId]` instead of the per-(cell ×
+  feature) matrix. `per_cell_metrics.py` emits a new `result_per_cell_summary.csv` (imported as the
+  table-only `perCellSummary` columns): `Max Feature UMI count`, `Max Feature Fraction`, and (with a
+  negative control) `Max Specificity score` — the per-cell max across features — plus a `Features`
+  summary string that lists every feature the cell has signal for as `feature : umiCount : fraction`,
+  sorted by descending fraction (dominant first), mirroring antibody-sequence-liabilities'
+  `pl7.app/isSummary` column. The Main table now shows consensus + these per-cell columns. The
+  A-0010 export contract is UNCHANGED — the full per-(cell × feature) `abundance`/`fractions`/
+  `consensusFeature`/`specificityScore` matrix still flows to the result pool for VDJ Multiomic
+  Integration.
+- Per-sample QC table now shows the real sample name: it moved from `createPlDataTableV3`
+  (`selector { mode: "enrichment", maxHops: 0 }`, which never joins the `pl7.app/label` column) to
+  `createPlDataTableV2`, which auto-joins it — previously the sample axis rendered the internal hash.
+- All tables render `Sample` first, then `Cell ID` (sampleId is axis 0, cellId axis 1).
+- New "Graph" tab (last in the tab list): an embedded `@milaboratories/graph-maker` violin plot
+  (chart-type discrete) defaulting to y = Feature Fraction, grouped by Sample, faceted by Feature. It
+  plots the full per-(cell × feature) matrix (a new `graphPf` workflow output) via a `pf` model output
+  built from `getRelatedColumns` (this block's columns + axis-compatible pool columns, so the sample
+  grouping shows real sample names) with File-valued columns filtered out of the picker.
 
 ## Assets
 

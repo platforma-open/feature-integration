@@ -108,6 +108,7 @@ valueOutputs := func(blockId, sampleAxisName, hasControl) {
 					valueType: "Double",
 					annotations: a(89000, true, {
 						"pl7.app/label": "Feature fraction",
+						"pl7.app/description": "This feature's share of the cell's total feature signal: its UMI count divided by the cell's total UMI count across all features. A cell's fractions sum to 1, so binding is comparable across cells with different capture depth.",
 						"pl7.app/min": "0",
 						"pl7.app/max": "1",
 						"pl7.app/isAbundance": "true",
@@ -136,6 +137,7 @@ valueOutputs := func(blockId, sampleAxisName, hasControl) {
 					valueType: "String",
 					annotations: a(88000, true, {
 						"pl7.app/label": "Consensus feature",
+						"pl7.app/description": "The cell's dominant feature/antigen — assigned only when one feature's share reaches the dominance threshold (default 0.6); otherwise 'ambiguous'.",
 						"pl7.app/isDiscreteFilter": "true"
 					})
 				}
@@ -162,6 +164,7 @@ valueOutputs := func(blockId, sampleAxisName, hasControl) {
 						valueType: "Double",
 						annotations: a(87000, true, {
 							"pl7.app/label": "Specificity score",
+							"pl7.app/description": "Cell Ranger's BEAM specificity score (0–100): confidence that this antigen's binding exceeds the negative control, from their UMI counts — not binding strength or affinity. Needs a designated negative control.",
 							"pl7.app/min": "0",
 							"pl7.app/max": "100",
 							"pl7.app/isScore": "true",
@@ -178,6 +181,93 @@ valueOutputs := func(blockId, sampleAxisName, hasControl) {
 	}
 
 	return outputs
+}
+
+// perCellSummaryOutput: the TABLE-ONLY per-cell collapse (one row per [sampleId, cellId]) produced by
+// per_cell_metrics.py's result_per_cell_summary.csv. Its columns are the cell's max feature UMI count
+// / max feature fraction (/ max specificity score, with a control) plus a "feature : umi : fraction |
+// ..." summary string sorted by descending fraction. This drives the Main results table INSTEAD of the
+// per-(cell x feature) matrix; the A-0010 export contract (abundance/fractions/consensus/specificity)
+// is unchanged. The "Max ..." labels distinguish these aggregates from the exported per-feature
+// columns. maxSpecificityScore is emitted (and imported) only with a negative control — same gating as
+// the per-feature specificity column. Keyed [cellId]; the sample axis is prepended by processColumn.
+perCellSummaryOutput := func(blockId, sampleAxisName, hasControl) {
+	cell := cellAxis(sampleAxisName)
+
+	cols := [
+		{
+			column: "maxUmiCount", id: "maxUmiCount",
+			spec: {
+				name: "pl7.app/feature/maxUmiCount",
+				valueType: "Int",
+				annotations: a(87000, true, {
+					"pl7.app/label": "Max Feature UMI count",
+					"pl7.app/description": "The cell's largest per-feature UMI count (the dominant feature's molecule count). The full per-feature counts are in the Features column and the exported abundance matrix.",
+					"pl7.app/min": "0"
+				})
+			}
+		},
+		{
+			column: "maxFraction", id: "maxFraction",
+			spec: {
+				name: "pl7.app/feature/maxFraction",
+				valueType: "Double",
+				annotations: a(86000, true, {
+					"pl7.app/label": "Max Feature Fraction",
+					"pl7.app/description": "The cell's largest per-feature fraction (the dominant feature's share of the cell's total feature signal).",
+					"pl7.app/min": "0",
+					"pl7.app/max": "1",
+					"pl7.app/format": ".2p"
+				})
+			}
+		}
+	]
+
+	if hasControl {
+		cols = append(cols, {
+			column: "maxSpecificityScore", id: "maxSpecificityScore",
+			spec: {
+				name: "pl7.app/feature/maxSpecificityScore",
+				valueType: "Double",
+				annotations: a(85000, true, {
+					"pl7.app/label": "Max Specificity score",
+					"pl7.app/description": "The cell's highest per-feature Cell Ranger BEAM specificity score (0–100): confidence that the best-supported feature's binding exceeds the negative control. Needs a designated negative control.",
+					"pl7.app/min": "0",
+					"pl7.app/max": "100",
+					"pl7.app/isScore": "true",
+					"pl7.app/format": ".1f"
+				})
+			}
+		})
+	}
+
+	// The "all features" summary string (mirrors antibody-sequence-liabilities' pl7.app/isSummary
+	// column). Listed last (lowest orderPriority) so the headline aggregates read first.
+	cols = append(cols, {
+		column: "featureSummary", id: "featureSummary",
+		spec: {
+			name: "pl7.app/feature/featureSummary",
+			valueType: "String",
+			annotations: a(84000, true, {
+				"pl7.app/label": "Features",
+				"pl7.app/description": "Every feature this cell has signal for, as 'feature : UMI count : fraction', sorted by descending fraction (dominant feature first).",
+				"pl7.app/isSummary": "true"
+			})
+		}
+	})
+
+	return {
+		type: "Xsv",
+		xsvType: "csv",
+		settings: {
+			axes: [{ column: "cellId", spec: cell }],
+			columns: cols,
+			storageFormat: "Parquet",
+			partitionKeyLength: 0
+		},
+		name: "perCellSummary",
+		path: ["perCellSummary"]
+	}
 }
 
 // tagstatQcOutput: the raw mitool tag-stat -u table (per (cell, feature-barcode) distinct-UMI counts,
@@ -200,6 +290,7 @@ tagstatQcOutput := func(blockId, sampleAxisName) {
 					valueType: "Long",
 					annotations: a(90000, true, {
 						"pl7.app/label": "Distinct UMIs (raw)",
+						"pl7.app/description": "Distinct-UMI (molecule) count per cell per feature barcode, from mitool tag-stat. 'Raw' means keyed by the observed barcode — already panel-corrected and UMI-deduplicated, but before mapping to antigen names and summing per feature.",
 						"pl7.app/min": "0",
 						"pl7.app/isAbundance": "true",
 						"pl7.app/abundance/unit": "molecules",
@@ -243,7 +334,7 @@ qcFileMapOutput := func(blockId) {
 // Each metric keeps its own valueType/label/orderPriority/format. Not part of the A-0010 export
 // contract; outputs-only.
 qcSummaryColumnsSpec := func(sampleAxisSpec) {
-	numCol := func(id, colName, label, order, fmt) {
+	numCol := func(id, colName, label, order, fmt, ...desc) {
 		spec := {
 			name: "pl7.app/qc/" + id,
 			valueType: "Double",
@@ -251,6 +342,9 @@ qcSummaryColumnsSpec := func(sampleAxisSpec) {
 		}
 		if !is_undefined(fmt) {
 			spec.annotations["pl7.app/format"] = fmt
+		}
+		if len(desc) > 0 && !is_undefined(desc[0]) && desc[0] != "" {
+			spec.annotations["pl7.app/description"] = desc[0]
 		}
 		return { column: colName, id: id, spec: spec }
 	}
@@ -264,7 +358,7 @@ qcSummaryColumnsSpec := func(sampleAxisSpec) {
 			numCol("featuresDetected", "featuresDetected", "Features detected", 86000, undefined),
 			numCol("totalUniqueUmis", "totalUniqueUmis", "Total distinct UMIs", 85000, undefined),
 			numCol("medianUmisPerCell", "medianUmisPerCell", "Median UMIs / cell", 84000, ".1f"),
-			numCol("panelAssignedFraction", "panelAssignedFraction", "Panel-assigned fraction", 83000, ".2p")
+			numCol("panelAssignedFraction", "panelAssignedFraction", "Panel-assigned fraction", 83000, ".2p", "Fraction of feature-barcode reads kept after correcting their barcode against the panel; reads too far from any panel entry are dropped. A low value flags a panel or read-geometry mismatch.")
 		],
 		storageFormat: "Parquet",
 		partitionKeyLength: 0
@@ -276,6 +370,7 @@ export {
 	featureAxis: featureAxis,
 	featureBarcodeAxis: featureBarcodeAxis,
 	valueOutputs: valueOutputs,
+	perCellSummaryOutput: perCellSummaryOutput,
 	tagstatQcOutput: tagstatQcOutput,
 	qcFileMapOutput: qcFileMapOutput,
 	qcSummaryColumnsSpec: qcSummaryColumnsSpec

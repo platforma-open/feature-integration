@@ -95,6 +95,7 @@ wf.body(func(args) {
 	// the per-sample QC-JSON map (read by the model to build the Analysis logs). Column/axis specs for
 	// the value columns come from column-specs.lib.tengo.
 	outputs := columnSpecs.valueOutputs(blockId, sampleAxis.name, hasControl)
+	outputs = append(outputs, columnSpecs.perCellSummaryOutput(blockId, sampleAxis.name, hasControl))
 	outputs = append(outputs, columnSpecs.tagstatQcOutput(blockId, sampleAxis.name))
 	outputs = append(outputs, columnSpecs.qcFileMapOutput(blockId))
 	outputs = append(outputs, {
@@ -152,7 +153,10 @@ wf.body(func(args) {
 		}
 	}
 
-	// Exported A-0010 contract frame (goes to the result pool -> VDJ Multiomic Integration).
+	// Exported A-0010 contract frame (goes to the result pool -> VDJ Multiomic Integration). This is the
+	// full per-(cell x feature) matrix and is UNCHANGED by the table collapse below — downstream still
+	// consumes abundance/fractions/consensus/specificity at [sampleId, cellId, featureId]. It also backs
+	// the violin graph tab (outputs.graphPf), which plots the per-feature fraction distribution.
 	fb := pframes.pFrameBuilder()
 	addXsvTo(fb, "abundance")
 	addXsvTo(fb, "fractions")
@@ -161,6 +165,15 @@ wf.body(func(args) {
 		addXsvTo(fb, "specificity")
 	}
 	finalPf := fb.build()
+
+	// Main results table (table-only): one row per [sampleId, cellId] — the consensus feature plus the
+	// per-cell summary aggregates (max UMI count / fraction, max specificity with a control) and the
+	// "feature : umi : fraction | ..." string listing every feature the cell has signal for. This
+	// collapses the matrix above for display; the export contract is unaffected.
+	tableFb := pframes.pFrameBuilder()
+	addXsvTo(tableFb, "consensus")
+	addXsvTo(tableFb, "perCellSummary")
+	tablePf := tableFb.build()
 
 	// QC-only frame: the raw tag-stat per-(cell, feature-barcode) distinct-UMI counts, before the
 	// CSV-driven collapse to feature names. Surfaced as a block output (not exported to the pool).
@@ -179,7 +192,10 @@ wf.body(func(args) {
 
 	return {
 		outputs: {
-			perCellTable: pframes.exportFrame(finalPf),
+			// Collapsed per-cell results table (one row per [sampleId, cellId]).
+			perCellTable: pframes.exportFrame(tablePf),
+			// Full per-(cell x feature) matrix for the violin graph tab (feature fraction distribution).
+			graphPf: pframes.exportFrame(finalPf),
 			// Raw tag-stat QC table (outputs-only) so the pipeline isn't a black box.
 			tagstatQcTable: pframes.exportFrame(qcPf),
 			// Per-sample QC summary table (outputs-only): reads parsed/matched, cells/features, UMIs.
