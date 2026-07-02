@@ -17,12 +17,11 @@ assets := import("@platforma-sdk/workflow-tengo:assets")
 maps := import("@platforma-sdk/workflow-tengo:maps")
 ll := import("@platforma-sdk/workflow-tengo:ll")
 pConstants := import("@platforma-sdk/workflow-tengo:pframes.constants")
-pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
 tagPattern := import(":tag-pattern")
 
 json := import("json")
 
-self.defineOutputs("abundance", "fractions", "consensus", "specificity", "tagstat", "qc", "stepLogs")
+self.defineOutputs("abundance", "fractions", "consensus", "specificity", "tagstat", "qc", "qcJson")
 
 // :memory-from-limits sizes the JVM heap from the granted limits — avoids end-of-parse OOM when many
 // tag writers flush (see demultiplex-fastq).
@@ -224,6 +223,7 @@ self.body(func(inputs) {
 		arg("--feature-col").arg(tagPattern.FEATURE_TAG).
 		arg("--umi-col").arg("unique_" + tagPattern.UMI_TAG).
 		arg("--output").arg("result_qc.csv").saveFile("result_qc.csv").
+		saveFile("result_qc.json").
 		printErrStreamToStdout().saveStdoutStream().run()
 
 	// Step 4: per-cell metrics (Python). sampleId is irrelevant here — processColumn prepends the
@@ -254,15 +254,6 @@ self.body(func(inputs) {
 	}
 	metrics = metrics.printErrStreamToStdout().saveStdoutStream().run()
 
-	// One high-level analysis log per sample, surfaced as the block's single "Analysis logs" view. The
-	// qc step runs last and has every stage's numbers, so qc_report.py prints a milestone narrative of
-	// the whole run to stdout; that stream is the analysis log. The individual mitool/Python step
-	// streams are deliberately NOT surfaced — one readable log, not a box per tool step (per-step stdout
-	// is still saved on each exec for backend retrieval / debugging). keyLength 1; processColumn
-	// prepends the sample axis, giving a [sampleId, step] resource map with the single "analysis" key.
-	stepLogs := pcolumn.resourceMapBuilder(1)
-	stepLogs.add(["analysis"], qc.getStdoutStream())
-
 	// The body must return exactly the defineOutputs set and no output may be undefined. specificity is
 	// meaningful only with a control feature, so the Python always writes result_specificity.csv (empty
 	// header-only when no --control) and we always return it. main.tpl and the model still gate the
@@ -274,6 +265,6 @@ self.body(func(inputs) {
 		specificity: metrics.getFile("result_specificity.csv"),
 		tagstat: tagStat.getFile("tagstat.tsv"),
 		qc: qc.getFile("result_qc.csv"),
-		stepLogs: stepLogs.build()
+		qcJson: qc.getFile("result_qc.json")
 	}
 })

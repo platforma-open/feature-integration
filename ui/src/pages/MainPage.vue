@@ -8,7 +8,6 @@ import {
   PlDropdown,
   PlDropdownRef,
   PlFileInput,
-  PlLogView,
   PlNumberField,
   PlSlideModal,
   usePlDataTableSettingsV2,
@@ -24,10 +23,10 @@ const tableSettings = usePlDataTableSettingsV2({
   model: () => app.model.outputs.perCellTable,
 });
 
-// Single high-level analysis log per sample (workflow stepLogs is now one "analysis" entry per sample
-// = qc_report.py's milestone narrative of the whole run). Shown in a wide slide-over; detailed
-// per-sample statistics live on the QC page. v1 maps a dataset to one sample (demux deferred).
-const logEntries = computed(() => app.model.outputs.stepLogs?.data ?? []);
+// The block's "Analysis logs": a live completed-sample heartbeat while the run is in progress, then a
+// run-level summary when it finishes (the model builds the lines from the per-sample QC). Shown in a
+// wide slide-over as one text area; detailed per-sample statistics live on the QC page.
+const analysisLog = computed(() => app.model.outputs.analysisLog ?? []);
 const logsOpen = ref(false);
 
 // No-negative-control info note in the Settings drawer: appears once the tag-feature CSV is added,
@@ -41,7 +40,7 @@ const controlInfoVisible = computed(
   <PlBlockPage>
     <template #title>Feature Integration</template>
     <template #append>
-      <PlBtnGhost v-if="logEntries.length > 0" @click.stop="logsOpen = true">Logs</PlBtnGhost>
+      <PlBtnGhost v-if="analysisLog.length > 0" @click.stop="logsOpen = true">Logs</PlBtnGhost>
       <PlBtnGhost @click.stop="settingsOpen = true">Settings</PlBtnGhost>
     </template>
 
@@ -123,7 +122,19 @@ const controlInfoVisible = computed(
 
     <PlSlideModal v-model="logsOpen" width="80%">
       <template #title>Analysis logs</template>
-      <PlLogView v-for="entry in logEntries" :key="entry.key.join('/')" :log-handle="entry.value" />
+      <pre class="analysis-log">{{ analysisLog.join("\n") }}</pre>
     </PlSlideModal>
   </PlBlockPage>
 </template>
+
+<style scoped>
+.analysis-log {
+  margin: 0;
+  padding: 12px 16px;
+  font-family: var(--pl-mono-font-family, monospace);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+</style>

@@ -92,20 +92,20 @@ wf.body(func(args) {
 	// processColumn outputs: the A-0010 contract value columns + the raw tag-stat QC table + the
 	// per-sample QC CSV collected as a [sampleId] file map (assembled into a table by qc-summary.tpl,
 	// NOT imported here — a per-sample scalar cannot be xsv-imported inside the shared processColumn) +
-	// the per-step log map. Column/axis specs come from column-specs.lib.tengo.
+	// the per-sample QC-JSON map (read by the model to build the Analysis logs). Column/axis specs for
+	// the value columns come from column-specs.lib.tengo.
 	outputs := columnSpecs.valueOutputs(blockId, sampleAxis.name, hasControl)
 	outputs = append(outputs, columnSpecs.tagstatQcOutput(blockId, sampleAxis.name))
 	outputs = append(outputs, columnSpecs.qcFileMapOutput(blockId))
 	outputs = append(outputs, {
-		type: "ResourceMap",
+		type: "Resource",
 		spec: {
 			kind: "PColumn",
-			name: "pl7.app/log",
+			name: "pl7.app/feature/qcJsonFile",
 			domain: { "pl7.app/blockId": blockId },
-			valueType: "Log",
-			axesSpec: [{ name: "pl7.app/feature/step", type: "String" }]
+			valueType: "File"
 		},
-		name: "stepLogs"
+		name: "qcJson"
 	})
 
 	// mitool resource meta (mixcr semantics): pass the base memory floor always; add the override key
@@ -184,8 +184,9 @@ wf.body(func(args) {
 			tagstatQcTable: pframes.exportFrame(qcPf),
 			// Per-sample QC summary table (outputs-only): reads parsed/matched, cells/features, UMIs.
 			qcSummaryTable: pframes.exportFrame(qcSummaryResult.output("qcSummaryTable")),
-			// Per-sample x per-step mitool/Python log streams (fb-pipeline stepLogs) -> model PlLogView.
-			stepLogs: perSampleResults.outputData("stepLogs"),
+			// Per-sample QC metrics as JSON (fb-pipeline qcJson) -> model builds the live "Analysis logs"
+			// (completed-sample heartbeat + run-level summary) from it.
+			qcJson: perSampleResults.outputData("qcJson"),
 			// Expose the tag->feature CSV import HANDLE so the model can watch it via getImportProgress()
 			// (model/src/index.ts). That model output is the actual upload driver: it registers the import
 			// with the middle-layer so the CSV bytes are pushed. Without it the CSV blob never materialises

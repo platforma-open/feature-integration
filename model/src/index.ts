@@ -15,6 +15,28 @@ export type { BlockArgs, BlockData } from "./types";
 
 const DOMINANCE_FLOOR = 0.5; // spec A-0012: threshold is user-adjustable down to 0.5, never lower
 
+// Per-sample QC metrics as emitted by qc_report.py (result_qc.json), read by the analysisLog output.
+type QcRow = {
+  readsTotal: number;
+  readsMatched: number;
+  matchedFraction: number;
+  cellsDetected: number;
+  featuresDetected: number;
+  totalUniqueUmis: number;
+  medianUmisPerCell: number;
+  panelAssignedFraction: number | ""; // "" when no refine report (qc_report leaves it blank)
+};
+
+// Panel-assigned fraction below this flags a sample in the analysis log (panel / read-geometry issue).
+const PANEL_ASSIGNED_FLOOR = 0.5;
+
+function median(xs: number[]): number | undefined {
+  if (xs.length === 0) return undefined;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 === 1 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
 const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
   dominanceThreshold: 0.6,
   // 10x 5' v2 read geometry defaults (cell 16 + UMI 10 on R1; feature barcode 15 on R2). DP-1:
@@ -151,14 +173,122 @@ export const platforma = BlockModelV3.create(dataModel)
   // True while the main run is executing (no output/context field settled yet) — drives the block
   // spinner via the app.ts progress callback.
   .output("isRunning", (ctx) => ctx.outputs?.getIsReadyOrError() === false)
-  // Per-sample × per-step mitool/Python log streams (workflow stepLogs ResourceMap keyed
-  // [sampleId, step]). Surfaced so the run isn't a black box — the QC page renders one PlLogView per
-  // entry. Shape: { isComplete, data: [{ key, value: logHandle }] }.
-  .output("stepLogs", (ctx) =>
-    ctx.outputs !== undefined
-      ? parseResourceMap(ctx.outputs.resolve("stepLogs"), (acc) => acc.getLogHandle(), false)
-      : undefined,
-  )
+  // The block's single "Analysis logs" (lines shown in the UI's wide slide-over), built from the
+  // per-sample QC JSON (qcJson), which settles incrementally as each sample's qc step finishes:
+  //   • while the run is in progress → a completed-sample heartbeat ("Processing… N / M samples");
+  //   • when every sample is done   → a run-level summary (aggregate reads/panel-assigned/cells +
+  //     any samples flagged for a panel-assigned fraction below PANEL_ASSIGNED_FLOOR, by name).
+  // One area regardless of sample count; detailed per-sample stats live on the QC page (qcSummaryTable).
+  .output("analysisLog", (ctx): string[] | undefined => {
+    if (ctx.outputs === undefined) return undefined;
+
+    // Sample labels (sampleId -> name) from the upstream pl7.app/label column — display names for
+    // flagged samples and the total sample count (heartbeat denominator). Mirrors mixcr-clonotyping.
+    let labels: Record<string, string> | undefined;
+    const inputRef = ctx.data.fbFastqRef;
+    if (inputRef !== undefined) {
+      const inputSpec = ctx.resultPool.getSpecByRef(inputRef);
+      if (inputSpec !== undefined && isPColumnSpec(inputSpec)) {
+        const sampleAxisSpec = inputSpec.axesSpec[0];
+        const obj = ctx.resultPool.getData().entries.find((f) => {
+          const spec = f.obj.spec;
+          if (!isPColumnSpec(spec)) return false;
+          if (spec.name !== "pl7.app/label" || spec.axesSpec.length !== 1) return false;
+          const axisSpec = spec.axesSpec[0];
+          if (axisSpec.name !== sampleAxisSpec.name) return false;
+          if (
+            sampleAxisSpec.domain === undefined ||
+            Object.keys(sampleAxisSpec.domain).length === 0
+          )
+            return true;
+          if (axisSpec.domain === undefined) return false;
+          for (const [k, v] of Object.entries(sampleAxisSpec.domain))
+            if (axisSpec.domain[k] !== v) return false;
+          return true;
+        });
+        if (obj !== undefined) {
+          labels = Object.fromEntries(
+            Object.entries(obj.obj.data.getDataAsJson<{ data: Record<string, string> }>().data).map(
+              (e) => [JSON.parse(e[0])[0], e[1]],
+            ),
+          ) as Record<string, string>;
+        }
+      }
+    }
+    const total = labels ? Object.keys(labels).length : undefined;
+
+    // Per-sample QC metrics; each entry appears as that sample's qc step finishes.
+    const qcMap = parseResourceMap(
+      ctx.outputs.resolve("qcJson"),
+      (acc) => acc.getDataAsJsonOrUndefined<QcRow>(),
+      false,
+    );
+    const entries = (qcMap?.data ?? []).filter((e) => e.value != null);
+    const done = entries.length;
+
+    if (total === undefined && done === 0) return undefined;
+
+    // In progress (or not every sample reported yet) → heartbeat.
+    const running = ctx.outputs.getIsReadyOrError() === false;
+    if (running || (total !== undefined && done < total)) {
+      const denom = total !== undefined ? String(total) : String(done);
+      return [`Processing… ${done} / ${denom} samples complete.`];
+    }
+    if (done === 0) return undefined;
+
+    // Run-level summary.
+    const rows = entries.map((e) => e.value as QcRow);
+    const num = (x: number | ""): number | undefined => (typeof x === "number" ? x : undefined);
+    const pct = (x: number) => `${Math.round(x * 100)}%`;
+    const nf = (x: number) => x.toLocaleString("en-US");
+
+    const readsTotal = rows.reduce((s, r) => s + (r.readsTotal ?? 0), 0);
+    const cellsTotal = rows.reduce((s, r) => s + (r.cellsDetected ?? 0), 0);
+    const features = Math.max(...rows.map((r) => r.featuresDetected ?? 0));
+    const matched = rows
+      .map((r) => r.matchedFraction)
+      .filter((x): x is number => typeof x === "number");
+    const assigned = rows
+      .map((r) => num(r.panelAssignedFraction))
+      .filter((x): x is number => x !== undefined);
+    const flagged = entries.filter((e) => {
+      const a = num((e.value as QcRow).panelAssignedFraction);
+      return (
+        (a !== undefined && a < PANEL_ASSIGNED_FLOOR) ||
+        ((e.value as QcRow).cellsDetected ?? 0) === 0
+      );
+    });
+
+    const medMatched = median(matched);
+    const medAssigned = median(assigned);
+    const lines: string[] = ["Feature Integration — analysis log", ""];
+    lines.push(`Processed ${done} sample${done === 1 ? "" : "s"}.`);
+    lines.push(
+      `Reads parsed: ${nf(readsTotal)} total` +
+        (medMatched !== undefined
+          ? ` · ${pct(medMatched)} matched the read pattern (median)`
+          : "") +
+        ".",
+    );
+    if (medAssigned !== undefined && assigned.length > 0) {
+      lines.push(
+        `Panel-assigned: ${pct(medAssigned)} of reads (median; range ${pct(Math.min(...assigned))}–${pct(Math.max(...assigned))}).`,
+      );
+    }
+    lines.push(`Cells detected: ${nf(cellsTotal)} · ${features} features.`);
+    lines.push("");
+    if (flagged.length > 0) {
+      const names = flagged.map((e) => labels?.[String(e.key[0])] ?? String(e.key[0]));
+      lines.push(
+        `${flagged.length} sample${flagged.length === 1 ? "" : "s"} flagged — panel-assigned fraction below ${pct(PANEL_ASSIGNED_FLOOR)} (or zero cells): ${names.join(", ")}.`,
+      );
+      lines.push("  See the QC page for per-sample detail.");
+    } else {
+      lines.push("No samples flagged.");
+    }
+    lines.push("", "Analysis complete. Full per-sample statistics are on the QC page.");
+    return lines;
+  })
   // DECISION (2026-07-01, operator): the front-end plan proposed splitting results into a per-cell
   // SUMMARY table [sampleId, cellId] (consensus + aggregates like total UMI / # features) and a
   // separate feature-MATRIX table [sampleId, cellId, featureId]. We deliberately keep ONE unified

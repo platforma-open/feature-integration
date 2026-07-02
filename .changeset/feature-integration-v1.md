@@ -97,11 +97,13 @@ Implement the feature-barcode workflow (plan Tasks 3–4).
   unaffected.
 - Mark the barcode-sequence and feature-name column dropdowns as `required` (red-star indicator),
   matching their `args()` validation — both must be set before Run enables.
-- Rework the logs into a single "Analysis logs": a wide (80%) slide-over showing one high-level
-  milestone narrative of the run instead of a box per tool step. qc_report.py (the last step, which
-  has every stage's numbers) prints the narrative — reads parsed, panel-assigned %, cells/features —
-  to stdout, and that stream is surfaced as the block's single analysis log; the raw per-step streams
-  are no longer shown in the UI. Detailed per-sample statistics stay on the QC page.
+- Rework the logs into a single "Analysis logs" (wide 80% slide-over) that scales to any sample count,
+  replacing the per-tool-step log boxes. While the run is in progress it shows a live
+  `Processing… N / M samples complete` heartbeat; when every sample finishes it shows a run-level
+  summary — reads parsed, panel-assigned % (median + range), cells/features, and any samples flagged
+  for a panel-assigned fraction below 50% (listed by name). qc_report.py now emits per-sample QC as
+  JSON (`qcJson`); the model reads it to build the log (completed-sample count + aggregate), with
+  sample names from the upstream label column. Detailed per-sample statistics stay on the QC page.
 
 ## Cell-barcode whitelist (added, then UI removed for v1)
 
