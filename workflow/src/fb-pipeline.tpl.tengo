@@ -223,7 +223,7 @@ self.body(func(inputs) {
 		arg("--feature-col").arg(tagPattern.FEATURE_TAG).
 		arg("--umi-col").arg("unique_" + tagPattern.UMI_TAG).
 		arg("--output").arg("result_qc.csv").saveFile("result_qc.csv").
-		saveFile("result_qc.json").
+		saveFileContent("result_qc.json").
 		printErrStreamToStdout().saveStdoutStream().run()
 
 	// Step 4: per-cell metrics (Python). sampleId is irrelevant here — processColumn prepends the
@@ -265,6 +265,6 @@ self.body(func(inputs) {
 		specificity: metrics.getFile("result_specificity.csv"),
 		tagstat: tagStat.getFile("tagstat.tsv"),
 		qc: qc.getFile("result_qc.csv"),
-		qcJson: qc.getFile("result_qc.json")
+		qcJson: qc.getFileContent("result_qc.json") // inline content (saveFileContent) so the model can read it
 	}
 })

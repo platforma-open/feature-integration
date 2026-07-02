@@ -216,6 +216,9 @@ export const platforma = BlockModelV3.create(dataModel)
       }
     }
     // Per-sample QC metrics; each entry appears as that sample's qc step finishes.
+    // qcJson is per-sample inline JSON content (workflow saveFileContent + getFileContent), so
+    // getDataAsJson reads it synchronously as the parsed row. (getDataAsJson on a saveFile'd file
+    // *handle* returns nothing — the block-dev gotcha; the inline-content pattern is what fixes it.)
     const qcMap = parseResourceMap(
       ctx.outputs.resolve("qcJson"),
       (acc) => acc.getDataAsJsonOrUndefined<QcRow>(),
