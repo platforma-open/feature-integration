@@ -19,16 +19,27 @@ software/**/*.tgz
 .vscode/sftp.json
 test-dry-run.json
 
-# Large manual-exploration datasets (regenerate with software/test-data/manual-run/generate.py).
-# The tiny CI fixtures in test/assets/ stay tracked; these do not.
-software/test-data/manual-run/
+# Manual / exploration test-data: track only the reproducible recipe — generators
+# (*.py), docs (*.md), and any non-regenerable harvested input (whitelist_cells.txt).
+# All generated data is ignored; regenerate with each dir's generator (see its README).
+# test/assets/ and software/test-data/feature-synthetic/ are used by automated tests
+# and stay fully tracked, so they are intentionally not listed here.
+software/test-data/manual-run/**
+!software/test-data/manual-run/**/
+!software/test-data/manual-run/**/*.py
+!software/test-data/manual-run/**/*.md
 
-# Multiomics manual-test synthetic data (regenerate with generate_multiomics.py)
-software/test-data/multiomics-run/
+software/test-data/feature-integration-synthetic/**
+!software/test-data/feature-integration-synthetic/**/
+!software/test-data/feature-integration-synthetic/**/*.py
+!software/test-data/feature-integration-synthetic/**/*.md
+!software/test-data/feature-integration-synthetic/whitelist_cells.txt
 
-# Realistic 2-donor antigen dataset (moved from local-artifacts; antigen arm for multiomics-run)
-software/test-data/feature-integration-synthetic/
+software/test-data/multiomics-run/**
+!software/test-data/multiomics-run/**/
+!software/test-data/multiomics-run/**/*.py
+!software/test-data/multiomics-run/**/*.md
 
-# Local working docs — not version-controlled
-docs/feature-integration-frontend-plan.md
-docs/cell-barcode-whitelist-correction.md
+# Local working docs / scratch — not version-controlled
+docs/superpowers/
+.meta/handover/
