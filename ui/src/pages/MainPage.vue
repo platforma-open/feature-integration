@@ -24,43 +24,16 @@ const tableSettings = usePlDataTableSettingsV2({
   model: () => app.model.outputs.perCellTable,
 });
 
-// Per-sample × per-step mitool/Python log streams (key = [sampleId, step]; value = log handle),
-// surfaced in a wide Logs slide-over. A sample selector shows one sample's steps at a time so a
-// many-sample run doesn't stack hundreds of log views.
-const logEntries = computed(() => app.model.outputs.stepLogs?.data ?? []);
-const logsOpen = ref(false);
-
-// Distinct sampleIds (key[0]) that produced logs, sorted for a stable dropdown.
-const logSamples = computed(() => {
-  const ids = new Set<string>();
-  for (const e of logEntries.value) ids.add(String(e.key[0]));
-  return [...ids].sort();
-});
-// sampleId (key[0]) is a hashed id; show the human label from the model when available.
-const sampleLabel = (id: string) => app.model.outputs.sampleLabels?.[id] ?? id;
-const sampleOptions = computed(() =>
-  logSamples.value.map((s) => ({ value: s, label: sampleLabel(s) })),
-);
-
-// Selected sample is local view state (a ref, never written to data — output→ref is not a hairpin).
-const selectedLogSample = ref<string>();
-function openLogs() {
-  if (
-    selectedLogSample.value === undefined ||
-    !logSamples.value.includes(selectedLogSample.value)
-  ) {
-    selectedLogSample.value = logSamples.value[0];
-  }
-  logsOpen.value = true;
-}
-
-// The selected sample's per-step logs, ordered by the "N-step" key prefix.
-const sampleStepLogs = computed(() =>
-  logEntries.value
-    .filter((e) => String(e.key[0]) === selectedLogSample.value)
+// Pipeline step log streams (workflow stepLogs, keyed [sampleId, step]; value = log handle), shown in
+// pipeline order as the run's progress in a wide Logs slide-over: the mitool steps render a progress
+// bar and the Python steps end with their summary stats. Detailed per-sample metrics live on the QC
+// page, not here. v1 maps a dataset to one sample (demux deferred), so there is no per-sample selector.
+const logEntries = computed(() =>
+  (app.model.outputs.stepLogs?.data ?? [])
     .slice()
     .sort((a, b) => String(a.key[1]).localeCompare(String(b.key[1]))),
 );
+const logsOpen = ref(false);
 
 // Human labels for the workflow step keys (see fb-pipeline.tpl.tengo stepLogs).
 const STEP_LABELS: Record<string, string> = {
@@ -89,7 +62,7 @@ const controlInfoVisible = computed(
   <PlBlockPage>
     <template #title>Feature Integration</template>
     <template #append>
-      <PlBtnGhost v-if="logEntries.length > 0" @click.stop="openLogs">Logs</PlBtnGhost>
+      <PlBtnGhost v-if="logEntries.length > 0" @click.stop="logsOpen = true">Logs</PlBtnGhost>
       <PlBtnGhost @click.stop="settingsOpen = true">Settings</PlBtnGhost>
     </template>
 
@@ -171,14 +144,8 @@ const controlInfoVisible = computed(
 
     <PlSlideModal v-model="logsOpen" width="80%">
       <template #title>Pipeline logs</template>
-      <PlDropdown
-        v-if="logSamples.length > 1"
-        v-model="selectedLogSample"
-        :options="sampleOptions"
-        label="Sample"
-      />
       <PlLogView
-        v-for="entry in sampleStepLogs"
+        v-for="entry in logEntries"
         :key="entry.key.join('/')"
         :label="stepLabel(String(entry.key[1]))"
         :log-handle="entry.value"
