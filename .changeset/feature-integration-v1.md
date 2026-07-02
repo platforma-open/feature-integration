@@ -97,6 +97,10 @@ Implement the feature-barcode workflow (plan Tasks 3–4).
   unaffected.
 - Mark the barcode-sequence and feature-name column dropdowns as `required` (red-star indicator),
   matching their `args()` validation — both must be set before Run enables.
+- Rework the pipeline logs view: a wide (80%) slide-over with a sample selector so a many-sample run
+  shows one sample's steps at a time instead of stacking every `[sampleId, step]` log. mitool steps
+  (parse/refine/tag-stat) now emit the `[==PROGRESS==]` marker (`MI_PROGRESS_PREFIX`) so `PlLogView`
+  renders a compact progress bar instead of a raw stream; step keys get human labels.
 
 ## Cell-barcode whitelist (added, then UI removed for v1)
 

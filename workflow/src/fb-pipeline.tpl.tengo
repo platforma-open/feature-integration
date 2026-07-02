@@ -135,7 +135,7 @@ self.body(func(inputs) {
 	parse := applyMitoolMem(exec.builder().
 		software(mitoolSw).
 		cpu(mitoolCPUs)).
-		env("MI_PROGRESS_PREFIX", "parse").
+		env("MI_PROGRESS_PREFIX", "[==PROGRESS==]").
 		arg("parse").
 		arg("--pattern").arg(pattern).
 		arg("--threads").argWithVar("{system.cpu}")
@@ -178,6 +178,7 @@ self.body(func(inputs) {
 	refine := applyMitoolMem(exec.builder().
 		software(mitoolSw).
 		cpu(mitoolCPUs)).
+		env("MI_PROGRESS_PREFIX", "[==PROGRESS==]").
 		arg("refine-tags").
 		arg("-t").arg(cellTag).
 		arg("-t").arg(tagPattern.FEATURE_TAG + "#file:panel.txt").
@@ -199,6 +200,7 @@ self.body(func(inputs) {
 		software(mitoolSw).
 		cpu(2).
 		memFormula(tagStatMemFormula, { fallback: string(tagStatBaseGB) + "GiB" }).
+		env("MI_PROGRESS_PREFIX", "[==PROGRESS==]").
 		arg("tag-stat").
 		arg("--use-local-temp").
 		arg("-t").arg(tagPattern.CELL_TAG).
