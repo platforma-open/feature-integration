@@ -261,3 +261,50 @@ def test_cli_with_control_writes_specificity(tagstat_tsv, tags_csv, tmp_path):
         cwd=tmp_path,
     )
     assert (tmp_path / "result_specificity.csv").exists()
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "tagstat_body",
+    [
+        "cellX\tTTTT\t5\t5\t3\n",  # a real tag-stat row whose feature barcode is off-panel (not in tags.csv)
+        "",  # a tag-stat with no rows at all (header only)
+    ],
+    ids=["off-panel-rows", "header-only"],
+)
+def test_cli_empty_join_writes_header_only_not_crash(tags_csv, tmp_path, tagstat_body):
+    # Regression: when no (cell, feature) pair survives the tag->feature join -- a wrong read geometry,
+    # or a sample with no on-panel reads -- the run must still emit all four CSVs header-only, never
+    # crash. --control exercises the specificity write too: it and consensus both build from Python
+    # row-lists, the two sites that died on pl.DataFrame([]).sort() (ColumnNotFoundError) before the fix.
+    tagstat = tmp_path / "tagstat.tsv"
+    tagstat.write_text("CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\n" + tagstat_body)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(SRC),
+            str(tagstat),
+            str(tags_csv),
+            "--sample-id",
+            "s1",
+            "--control",
+            "CTRL",
+            "--output-prefix",
+            str(tmp_path / "result"),
+        ],
+        check=True,  # the old crash exited non-zero -> this would fail here
+        cwd=tmp_path,
+    )
+    for name, header in [
+        ("result_abundance.csv", ["sampleId", "cellId", "feature", "umiCount"]),
+        ("result_fractions.csv", ["sampleId", "cellId", "feature", "fraction"]),
+        ("result_consensus.csv", ["sampleId", "cellId", "consensusFeature"]),
+        ("result_specificity.csv", ["sampleId", "cellId", "feature", "specificityScore"]),
+    ]:
+        p = tmp_path / name
+        assert p.exists(), f"missing {name}"
+        with open(p, newline="") as f:
+            reader = csv.DictReader(f)
+            assert reader.fieldnames == header  # schema/header preserved
+            assert list(reader) == []  # zero data rows (empty result)

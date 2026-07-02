@@ -18,6 +18,20 @@ from scipy.stats import beta
 
 DOMINANCE_FLOOR = 0.5  # spec A-0012: threshold is user-adjustable down to 0.5, never lower
 
+# Output CSV schemas, passed explicitly to pl.DataFrame at every write. consensus and specificity are
+# built from Python lists (row dicts), so an empty result -- no cells survive the tag->feature join,
+# e.g. a wrong read geometry or a sample with no on-panel reads -- yields pl.DataFrame([]), which is
+# schema-less; the following .sort() then raises ColumnNotFoundError and fails the whole per-sample
+# run. With an explicit schema the empty case writes a header-only CSV instead, matching how the
+# schema-bearing abundance/fractions frames already behave. Non-empty output is unchanged.
+_CONSENSUS_SCHEMA = {"sampleId": pl.Utf8, "cellId": pl.Utf8, "consensusFeature": pl.Utf8}
+_SPECIFICITY_SCHEMA = {
+    "sampleId": pl.Utf8,
+    "cellId": pl.Utf8,
+    "feature": pl.Utf8,
+    "specificityScore": pl.Float64,
+}
+
 
 def consensus_category(counts: dict[str, float], threshold: float) -> str | None:
     """Dominant-category rule (spec A-0012).
@@ -67,6 +81,11 @@ def _load(
     regardless of the source CSV's header, since downstream Xsv import depends on that name.
     """
     stat = pl.read_csv(tag_stat_tsv, separator="\t")
+    # A header-only tag-stat (a sample whose reads were all dropped -- e.g. every read off-panel) has no
+    # data rows, so polars infers every column as String. Coerce the UMI-count column to a numeric type
+    # up front, otherwise the downstream fraction division fails on String arithmetic. On a populated
+    # file the column is already integer and this cast is a no-op.
+    stat = stat.with_columns(pl.col(umi_count_col).cast(pl.Int64))
     mapping = pl.read_csv(tag_feature_csv)  # columns: csv_barcode_col (feature barcode), csv_feature_col
     print(
         f"[per-cell-metrics] tag-stat: {stat.height} rows, columns={stat.columns}",
@@ -184,7 +203,9 @@ def main() -> None:
                 "consensusFeature": consensus_category(per_feature, args.dominance_threshold),
             }
         )
-    pl.DataFrame(consensus_rows).sort(["sampleId", "cellId"]).write_csv(f"{args.output_prefix}_consensus.csv")
+    pl.DataFrame(consensus_rows, schema=_CONSENSUS_SCHEMA).sort(["sampleId", "cellId"]).write_csv(
+        f"{args.output_prefix}_consensus.csv"
+    )
 
     # optional specificity score per (cell, feature) vs the negative control
     if args.control is not None:
@@ -201,21 +222,14 @@ def main() -> None:
             }
             for r in spec.iter_rows(named=True)
         ]
-        pl.DataFrame(spec_rows).sort(["sampleId", "cellId", "feature"]).write_csv(
+        pl.DataFrame(spec_rows, schema=_SPECIFICITY_SCHEMA).sort(["sampleId", "cellId", "feature"]).write_csv(
             f"{args.output_prefix}_specificity.csv"
         )
     else:
         # No negative control: still emit an (empty, header-only) specificity CSV so the workflow's
         # fixed output set is satisfied. It is not imported when no control is set (main.tpl and the
         # model gate the specificity column on hasControl).
-        pl.DataFrame(
-            schema={
-                "sampleId": pl.Utf8,
-                "cellId": pl.Utf8,
-                "feature": pl.Utf8,
-                "specificityScore": pl.Float64,
-            }
-        ).write_csv(f"{args.output_prefix}_specificity.csv")
+        pl.DataFrame(schema=_SPECIFICITY_SCHEMA).write_csv(f"{args.output_prefix}_specificity.csv")
 
 
 if __name__ == "__main__":
