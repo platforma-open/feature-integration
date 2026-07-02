@@ -23,7 +23,6 @@ const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
   umiLen: 10,
   featureLen: 15,
   cellWhitelist: "", // de-novo CELL correction by default (spec A-0018 defers the scheme)
-  controlInfoDismissed: false,
   defaultBlockLabel: "",
   tableState: createPlDataTableStateV2(),
   tagstatTableState: createPlDataTableStateV2(),
@@ -229,7 +228,7 @@ export const platforma = BlockModelV3.create(dataModel)
   // string is derived in the `suggestedBlockLabel` OUTPUT (which HAS the pool) and copied into
   // `defaultBlockLabel` by a UI watchEffect (the sanctioned block-label pattern). The subtitle only
   // reads `ctx.data`. Guard `ctx.data` — it can be undefined before block storage is parsed.
-  .subtitle((ctx) => ctx.data?.defaultBlockLabel || "Feature-barcode → per-cell antigen counts")
+  .subtitle((ctx) => ctx.data?.defaultBlockLabel || "Feature-barcode - per-cell antigen counts")
   .sections(() => [
     { type: "link" as const, href: "/" as const, label: "Main" },
     { type: "link" as const, href: "/qc" as const, label: "Per-sample QC" },

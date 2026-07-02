@@ -29,19 +29,11 @@ const tableSettings = usePlDataTableSettingsV2({
 const logEntries = computed(() => app.model.outputs.stepLogs?.data ?? []);
 const logsOpen = ref(false);
 
-// No-negative-control info banner — TEMPORARILY DISABLED (MILAB-6496; restore later).
-// Shown when results exist and no control is set, until the user dismisses it (persisted in data).
-/*
+// No-negative-control info note in the Settings drawer: appears once the tag-feature CSV is added,
+// and hides as soon as a negative control feature is selected.
 const controlInfoVisible = computed(
-  () =>
-    app.model.outputs.perCellTable !== undefined &&
-    !app.model.data.controlFeature &&
-    !app.model.data.controlInfoDismissed,
+  () => !!app.model.data.tagFeatureCsvHandle && !app.model.data.controlFeature,
 );
-function dismissControlInfo() {
-  app.model.data.controlInfoDismissed = true;
-}
-*/
 </script>
 
 <template>
@@ -51,20 +43,6 @@ function dismissControlInfo() {
       <PlBtnGhost v-if="logEntries.length > 0" @click.stop="logsOpen = true">Logs</PlBtnGhost>
       <PlBtnGhost @click.stop="settingsOpen = true">Settings</PlBtnGhost>
     </template>
-
-    <!-- No-negative-control info banner — TEMPORARILY DISABLED (MILAB-6496; restore later).
-    <PlAlert
-      v-if="controlInfoVisible"
-      type="info"
-      closeable
-      @update:model-value="dismissControlInfo"
-    >
-      No negative control selected — specificity scores are not computed. Pick a "Negative-control
-      feature" in Settings to add them. Consensus feature shows the assigned antigen,
-      <b>ambiguous</b> when no feature passes the dominance threshold, and is empty when the cell
-      has no feature signal.
-    </PlAlert>
-    -->
 
     <PlAgDataTableV2
       v-if="app.model.outputs.perCellTable"
@@ -91,14 +69,12 @@ function dismissControlInfo() {
         required
       />
       <PlDropdown
-        v-if="app.model.data.tagFeatureCsvHandle"
         v-model="app.model.data.barcodeSeqColumn"
         :options="app.model.outputs.csvColumnOptions"
         label="Barcode sequence column"
         required
       />
       <PlDropdown
-        v-if="app.model.data.tagFeatureCsvHandle"
         v-model="app.model.data.featureNameColumn"
         :options="app.model.outputs.csvColumnOptions"
         label="Feature name column"
@@ -109,6 +85,9 @@ function dismissControlInfo() {
         :options="app.model.outputs.controlOptions"
         label="Negative control feature (optional)"
       />
+      <PlAlert v-if="controlInfoVisible" type="info">
+        Specificity scores will not be computed without a negative control feature
+      </PlAlert>
       <!-- Less-common params: dominance threshold + read geometry (DP-1: 10x 5' v2 defaults). -->
       <PlAccordionSection label="Advanced Settings">
         <PlNumberField
