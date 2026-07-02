@@ -84,6 +84,7 @@ const controlInfoVisible = computed(
         v-model="app.model.data.controlFeature"
         :options="app.model.outputs.controlOptions"
         label="Negative control feature (optional)"
+        clearable
       />
       <PlAlert v-if="controlInfoVisible" type="info">
         Specificity scores will not be computed without a negative control feature

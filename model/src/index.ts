@@ -81,7 +81,7 @@ export const platforma = BlockModelV3.create(dataModel)
       );
     }),
   )
-  // Suggested block label for the sidebar subtitle: "<dataset> · <barcode> → <feature>", derived from
+  // Suggested block label for the sidebar subtitle: "<dataset> · <barcode> - <feature>", derived from
   // the current inputs. Computed here (not in .subtitle) because the subtitle context has no result
   // pool; a UI watchEffect copies this into data.defaultBlockLabel. Each part is dropped until set.
   .output("suggestedBlockLabel", (ctx): string | undefined => {
@@ -102,7 +102,7 @@ export const platforma = BlockModelV3.create(dataModel)
       if (label) parts.push(label);
     }
     if (ctx.data?.barcodeSeqColumn && ctx.data?.featureNameColumn) {
-      parts.push(`${ctx.data.barcodeSeqColumn} → ${ctx.data.featureNameColumn}`);
+      parts.push(`${ctx.data.barcodeSeqColumn} - ${ctx.data.featureNameColumn}`);
     }
     return parts.length > 0 ? parts.join(" · ") : undefined;
   })
@@ -224,7 +224,7 @@ export const platforma = BlockModelV3.create(dataModel)
   )
   .title(() => "Feature Integration")
   // Standard block-label subtitle. The subtitle render context is args-only (no result pool / outputs
-  // — touching them renders "Invalid subtitle"), so the dynamic "<dataset> · <barcode> → <feature>"
+  // — touching them renders "Invalid subtitle"), so the dynamic "<dataset> · <barcode> - <feature>"
   // string is derived in the `suggestedBlockLabel` OUTPUT (which HAS the pool) and copied into
   // `defaultBlockLabel` by a UI watchEffect (the sanctioned block-label pattern). The subtitle only
   // reads `ctx.data`. Guard `ctx.data` — it can be undefined before block storage is parsed.
