@@ -29,8 +29,9 @@ const tableSettings = usePlDataTableSettingsV2({
 const logEntries = computed(() => app.model.outputs.stepLogs?.data ?? []);
 const logsOpen = ref(false);
 
-// No-negative-control info banner: shown when results exist and no control is set, until the user
-// dismisses it (dismissal persisted in data so it stays hidden).
+// No-negative-control info banner — TEMPORARILY DISABLED (MILAB-6496; restore later).
+// Shown when results exist and no control is set, until the user dismisses it (persisted in data).
+/*
 const controlInfoVisible = computed(
   () =>
     app.model.outputs.perCellTable !== undefined &&
@@ -40,6 +41,7 @@ const controlInfoVisible = computed(
 function dismissControlInfo() {
   app.model.data.controlInfoDismissed = true;
 }
+*/
 </script>
 
 <template>
@@ -50,6 +52,7 @@ function dismissControlInfo() {
       <PlBtnGhost @click.stop="settingsOpen = true">Settings</PlBtnGhost>
     </template>
 
+    <!-- No-negative-control info banner — TEMPORARILY DISABLED (MILAB-6496; restore later).
     <PlAlert
       v-if="controlInfoVisible"
       type="info"
@@ -61,6 +64,7 @@ function dismissControlInfo() {
       <b>ambiguous</b> when no feature passes the dominance threshold, and is empty when the cell
       has no feature signal.
     </PlAlert>
+    -->
 
     <PlAgDataTableV2
       v-if="app.model.outputs.perCellTable"
