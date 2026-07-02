@@ -33,6 +33,7 @@ export type BlockData = {
   featureLen: number;
   cellWhitelist?: string; // optional (defaults to "" = de-novo); see BlockArgs.cellWhitelist
   controlInfoDismissed?: boolean; // UI-only: user dismissed the no-negative-control info banner
+  defaultBlockLabel?: string; // UI-only: sidebar subtitle, mirrored from the suggestedBlockLabel output
   tableState: PlDataTableStateV2; // per-cell results grid state (UI-only, never projected to args)
   tagstatTableState: PlDataTableStateV2; // raw tag-stat QC grid state (UI-only)
   qcSummaryTableState: PlDataTableStateV2; // per-sample QC summary grid state (UI-only)

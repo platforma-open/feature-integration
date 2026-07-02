@@ -24,6 +24,7 @@ const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
   featureLen: 15,
   cellWhitelist: "", // de-novo CELL correction by default (spec A-0018 defers the scheme)
   controlInfoDismissed: false,
+  defaultBlockLabel: "",
   tableState: createPlDataTableStateV2(),
   tagstatTableState: createPlDataTableStateV2(),
   qcSummaryTableState: createPlDataTableStateV2(),
@@ -76,6 +77,31 @@ export const platforma = BlockModelV3.create(dataModel)
       );
     }),
   )
+  // Suggested block label for the sidebar subtitle: "<dataset> · <barcode> → <feature>", derived from
+  // the current inputs. Computed here (not in .subtitle) because the subtitle context has no result
+  // pool; a UI watchEffect copies this into data.defaultBlockLabel. Each part is dropped until set.
+  .output("suggestedBlockLabel", (ctx): string | undefined => {
+    const parts: string[] = [];
+    const ref = ctx.data?.fbFastqRef;
+    if (ref) {
+      const label = ctx.resultPool
+        .getOptions((spec) => {
+          if (!isPColumnSpec(spec)) return false;
+          const ext = spec.domain?.["pl7.app/fileExtension"];
+          return (
+            spec.name === "pl7.app/sequencing/data" &&
+            (spec.valueType as string) === "File" &&
+            (ext === "fastq" || ext === "fastq.gz")
+          );
+        })
+        .find((o) => o.ref.blockId === ref.blockId && o.ref.name === ref.name)?.label;
+      if (label) parts.push(label);
+    }
+    if (ctx.data?.barcodeSeqColumn && ctx.data?.featureNameColumn) {
+      parts.push(`${ctx.data.barcodeSeqColumn} → ${ctx.data.featureNameColumn}`);
+    }
+    return parts.length > 0 ? parts.join(" · ") : undefined;
+  })
   // Negative-control dropdown options: the feature/antigen names parsed from the uploaded tag→feature
   // CSV (spec A-0014). The prerun (staging) emit-features step writes them as a JSON array; staging
   // auto-reruns on CSV change so the list stays current without a Run. Empty until the CSV is uploaded
@@ -193,12 +219,12 @@ export const platforma = BlockModelV3.create(dataModel)
     { retentive: true, withStatus: true },
   )
   .title(() => "Feature Integration")
-  // Dynamic, pure-from-data subtitle (no block-label hairpin): reflects the current control choice.
-  .subtitle((ctx) =>
-    ctx.data.controlFeature
-      ? `Control: ${ctx.data.controlFeature}`
-      : "Feature-barcode → per-cell antigen counts",
-  )
+  // Standard block-label subtitle. The subtitle render context is args-only (no result pool / outputs
+  // — touching them renders "Invalid subtitle"), so the dynamic "<dataset> · <barcode> → <feature>"
+  // string is derived in the `suggestedBlockLabel` OUTPUT (which HAS the pool) and copied into
+  // `defaultBlockLabel` by a UI watchEffect (the sanctioned block-label pattern). The subtitle only
+  // reads `ctx.data`. Guard `ctx.data` — it can be undefined before block storage is parsed.
+  .subtitle((ctx) => ctx.data?.defaultBlockLabel || "Feature-barcode → per-cell antigen counts")
   .sections(() => [
     { type: "link" as const, href: "/" as const, label: "Main" },
     { type: "link" as const, href: "/qc" as const, label: "Per-sample QC" },
