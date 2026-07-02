@@ -201,7 +201,8 @@ export const platforma = BlockModelV3.create(dataModel)
   )
   .sections(() => [
     { type: "link" as const, href: "/" as const, label: "Main" },
-    { type: "link" as const, href: "/qc" as const, label: "QC" },
+    { type: "link" as const, href: "/qc" as const, label: "Per-sample QC" },
+    { type: "link" as const, href: "/tagstat" as const, label: "Raw tag-stat" },
   ])
   .done();
 

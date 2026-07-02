@@ -1,7 +1,8 @@
 import { platforma } from "@platforma-open/milaboratories.feature-integration.model";
 import { defineAppV3 } from "@platforma-sdk/ui-vue";
 import MainPage from "./pages/MainPage.vue";
-import QcPage from "./pages/QcPage.vue";
+import QcSummaryPage from "./pages/QcSummaryPage.vue";
+import TagstatPage from "./pages/TagstatPage.vue";
 
 export const sdkPlugin = defineAppV3(platforma, (app) => {
   return {
@@ -9,7 +10,8 @@ export const sdkPlugin = defineAppV3(platforma, (app) => {
     progress: () => app.model.outputs.isRunning,
     routes: {
       "/": () => MainPage,
-      "/qc": () => QcPage,
+      "/qc": () => QcSummaryPage,
+      "/tagstat": () => TagstatPage,
     },
   };
 });
