@@ -176,9 +176,16 @@ de-novo and the option is chemistry-labelled.
 
 ## 8. Open questions / verification
 
-- **Confirm which built-in mixcr-clonotyping's 10x preset applies for the target chemistry**, so FI's
-  recommended selection points at the identical list. (Traced FI→mitool→737K; the mixcr-preset→mitool
-  link is inferred, not fully traced.) [TODO]
+- **Confirm which built-in mixcr-clonotyping's 10x preset applies for the target chemistry** —
+  **[CONFIRMED 2026-07-02]**. mixcr's 10x 5′ presets (`10x-vdj-tcr` for BEAM-T, `10x-vdj-bcr` for
+  BEAM-Ab, `10x-sc-xcr-vdj`, and the `10x-5gex-*` GEX presets) run mitool as their first pipeline
+  stages (`mitool-parse → mitool-refine-tags → mitool-consensus`); the `mitool.refineTags` step sets
+  `whitelists: {CELL: builtin:737K-august-2016}` — identical to FI's `refine-tags -t
+  CELL#builtin:737K-august-2016` and to mitool's `10x_default`. mixcr's own `refineTagsAndSort` sets
+  `whitelists: {}` with `dontCorrectTagsTypes: [Cell, Molecule]`, so it delegates cell-barcode
+  correction entirely to mitool. Same tool, same list, same 16+10 geometry (mixcr tag pattern
+  `^(CELL:N{16})(UMI:N{10})\^(R2:*)`) ⇒ FI↔VDJ cellIds match by construction once FI's seam is set to
+  `737K-august-2016`. Source: mixcr `regression/presets/analyze/10x-vdj-tcr.yaml` @ develop.
 - **Smoke-test `refine-tags -t CELL#builtin:737K-august-2016`** on the BEAM-T antigen library —
   **[DONE 2026-07-01]**. 200k antigen reads (5k_BEAM-T 5′ v2, L001) parsed 100% (geometry confirmed:
   CELL 16 @ 0, UMI 10 @ 16, FEATURE 15 @ R2 0). `refine-tags` with `-t CELL#builtin:737K-august-2016`
@@ -196,5 +203,6 @@ de-novo and the option is chemistry-labelled.
   correction deferred), A-0004 (tag CSV authoritative), A-0016 (mitool).
 - mitool built-ins: `tools/mitool/.../pattern/SequenceSetCollection.kt`,
   `tools/mitool/.../resources/mitool_presets.yaml` (`CELL: builtin:737K-august-2016`).
-- Prior evaluation: `docs/cell-barcode-whitelist-correction.md` (local, gitignored).
+- Prior evaluation: the local "Option D" doc (removed; its defer-to-de-novo recommendation is
+  superseded by this plan and folded into BEAM spec A-0018).
 - Empirical verification: 10x public dataset `5k_BEAM-T_Human_A0201_B0702_PBMC_5pv2`.

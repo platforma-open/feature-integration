@@ -107,8 +107,8 @@ Implement the feature-barcode workflow (plan Tasks 3–4).
   the others carried footguns (whitelist/UMI-length could disagree; non-5'v2 VDJ-side alignment
   unconfirmed). Aligning cell barcodes across producers is a chain-level concern to revisit once the
   downstream join is verified end to end. The `#builtin:` workflow/model plumbing is kept dormant
-  (`cellWhitelist` stays `""`) as a documented seam. See `docs/cell-whitelist-correction-plan.md` and
-  `docs/cell-calling-and-ambient-barcodes.md`.
+  (`cellWhitelist` stays `""`) as a documented seam. See
+  `docs/dormant-features/cell-whitelist-correction-plan.md`.
 
 ## Robustness / performance / fixes
 
