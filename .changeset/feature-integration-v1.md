@@ -99,7 +99,8 @@ Implement the feature-barcode workflow (plan Tasks 3–4).
   matching their `args()` validation — both must be set before Run enables.
 - Rework the logs into a single "Analysis logs" (wide 80% slide-over) that scales to any sample count,
   replacing the per-tool-step log boxes. While the run is in progress it shows a live
-  `Processing… N / M samples complete` heartbeat; when every sample finishes it shows a run-level
+  `Processing… N samples complete` count (no fixed denominator — the block only processes the samples
+  present in its feature-barcode dataset, not every project sample); when the run finishes it shows a run-level
   summary — reads parsed, panel-assigned % (median + range), cells/features, and any samples flagged
   for a panel-assigned fraction below 50% (listed by name). qc_report.py now emits per-sample QC as
   JSON (`qcJson`); the model reads it to build the log (completed-sample count + aggregate), with

@@ -12,12 +12,20 @@ import {
   PlSlideModal,
   usePlDataTableSettingsV2,
 } from "@platforma-sdk/ui-vue";
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useApp } from "../app";
 
 const app = useApp();
 // Auto-open Settings for a fresh block (no FASTQ chosen yet); stay closed once configured.
 const settingsOpen = ref(app.model.data.fbFastqRef === undefined);
+// Close the Settings drawer once a run starts. Watching an output → writing a local ref is not a
+// hairpin (no write to server-stored data).
+watch(
+  () => app.model.outputs.isRunning,
+  (running) => {
+    if (running) settingsOpen.value = false;
+  },
+);
 
 const tableSettings = usePlDataTableSettingsV2({
   model: () => app.model.outputs.perCellTable,
@@ -122,19 +130,7 @@ const controlInfoVisible = computed(
 
     <PlSlideModal v-model="logsOpen" width="80%">
       <template #title>Analysis logs</template>
-      <pre class="analysis-log">{{ analysisLog.join("\n") }}</pre>
+      <pre>{{ analysisLog.join("\n") }}</pre>
     </PlSlideModal>
   </PlBlockPage>
 </template>
-
-<style scoped>
-.analysis-log {
-  margin: 0;
-  padding: 12px 16px;
-  font-family: var(--pl-mono-font-family, monospace);
-  font-size: 13px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-</style>

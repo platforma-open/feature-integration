@@ -175,7 +175,7 @@ export const platforma = BlockModelV3.create(dataModel)
   .output("isRunning", (ctx) => ctx.outputs?.getIsReadyOrError() === false)
   // The block's single "Analysis logs" (lines shown in the UI's wide slide-over), built from the
   // per-sample QC JSON (qcJson), which settles incrementally as each sample's qc step finishes:
-  //   • while the run is in progress → a completed-sample heartbeat ("Processing… N / M samples");
+  //   • while the run is in progress → a live count of samples finished so far ("Processing… N …");
   //   • when every sample is done   → a run-level summary (aggregate reads/panel-assigned/cells +
   //     any samples flagged for a panel-assigned fraction below PANEL_ASSIGNED_FLOOR, by name).
   // One area regardless of sample count; detailed per-sample stats live on the QC page (qcSummaryTable).
@@ -215,8 +215,6 @@ export const platforma = BlockModelV3.create(dataModel)
         }
       }
     }
-    const total = labels ? Object.keys(labels).length : undefined;
-
     // Per-sample QC metrics; each entry appears as that sample's qc step finishes.
     const qcMap = parseResourceMap(
       ctx.outputs.resolve("qcJson"),
@@ -225,14 +223,16 @@ export const platforma = BlockModelV3.create(dataModel)
     );
     const entries = (qcMap?.data ?? []).filter((e) => e.value != null);
     const done = entries.length;
-
-    if (total === undefined && done === 0) return undefined;
-
-    // In progress (or not every sample reported yet) → heartbeat.
     const running = ctx.outputs.getIsReadyOrError() === false;
-    if (running || (total !== undefined && done < total)) {
-      const denom = total !== undefined ? String(total) : String(done);
-      return [`Processing… ${done} / ${denom} samples complete.`];
+
+    // While the run is in progress → a live count of samples finished so far. No fixed denominator:
+    // the block only processes the samples present in its feature-barcode dataset, which isn't reliably
+    // known until the run completes (a project-wide sample total would over-count and make a finished
+    // run look stuck). On a crash the count freezes at how far it got, next to the block's error state.
+    if (running) {
+      return done === 0
+        ? ["Processing…"]
+        : [`Processing… ${done} sample${done === 1 ? "" : "s"} complete.`];
     }
     if (done === 0) return undefined;
 
