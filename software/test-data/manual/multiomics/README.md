@@ -1,14 +1,14 @@
 # Full BEAM-Ab multiomics manual run — data + per-block settings
 
 End-to-end manual test of the BEAM-Ab single-cell multiomics pipeline on **coherent synthetic data**
-(the `realistic` profile, calibrated to a real 5k BEAM-T dataset — see `../feature-integration-synthetic/real-data-calibration.md`).
+(the `realistic` profile, calibrated to a real 5k BEAM-T dataset — see `../antigen/real-data-calibration.md`).
 
 **Pipeline:** `samples-and-data` → three parallel arms (**antigen** `feature-integration`, **VDJ**
 `import-vdj-data`, **GEX** `import-sc-rnaseq-data` + `cell-type-annotation`) → **`vdj-multiomic-integration`**
 (convergence) → **`antibody-tcr-lead-selection`** (payoff).
 
 All data here is **gitignored** and reproducible from the generators (`generate_vdj.py`, `generate_gex.py`,
-+ `../feature-integration-synthetic/generate.py`); validate with `validate_multiomics.py`.
++ `../antigen/generate.py`); validate with `validate_multiomics.py`.
 
 ---
 
@@ -67,18 +67,18 @@ per donor:
 
 | Arm | Dataset type in Samples & Data | per-donor file (`donor01`…`donorNN`) |
 |---|---|---|
-| **Antigen** | Fastq (R1, R2; gzipped) | `../feature-integration-synthetic/realistic/donorNN_R{1,2}.fastq.gz` |
+| **Antigen** | Fastq (R1, R2; gzipped) | `../antigen/realistic/donorNN_R{1,2}.fastq.gz` |
 | **VDJ** | Table / Xsv (**tsv**) | `vdj/realistic/donorNN_airr_sc.tsv` |
 | **GEX** | Table / Xsv (**csv**) | `gex/realistic/donorNN_counts.csv` |
 
 > The 24×2000 default is a big manual upload — for a hand run, regenerate at a smaller scale first
-> (e.g. `python3 ../feature-integration-synthetic/generate.py --profile realistic --samples 2
+> (e.g. `python3 ../antigen/generate.py --profile realistic --samples 2
 > --cells-per-sample 80`, then the VDJ/GEX arms), which is closer to the old 2-donor bed.
 
 Supporting files (uploaded inside a block, not as a Samples & Data dataset):
-- **Tag → feature panel CSV** (Feature Integration upload): `../feature-integration-synthetic/realistic/tags.csv`
+- **Tag → feature panel CSV** (Feature Integration upload): `../antigen/realistic/tags.csv`
   — `--panel-size` antigens + `negative_control` (default 65 rows; first 4 are the real anchors).
-- **Sample metadata (optional)**: `../feature-integration-synthetic/realistic/samples-metadata.tsv`
+- **Sample metadata (optional)**: `../antigen/realistic/samples-metadata.tsv`
   (`Sample / Donor / Condition`). Import in Samples & Data only if you want grouping labels downstream —
   the pipeline and the join do **not** need it.
 
@@ -98,7 +98,7 @@ Supporting files (uploaded inside a block, not as a Samples & Data dataset):
 | Setting | Value |
 |---|---|
 | Feature-barcode FASTQ | Dataset 1 (Fastq) |
-| Tag → feature CSV (upload) | `../feature-integration-synthetic/realistic/tags.csv` |
+| Tag → feature CSV (upload) | `../antigen/realistic/tags.csv` |
 | Negative-control feature | `negative_control` (dropdown is populated from the CSV) — enables specificity scoring |
 | Advanced → Dominance threshold | `0.6` |
 | Advanced → Cell / UMI / Feature length | `16` / `10` / `15` |
@@ -187,14 +187,14 @@ clones per donor, each binding one antigen — plus minor/ambiguous clones. The 
 previews, and the binder-vs-naive plasma means for the current scale (they scale with
 `--samples`/`--panel-size`/`--cells-per-sample`, so don't hardcode them). Ground-truth files:
 `vdj/realistic/truth_clonotypes.csv` (clone → target antigen), `gex/realistic/truth_cells_gex.csv`,
-`../feature-integration-synthetic/realistic/expected-consensus.tsv`.
+`../antigen/realistic/expected-consensus.tsv`.
 
 ---
 
 ## Offline validation (no backend)
 
 ```bash
-# antigen (in ../feature-integration-synthetic/) — scale flags optional (defaults 24/64/2000)
+# antigen (in ../antigen/) — scale flags optional (defaults 24/64/2000)
 python3 generate.py --profile realistic
 # arms (here) — no scale flags; they follow the antigen arm automatically
 python3 generate_vdj.py --realistic && python3 generate_gex.py --realistic
@@ -217,13 +217,13 @@ the data.
 The guide above uses the `realistic` profile (random barcodes; run with cell whitelist = None). To
 exercise the **cell-barcode whitelist** end to end, use the **`whitelist737k`** profile instead: its cell
 barcodes are **real `737K-august-2016` members** — sampled from the full 10x inclusion list
-(`../feature-integration-synthetic/737K-august-2016.txt`, fetched on demand; falls back to the harvested
+(`../antigen/737K-august-2016.txt`, fetched on demand; falls back to the harvested
 `whitelist_cells.txt` pool) — plus a realistic **ambient off-list read tail**, so the whitelist does real
 work.
 
 Generate it:
 ```bash
-# antigen (in ../feature-integration-synthetic/) — same scale flags as realistic
+# antigen (in ../antigen/) — same scale flags as realistic
 python3 generate.py --profile whitelist737k
 # arms (here)
 python3 generate_vdj.py --profile whitelist737k && python3 generate_gex.py --profile whitelist737k
@@ -232,7 +232,7 @@ python3 validate_multiomics.py --profile whitelist737k     # → ALL PASS
 
 Run it exactly like the guide above, with two changes:
 - **Data paths** use `whitelist737k/` in place of `realistic/` (antigen
-  `../feature-integration-synthetic/whitelist737k/…`, VDJ `vdj/whitelist737k/…`, GEX `gex/whitelist737k/…`).
+  `../antigen/whitelist737k/…`, VDJ `vdj/whitelist737k/…`, GEX `gex/whitelist737k/…`).
 - **Feature Integration → Advanced → Cell barcode whitelist = `737K-august-2016`** (not None).
 
 What it demonstrates (verified offline with mitool 2.3.1-131-main): `refine-tags

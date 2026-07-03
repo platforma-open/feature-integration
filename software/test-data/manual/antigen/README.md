@@ -2,8 +2,8 @@
 
 Realistic synthetic **antigen-capture (feature-barcode)** reads for driving the `feature-integration`
 block by hand — standalone (this doc) or as the antigen arm of the full multiomics run
-(`../multiomics-run/README.md`). Gitignored; regenerate with `python3 generate.py` (stdlib only, seeded →
-reproducible). This is the **canonical** FI-standalone test bed (it supersedes the older `../manual-run/`,
+(`../multiomics/README.md`). Gitignored; regenerate with `python3 generate.py` (stdlib only, seeded →
+reproducible). This is the **canonical** FI-standalone test bed (it supersedes the older `../panel-swap/`,
 whose panel-swap fixtures are still referenced below).
 
 ## What it models
@@ -127,7 +127,7 @@ The **cell** barcode has two modes (Advanced → "Cell barcode whitelist (10x)")
   reads), so `scenarios/errors/expected-abundance.tsv` is the *ideal*; the de-novo output shows extras.
 - **A 10x built-in** (e.g. `737K-august-2016`) — snaps cells to that real 10x list; off-list barcodes
   drop. This makes cellIds match the VDJ producer by construction (see
-  `../../../docs/dormant-features/cell-whitelist-correction-plan.md`; smoke-tested on real BEAM-T: ~9% off-list tail dropped,
+  `../../../../docs/dormant-features/cell-whitelist-correction-plan.md`; smoke-tested on real BEAM-T: ~9% off-list tail dropped,
   ~98% of records kept). The `default`/`realistic` fixtures use **random** barcodes → keep this **`None`**
   for them (a whitelist would drop every cell). To exercise the whitelist, use the **`whitelist737k`**
   profile (real 737K barcodes + ambient tail) with whitelist = **`737K-august-2016`** — it keeps the
@@ -159,17 +159,17 @@ The **cell** barcode has two modes (Advanced → "Cell barcode whitelist (10x)")
 
 ### Exploration matrix (panel-swap effects)
 
-Re-upload a different panel CSV and re-run to see whitelist/merge behavior. The older `../manual-run/panels/`
+Re-upload a different panel CSV and re-run to see whitelist/merge behavior. The older `../panel-swap/panels/`
 fixtures are handy here (7/6/3-feature synthetic panels):
 
 | Panel | What it demonstrates |
 |---|---|
-| `../manual-run/panels/panel_full.csv` (7 features) | baseline; all features present |
-| `../manual-run/panels/panel_merged.csv` (6) | two barcodes → one feature name (mitool sums them) |
-| `../manual-run/panels/panel_core.csv` (3) | whitelist filtering: dropped antigens' reads vanish → fewer/emptier cells |
+| `../panel-swap/panels/panel_full.csv` (7 features) | baseline; all features present |
+| `../panel-swap/panels/panel_merged.csv` (6) | two barcodes → one feature name (mitool sums them) |
+| `../panel-swap/panels/panel_core.csv` (3) | whitelist filtering: dropped antigens' reads vanish → fewer/emptier cells |
 
 Multi-sample behavior (the per-sample axis the next block aggregates on) is exercised directly by the two
-donors here, or by `../manual-run/multisample/` (two samples with different dominant-antigen mixes).
+donors here, or by `../panel-swap/multisample/` (two samples with different dominant-antigen mixes).
 
 ## Tuning
 

@@ -30,7 +30,7 @@ from pathlib import Path
 
 SEED = 6496
 HERE = Path(__file__).resolve().parent
-ANTIGEN_DIR = HERE.parent / "feature-integration-synthetic"
+ANTIGEN_DIR = HERE.parent / "antigen"
 GEX_DIR = HERE / "gex"
 ANNOT_CSV = GEX_DIR / "homo_sapiens_gene_annotations.csv"
 N_FILLER = 300

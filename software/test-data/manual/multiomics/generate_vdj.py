@@ -1,7 +1,7 @@
 """Generate the VDJ (BCR) arm of the BEAM-Ab multiomics manual test — Tier 0.
 
 The ANTIGEN arm already exists (realistic, mitool-validated) at
-`../feature-integration-synthetic/` (2 donors, real 10x BEAM-Ab panel, ground-truth consensus).
+`../antigen/` (2 donors, real 10x BEAM-Ab panel, ground-truth consensus).
 This script builds a *coherent* single-cell BCR repertoire ON TOP of it: it reads each cell's
 planted dominant antigen and groups cells into clonotypes so that a clonotype's cells bind the
 same antigen — exactly the biology `vdj-multiomic-integration` is meant to surface (per-clonotype
@@ -24,7 +24,7 @@ from pathlib import Path
 
 SEED = 6496
 HERE = Path(__file__).resolve().parent
-ANTIGEN_DIR = HERE.parent / "feature-integration-synthetic"
+ANTIGEN_DIR = HERE.parent / "antigen"
 OUT_DIR = HERE / "vdj"
 
 CONTROL_NAME = "negative_control"
@@ -98,7 +98,7 @@ def read_cells(antigen_dir) -> dict[str, list[tuple[str, str]]]:
     """{donor: [(cellId, plantedConsensus), ...]} from the antigen arm's ground truth."""
     path = antigen_dir / "expected-consensus.tsv"
     if not path.exists():
-        raise SystemExit(f"antigen arm not found: {path}\nMove feature-integration-synthetic into place first.")
+        raise SystemExit(f"antigen arm not found: {path}\nMove antigen into place first.")
     by_donor: dict[str, list[tuple[str, str]]] = {}
     with open(path, newline="") as fh:
         for row in csv.DictReader(fh, delimiter="\t"):
@@ -176,7 +176,7 @@ def main() -> None:
     ap.add_argument("--realistic", action="store_true", help="alias for --profile realistic")
     ap.add_argument(
         "--profile", default="default", choices=["default", "realistic", "whitelist737k"],
-        help="build on the matching antigen profile's consensus (feature-integration-synthetic/<profile>/) "
+        help="build on the matching antigen profile's consensus (antigen/<profile>/) "
              "and write to vdj/<profile>/ — the default vdj/ output is untouched. whitelist737k = the "
              "737K-august-2016-compliant chain.",
     )

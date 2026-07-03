@@ -4,7 +4,7 @@ of the Feature Integration block (not for CI — the tiny CI fixtures live in te
 Run from this directory:  python3 generate.py
 
 Everything is stdlib-only and seeded, so the output is deterministic. Re-run any time to
-regenerate. This whole `manual-run/` tree is gitignored (see block .gitignore).
+regenerate. This whole `panel-swap/` tree is gitignored (see block .gitignore).
 
 --------------------------------------------------------------------------------------------
 What the block expects (10x 5' v2 geometry, confirmed against the block's tag-pattern.lib.tengo
@@ -325,7 +325,7 @@ def main() -> None:
     s2_stats = write_fastq(rng, HERE / "multisample" / "sample2", s2_cells, all_bc_seq)
     write_truth(HERE / "multisample" / "truth_cells.csv", s1_cells + s2_cells)
 
-    print("Generated manual-run datasets (seed", SEED, "):")
+    print("Generated panel-swap datasets (seed", SEED, "):")
     print(f"  bcSpikeB (Spike-v2) = {spike_b}")
     print(f"  off-panel junk barcodes = {junk}")
     print(f"  main/        {len(main_cells):3d} cells  {main_stats['reads']:6d} reads")

@@ -1,7 +1,7 @@
-# manual-run — superseded
+# panel-swap (was manual-run) — superseded
 
 The canonical Feature Integration standalone test bed is now
-**`../feature-integration-synthetic/`** (real 10x BEAM-Ab panel, `errors`/`multilane`/`offpanel`
+**`../antigen/`** (real 10x BEAM-Ab panel, `errors`/`multilane`/`offpanel`
 scenarios, a `realistic` profile calibrated to real BEAM-T data, and ground truth). Use its README.
 
 This directory is kept only for the **panel-swap exploration** fixtures it still provides, which the

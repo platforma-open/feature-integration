@@ -48,16 +48,16 @@ junk is *ambient-dominated*, not 1-bp-error-dominated.
 ## What was applied — the `realistic` profile (defaults untouched)
 | Generator | Flag | Output | Change |
 |---|---|---|---|
-| `feature-integration-synthetic/generate.py` | `--profile realistic` | `realistic/` | UMI depth ↑, dup ↓, dominance ↑, background ↓ |
-| `multiomics-run/generate_vdj.py` | `--realistic` | `vdj/realistic/` | reads realistic antigen consensus |
-| `multiomics-run/generate_gex.py` | `--realistic` | `gex/realistic/` | 1000 genes (depth already matched) |
-| `multiomics-run/validate_multiomics.py` | `--realistic` | — | validates the realistic chain (**38/38**) |
+| `antigen/generate.py` | `--profile realistic` | `realistic/` | UMI depth ↑, dup ↓, dominance ↑, background ↓ |
+| `multiomics/generate_vdj.py` | `--realistic` | `vdj/realistic/` | reads realistic antigen consensus |
+| `multiomics/generate_gex.py` | `--realistic` | `gex/realistic/` | 1000 genes (depth already matched) |
+| `multiomics/validate_multiomics.py` | `--realistic` | — | validates the realistic chain (**38/38**) |
 
 Build the realistic multiomics chain:
 ```bash
-# antigen (in feature-integration-synthetic/)
+# antigen (in antigen/)
 python3 generate.py --profile realistic          # + optionally --scenario all
-# arms (in multiomics-run/)
+# arms (in multiomics/)
 python3 generate_vdj.py --realistic && python3 generate_gex.py --realistic
 python3 validate_multiomics.py --realistic        # 38/38
 ```

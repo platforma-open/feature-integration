@@ -1,4 +1,4 @@
-# feature-synthetic test bed
+# per-cell-metrics test bed
 
 Tiny, hand-designed fixtures for the Feature Integration per-cell-metrics tests. Committed (not
 generated at test time) and excluded from ruff. Regenerate with `python generate.py`.

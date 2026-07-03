@@ -25,7 +25,7 @@ from collections import defaultdict
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-ANTIGEN_DIR = HERE.parent / "feature-integration-synthetic"
+ANTIGEN_DIR = HERE.parent / "antigen"
 VDJ_DIR = HERE / "vdj"
 GEX_DIR = HERE / "gex"
 CONTROL_NAME = "negative_control"
@@ -182,7 +182,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--realistic", action="store_true", help="alias for --profile realistic")
     ap.add_argument("--profile", default="default", choices=["default", "realistic", "whitelist737k"],
-                    help="validate the given profile chain (feature-integration-synthetic/<profile> + "
+                    help="validate the given profile chain (antigen/<profile> + "
                          "vdj/<profile> + gex/<profile>)")
     args = ap.parse_args()
     profile = "realistic" if args.realistic else args.profile
