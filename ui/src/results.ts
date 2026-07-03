@@ -31,10 +31,11 @@ const STEP_NAMES: Record<string, string> = {
   "3-tagstat": "Counting UMIs",
 };
 
-// Steps whose mitool progress isn't monotonic — refine-tags runs several internal passes (CELL /
-// FEATURE / UMI / writing), each counting 0→100%, so its live percent visibly jumps up and down.
-// Show these as an indeterminate (animated) bar instead of a jumpy number.
-const INDETERMINATE_STEPS = new Set(["2-refine"]);
+// Steps whose mitool progress isn't monotonic — each runs several internal passes that each count
+// 0→100%, so a live percent visibly jumps up and down. refine-tags passes over CELL / FEATURE / UMI /
+// writing; tag-stat -u makes multiple passes over the on-disk sort. Show these as an indeterminate
+// (animated) bar instead of a jumpy number.
+const INDETERMINATE_STEPS = new Set(["2-refine", "3-tagstat"]);
 
 export const sampleResults = computed<SampleResult[] | undefined>(() => {
   const app = useApp();
