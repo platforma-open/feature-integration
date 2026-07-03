@@ -291,6 +291,18 @@ def build_sample(rng, sample, cells, realistic=False, nonbinder_frac=0.0):
     return reads, truth_ab, truth_con, truth_class
 
 
+# QC-visualization profile: a few samples degraded to DIFFERENT levels so the block's Quality tag and
+# Read recovery bar show a full spread. (sample, matched_frac, panel_assigned_frac, expected_tag).
+# matched < 80% or panel-assigned < 50% -> WARN; panel-assigned < 25% -> ALERT (see the cutoffs in
+# ui/src/results.ts qualityStatus).
+DEGRADED_PROFILE = [
+    ("donor01_clean", 1.00, 1.00, "OK"),
+    ("donor02_lowmatch", 0.65, 1.00, "WARN"),  # 35% of reads fail parse -> matched 65%
+    ("donor03_offpanel", 0.95, 0.40, "WARN"),  # 60% of matched reads off-panel -> panel-assigned 40%
+    ("donor04_badpanel", 0.90, 0.15, "ALERT"),  # 85% off-panel -> panel-assigned 15%
+]
+
+
 # --- scenario perturbations (applied AFTER the clean build, so the baseline stream is untouched) ---
 
 
@@ -328,6 +340,34 @@ def perturb_offpanel(rng, reads, cells, off_bcs, frac=0.12, n_malformed=40):
 def assign_lanes(rng, reads, n_lanes=2):
     for r in reads:
         r[3] = rng.randint(1, n_lanes)
+    return reads
+
+
+def convert_offpanel(rng, reads, off_bcs, off_frac):
+    """Rewrite `off_frac` of the (structurally valid) reads' feature barcodes to OFF-panel barcodes
+    (Hamming >= 5 from every panel entry, so refine-tags drops rather than corrects them). Reads stay
+    parseable, so this lowers panel-assigned to ~(1 - off_frac) without touching matched."""
+    if off_frac <= 0:
+        return reads
+    k = min(len(reads), int(len(reads) * off_frac))
+    for i in rng.sample(range(len(reads)), k):
+        reads[i][2] = rng.choice(off_bcs) + R2_FILLER
+    return reads
+
+
+def add_malformed(rng, reads, matched_frac):
+    """Append malformed reads (R1 too short for CELL+UMI, or R2 too short for the feature barcode) so
+    parse drops them and matched ~= `matched_frac`. n_bad = matched_count * (1 - m) / m."""
+    if matched_frac >= 1.0:
+        return reads
+    m = max(0.01, matched_frac)
+    n_bad = int(len(reads) * (1 - m) / m)
+    base = len(reads)
+    for i in range(n_bad):
+        if i % 2 == 0:
+            reads.append([f"malformed_read{base + i}", rand_seq(rng, 18), rand_seq(rng, FEAT_LEN) + R2_FILLER, 1])
+        else:
+            reads.append([f"malformed_read{base + i}", rand_seq(rng, 26), rand_seq(rng, 10), 1])
     return reads
 
 
@@ -468,12 +508,39 @@ def generate(scenario, profile="default"):
     print(f"[{scenario}] {len(SAMPLES)} samples, {n_total} cells, {total_reads} reads -> {outdir}")
 
 
+def generate_degraded():
+    """QC-visualization fixture (NOT a behavioral assertion): a few samples degraded to DIFFERENT levels
+    so the block's Quality tag (OK/WARN/ALERT) and Read recovery bar (usable / off-panel / no-match)
+    show a full spread side by side. Written to scenarios/degraded/. Load it like any dataset (tags.csv
+    is the panel) and run the block."""
+    rng = _random.Random(SEED)
+    outdir = os.path.join(HERE, "scenarios", "degraded")
+    os.makedirs(outdir, exist_ok=True)
+
+    cells_per = 400  # small + fast; enough cells for stable fractions
+    samples = [p[0] for p in DEGRADED_PROFILE]
+    all_cells = gen_cells(rng, len(DEGRADED_PROFILE) * cells_per)
+    off_bcs = gen_distinct(_random.Random(SEED + 99), 3, FEAT_LEN, min_dist=5, avoid=list(FEATURES.values()))
+
+    for i, (sample, m, p, tag) in enumerate(DEGRADED_PROFILE):
+        cells = all_cells[i * cells_per:(i + 1) * cells_per]
+        reads, _, _, _ = build_sample(rng, sample, cells)
+        reads = convert_offpanel(rng, reads, off_bcs, off_frac=1 - p)
+        reads = add_malformed(rng, reads, matched_frac=m)
+        rng.shuffle(reads)
+        write_fastqs(outdir, sample, reads, multilane=False)
+        print(f"  {sample}: matched~{m:.0%}, panel-assigned~{p:.0%}, {len(reads)} reads -> expect {tag}")
+
+    write_metadata(outdir, samples)
+    print(f"[degraded] {len(samples)} samples, {cells_per} cells each -> {outdir}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--scenario",
         default="baseline",
-        choices=["baseline", "errors", "offpanel", "multilane", "control", "all"],
+        choices=["baseline", "errors", "offpanel", "multilane", "control", "degraded", "all"],
     )
     ap.add_argument(
         "--profile", default="default", choices=["default", "realistic", "whitelist737k"],
@@ -499,7 +566,10 @@ def main():
     if args.profile == "whitelist737k":
         scenarios = ["baseline"]  # the 737K profile is the coherent multiomics antigen arm (baseline only)
     for s in scenarios:
-        generate(s, args.profile)
+        if s == "degraded":
+            generate_degraded()
+        else:
+            generate(s, args.profile)
     print(f"panel: {len(ANTIGEN_NAMES)} antigens + 1 control ({len(FEATURES)} features) "
           f"| control: {CONTROL_NAME} | samples: {len(SAMPLES)} | cells/sample: {CELLS_PER_SAMPLE} "
           f"| profile: {args.profile}")
