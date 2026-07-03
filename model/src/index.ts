@@ -14,6 +14,13 @@ import type { BlockArgs, BlockData } from "./types";
 
 export type { BlockArgs, BlockData } from "./types";
 
+// mitool prints progress lines to stderr prefixed with this sentinel; the workflow sets it as
+// MI_PROGRESS_PREFIX on the parse step (fb-pipeline.tpl.tengo) — keep the two in sync. ProgressPattern
+// parses a prefix-stripped line ("<stage>: <pct>% ETA: <eta>") into parts for the UI progress cell.
+export const ProgressPrefix = "[==PROGRESS==]";
+export const ProgressPattern =
+  /(?<stage>[^:]*):(?: *(?<progress>[0-9.]+)%)?(?: *ETA: *(?<eta>.+))?/;
+
 const DOMINANCE_FLOOR = 0.5; // spec A-0012: threshold is user-adjustable down to 0.5, never lower
 
 // Per-sample QC metrics as emitted by qc_report.py (result_qc.json), read by the analysisLog output.
@@ -178,6 +185,61 @@ export const platforma = BlockModelV3.create(dataModel)
   // True while the main run is executing (no output/context field settled yet) — drives the block
   // spinner via the app.ts progress callback.
   .output("isRunning", (ctx) => ctx.outputs?.getIsReadyOrError() === false)
+  // True once the main workflow has begun producing outputs (ctx.outputs settles) — lets the Main page
+  // swap the static "run the block" hint for the live per-sample progress grid.
+  .output("started", (ctx) => ctx.outputs !== undefined)
+  // Live per-sample progress for the Main-page grid. Resolves the flat per-sample parse-log stream
+  // (workflow parseLogStream) and reads mitool's latest progress line per sample. Gated on
+  // getInputsLocked so the full sample roster is enumerated before any row shows — every sample then
+  // appears at once ("Queued" until its parse emits a line). The per-sample values are FutureRefs the
+  // framework resolves on serialization; the UI reads the resolved { progressLine, live } (mirrors
+  // blocks/peptide-extraction parseProgress).
+  .output("sampleProgress", (ctx) => {
+    const acc = ctx.outputs?.resolve("parseLogStream");
+    if (!acc || !acc.getInputsLocked()) return undefined;
+    return parseResourceMap(acc, (a) => a.getProgressLogWithInfo(ProgressPrefix), true);
+  })
+  // sampleIds whose per-sample pipeline has finished. qcJson is the LAST per-sample step and is inline
+  // JSON content, so getDataAsJsonOrUndefined reads it synchronously — the done-set is computed here
+  // (unlike sampleProgress's FutureRefs) and drives the grid's "Done" state.
+  .output("completedSamples", (ctx): string[] | undefined => {
+    if (ctx.outputs === undefined) return undefined;
+    const qcMap = parseResourceMap(
+      ctx.outputs.resolve("qcJson"),
+      (acc) => acc.getDataAsJsonOrUndefined<QcRow>(),
+      false,
+    );
+    return qcMap.data.filter((e) => e.value != null).map((e) => String(e.key[0]));
+  })
+  // sampleId -> display name (upstream pl7.app/label), for the progress grid's Sample column. Mirrors
+  // the label lookup inlined in analysisLog below; kept as its own output because each output is a pure
+  // function of ctx and outputs cannot read one another.
+  .output("sampleLabels", (ctx): Record<string, string> | undefined => {
+    const inputRef = ctx.data.fbFastqRef;
+    if (inputRef === undefined) return undefined;
+    const inputSpec = ctx.resultPool.getSpecByRef(inputRef);
+    if (inputSpec === undefined || !isPColumnSpec(inputSpec)) return undefined;
+    const sampleAxisSpec = inputSpec.axesSpec[0];
+    const obj = ctx.resultPool.getData().entries.find((f) => {
+      const spec = f.obj.spec;
+      if (!isPColumnSpec(spec)) return false;
+      if (spec.name !== "pl7.app/label" || spec.axesSpec.length !== 1) return false;
+      const axisSpec = spec.axesSpec[0];
+      if (axisSpec.name !== sampleAxisSpec.name) return false;
+      if (sampleAxisSpec.domain === undefined || Object.keys(sampleAxisSpec.domain).length === 0)
+        return true;
+      if (axisSpec.domain === undefined) return false;
+      for (const [k, v] of Object.entries(sampleAxisSpec.domain))
+        if (axisSpec.domain[k] !== v) return false;
+      return true;
+    });
+    if (obj === undefined) return undefined;
+    return Object.fromEntries(
+      Object.entries(obj.obj.data.getDataAsJson<{ data: Record<string, string> }>().data).map(
+        (e) => [JSON.parse(e[0])[0], e[1]],
+      ),
+    ) as Record<string, string>;
+  })
   // The block's single "Analysis logs" (lines shown in the UI's wide slide-over), built from the
   // per-sample QC JSON (qcJson), which settles incrementally as each sample's qc step finishes:
   //   • while the run is in progress → a live count of samples finished so far ("Processing… N …");

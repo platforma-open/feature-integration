@@ -166,3 +166,19 @@ Implement the feature-barcode workflow (plan Tasks 3–4).
 ## Assets
 
 - Update the block and organization logos.
+
+## Loading screen — live per-sample progress
+
+Replace the Main page's static "run the block" placeholder with a live per-sample progress list while a
+run is in progress. Each sample appears as soon as the roster is enumerated ("Queued"), shows live
+mitool parse progress (stage + percent + ETA) in a `PlProgressCell`, falls back to an indeterminate
+"Processing…" while the downstream steps (which emit no progress) run, then flips to "Done" when its
+per-sample pipeline finishes. Modeled on blocks/peptide-extraction.
+
+- Workflow: the per-sample `parse` step's stdout (already progress-prefixed via `MI_PROGRESS_PREFIX`,
+  now a shared `[==PROGRESS==]` sentinel matched by the model) is surfaced as a flat per-sample
+  `parseLogStream` Log column.
+- Model: new outputs — `started`, `sampleProgress` (roster + latest live progress line per sample,
+  gated on `getInputsLocked`), `completedSamples` (from the per-sample qcJson), and `sampleLabels`.
+- UI: `sampleResults` derives the per-sample rows; the Main page renders them as a stack of
+  `PlProgressCell`s (no new UI dependencies).

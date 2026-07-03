@@ -109,6 +109,19 @@ wf.body(func(args) {
 		name: "qcJson"
 	})
 
+	// Flat per-sample parse-log stream (mitool stdout, progress-prefixed). Surfaced so the model can build
+	// the live per-sample progress grid (sampleProgress) + the early sample roster (getInputsLocked).
+	outputs = append(outputs, {
+		type: "Resource",
+		spec: {
+			kind: "PColumn",
+			name: "pl7.app/log",
+			domain: { "pl7.app/blockId": blockId },
+			valueType: "Log"
+		},
+		name: "parseLogStream"
+	})
+
 	// mitool resource meta (mixcr semantics): pass the base memory floor always; add the override key
 	// only when the user set one (Advanced Settings) so fb-pipeline treats it as a hard fixed request.
 	// A distinct meta when overridden is correct — it must not dedup with the formula-sized run.
@@ -203,6 +216,8 @@ wf.body(func(args) {
 			// Per-sample QC metrics as JSON (fb-pipeline qcJson) -> model builds the live "Analysis logs"
 			// (completed-sample heartbeat + run-level summary) from it.
 			qcJson: perSampleResults.outputData("qcJson"),
+			// Per-sample parse-log stream -> model sampleProgress (live per-sample progress grid + roster).
+			parseLogStream: perSampleResults.outputData("parseLogStream"),
 			// Expose the tag->feature CSV import HANDLE so the model can watch it via getImportProgress()
 			// (model/src/index.ts). That model output is the actual upload driver: it registers the import
 			// with the middle-layer so the CSV bytes are pushed. Without it the CSV blob never materialises

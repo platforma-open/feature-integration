@@ -9,11 +9,13 @@ import {
   PlDropdownRef,
   PlFileInput,
   PlNumberField,
+  PlProgressCell,
   PlSlideModal,
   usePlDataTableSettingsV2,
 } from "@platforma-sdk/ui-vue";
 import { computed, ref, watch } from "vue";
 import { useApp } from "../app";
+import { sampleResults } from "../results";
 
 const app = useApp();
 // Auto-open Settings for a fresh block (no FASTQ chosen yet); stay closed once configured.
@@ -58,6 +60,24 @@ const controlInfoVisible = computed(
       :settings="tableSettings"
       show-export-button
     />
+    <!-- Once the run starts (before per-cell results settle): a live per-sample progress list — every
+         sample appears at once ("Queued"), shows live parse progress, then flips to "Done". -->
+    <div
+      v-else-if="app.model.outputs.started"
+      :style="{ display: 'flex', flexDirection: 'column', gap: '8px' }"
+    >
+      <PlProgressCell
+        v-for="row in sampleResults ?? []"
+        :key="row.sampleId"
+        :stage="row.stage"
+        :step="`${row.label} — ${row.step}`"
+        :progress-string="row.progressString"
+        :progress="row.percent"
+      />
+      <PlAlert v-if="(sampleResults ?? []).length === 0" type="info">
+        Starting run… preparing the sample list.
+      </PlAlert>
+    </div>
     <PlAlert v-else type="info">
       Per-cell feature results appear after you set the inputs in Settings and run the block.
     </PlAlert>

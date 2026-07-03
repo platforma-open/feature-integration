@@ -21,7 +21,12 @@ tagPattern := import(":tag-pattern")
 
 json := import("json")
 
-self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "tagstat", "qc", "qcJson")
+// mitool prints progress lines to stderr prefixed with this sentinel (set below via MI_PROGRESS_PREFIX
+// on the parse step). The model searches for the same string (ProgressPrefix in model/src/index.ts) to
+// surface live per-sample progress — keep the two in sync.
+progressPrefix := "[==PROGRESS==]"
+
+self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "tagstat", "qc", "qcJson", "parseLogStream")
 
 // :memory-from-limits sizes the JVM heap from the granted limits — avoids end-of-parse OOM when many
 // tag writers flush (see demultiplex-fastq).
@@ -134,7 +139,7 @@ self.body(func(inputs) {
 	parse := applyMitoolMem(exec.builder().
 		software(mitoolSw).
 		cpu(mitoolCPUs)).
-		env("MI_PROGRESS_PREFIX", "parse").
+		env("MI_PROGRESS_PREFIX", progressPrefix).
 		arg("parse").
 		arg("--pattern").arg(pattern).
 		arg("--threads").argWithVar("{system.cpu}")
@@ -267,6 +272,8 @@ self.body(func(inputs) {
 		perCellSummary: metrics.getFile("result_per_cell_summary.csv"),
 		tagstat: tagStat.getFile("tagstat.tsv"),
 		qc: qc.getFile("result_qc.csv"),
-		qcJson: qc.getFileContent("result_qc.json") // inline content (saveFileContent) so the model can read it
+		qcJson: qc.getFileContent("result_qc.json"), // inline content (saveFileContent) so the model can read it
+		// Per-sample mitool stdout (progress-prefixed); surfaced by main.tpl for the model's live progress grid.
+		parseLogStream: parse.getStdoutStream()
 	}
 })
