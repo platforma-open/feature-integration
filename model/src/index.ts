@@ -1,12 +1,9 @@
-import type { InferOutputsType, PColumnIdAndSpec } from "@platforma-sdk/model";
+import type { InferOutputsType } from "@platforma-sdk/model";
 import {
   BlockModelV3,
   createPlDataTableStateV2,
   createPlDataTableV2,
   DataModelBuilder,
-  getRelatedColumns,
-  isHiddenFromGraphColumn,
-  isHiddenFromUIColumn,
   isPColumnSpec,
   parseResourceMap,
 } from "@platforma-sdk/model";
@@ -56,12 +53,7 @@ const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
   cellWhitelist: "", // de-novo CELL correction by default (spec A-0018 defers the scheme)
   defaultBlockLabel: "",
   tableState: createPlDataTableStateV2(),
-  tagstatTableState: createPlDataTableStateV2(),
   qcSummaryTableState: createPlDataTableStateV2(),
-  // Violin-plot graph tab: feature-fraction distribution per sample, faceted by feature. Defaults
-  // (y = fraction, primary grouping = sample, facet = feature) are seeded by the Graph page's
-  // default-options; here we only fix the chart template.
-  graphState: { title: "Feature Fraction Distribution", template: "violin", currentTab: null },
 }));
 
 export const platforma = BlockModelV3.create(dataModel)
@@ -394,9 +386,8 @@ export const platforma = BlockModelV3.create(dataModel)
   // columns: Max Feature UMI count, Max Feature Fraction, Max Specificity score, and a "Feature
   // breakdown" string listing every feature as "feature (fraction%, umi)" sorted by descending fraction). The
   // per-feature matrix is not lost: it is still exported to the result pool (perCellFeatures, the
-  // A-0010 contract) for VDJ Multiomic Integration and still drives the violin graph tab (graphPf /
-  // the `pf` output). This output resolves the workflow's collapsed perCellTable PFrame; undefined
-  // until the workflow emits it (guarded by the UI).
+  // A-0010 contract) for VDJ Multiomic Integration. This output resolves the workflow's collapsed
+  // perCellTable PFrame; undefined until the workflow emits it (guarded by the UI).
   //
   // Uses createPlDataTableV2 (columns passed directly via getPColumns), NOT V3. This frame is our OWN
   // self-contained, non-batch processColumn output. createPlDataTableV3's discovery cannot render it:
@@ -416,21 +407,9 @@ export const platforma = BlockModelV3.create(dataModel)
     },
     { retentive: true, withStatus: true },
   )
-  // Raw tag-stat QC table: per (cell, feature-barcode) distinct-UMI counts before the CSV-driven
-  // collapse to feature names. Same non-batch processColumn frame as perCellTable, so it uses
-  // createPlDataTableV2 for the same reason (V3 discovery can't render these frames — see perCellTable).
-  .output(
-    "tagstatQcTable",
-    (ctx) => {
-      const pCols = ctx.outputs?.resolve("tagstatQcTable")?.getPColumns();
-      if (pCols === undefined || pCols.length === 0) return undefined;
-      return createPlDataTableV2(ctx, pCols, ctx.data.tagstatTableState);
-    },
-    { retentive: true, withStatus: true },
-  )
   // Per-sample QC summary table: reads parsed/matched, cells/features detected, UMI totals, and
   // panel-assigned fraction. Uses createPlDataTableV2 (columns passed directly via getPColumns) like
-  // perCellTable/tagstatQcTable. The earlier V3 form used selector { mode: "enrichment", maxHops: 0 },
+  // perCellTable. The earlier V3 form used selector { mode: "enrichment", maxHops: 0 },
   // which never traverses to the upstream pl7.app/label column — so the sampleId axis rendered the raw
   // sample hash instead of the human sample name. createPlDataTableV2 runs getAllLabelColumns over the
   // result pool and auto-joins the matching sampleId label, giving the real sample name.
@@ -443,31 +422,6 @@ export const platforma = BlockModelV3.create(dataModel)
     },
     { retentive: true, withStatus: true },
   )
-  // Violin graph tab (fix 4): the FULL per-(cell x feature) matrix (workflow graphPf output), NOT the
-  // collapsed Main table — the violin plots each feature's per-cell fraction distribution, grouped by
-  // sample. We build the frame from this block's columns plus axis-compatible pool columns (this is what
-  // createPFrameForGraphs does under the hood — getRelatedColumns), so the sampleId pl7.app/label rides
-  // along and the sample grouping shows real names, not the hash. The File-valued predicate drops
-  // File-typed columns from the picker; note it does NOT prevent the upstream Samples & Data FASTQ
-  // File-dataset (keyed on sampleId) from being pulled in via its linker, so pf resolves only after that
-  // dataset's blob loads — a live await can transiently report no_data:<snd>:pf.dataset.* before the
-  // block settles to Done. Verified: it does settle and the violin renders with sample labels.
-  // outputWithStatus feeds GraphMaker its loading/error UI.
-  .outputWithStatus("pf", (ctx) => {
-    const pCols = ctx.outputs?.resolve("graphPf")?.getPColumns();
-    if (pCols === undefined) return undefined;
-    const graphColumn = (spec: (typeof pCols)[number]["spec"]) =>
-      !isHiddenFromUIColumn(spec) &&
-      !isHiddenFromGraphColumn(spec) &&
-      (spec.valueType as string) !== "File";
-    return ctx.createPFrame(getRelatedColumns(ctx, { columns: pCols, predicate: graphColumn }));
-  })
-  // Column id+spec list for the Graph page's default-options (find the fraction column, map its axes).
-  .output("pfPcols", (ctx): PColumnIdAndSpec[] | undefined => {
-    const pCols = ctx.outputs?.resolve("graphPf")?.getPColumns();
-    if (pCols === undefined) return undefined;
-    return pCols.map((c) => ({ columnId: c.id, spec: c.spec }) satisfies PColumnIdAndSpec);
-  })
   .title(() => "Feature Integration")
   // Standard block-label subtitle. The subtitle render context is args-only (no result pool / outputs
   // — touching them renders "Invalid subtitle"), so the dynamic "<dataset> · <barcode> - <feature>"
@@ -475,18 +429,22 @@ export const platforma = BlockModelV3.create(dataModel)
   // `defaultBlockLabel` by a UI watchEffect (the sanctioned block-label pattern). The subtitle only
   // reads `ctx.data`. Guard `ctx.data` — it can be undefined before block storage is parsed.
   .subtitle((ctx) => ctx.data?.defaultBlockLabel || "Feature-barcode - per-cell antigen counts")
-  // Operator feedback (2026-07-03): the block should not surface result data in its own UI — only
-  // per-sample progress, like MiXCR Clonotyping (Main + a QC tab). The Raw tag-stat and Feature
-  // Fraction Distribution (Graph) tabs are commented out (not deleted) so they can be re-enabled fast
-  // if the team wants them back once they see it bare. Their pages (ui/src/pages/*), model outputs
-  // (tagstatQcTable / pf / pfPcols), and routes (ui/src/app.ts) are all left intact. To restore a tab:
-  // uncomment its line below.
-  .sections(() => [
-    { type: "link" as const, href: "/" as const, label: "Main" },
-    { type: "link" as const, href: "/qc" as const, label: "Per-sample QC" },
-    // { type: "link" as const, href: "/tagstat" as const, label: "Raw tag-stat" },
-    // { type: "link" as const, href: "/graph" as const, label: "Feature Fraction Distribution" },
-  ])
+  // Main (the per-sample progress grid) is always shown. The result tabs — Per-sample QC and the
+  // per-cell results table — appear only once the block has produced outputs, so a fresh/unrun block
+  // shows only Main. ctx.outputs settles when the workflow starts emitting (the same signal as the
+  // `started` output). The Graph and Raw tag-stat views were removed (2026-07-03, operator).
+  .sections((ctx) => {
+    const hasRun = ctx.outputs !== undefined;
+    return [
+      { type: "link" as const, href: "/" as const, label: "Main" },
+      ...(hasRun
+        ? [
+            { type: "link" as const, href: "/qc" as const, label: "Per-sample QC" },
+            { type: "link" as const, href: "/results" as const, label: "Per-cell results" },
+          ]
+        : []),
+    ];
+  })
   .done();
 
 export type BlockOutputs = InferOutputsType<typeof platforma>;

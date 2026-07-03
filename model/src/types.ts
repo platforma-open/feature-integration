@@ -1,4 +1,3 @@
-import type { GraphMakerState } from "@milaboratories/graph-maker";
 import type { ImportFileHandle, PlDataTableStateV2, PlRef } from "@platforma-sdk/model";
 
 /** Workflow inputs (projected from BlockData by the args lambda; validated there). */
@@ -35,7 +34,5 @@ export type BlockData = {
   cellWhitelist?: string; // optional (defaults to "" = de-novo); see BlockArgs.cellWhitelist
   defaultBlockLabel?: string; // UI-only: sidebar subtitle, mirrored from the suggestedBlockLabel output
   tableState: PlDataTableStateV2; // per-cell results grid state (UI-only, never projected to args)
-  tagstatTableState: PlDataTableStateV2; // raw tag-stat QC grid state (UI-only)
   qcSummaryTableState: PlDataTableStateV2; // per-sample QC summary grid state (UI-only)
-  graphState: GraphMakerState; // violin-plot graph tab state (UI-only, never projected to args)
 };

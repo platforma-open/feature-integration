@@ -1,10 +1,9 @@
 import { platforma } from "@platforma-open/milaboratories.feature-integration.model";
 import { defineAppV3 } from "@platforma-sdk/ui-vue";
 import { watchEffect } from "vue";
-import GraphPage from "./pages/GraphPage.vue";
 import MainPage from "./pages/MainPage.vue";
 import QcSummaryPage from "./pages/QcSummaryPage.vue";
-import TagstatPage from "./pages/TagstatPage.vue";
+import ResultsPage from "./pages/ResultsPage.vue";
 
 export const sdkPlugin = defineAppV3(platforma, (app) => {
   // Block-label pattern: mirror the model's suggestedBlockLabel ("<dataset> · <barcode> → <feature>")
@@ -23,9 +22,8 @@ export const sdkPlugin = defineAppV3(platforma, (app) => {
     progress: () => app.model.outputs.isRunning,
     routes: {
       "/": () => MainPage,
-      "/graph": () => GraphPage,
       "/qc": () => QcSummaryPage,
-      "/tagstat": () => TagstatPage,
+      "/results": () => ResultsPage,
     },
   };
 });

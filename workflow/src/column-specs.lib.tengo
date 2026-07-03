@@ -46,19 +46,6 @@ featureAxis := func(blockId) {
 	}
 }
 
-// featureBarcodeAxis: the raw feature barcode (pre-collapse) — used only by the tag-stat QC table.
-featureBarcodeAxis := func(blockId) {
-	return {
-		name: "pl7.app/feature/featureBarcode",
-		type: "String",
-		domain: { "pl7.app/blockId": blockId },
-		annotations: {
-			"pl7.app/label": "Feature barcode",
-			"pl7.app/table/fontFamily": "monospace"
-		}
-	}
-}
-
 // valueOutputs: the A-0010 contract value columns, as processColumn `Xsv` output declarations.
 // hasControl gates the specificity score (spec A-0014) — only meaningful with a negative control.
 //
@@ -270,42 +257,6 @@ perCellSummaryOutput := func(blockId, sampleAxisName, hasControl) {
 	}
 }
 
-// tagstatQcOutput: the raw mitool tag-stat -u table (per (cell, feature-barcode) distinct-UMI counts,
-// before the CSV-driven collapse to feature names). Surfaced as a QC table so the pipeline is not a
-// black box — you can inspect what mitool actually produced. Keyed [sampleId, cellId, featureBarcode];
-// value = the unique_UMI count. Not part of the A-0010 export contract; outputs-only.
-tagstatQcOutput := func(blockId, sampleAxisName) {
-	return {
-		type: "Xsv",
-		xsvType: "tsv",
-		settings: {
-			axes: [
-				{ column: "CELL", spec: cellAxis(sampleAxisName) },
-				{ column: "FEATURE", spec: featureBarcodeAxis(blockId) }
-			],
-			columns: [{
-				column: "unique_UMI", id: "uniqueUmi",
-				spec: {
-					name: "pl7.app/feature/tagStatUniqueUmi",
-					valueType: "Long",
-					annotations: a(90000, true, {
-						"pl7.app/label": "Distinct UMIs (raw)",
-						"pl7.app/description": "Distinct-UMI (molecule) count per cell per feature barcode, from mitool tag-stat. 'Raw' means keyed by the observed barcode — already panel-corrected and UMI-deduplicated, but before mapping to antigen names and summing per feature.",
-						"pl7.app/min": "0",
-						"pl7.app/isAbundance": "true",
-						"pl7.app/abundance/unit": "molecules",
-						"pl7.app/abundance/normalized": "false"
-					})
-				}
-			}],
-			storageFormat: "Parquet",
-			partitionKeyLength: 0
-		},
-		name: "tagstatQc",
-		path: ["tagstat"]
-	}
-}
-
 // qcFileMapOutput: collect the per-sample QC CSV (fb-pipeline `qc` output) into a resource map keyed
 // [sampleId]. A per-sample QC row is a SCALAR (0 within-sample axes); an xsv import cannot emit that
 // (it requires >=1 within-file axis: xsv-import-file.lib.tengo asserts partitionKeyLength < len(axes)),
@@ -368,10 +319,8 @@ qcSummaryColumnsSpec := func(sampleAxisSpec) {
 export {
 	cellAxis: cellAxis,
 	featureAxis: featureAxis,
-	featureBarcodeAxis: featureBarcodeAxis,
 	valueOutputs: valueOutputs,
 	perCellSummaryOutput: perCellSummaryOutput,
-	tagstatQcOutput: tagstatQcOutput,
 	qcFileMapOutput: qcFileMapOutput,
 	qcSummaryColumnsSpec: qcSummaryColumnsSpec
 }

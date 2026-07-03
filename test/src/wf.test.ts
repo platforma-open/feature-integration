@@ -120,9 +120,7 @@ blockTest(
         umiLen: 10,
         featureLen: 15,
         tableState: createPlDataTableStateV2(),
-        tagstatTableState: createPlDataTableStateV2(),
         qcSummaryTableState: createPlDataTableStateV2(),
-        graphState: { title: "Feature fractions", template: "violin", currentTab: null },
       } satisfies BlockData,
     });
 
