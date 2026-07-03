@@ -3,6 +3,8 @@ import type { PlAgHeaderComponentParams } from "@platforma-sdk/ui-vue";
 import {
   AgGridTheme,
   PlAccordionSection,
+  PlAgCellStatusTag,
+  PlAgChartStackedBarCell,
   // PlAgDataTableV2, // retired with the per-cell results-table view (see template restore note)
   PlAgOverlayLoading,
   PlAgOverlayNoRows,
@@ -24,7 +26,13 @@ import { ClientSideRowModelModule, ModuleRegistry } from "ag-grid-enterprise";
 import { AgGridVue } from "ag-grid-vue3";
 import { computed, ref, watch } from "vue";
 import { useApp } from "../app";
-import { sampleResults, type ProgressCell, type SampleResult } from "../results";
+import {
+  sampleResults,
+  type ProgressCell,
+  type QcStatus,
+  type RecoveryBar,
+  type SampleResult,
+} from "../results";
 
 const app = useApp();
 // Auto-open Settings for a fresh block (no FASTQ chosen yet); stay closed once configured.
@@ -97,6 +105,32 @@ const columnDefs: ColDef<SampleResult>[] = [
     flex: 2,
     // results.ts already produces the cell config (status / percent / text / suffix); pass it through.
     progress: (value) => value,
+  }),
+  // Quality status tag (OK / WARN / ALERT), worst-case per sample from the QC metrics (results.ts).
+  // Blank while the sample is still running (quality is undefined until its QC settles).
+  createAgGridColDef<SampleResult, QcStatus | undefined>({
+    colId: "quality",
+    field: "quality",
+    headerName: "Quality",
+    headerComponentParams: { type: "Text" } satisfies PlAgHeaderComponentParams,
+    width: 120,
+    cellRendererSelector: (params) =>
+      params.data?.quality
+        ? { component: PlAgCellStatusTag, params: { type: params.data.quality } }
+        : undefined,
+  }),
+  // Read recovery: a compact stacked bar (usable / off-panel / no pattern match). Blank until QC settles.
+  createAgGridColDef<SampleResult, RecoveryBar | undefined>({
+    colId: "recovery",
+    field: "recovery",
+    headerName: "Read recovery",
+    headerComponentParams: { type: "Text" } satisfies PlAgHeaderComponentParams,
+    flex: 2,
+    cellStyle: { "--ag-cell-horizontal-padding": "12px" },
+    cellRendererSelector: (params) =>
+      params.data?.recovery
+        ? { component: PlAgChartStackedBarCell, params: { value: params.data.recovery } }
+        : undefined,
   }),
 ];
 

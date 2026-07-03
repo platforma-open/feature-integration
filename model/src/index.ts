@@ -23,8 +23,9 @@ export const ProgressPattern =
 
 const DOMINANCE_FLOOR = 0.5; // spec A-0012: threshold is user-adjustable down to 0.5, never lower
 
-// Per-sample QC metrics as emitted by qc_report.py (result_qc.json), read by the analysisLog output.
-type QcRow = {
+// Per-sample QC metrics as emitted by qc_report.py (result_qc.json), read by the analysisLog output
+// and (per sample) by the Main grid's Quality + Read recovery columns (derived in ui/src/results.ts).
+export type QcRow = {
   readsTotal: number;
   readsMatched: number;
   matchedFraction: number;
@@ -224,6 +225,20 @@ export const platforma = BlockModelV3.create(dataModel)
       false,
     );
     return qcMap.data.filter((e) => e.value != null).map((e) => String(e.key[0]));
+  })
+  // Per-sample QC metrics (from qcJson) keyed by sampleId — drives the Main grid's Quality + Read
+  // recovery columns (derived in ui/src/results.ts). Present per sample once its qc step settles (same
+  // source as completedSamples), so the two columns fill in as each sample finishes.
+  .output("sampleQc", (ctx): Record<string, QcRow> | undefined => {
+    if (ctx.outputs === undefined) return undefined;
+    const qcMap = parseResourceMap(
+      ctx.outputs.resolve("qcJson"),
+      (acc) => acc.getDataAsJsonOrUndefined<QcRow>(),
+      false,
+    );
+    const out: Record<string, QcRow> = {};
+    for (const e of qcMap.data) if (e.value != null) out[String(e.key[0])] = e.value as QcRow;
+    return out;
   })
   // sampleId -> display name (upstream pl7.app/label), for the progress grid's Sample column. Mirrors
   // the label lookup inlined in analysisLog below; kept as its own output because each output is a pure
