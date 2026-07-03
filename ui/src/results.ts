@@ -38,8 +38,8 @@ const STEP_NAMES: Record<string, string> = {
 // tag-pattern.lib.tengo if the corrected-tag set changes.
 const REFINE_TAGS = ["CELL", "FEATURE", "UMI"];
 const REFINE_TAG_LABELS: Record<string, string> = {
-  CELL: "cell barcodes",
-  FEATURE: "feature barcodes",
+  CELL: "Cell barcodes",
+  FEATURE: "Feature barcodes",
   UMI: "UMIs",
 };
 
@@ -47,7 +47,9 @@ const REFINE_TAG_LABELS: Record<string, string> = {
 // progress is structured, so instead of one jumpy percent we surface which sub-step is running:
 //   • parse — one monotonic pass → show the live percent.
 //   • refine-tags — corrects CELL → FEATURE → UMI; per-tag progress is non-monotonic (recursive
-//     correction passes), so show the current tag + "N of 3" with an indeterminate (animated) bar.
+//     correction passes). Keep a stable "Refining barcodes" prefix so the label doesn't jump; vary
+//     only the colon-suffix ("Refining barcodes" on init → ": Cell/Feature barcodes|UMIs" + "N of 3"
+//     per tag → ": Finalizing" on the wrap-up phases), all on an indeterminate (animated) bar.
 //   • tag-stat -u — a data-dependent hierarchical on-disk sort (non-monotonic → indeterminate),
 //     then one monotonic "Writing result" pass → show the live percent for that final phase.
 // Blank suffix on indeterminate cells, else the progress cell defaults the right-hand note to "0%".
@@ -62,11 +64,17 @@ function liveCell(
     if (tag) {
       return {
         status: "running",
-        text: `Refining ${REFINE_TAG_LABELS[tag]}`,
+        text: `Refining barcodes: ${REFINE_TAG_LABELS[tag]}`,
         suffix: `${REFINE_TAGS.indexOf(tag) + 1} of ${REFINE_TAGS.length}`,
       };
     }
-    return { status: "running", text: "Refining barcodes", suffix: "" };
+    // Non-tag global phases keep the stable "Refining barcodes" prefix so the label doesn't jump.
+    // mitool's lead-in stage is "Initialization" (bare label); the wrap-up stages (Filtering /
+    // Final sorting / Writing result) collapse to ": Finalizing".
+    if (/init/i.test(stage)) {
+      return { status: "running", text: "Refining barcodes", suffix: "" };
+    }
+    return { status: "running", text: "Refining barcodes: Finalizing", suffix: "" };
   }
 
   if (step === "3-tagstat") {
