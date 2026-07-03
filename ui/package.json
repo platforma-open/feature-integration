@@ -14,6 +14,8 @@
     "@milaboratories/graph-maker": "catalog:",
     "@platforma-open/milaboratories.feature-integration.model": "workspace:*",
     "@platforma-sdk/ui-vue": "catalog:",
+    "ag-grid-enterprise": "catalog:",
+    "ag-grid-vue3": "catalog:",
     "vue": "catalog:"
   },
   "devDependencies": {

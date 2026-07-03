@@ -3,14 +3,20 @@ import { computed } from "vue";
 import { useApp } from "./app";
 import { parseProgressString } from "./parseProgress";
 
-// One row of the Main-page loading grid. Fields map directly onto PlProgressCell props.
-export type SampleProgressRow = {
+// Progress-cell config per sample. Maps onto the Progress column cell: status → stage, percent → bar
+// fill (undefined = indeterminate), text → main label, suffix → right-hand note. Shape matches the
+// SDK's ColDefProgress, so the column's `progress` callback passes it through unchanged.
+export type ProgressCell = {
+  status: "not_started" | "running" | "done";
+  percent?: number;
+  text: string;
+  suffix?: string;
+};
+
+export type SampleResult = {
   sampleId: string;
   label: string;
-  stage: "not_started" | "running" | "done";
-  step: string; // left text
-  progressString: string; // right text (percent / ETA)
-  percent?: number; // bar fill 0-100; undefined = indeterminate (animated) bar
+  progress: ProgressCell;
 };
 
 // The framework resolves the FutureRefs inside sampleProgress / stepProgress on serialization, so each
@@ -25,16 +31,16 @@ const STEP_NAMES: Record<string, string> = {
   "3-tagstat": "Counting UMIs",
 };
 
-export const sampleResults = computed<SampleProgressRow[] | undefined>(() => {
+export const sampleResults = computed<SampleResult[] | undefined>(() => {
   const app = useApp();
   const roster = app.model.outputs.sampleProgress;
-  if (!roster) return undefined; // roster not yet enumerated (inputs still locking)
+  // undefined until the roster is enumerated — the grid shows its loading overlay in the meantime.
+  if (!roster) return undefined;
 
   const stepProg = app.model.outputs.stepProgress;
   const completed = new Set(app.model.outputs.completedSamples ?? []);
   const labels = app.model.outputs.sampleLabels ?? {};
 
-  // Full roster (every sample shows at once, "Queued" until its first step emits).
   const sampleIds = new Set<string>();
   for (const e of roster.data) sampleIds.add(String(e.key[0]));
 
@@ -55,33 +61,47 @@ export const sampleResults = computed<SampleProgressRow[] | undefined>(() => {
   }
 
   return [...sampleIds]
-    .map((sampleId): SampleProgressRow => {
+    .map((sampleId): SampleResult => {
       const label = labels[sampleId] ?? sampleId;
 
+      // Whole sample finished.
       if (completed.has(sampleId)) {
-        return { sampleId, label, stage: "done", step: "Done", progressString: "" };
+        return { sampleId, label, progress: { status: "done", percent: 100, text: "Done" } };
       }
 
       const cur = latest.get(sampleId);
       if (!cur) {
-        return { sampleId, label, stage: "not_started", step: "Queued", progressString: "" };
+        return { sampleId, label, progress: { status: "not_started", text: "Queued" } };
       }
 
       const name = STEP_NAMES[cur.step] ?? cur.step;
 
-      // Step is actively streaming a progress line → show its stage + percent + ETA (determinate bar).
+      // Step actively streaming → live percent + ETA in the right-hand note.
       if (cur.info.live && cur.info.progressLine) {
-        const parsed = parseProgressString(cur.info.progressLine.replace(ProgressPrefix, ""));
-        const percent = parsed.percentage ? Number(parsed.percentage) : undefined;
-        const right = [parsed.percentage ? `${parsed.percentage}%` : "", parsed.etaLabel ?? ""]
-          .filter(Boolean)
-          .join("  ");
-        return { sampleId, label, stage: "running", step: name, progressString: right, percent };
+        const p = parseProgressString(cur.info.progressLine.replace(ProgressPrefix, ""));
+        if (p.percentage) {
+          return {
+            sampleId,
+            label,
+            progress: {
+              status: "running",
+              percent: Number(p.percentage),
+              text: `${name}: ${p.percentage}%`,
+              suffix: p.etaLabel ?? "",
+            },
+          };
+        }
+        // Streaming but no parseable percent (e.g. mitool's "∞%" line) → indeterminate bar.
+        return { sampleId, label, progress: { status: "running", text: name } };
       }
 
-      // Step finished streaming but the sample isn't done — between steps, or a Python step is running.
-      // Show the last known stage as indeterminate so the row stays informative, not blank "Processing…".
-      return { sampleId, label, stage: "running", step: `${name}…`, progressString: "" };
+      // Step finished streaming but the sample isn't done yet — show that step as complete: a full bar
+      // with a "Done" note, keeping the step name. The next step resets the bar when it starts emitting.
+      return {
+        sampleId,
+        label,
+        progress: { status: "running", percent: 100, text: name, suffix: "Done" },
+      };
     })
     .sort((a, b) => a.label.localeCompare(b.label));
 });

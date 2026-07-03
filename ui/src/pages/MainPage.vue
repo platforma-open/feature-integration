@@ -1,7 +1,11 @@
 <script setup lang="ts">
+import type { PlAgHeaderComponentParams } from "@platforma-sdk/ui-vue";
 import {
+  AgGridTheme,
   PlAccordionSection,
   PlAgDataTableV2,
+  PlAgOverlayLoading,
+  PlAgOverlayNoRows,
   PlAlert,
   PlBlockPage,
   PlBtnGhost,
@@ -9,13 +13,18 @@ import {
   PlDropdownRef,
   PlFileInput,
   PlNumberField,
-  PlProgressCell,
   PlSlideModal,
+  autoSizeRowNumberColumn,
+  createAgGridColDef,
+  makeRowNumberColDef,
   usePlDataTableSettingsV2,
 } from "@platforma-sdk/ui-vue";
+import type { ColDef, GridReadyEvent } from "ag-grid-enterprise";
+import { ClientSideRowModelModule, ModuleRegistry } from "ag-grid-enterprise";
+import { AgGridVue } from "ag-grid-vue3";
 import { computed, ref, watch } from "vue";
 import { useApp } from "../app";
-import { sampleResults } from "../results";
+import { sampleResults, type ProgressCell, type SampleResult } from "../results";
 
 const app = useApp();
 // Auto-open Settings for a fresh block (no FASTQ chosen yet); stay closed once configured.
@@ -44,6 +53,49 @@ const logsOpen = ref(false);
 const controlInfoVisible = computed(
   () => !!app.model.data.tagFeatureCsvHandle && !app.model.data.controlFeature,
 );
+
+// --- Running-state progress grid (in-memory AgGridVue, same pattern as blocks/peptide-extraction) ---
+ModuleRegistry.registerModules([ClientSideRowModelModule]);
+
+const onGridReady = (params: GridReadyEvent) => {
+  autoSizeRowNumberColumn(params.api);
+};
+
+const defaultColumnDef: ColDef = {
+  suppressHeaderMenuButton: true,
+  lockPinned: true,
+  sortable: false,
+};
+
+// The grid only renders while the run is in progress, so the overlay is always the "running" variant.
+const loadingOverlayParams = { variant: "running" as const, runningText: "Preparing sample list" };
+
+const columnDefs: ColDef<SampleResult>[] = [
+  makeRowNumberColDef(),
+  createAgGridColDef<SampleResult, string>({
+    colId: "label",
+    field: "label",
+    headerName: "Sample",
+    headerComponentParams: { type: "Text" } satisfies PlAgHeaderComponentParams,
+    pinned: "left",
+    lockPinned: true,
+    sortable: true,
+    flex: 1,
+  }),
+  createAgGridColDef<SampleResult, ProgressCell>({
+    colId: "progress",
+    field: "progress",
+    headerName: "Progress",
+    headerComponentParams: { type: "Progress" } satisfies PlAgHeaderComponentParams,
+    flex: 2,
+    // results.ts already produces the cell config (status / percent / text / suffix); pass it through.
+    progress: (value) => value,
+  }),
+];
+
+const gridOptions = {
+  getRowId: (row: { data: SampleResult }) => row.data.sampleId,
+};
 </script>
 
 <template>
@@ -54,21 +106,23 @@ const controlInfoVisible = computed(
       <PlBtnGhost @click.stop="settingsOpen = true">Settings</PlBtnGhost>
     </template>
 
-    <!-- While the run is in progress: a live per-sample progress list — every sample appears at once,
-         shows live parse progress, then flips to Done. perCellTable is a withStatus output (truthy even
-         while loading, so it would otherwise show its own generic overlay) — gate on isRunning so this
-         list wins during the run, and fall through to the results table once the run finishes. -->
-    <div
-      v-if="app.model.outputs.isRunning"
-      :style="{ display: 'flex', flexDirection: 'column', gap: '8px' }"
-    >
-      <PlProgressCell
-        v-for="row in sampleResults ?? []"
-        :key="row.sampleId"
-        :stage="row.stage"
-        :step="`${row.label} — ${row.step}`"
-        :progress-string="row.progressString"
-        :progress="row.percent"
+    <!-- While the run is in progress: an in-memory per-sample progress grid (same pattern as
+         blocks/peptide-extraction — no custom CSS; the grid handles layout, its Progress cell, and the
+         loading overlay for the pre-roster window). perCellTable is a withStatus output (truthy while
+         loading, so it would otherwise show its own generic overlay), so gate on isRunning; the results
+         table shows once the run finishes. -->
+    <div v-if="app.model.outputs.isRunning" :style="{ flex: 1 }">
+      <AgGridVue
+        :theme="AgGridTheme"
+        :style="{ height: '100%' }"
+        :row-data="sampleResults"
+        :default-col-def="defaultColumnDef"
+        :column-defs="columnDefs"
+        :grid-options="gridOptions"
+        :loading-overlay-component-params="loadingOverlayParams"
+        :loading-overlay-component="PlAgOverlayLoading"
+        :no-rows-overlay-component="PlAgOverlayNoRows"
+        @grid-ready="onGridReady"
       />
     </div>
     <PlAgDataTableV2
