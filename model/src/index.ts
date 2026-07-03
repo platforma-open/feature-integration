@@ -460,11 +460,17 @@ export const platforma = BlockModelV3.create(dataModel)
   // `defaultBlockLabel` by a UI watchEffect (the sanctioned block-label pattern). The subtitle only
   // reads `ctx.data`. Guard `ctx.data` — it can be undefined before block storage is parsed.
   .subtitle((ctx) => ctx.data?.defaultBlockLabel || "Feature-barcode - per-cell antigen counts")
+  // Operator feedback (2026-07-03): the block should not surface result data in its own UI — only
+  // per-sample progress, like MiXCR Clonotyping (Main + a QC tab). The Raw tag-stat and Feature
+  // Fraction Distribution (Graph) tabs are commented out (not deleted) so they can be re-enabled fast
+  // if the team wants them back once they see it bare. Their pages (ui/src/pages/*), model outputs
+  // (tagstatQcTable / pf / pfPcols), and routes (ui/src/app.ts) are all left intact. To restore a tab:
+  // uncomment its line below.
   .sections(() => [
     { type: "link" as const, href: "/" as const, label: "Main" },
     { type: "link" as const, href: "/qc" as const, label: "Per-sample QC" },
-    { type: "link" as const, href: "/tagstat" as const, label: "Raw tag-stat" },
-    { type: "link" as const, href: "/graph" as const, label: "Feature Fraction Distribution" },
+    // { type: "link" as const, href: "/tagstat" as const, label: "Raw tag-stat" },
+    // { type: "link" as const, href: "/graph" as const, label: "Feature Fraction Distribution" },
   ])
   .done();
 

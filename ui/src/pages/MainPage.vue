@@ -3,7 +3,7 @@ import type { PlAgHeaderComponentParams } from "@platforma-sdk/ui-vue";
 import {
   AgGridTheme,
   PlAccordionSection,
-  PlAgDataTableV2,
+  // PlAgDataTableV2, // retired with the per-cell results-table view (see template restore note)
   PlAgOverlayLoading,
   PlAgOverlayNoRows,
   PlAlert,
@@ -17,7 +17,7 @@ import {
   autoSizeRowNumberColumn,
   createAgGridColDef,
   makeRowNumberColDef,
-  usePlDataTableSettingsV2,
+  // usePlDataTableSettingsV2, // retired with the per-cell results-table view (see template restore note)
 } from "@platforma-sdk/ui-vue";
 import type { ColDef, GridReadyEvent } from "ag-grid-enterprise";
 import { ClientSideRowModelModule, ModuleRegistry } from "ag-grid-enterprise";
@@ -38,9 +38,11 @@ watch(
   },
 );
 
-const tableSettings = usePlDataTableSettingsV2({
-  model: () => app.model.outputs.perCellTable,
-});
+// Retired with the per-cell results-table view (operator feedback 2026-07-03; see template restore
+// note). Left commented for quick re-enable — the model output perCellTable is still produced.
+// const tableSettings = usePlDataTableSettingsV2({
+//   model: () => app.model.outputs.perCellTable,
+// });
 
 // The block's "Analysis logs": a live completed-sample heartbeat while the run is in progress, then a
 // run-level summary when it finishes (the model builds the lines from the per-sample QC). Shown in a
@@ -67,8 +69,13 @@ const defaultColumnDef: ColDef = {
   sortable: false,
 };
 
-// The grid only renders while the run is in progress, so the overlay is always the "running" variant.
-const loadingOverlayParams = { variant: "running" as const, runningText: "Preparing sample list" };
+// The progress grid is now always shown (the results-table view is retired — see template). Before the
+// run starts, show the "not-ready" overlay; once it begins, show "running" until the sample roster loads.
+const loadingOverlayParams = computed(() =>
+  app.model.outputs.started
+    ? { variant: "running" as const, runningText: "Preparing sample list" }
+    : { variant: "not-ready" as const },
+);
 
 const columnDefs: ColDef<SampleResult>[] = [
   makeRowNumberColDef(),
@@ -106,12 +113,13 @@ const gridOptions = {
       <PlBtnGhost @click.stop="settingsOpen = true">Settings</PlBtnGhost>
     </template>
 
-    <!-- While the run is in progress: an in-memory per-sample progress grid (same pattern as
+    <!-- Operator feedback (2026-07-03): the block shows ONLY per-sample progress (like MiXCR
+         Clonotyping) — no in-UI result data. The in-memory per-sample progress grid (same pattern as
          blocks/peptide-extraction — no custom CSS; the grid handles layout, its Progress cell, and the
-         loading overlay for the pre-roster window). perCellTable is a withStatus output (truthy while
-         loading, so it would otherwise show its own generic overlay), so gate on isRunning; the results
-         table shows once the run finishes. -->
-    <div v-if="app.model.outputs.isRunning" :style="{ flex: 1 }">
+         loading overlay for the pre-roster window) is now ALWAYS shown: when the run finishes, every row
+         settles into its "Done" state (results.ts sets status "done" from completedSamples) instead of
+         swapping to a results table. -->
+    <div :style="{ flex: 1 }">
       <AgGridVue
         :theme="AgGridTheme"
         :style="{ height: '100%' }"
@@ -125,13 +133,17 @@ const gridOptions = {
         @grid-ready="onGridReady"
       />
     </div>
+    <!-- Retired per-cell results-table view. Re-enable together with the Raw tag-stat / Graph tabs if the
+         team wants data back in-UI: uncomment this block, the PlAgDataTableV2 + usePlDataTableSettingsV2
+         imports, and the tableSettings const above. The perCellTable model output is still produced.
     <PlAgDataTableV2
-      v-else-if="app.model.outputs.perCellTable"
+      v-if="app.model.outputs.perCellTable"
       v-model="app.model.data.tableState"
       :settings="tableSettings"
       show-export-button
     />
-    <PlAlert v-else type="info">
+    -->
+    <PlAlert v-if="false" type="info">
       Per-cell feature results appear after you set the inputs in Settings and run the block.
     </PlAlert>
 

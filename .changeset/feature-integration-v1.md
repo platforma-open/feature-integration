@@ -191,3 +191,14 @@ list from `feature : umiCount : fraction` to `feature (fraction%, umiCount UMI)`
 raw decimal, "<1%" for a nonzero feature that rounds below 1%), bullet-separated with non-breaking
 padding and sorted by descending fraction. Display-only — the exported per-feature matrix (A-0010
 contract) is unchanged.
+
+## Main page — progress-only view (in-UI data display hidden for now)
+
+Operator feedback: the block should not surface result data in its own UI — only per-sample progress,
+matching MiXCR Clonotyping (Main + a QC tab). The Main page now always shows the per-sample progress
+grid; when the run finishes every row settles into its "Done" state instead of swapping to the results
+table. The "Raw tag-stat" and "Feature Fraction Distribution" (Graph) tabs are commented out in
+`sections()`. This is display-only and reversible — the results-table branch, both tabs' pages, their
+model outputs (`perCellTable` / `tagstatQcTable` / `pf` / `pfPcols`), and the routes are all left intact,
+so a tab is re-enabled by uncommenting one line. The "Per-sample QC" tab stays. The A-0010 export
+contract to VDJ Multiomic Integration is unaffected.
