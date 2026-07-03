@@ -60,7 +60,7 @@ const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
   // Violin-plot graph tab: feature-fraction distribution per sample, faceted by feature. Defaults
   // (y = fraction, primary grouping = sample, facet = feature) are seeded by the Graph page's
   // default-options; here we only fix the chart template.
-  graphState: { title: "Feature fractions", template: "violin", currentTab: null },
+  graphState: { title: "Feature Fraction Distribution", template: "violin", currentTab: null },
 }));
 
 export const platforma = BlockModelV3.create(dataModel)
@@ -450,7 +450,7 @@ export const platforma = BlockModelV3.create(dataModel)
     { type: "link" as const, href: "/" as const, label: "Main" },
     { type: "link" as const, href: "/qc" as const, label: "Per-sample QC" },
     { type: "link" as const, href: "/tagstat" as const, label: "Raw tag-stat" },
-    { type: "link" as const, href: "/graph" as const, label: "Graph" },
+    { type: "link" as const, href: "/graph" as const, label: "Feature Fraction Distribution" },
   ])
   .done();
 
