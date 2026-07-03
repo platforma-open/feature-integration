@@ -61,16 +61,12 @@ def specificity_score(antigen_umi, control_umi):
     return (1.0 - beta.cdf(0.925, antigen_umi + 1, control_umi + 3)) * 100.0
 
 
-# Decimal places for the fraction in the per-cell feature-summary string (table-only display; the
-# exported Double fractions keep full precision).
-_SUMMARY_FRACTION_DECIMALS = 3
-
-
 def per_cell_summary(counts: pl.DataFrame, control: str | None) -> pl.DataFrame:
     """One row per (sampleId, cellId): the cell's max feature UMI count and max feature fraction
     (and, with a negative control, the max specificity score), plus a ``featureSummary`` string that
-    lists every feature the cell has signal for as ``feature : umiCount : fraction``, joined by
-    " | " and sorted by descending fraction (dominant feature first, feature name as tie-break).
+    lists every feature the cell has signal for as ``feature (fraction%, umiCount UMI)``, bullet-
+    separated and sorted by descending fraction (dominant feature first, feature name as tie-break).
+    Fractions display as whole percents, with "<1%" for a nonzero feature that rounds below 1%.
 
     This is a TABLE-ONLY collapse of the (cell x feature) matrix -- the per-feature abundance,
     fractions, consensus, and specificity outputs (the A-0010 export contract) are unaffected.
@@ -89,12 +85,20 @@ def per_cell_summary(counts: pl.DataFrame, control: str | None) -> pl.DataFrame:
         scores = specificity_score(per_cell["umiCount"].to_numpy(), per_cell["_controlUmi"].to_numpy())
         per_cell = per_cell.with_columns(pl.Series("specificityScore", scores, dtype=pl.Float64))
 
+    # Whole-percent display of the fraction, with "<1%" for a nonzero feature that rounds below 1% (so a
+    # real-but-tiny signal never reads as "0%"). Full-precision fractions stay in the exported columns.
+    pct = (pl.col("fraction") * 100).round(0)
+    pct_str = (
+        pl.when((pct == 0) & (pl.col("umiCount") > 0))
+        .then(pl.lit("<1%"))
+        .otherwise(pct.cast(pl.Int64).cast(pl.Utf8) + pl.lit("%"))
+    )
     per_cell = per_cell.with_columns(
         pl.format(
-            "{} : {} : {}",
+            "{} ({}, {} UMI)",
             pl.col("feature"),
+            pct_str,
             pl.col("umiCount"),
-            pl.col("fraction").round(_SUMMARY_FRACTION_DECIMALS),
         ).alias("_entry")
     )
     aggs = [
@@ -102,7 +106,9 @@ def per_cell_summary(counts: pl.DataFrame, control: str | None) -> pl.DataFrame:
         pl.col("fraction").max().alias("maxFraction"),
         pl.col("_entry")
         .sort_by(["fraction", "feature"], descending=[True, False])
-        .str.join(" | ")
+        # bullet with non-breaking padding — a plain " | " reads as too thin/crowded in the table cell,
+        # and normal spaces collapse in HTML, so the U+00A0 padding is what makes the separation stick.
+        .str.join("  •  ")
         .alias("featureSummary"),
     ]
     out_cols = ["sampleId", "cellId", "maxUmiCount", "maxFraction"]

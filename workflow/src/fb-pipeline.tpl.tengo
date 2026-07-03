@@ -18,6 +18,7 @@ maps := import("@platforma-sdk/workflow-tengo:maps")
 ll := import("@platforma-sdk/workflow-tengo:ll")
 pConstants := import("@platforma-sdk/workflow-tengo:pframes.constants")
 tagPattern := import(":tag-pattern")
+pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
 
 json := import("json")
 
@@ -26,7 +27,7 @@ json := import("json")
 // surface live per-sample progress — keep the two in sync.
 progressPrefix := "[==PROGRESS==]"
 
-self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "tagstat", "qc", "qcJson", "parseLogStream")
+self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "tagstat", "qc", "qcJson", "parseLogStream", "stepLogs")
 
 // :memory-from-limits sizes the JVM heap from the granted limits — avoids end-of-parse OOM when many
 // tag writers flush (see demultiplex-fastq).
@@ -182,6 +183,7 @@ self.body(func(inputs) {
 	refine := applyMitoolMem(exec.builder().
 		software(mitoolSw).
 		cpu(mitoolCPUs)).
+		env("MI_PROGRESS_PREFIX", progressPrefix).
 		arg("refine-tags").
 		arg("-t").arg(cellTag).
 		arg("-t").arg(tagPattern.FEATURE_TAG + "#file:panel.txt").
@@ -203,6 +205,7 @@ self.body(func(inputs) {
 		software(mitoolSw).
 		cpu(2).
 		memFormula(tagStatMemFormula, { fallback: string(tagStatBaseGB) + "GiB" }).
+		env("MI_PROGRESS_PREFIX", progressPrefix).
 		arg("tag-stat").
 		arg("--use-local-temp").
 		arg("-t").arg(tagPattern.CELL_TAG).
@@ -260,6 +263,14 @@ self.body(func(inputs) {
 	}
 	metrics = metrics.printErrStreamToStdout().saveStdoutStream().run()
 
+	// Per-step stdout streams (progress-prefixed for the mitool steps) → the model's live per-step
+	// progress grid. Ordinal step key so the UI can order + name them; qc/metrics are Python (no
+	// progress lines) so they are not tracked here — completion comes from qcJson (completedSamples).
+	stepLogs := pcolumn.resourceMapBuilder(1)
+	stepLogs.add(["1-parse"], parse.getStdoutStream())
+	stepLogs.add(["2-refine"], refine.getStdoutStream())
+	stepLogs.add(["3-tagstat"], tagStat.getStdoutStream())
+
 	// The body must return exactly the defineOutputs set and no output may be undefined. specificity is
 	// meaningful only with a control feature, so the Python always writes result_specificity.csv (empty
 	// header-only when no --control) and we always return it. main.tpl and the model still gate the
@@ -274,6 +285,8 @@ self.body(func(inputs) {
 		qc: qc.getFile("result_qc.csv"),
 		qcJson: qc.getFileContent("result_qc.json"), // inline content (saveFileContent) so the model can read it
 		// Per-sample mitool stdout (progress-prefixed); surfaced by main.tpl for the model's live progress grid.
-		parseLogStream: parse.getStdoutStream()
+		parseLogStream: parse.getStdoutStream(),
+		// Per-step progress-log map (parse / refine / tag-stat) → model stepProgress → live step display.
+		stepLogs: stepLogs.build()
 	}
 })

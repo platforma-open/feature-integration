@@ -13,30 +13,45 @@ export type SampleProgressRow = {
   percent?: number; // bar fill 0-100; undefined = indeterminate (animated) bar
 };
 
-// The framework resolves the FutureRef inside the sampleProgress output on serialization, so each
-// entry's value arrives as this shape (or undefined before the sample's parse emits a line). The cast
-// mirrors blocks/peptide-extraction results.ts.
+// The framework resolves the FutureRefs inside sampleProgress / stepProgress on serialization, so each
+// entry's value arrives as this shape (or undefined). Cast mirrors blocks/peptide-extraction results.ts.
 type ProgressInfo = { progressLine?: string; live: boolean };
 
-// Per-sample progress rows for the loading grid, derived purely from model outputs:
-//   • sampleProgress   — roster (gated on getInputsLocked) + latest live parse progress line per sample
-//   • completedSamples — samples whose per-sample pipeline finished (qcJson settled)
-//   • sampleLabels     — sampleId -> display name
+// Ordinal step key (from the workflow stepLogs axis) → friendly display name. Only the mitool steps
+// emit progress; qc/metrics (Python) are not tracked — completion comes from completedSamples.
+const STEP_NAMES: Record<string, string> = {
+  "1-parse": "Parsing reads",
+  "2-refine": "Refining barcodes",
+  "3-tagstat": "Counting UMIs",
+};
+
 export const sampleResults = computed<SampleProgressRow[] | undefined>(() => {
   const app = useApp();
-  const progress = app.model.outputs.sampleProgress;
-  if (!progress) return undefined; // roster not yet enumerated (inputs still locking)
+  const roster = app.model.outputs.sampleProgress;
+  if (!roster) return undefined; // roster not yet enumerated (inputs still locking)
 
+  const stepProg = app.model.outputs.stepProgress;
   const completed = new Set(app.model.outputs.completedSamples ?? []);
   const labels = app.model.outputs.sampleLabels ?? {};
 
-  const infoBySample = new Map<string, ProgressInfo>();
+  // Full roster (every sample shows at once, "Queued" until its first step emits).
   const sampleIds = new Set<string>();
-  for (const e of progress.data) {
-    const sampleId = String(e.key[0]);
-    sampleIds.add(sampleId);
-    const info = e.value as ProgressInfo | undefined;
-    if (info) infoBySample.set(sampleId, info);
+  for (const e of roster.data) sampleIds.add(String(e.key[0]));
+
+  // Latest step per sample: prefer a currently-live stream, else the highest-ordinal step seen. Step
+  // keys sort lexicographically ("1-…" < "2-…" < "3-…"), so string compare gives step order.
+  const latest = new Map<string, { step: string; info: ProgressInfo }>();
+  const consider = (sampleId: string, step: string, info: ProgressInfo | undefined) => {
+    if (!info) return;
+    const cur = latest.get(sampleId);
+    if (!cur || (info.live && !cur.info.live) || (info.live === cur.info.live && step > cur.step)) {
+      latest.set(sampleId, { step, info });
+    }
+  };
+  if (stepProg) {
+    for (const e of stepProg.data) {
+      consider(String(e.key[0]), String(e.key[1]), e.value as ProgressInfo | undefined);
+    }
   }
 
   return [...sampleIds]
@@ -47,33 +62,26 @@ export const sampleResults = computed<SampleProgressRow[] | undefined>(() => {
         return { sampleId, label, stage: "done", step: "Done", progressString: "" };
       }
 
-      const info = infoBySample.get(sampleId);
+      const cur = latest.get(sampleId);
+      if (!cur) {
+        return { sampleId, label, stage: "not_started", step: "Queued", progressString: "" };
+      }
 
-      // Live parse progress — show stage + percent + ETA with a determinate bar.
-      if (info?.live && info.progressLine) {
-        const parsed = parseProgressString(info.progressLine.replace(ProgressPrefix, ""));
+      const name = STEP_NAMES[cur.step] ?? cur.step;
+
+      // Step is actively streaming a progress line → show its stage + percent + ETA (determinate bar).
+      if (cur.info.live && cur.info.progressLine) {
+        const parsed = parseProgressString(cur.info.progressLine.replace(ProgressPrefix, ""));
         const percent = parsed.percentage ? Number(parsed.percentage) : undefined;
         const right = [parsed.percentage ? `${parsed.percentage}%` : "", parsed.etaLabel ?? ""]
           .filter(Boolean)
           .join("  ");
-        return {
-          sampleId,
-          label,
-          stage: "running",
-          step: parsed.stage?.trim() || "Parsing",
-          progressString: right,
-          percent,
-        };
+        return { sampleId, label, stage: "running", step: name, progressString: right, percent };
       }
 
-      // Parse stream ended but the sample isn't done — the downstream steps (refine / tag-stat /
-      // per-cell metrics) run without emitting progress lines. Show an indeterminate "Processing…".
-      if (info) {
-        return { sampleId, label, stage: "running", step: "Processing…", progressString: "" };
-      }
-
-      // Enumerated but its parse hasn't started emitting yet.
-      return { sampleId, label, stage: "not_started", step: "Queued", progressString: "" };
+      // Step finished streaming but the sample isn't done — between steps, or a Python step is running.
+      // Show the last known stage as indeterminate so the row stays informative, not blank "Processing…".
+      return { sampleId, label, stage: "running", step: `${name}…`, progressString: "" };
     })
     .sort((a, b) => a.label.localeCompare(b.label));
 });

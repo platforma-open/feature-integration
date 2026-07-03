@@ -54,16 +54,12 @@ const controlInfoVisible = computed(
       <PlBtnGhost @click.stop="settingsOpen = true">Settings</PlBtnGhost>
     </template>
 
-    <PlAgDataTableV2
-      v-if="app.model.outputs.perCellTable"
-      v-model="app.model.data.tableState"
-      :settings="tableSettings"
-      show-export-button
-    />
-    <!-- Once the run starts (before per-cell results settle): a live per-sample progress list — every
-         sample appears at once ("Queued"), shows live parse progress, then flips to "Done". -->
+    <!-- While the run is in progress: a live per-sample progress list — every sample appears at once,
+         shows live parse progress, then flips to Done. perCellTable is a withStatus output (truthy even
+         while loading, so it would otherwise show its own generic overlay) — gate on isRunning so this
+         list wins during the run, and fall through to the results table once the run finishes. -->
     <div
-      v-else-if="app.model.outputs.started"
+      v-if="app.model.outputs.isRunning"
       :style="{ display: 'flex', flexDirection: 'column', gap: '8px' }"
     >
       <PlProgressCell
@@ -74,10 +70,13 @@ const controlInfoVisible = computed(
         :progress-string="row.progressString"
         :progress="row.percent"
       />
-      <PlAlert v-if="(sampleResults ?? []).length === 0" type="info">
-        Starting run… preparing the sample list.
-      </PlAlert>
     </div>
+    <PlAgDataTableV2
+      v-else-if="app.model.outputs.perCellTable"
+      v-model="app.model.data.tableState"
+      :settings="tableSettings"
+      show-export-button
+    />
     <PlAlert v-else type="info">
       Per-cell feature results appear after you set the inputs in Settings and run the block.
     </PlAlert>

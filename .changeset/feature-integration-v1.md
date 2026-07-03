@@ -170,15 +170,24 @@ Implement the feature-barcode workflow (plan Tasks 3–4).
 ## Loading screen — live per-sample progress
 
 Replace the Main page's static "run the block" placeholder with a live per-sample progress list while a
-run is in progress. Each sample appears as soon as the roster is enumerated ("Queued"), shows live
-mitool parse progress (stage + percent + ETA) in a `PlProgressCell`, falls back to an indeterminate
-"Processing…" while the downstream steps (which emit no progress) run, then flips to "Done" when its
-per-sample pipeline finishes. Modeled on blocks/peptide-extraction.
+run is in progress. Each sample appears as soon as the roster is enumerated ("Queued"), then shows the
+current mitool step by name with its percent + ETA ("Parsing reads" → "Refining barcodes" → "Counting
+UMIs"), and flips to "Done" when its per-sample pipeline finishes. Modeled on blocks/peptide-extraction.
 
-- Workflow: the per-sample `parse` step's stdout (already progress-prefixed via `MI_PROGRESS_PREFIX`,
-  now a shared `[==PROGRESS==]` sentinel matched by the model) is surfaced as a flat per-sample
-  `parseLogStream` Log column.
-- Model: new outputs — `started`, `sampleProgress` (roster + latest live progress line per sample,
-  gated on `getInputsLocked`), `completedSamples` (from the per-sample qcJson), and `sampleLabels`.
-- UI: `sampleResults` derives the per-sample rows; the Main page renders them as a stack of
-  `PlProgressCell`s (no new UI dependencies).
+- Workflow: each mitool step (parse / refine-tags / tag-stat) runs with a shared `[==PROGRESS==]`
+  `MI_PROGRESS_PREFIX` sentinel and its stdout is surfaced two ways — a flat per-sample `parseLogStream`
+  Log column (roster + early gate) and a nested per-sample × per-step `stepLogs` Log ResourceMap.
+- Model: new outputs — `started`, `sampleProgress` (roster, gated on `getInputsLocked`), `stepProgress`
+  (per-sample × per-step latest progress line), `completedSamples` (from the per-sample qcJson), and
+  `sampleLabels`.
+- UI: `sampleResults` picks each sample's latest active step; the Main page renders a stack of
+  `PlProgressCell`s (no new UI dependencies), gated on `isRunning` so it shows while running and the
+  results table shows once done.
+
+## Per-cell "Feature breakdown" column
+
+Rename the per-cell summary column "Features" → **"Feature breakdown"** and reformat its per-feature
+list from `feature : umiCount : fraction` to `feature (fraction%, umiCount UMI)` (percent instead of a
+raw decimal, "<1%" for a nonzero feature that rounds below 1%), bullet-separated with non-breaking
+padding and sorted by descending fraction. Display-only — the exported per-feature matrix (A-0010
+contract) is unchanged.

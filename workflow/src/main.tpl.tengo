@@ -122,6 +122,20 @@ wf.body(func(args) {
 		name: "parseLogStream"
 	})
 
+	// Per-sample × per-step progress-log map (parse / refine / tag-stat). Nested ResourceMap keyed by an
+	// ordinal step axis; the model reads the latest progress line per step for the live progress grid.
+	outputs = append(outputs, {
+		type: "ResourceMap",
+		spec: {
+			kind: "PColumn",
+			name: "pl7.app/log",
+			domain: { "pl7.app/blockId": blockId },
+			valueType: "Log",
+			axesSpec: [{ name: "pl7.app/feature/step", type: "String" }]
+		},
+		name: "stepLogs"
+	})
+
 	// mitool resource meta (mixcr semantics): pass the base memory floor always; add the override key
 	// only when the user set one (Advanced Settings) so fb-pipeline treats it as a hard fixed request.
 	// A distinct meta when overridden is correct — it must not dedup with the formula-sized run.
@@ -218,6 +232,8 @@ wf.body(func(args) {
 			qcJson: perSampleResults.outputData("qcJson"),
 			// Per-sample parse-log stream -> model sampleProgress (live per-sample progress grid + roster).
 			parseLogStream: perSampleResults.outputData("parseLogStream"),
+			// Per-sample × per-step progress-log map -> model stepProgress (live per-step display).
+			stepLogs: perSampleResults.outputData("stepLogs"),
 			// Expose the tag->feature CSV import HANDLE so the model can watch it via getImportProgress()
 			// (model/src/index.ts). That model output is the actual upload driver: it registers the import
 			// with the middle-layer so the CSV bytes are pushed. Without it the CSV blob never materialises

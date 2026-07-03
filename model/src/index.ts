@@ -199,6 +199,20 @@ export const platforma = BlockModelV3.create(dataModel)
     if (!acc || !acc.getInputsLocked()) return undefined;
     return parseResourceMap(acc, (a) => a.getProgressLogWithInfo(ProgressPrefix), true);
   })
+  // Per-sample × per-step progress (workflow stepLogs: 1-parse / 2-refine / 3-tagstat). Each mitool
+  // step's stdout is progress-prefixed; getProgressLogWithInfo returns the latest line + live flag per
+  // step. Keys flatten to [sampleId, step]; the UI picks the latest active step per sample so the grid
+  // shows which stage each sample is in, not just "Processing…". (qc/metrics are Python — no progress —
+  // so they are not tracked; completion comes from completedSamples.)
+  .output("stepProgress", (ctx) =>
+    ctx.outputs !== undefined
+      ? parseResourceMap(
+          ctx.outputs.resolve("stepLogs"),
+          (acc) => acc.getProgressLogWithInfo(ProgressPrefix),
+          false,
+        )
+      : undefined,
+  )
   // sampleIds whose per-sample pipeline has finished. qcJson is the LAST per-sample step and is inline
   // JSON content, so getDataAsJsonOrUndefined reads it synchronously — the done-set is computed here
   // (unlike sampleProgress's FutureRefs) and drives the grid's "Done" state.
@@ -362,8 +376,8 @@ export const platforma = BlockModelV3.create(dataModel)
   // DECISION (2026-07-02, operator): the Main table is now ONE ROW PER CELL [sampleId, cellId].
   // Supersedes the 2026-07-01 "single unified matrix table" decision — the per-(cell x feature) rows
   // moved OUT of this table into the collapsed workflow frame (consensus + the per-cell summary
-  // columns: Max Feature UMI count, Max Feature Fraction, Max Specificity score, and a "Features"
-  // string listing every feature as "feature : umi : fraction" sorted by descending fraction). The
+  // columns: Max Feature UMI count, Max Feature Fraction, Max Specificity score, and a "Feature
+  // breakdown" string listing every feature as "feature (fraction%, umi)" sorted by descending fraction). The
   // per-feature matrix is not lost: it is still exported to the result pool (perCellFeatures, the
   // A-0010 contract) for VDJ Multiomic Integration and still drives the violin graph tab (graphPf /
   // the `pf` output). This output resolves the workflow's collapsed perCellTable PFrame; undefined
