@@ -31,6 +31,11 @@ const STEP_NAMES: Record<string, string> = {
   "3-tagstat": "Counting UMIs",
 };
 
+// Steps whose mitool progress isn't monotonic — refine-tags runs several internal passes (CELL /
+// FEATURE / UMI / writing), each counting 0→100%, so its live percent visibly jumps up and down.
+// Show these as an indeterminate (animated) bar instead of a jumpy number.
+const INDETERMINATE_STEPS = new Set(["2-refine"]);
+
 export const sampleResults = computed<SampleResult[] | undefined>(() => {
   const app = useApp();
   const roster = app.model.outputs.sampleProgress;
@@ -78,6 +83,11 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
 
       // Step actively streaming → live percent + ETA in the right-hand note.
       if (cur.info.live && cur.info.progressLine) {
+        // Non-monotonic steps (refine-tags): indeterminate bar so the percent doesn't jump around.
+        // Blank suffix — otherwise the progress cell defaults the right-hand note to "0%".
+        if (INDETERMINATE_STEPS.has(cur.step)) {
+          return { sampleId, label, progress: { status: "running", text: name, suffix: "" } };
+        }
         const p = parseProgressString(cur.info.progressLine.replace(ProgressPrefix, ""));
         if (p.percentage) {
           return {
@@ -91,8 +101,9 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
             },
           };
         }
-        // Streaming but no parseable percent (e.g. mitool's "∞%" line) → indeterminate bar.
-        return { sampleId, label, progress: { status: "running", text: name } };
+        // Streaming but no parseable percent (e.g. mitool's "∞%" line) → indeterminate bar (blank
+        // suffix so the cell doesn't default the right-hand note to "0%").
+        return { sampleId, label, progress: { status: "running", text: name, suffix: "" } };
       }
 
       // Step finished streaming but the sample isn't done yet — show that step as complete: a full bar
