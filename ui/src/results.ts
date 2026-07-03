@@ -31,11 +31,69 @@ const STEP_NAMES: Record<string, string> = {
   "3-tagstat": "Counting UMIs",
 };
 
-// Steps whose mitool progress isn't monotonic — each runs several internal passes that each count
-// 0→100%, so a live percent visibly jumps up and down. refine-tags passes over CELL / FEATURE / UMI /
-// writing; tag-stat -u makes multiple passes over the on-disk sort. Show these as an indeterminate
-// (animated) bar instead of a jumpy number.
-const INDETERMINATE_STEPS = new Set(["2-refine", "3-tagstat"]);
+// refine-tags corrects the barcode tags in this fixed order (fb-pipeline.tpl.tengo passes
+// `-t CELL -t FEATURE -t UMI`; mitool orders CELL < FEATURE < UMI). mitool labels each progress line
+// with the tag it is currently working on ("Counting CELL", "Correcting FEATURE", "Writing UMI", …),
+// so we surface WHICH tag is in progress and its position ("2 of 3"). Keep in sync with
+// tag-pattern.lib.tengo if the corrected-tag set changes.
+const REFINE_TAGS = ["CELL", "FEATURE", "UMI"];
+const REFINE_TAG_LABELS: Record<string, string> = {
+  CELL: "cell barcodes",
+  FEATURE: "feature barcodes",
+  UMI: "UMIs",
+};
+
+// Build the running-state progress cell from mitool's latest live stage label. mitool's per-step
+// progress is structured, so instead of one jumpy percent we surface which sub-step is running:
+//   • parse — one monotonic pass → show the live percent.
+//   • refine-tags — corrects CELL → FEATURE → UMI; per-tag progress is non-monotonic (recursive
+//     correction passes), so show the current tag + "N of 3" with an indeterminate (animated) bar.
+//   • tag-stat -u — a data-dependent hierarchical on-disk sort (non-monotonic → indeterminate),
+//     then one monotonic "Writing result" pass → show the live percent for that final phase.
+// Blank suffix on indeterminate cells, else the progress cell defaults the right-hand note to "0%".
+function liveCell(
+  step: string,
+  stage: string,
+  percentage?: string,
+  etaLabel?: string,
+): ProgressCell {
+  if (step === "2-refine") {
+    const tag = REFINE_TAGS.find((t) => stage.includes(t));
+    if (tag) {
+      return {
+        status: "running",
+        text: `Refining ${REFINE_TAG_LABELS[tag]}`,
+        suffix: `${REFINE_TAGS.indexOf(tag) + 1} of ${REFINE_TAGS.length}`,
+      };
+    }
+    return { status: "running", text: "Refining barcodes", suffix: "" };
+  }
+
+  if (step === "3-tagstat") {
+    // The final "Writing result" pass is monotonic; the preceding on-disk sort is not.
+    if (/writing/i.test(stage) && percentage) {
+      return {
+        status: "running",
+        percent: Number(percentage),
+        text: `Counting UMIs: writing ${percentage}%`,
+        suffix: etaLabel ?? "",
+      };
+    }
+    return { status: "running", text: "Counting UMIs: sorting", suffix: "" };
+  }
+
+  // parse (and any other monotonic step): show the live percent when present, else indeterminate.
+  const name = STEP_NAMES[step] ?? step;
+  if (percentage) {
+    return {
+      status: "running",
+      percent: Number(percentage),
+      text: `${name}: ${percentage}%`,
+      suffix: etaLabel ?? "",
+    };
+  }
+  return { status: "running", text: name, suffix: "" };
+}
 
 export const sampleResults = computed<SampleResult[] | undefined>(() => {
   const app = useApp();
@@ -82,29 +140,14 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
 
       const name = STEP_NAMES[cur.step] ?? cur.step;
 
-      // Step actively streaming → live percent + ETA in the right-hand note.
+      // Step actively streaming → a descriptive cell built from mitool's structured stage label.
       if (cur.info.live && cur.info.progressLine) {
-        // Non-monotonic steps (refine-tags): indeterminate bar so the percent doesn't jump around.
-        // Blank suffix — otherwise the progress cell defaults the right-hand note to "0%".
-        if (INDETERMINATE_STEPS.has(cur.step)) {
-          return { sampleId, label, progress: { status: "running", text: name, suffix: "" } };
-        }
         const p = parseProgressString(cur.info.progressLine.replace(ProgressPrefix, ""));
-        if (p.percentage) {
-          return {
-            sampleId,
-            label,
-            progress: {
-              status: "running",
-              percent: Number(p.percentage),
-              text: `${name}: ${p.percentage}%`,
-              suffix: p.etaLabel ?? "",
-            },
-          };
-        }
-        // Streaming but no parseable percent (e.g. mitool's "∞%" line) → indeterminate bar (blank
-        // suffix so the cell doesn't default the right-hand note to "0%").
-        return { sampleId, label, progress: { status: "running", text: name, suffix: "" } };
+        return {
+          sampleId,
+          label,
+          progress: liveCell(cur.step, p.stage ?? "", p.percentage, p.etaLabel),
+        };
       }
 
       // Step finished streaming but the sample isn't done yet — show that step as complete: a full bar
