@@ -107,7 +107,7 @@ def derive_antigen_umis(donor, panel):
 
 def load_vdj(donor):
     """Parse the AIRR-sc TSV; return per-cell clone key + schema stats."""
-    path = VDJ_DIR / f"{donor}_airr_sc.tsv"
+    path = VDJ_DIR / f"{donor}.tsv"
     required = {"cell_id", "junction", "v_call", "j_call", "duplicate_count"}
     per_cell = defaultdict(lambda: {"IGH": [], "IGK": []})
     bad_junction = 0
@@ -148,7 +148,7 @@ def load_vdj(donor):
 
 def load_gex(donor):
     """Parse the genes-in-rows count CSV; return cell set, per-cell plasma-marker mean, validity."""
-    with open(GEX_DIR / f"{donor}_counts.csv", newline="") as fh:
+    with open(GEX_DIR / f"{donor}.csv", newline="") as fh:
         rows = list(csv.reader(fh))
     header = rows[0]
     barcodes = [b.split("-")[0] for b in header[1:]]  # strip any -N suffix (import-sc-rnaseq does)

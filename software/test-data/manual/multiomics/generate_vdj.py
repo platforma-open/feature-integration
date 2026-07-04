@@ -197,11 +197,16 @@ def main() -> None:
     for donor in sorted(by_donor):
         clones = build_clones(rng, by_donor[donor], clear)
         all_clones[donor] = clones
-        n_rows = write_airr(out_dir / f"{donor}_airr_sc.tsv", clones, rng)
+        # Filename is the bare donor id (no `_airr_sc` library suffix): Samples & Data derives the
+        # sample name from the filename stem, so all three arms MUST yield the same stem to share one
+        # sampleId. A per-library suffix forks the donor into separate samples and the convergence
+        # [sampleId,cellId] join then matches nothing. Real deliveries may carry such suffixes — see
+        # README "Sample model & assumptions (revisit against real data)".
+        n_rows = write_airr(out_dir / f"{donor}.tsv", clones, rng)
         n_cells = sum(len(c["cells"]) for c in clones)
         n_lead = sum(1 for c in clones if c["kind"] == "lead")
         print(f"  {donor}: {n_cells} cells, {len(clones)} clonotypes "
-              f"({n_lead} lead) -> {n_rows} contig rows ({out_dir.name}/{donor}_airr_sc.tsv)")
+              f"({n_lead} lead) -> {n_rows} contig rows ({out_dir.name}/{donor}.tsv)")
     write_truth(out_dir / "truth_clonotypes.csv", all_clones)
     print(f"  truth -> {out_dir.name}/truth_clonotypes.csv")
     print(f"\nAntigen arm (reused): {antigen_dir}/<donor>_R{{1,2}}.fastq.gz + tags.csv")

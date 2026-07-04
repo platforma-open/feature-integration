@@ -58,18 +58,44 @@ The convergence join is a silent inner-join on `[sampleId, cellId]`. All three a
 
 ---
 
+## Sample model & assumptions (revisit against real data)
+
+This synthetic cohort assumes **one capture = one donor**: each donor is a single BEAM-Ab capture whose
+three libraries (antigen / VDJ / GEX) share one 16 nt cell barcode and import as **one Samples & Data
+sample with three datasets** — i.e. one shared `sampleId`. The convergence join depends on that shared
+`sampleId` (see the canonical-barcode rule above). Two assumptions are baked in here that we should **not
+over-index on** — confirm them against real BEAM data before treating them as fixed:
+
+- **Filenames carry no library suffix.** All three arms write `donorNN.<ext>` (antigen
+  `donorNN_R{1,2}.fastq.gz`, VDJ `donorNN.tsv`, GEX `donorNN.csv`), so Samples & Data extracts the same
+  `donorNN` stem from each and mints **one** shared `sampleId`. This is a deliberate synthetic-data
+  convenience. **Real deliveries may name files per library** (e.g. `donorNN_airr_sc`, `donorNN_counts`) —
+  Samples & Data would then fork each donor into separate per-library samples with disjoint `sampleId`s,
+  and the convergence `[sampleId, cellId]` join returns nothing. If real data arrives that way, import as
+  one sample per donor (multiple datasets under it) or collapse the sampleIds in Samples & Data — do **not**
+  assume filenames are already suffix-free.
+- **Pooled donors are out of scope (for now).** Real cohorts often **pool several donors in one capture**
+  and separate them afterward by genetic / hashtag demultiplexing. This test bed and the block both assume
+  **separate per-donor captures** — spec-consistent, since demux is a separate/optional upstream step
+  (atoms A-0002 / A-0005 defer per-sample stratification). Pooled input + demux is a **future input mode**,
+  not a current guarantee; don't hard-code a 1:1 capture↔donor relationship downstream. (No
+  `demultiplex-fastq` block in the guide below — samples are already per-donor.)
+
+---
+
 ## Data manifest (realistic profile) — what to upload where
 
 Scale is set by the antigen generator's flags (`--samples`/`--panel-size`/`--cells-per-sample`) and the
 VDJ/GEX arms follow it automatically. Defaults: **24 donors** (`donor01`…`donor24`), **2000 cells/donor**,
-a **64-antigen panel + control** (4 real 10x anchors + 60 synthetic). One Fastq pair / VDJ TSV / GEX CSV
+a **15-antigen panel + control** (real 10x BEAM Core Kit size; up to 4 real 10x anchors + the rest
+synthetic; pass `--panel-size 64` for a capacity stress test). One Fastq pair / VDJ TSV / GEX CSV
 per donor:
 
 | Arm | Dataset type in Samples & Data | per-donor file (`donor01`…`donorNN`) |
 |---|---|---|
 | **Antigen** | Fastq (R1, R2; gzipped) | `../antigen/realistic/donorNN_R{1,2}.fastq.gz` |
-| **VDJ** | Table / Xsv (**tsv**) | `vdj/realistic/donorNN_airr_sc.tsv` |
-| **GEX** | Table / Xsv (**csv**) | `gex/realistic/donorNN_counts.csv` |
+| **VDJ** | Table / Xsv (**tsv**) | `vdj/realistic/donorNN.tsv` |
+| **GEX** | Table / Xsv (**csv**) | `gex/realistic/donorNN.csv` |
 
 > The 24×2000 default is a big manual upload — for a hand run, regenerate at a smaller scale first
 > (e.g. `python3 ../antigen/generate.py --profile realistic --samples 2
@@ -77,7 +103,8 @@ per donor:
 
 Supporting files (uploaded inside a block, not as a Samples & Data dataset):
 - **Tag → feature panel CSV** (Feature Integration upload): `../antigen/realistic/tags.csv`
-  — `--panel-size` antigens + `negative_control` (default 65 rows; first 4 are the real anchors).
+  — `--panel-size` antigens + `negative_control` (default 16 features = 15 antigens + control;
+  first up-to-4 antigens are the real 10x anchors).
 - **Sample metadata (optional)**: `../antigen/realistic/samples-metadata.tsv`
   (`Sample / Donor / Condition`). Import in Samples & Data only if you want grouping labels downstream —
   the pipeline and the join do **not** need it.
@@ -89,8 +116,8 @@ Supporting files (uploaded inside a block, not as a Samples & Data dataset):
 ### 0 · Samples & Data
 - Create one sample per donor (`donor01`…`donorNN`).
 - **Dataset 1 — Fastq** (read indices **R1, R2**; **gzipped ✓**): upload each donor's antigen R1/R2.
-- **Dataset 2 — Table / Xsv (tsv)**: each donor's VDJ `*_airr_sc.tsv`.
-- **Dataset 3 — Table / Xsv (csv)**: each donor's GEX `*_counts.csv`.
+- **Dataset 2 — Table / Xsv (tsv)**: each donor's VDJ `donorNN.tsv`.
+- **Dataset 3 — Table / Xsv (csv)**: each donor's GEX `donorNN.csv`.
 - *(Optional)* import `samples-metadata.tsv` as metadata.
 - **Run.** (No `demultiplex-fastq` — samples are per-sample, not pooled.)
 
@@ -194,7 +221,7 @@ previews, and the binder-vs-naive plasma means for the current scale (they scale
 ## Offline validation (no backend)
 
 ```bash
-# antigen (in ../antigen/) — scale flags optional (defaults 24/64/2000)
+# antigen (in ../antigen/) — scale flags optional (defaults 24/15/2000: donors/antigens/cells)
 python3 generate.py --profile realistic
 # arms (here) — no scale flags; they follow the antigen arm automatically
 python3 generate_vdj.py --realistic && python3 generate_gex.py --realistic

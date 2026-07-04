@@ -175,10 +175,12 @@ def main():
     truth_rows = []
     for donor in sorted(by_donor):
         cells = by_donor[donor]
-        write_counts(out_dir / f"{donor}_counts.csv", genes, cells, rng)
+        # bare donor id (no `_counts` suffix) so Samples & Data mints ONE shared sampleId across all
+        # three arms — see generate_vdj.py / README "Sample model & assumptions".
+        write_counts(out_dir / f"{donor}.csv", genes, cells, rng)
         nb = sum(1 for _, c in cells if c == "binder")
         print(f"  {donor}: {len(cells)} cells ({nb} binder / {len(cells) - nb} naive) "
-              f"-> {out_dir.name}/{donor}_counts.csv ({len(genes)}x{len(cells)} genes-in-rows)")
+              f"-> {out_dir.name}/{donor}.csv ({len(genes)}x{len(cells)} genes-in-rows)")
         truth_rows += [(donor, c, cls) for c, cls in cells]
     with open(out_dir / "truth_cells_gex.csv", "w", newline="") as fh:
         w = csv.writer(fh)
