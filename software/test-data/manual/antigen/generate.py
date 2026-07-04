@@ -7,10 +7,10 @@ Geometry matches the block defaults (10x 5' v2):
   R2 = feature barcode(15) + filler -> 25 bp   (block reads first 15 bp as CELLFB; rest is R2:* ignored)
 
 Scale is parameterized (a real BEAM run is far bigger than a toy fixture). Defaults target a realistic
-multi-donor cohort with a large antigen panel:
+multi-donor cohort with a realistic antigen panel:
 
   --samples N            number of donor samples          (default 24; verified cohort high-water ~22-50)
-  --panel-size M         number of ANTIGENS, excl. control (default 64; verified feature ceiling = 64)
+  --panel-size M         number of ANTIGENS, excl. control (default 15 = real 10x BEAM kit's 15+1; up to 64 for capacity tests)
   --cells-per-sample K   cells per donor                  (default 2000; a real GEM well is 2k-10k)
 
 Antigen panel: the first (up to) 4 barcodes are the REAL 10x BEAM-Ab panel from the public "2k
@@ -551,8 +551,9 @@ def main():
              "whitelist = 737K-august-2016). The default fixtures are left untouched.",
     )
     ap.add_argument("--samples", type=int, default=24, help="number of donor samples (default 24)")
-    ap.add_argument("--panel-size", type=int, default=64,
-                    help="number of antigens, excluding the negative control (default 64)")
+    ap.add_argument("--panel-size", type=int, default=15,
+                    help="number of antigens, excluding the negative control (default 15 = the real 10x "
+                         "BEAM kit's 15 antigens + 1 control; up to 64 for capacity stress-testing)")
     ap.add_argument("--cells-per-sample", type=int, default=2000,
                     help="cells per donor (default 2000; a real GEM well is 2k-10k)")
     args = ap.parse_args()
