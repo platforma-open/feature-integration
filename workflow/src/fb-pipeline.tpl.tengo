@@ -5,36 +5,32 @@
 // distinct-UMI counts, then hands that table plus the user's tag->feature CSV to the per-cell-metrics
 // Python software, which collapses to the (cell x feature) outputs (spec A-0010/A-0012/A-0014).
 //
-// refine-tags corrects the FEATURE barcode against the panel whitelist (the tag column of the user's
-// CSV, emitted as panel.txt by the emit-panel step): reads within Hamming-1 of a panel barcode snap
-// onto it, off-panel reads are dropped (mitool#87 fixed the `-t TAG#file:` CLI; spec A-0018 leaves the
-// scheme to implementation). Tag names (CELL / FEATURE / UMI) are baked into the pattern by
-// tag-pattern.lib.tengo and reused here. R1/R2 file-group handling follows blocks/peptide-extraction.
+// Every exec runs inside a render.create sub-template (fb-parse / fb-refine / fb-tagstat produce the
+// mitool files; fb-downstream runs the QC + per-cell-metrics consumers) so this body returns ONLY render
+// outputs, never an inline exec's getFile. That is the CIDConflictError fix: parse/refine/tag-stat
+// capture rate-dependent mitool progress via saveStdoutStream, which makes a streaming exec's files map
+// (hence any getFile off it) resolve to a run-to-run drifting CID; the SDK exec.tpl is hash_override-
+// pinned, so an inline consumer has a stable AID + drifting CID and conflicts when its per-sample output
+// is flattened. A render.create resource has a content-derived AID (render.lib builds a plain struct, no
+// hash_override), so a consumer inside a boundary absorbs the drift and its outputs flatten cleanly.
+// Mirrors blocks/peptide-extraction (parse.tpl + umi-consensus.tpl + downstream-pipeline.tpl).
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
-exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
+render := import("@platforma-sdk/workflow-tengo:render")
 maps := import("@platforma-sdk/workflow-tengo:maps")
 ll := import("@platforma-sdk/workflow-tengo:ll")
 pConstants := import("@platforma-sdk/workflow-tengo:pframes.constants")
-tagPattern := import(":tag-pattern")
 pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
 
 json := import("json")
 
-// mitool prints progress lines to stderr prefixed with this sentinel (set below via MI_PROGRESS_PREFIX
-// on the parse step). The model searches for the same string (ProgressPrefix in model/src/index.ts) to
-// surface live per-sample progress — keep the two in sync.
-progressPrefix := "[==PROGRESS==]"
+fbParseTpl := assets.importTemplate(":fb-parse")
+fbRefineTpl := assets.importTemplate(":fb-refine")
+fbTagstatTpl := assets.importTemplate(":fb-tagstat")
+fbDownstreamTpl := assets.importTemplate(":fb-downstream")
 
 self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "qc", "qcJson", "parseLogStream", "stepLogs")
-
-// :memory-from-limits sizes the JVM heap from the granted limits — avoids end-of-parse OOM when many
-// tag writers flush (see demultiplex-fastq).
-mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
-metricsSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:main")
-emitPanelSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:emit-panel")
-qcReportSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:qc-report")
 
 self.body(func(inputs) {
 	inputData := inputs[pConstants.VALUE_FIELD_NAME]
@@ -49,45 +45,13 @@ self.body(func(inputs) {
 	barcodeSeqColumn := inputs.barcodeSeqColumn
 	featureNameColumn := inputs.featureNameColumn
 	cellWhitelist := inputs.cellWhitelist // "" = de-novo CELL correction (default); else a 10x built-in
-
-	// mitool memory (mixcr semantics): an explicit per-process override (Advanced Settings) is a hard
-	// fixed request; otherwise size RAM from the input reads' stored (compressed) blob size on top of a
-	// floor. parse OOMs at end-of-parse when many tag writers flush, and that scales with input volume
-	// (see mixcr-clonotyping mixcr-analyze.tpl / blocks/demultiplex-fastq). `size("reads")` reads only
-	// blob metadata (no decompress, no pre-exec); on backends that cannot evaluate formulas, memFormula
-	// falls back to the floor.
-	formula := exec.formula
 	memBaseGB := inputs.mitoolBaseMemGB
-	mitoolMemFormula := formula.clamp(
-		formula.add(formula.gib(memBaseGB), formula.mul(formula.size("reads"), 4)),
-		formula.gib(memBaseGB),
-		formula.gib(128))
-	mitoolMemFallback := string(memBaseGB) + "GiB"
-	// Apply the mem request to a builder: fixed when overridden, else the size formula.
-	applyMitoolMem := func(b) {
-		if is_undefined(inputs.mitoolMemOverrideGB) {
-			return b.memFormula(mitoolMemFormula, { fallback: mitoolMemFallback })
-		}
-		return b.mem(string(inputs.mitoolMemOverrideGB) + "GiB")
-	}
 
-	// tag-stat's distinct-UMI on-disk sort and the per-cell-metrics polars read both scale with input
-	// volume, so size their RAM from the relevant input blob instead of a fixed 8 GiB (same mixcr-style
-	// size formula as parse/refine). Sizing inputs differ: tag-stat by refined.mic (molecules),
-	// per-cell-metrics by tagstat.tsv (the (cell, feature) rows it reads into polars); the metrics
-	// multiplier is larger because that step also materialises Python row-objects on top of the frame.
-	// Both fall back to the floor where formulas can't be evaluated and clamp at 128 GiB. NOTE: the
-	// Advanced-Settings per-process memory override applies to parse/refine only, not to these two.
-	tagStatBaseGB := 8
-	tagStatMemFormula := formula.clamp(
-		formula.add(formula.gib(tagStatBaseGB), formula.mul(formula.size("mic"), 4)),
-		formula.gib(tagStatBaseGB),
-		formula.gib(128))
-	metricsBaseGB := 8
-	metricsMemFormula := formula.clamp(
-		formula.add(formula.gib(metricsBaseGB), formula.mul(formula.size("tagstat"), 8)),
-		formula.gib(metricsBaseGB),
-		formula.gib(128))
+	// mitool memory override (Advanced Settings): passed to the parse/refine sub-templates. 0 = no
+	// override (size RAM from the input blob on a floor); >0 = a hard fixed request. A sentinel keeps the
+	// render.create input a plain number (the model only sets metaExtra.mitoolMemOverrideGB when the user
+	// configures one, so inputs.mitoolMemOverrideGB is otherwise undefined).
+	memOverrideGB := is_undefined(inputs.mitoolMemOverrideGB) ? 0 : inputs.mitoolMemOverrideGB
 
 	ll.assert(!is_undefined(pattern) && pattern != "", "tag pattern is required")
 
@@ -136,156 +100,80 @@ self.body(func(inputs) {
 	ll.assert(len(R1Files) > 0, "no R1 FASTQ files found")
 	ll.assert(len(R2Files) > 0, "no R2 FASTQ files found (feature barcode is read from R2)")
 
-	// Step 1: mitool parse — extract CELL + UMI (R1) and the feature barcode FEATURE (R2).
-	parse := applyMitoolMem(exec.builder().
-		software(mitoolSw).
-		cpu(mitoolCPUs)).
-		env("MI_PROGRESS_PREFIX", progressPrefix).
-		arg("parse").
-		arg("--pattern").arg(pattern).
-		arg("--threads").argWithVar("{system.cpu}")
-	for f in R1Files { parse = parse.addFile(f.name, f.file, { tag: "reads" }) }
-	for f in R2Files { parse = parse.addFile(f.name, f.file, { tag: "reads" }) }
-	// TODO(feature-integration): parse_report.txt / refine_report.txt are written by mitool (--report)
-	// and saveFile'd so they survive as retrievable exec outputs, but nothing consumes them yet — they
-	// are NOT collected by main.tpl's processColumn or surfaced in the model/UI. They were kept as the
-	// raw material for a future "reports" QC surface (a text/file view distinct from the stepLogs stream,
-	// which already carries mitool's stderr summaries). If no reports UI has been built and these are
-	// still unconsumed, drop the two --report/saveFile pairs to remove the dead work.
-	parse = parse.
-		arg("--report").arg("parse_report.txt").saveFile("parse_report.txt").
-		arg("--json-report").arg("parse_report.json").saveFile("parse_report.json").
-		arg(inputArg).arg("parsed.mic").saveFile("parsed.mic").
-		printErrStreamToStdout().saveStdoutStream().run()
+	// Step 1: mitool parse (fb-parse boundary) — extract CELL + UMI (R1) and the feature barcode (R2).
+	// The FASTQ files go in as a ResourceMap keyed by [filename] (decoded back inside fb-parse).
+	inputFilesBuilder := pcolumn.resourceMapBuilder(1)
+	for f in R1Files { inputFilesBuilder.add([f.name], f.file) }
+	for f in R2Files { inputFilesBuilder.add([f.name], f.file) }
 
-	// Step 2a: build the feature-barcode panel (panel.txt) from the user's tag->feature CSV. The panel
-	// is sample-independent, so this dedups across samples (pure template, same tags.csv input).
-	panel := exec.builder().
-		software(emitPanelSw).
-		cpu(1).
-		mem("2GiB").
-		addFile("tags.csv", tagsCsv).
-		arg("tags.csv").arg("panel.txt").
-		arg("--tag-col").arg(barcodeSeqColumn).
-		saveFile("panel.txt").
-		printErrStreamToStdout().saveStdoutStream().run()
+	parseRun := render.create(fbParseTpl, {
+		pattern: pattern,
+		inputArg: inputArg,
+		inputFiles: inputFilesBuilder.build(),
+		mitoolCPUs: mitoolCPUs,
+		mitoolBaseMemGB: memBaseGB,
+		mitoolMemOverrideGB: memOverrideGB
+	})
+	parsedMic := parseRun.output("parsedMic")
+	parseReport := parseRun.output("parseReport")
+	parseLogStream := parseRun.output("parseLogStream")
 
-	// Step 2b: refine-tags — error-correct cell, feature, and UMI barcodes. FEATURE is corrected against
-	// the panel whitelist (#file:panel.txt): within-Hamming-1 reads snap to a panel barcode and off-panel
-	// reads are dropped. CELL is de-novo corrected by default; when a chemistry whitelist is selected it
-	// snaps to that 10x built-in (#builtin:<name>, the same #-address mechanism as the FEATURE panel) so
-	// cellIds match the VDJ producer by construction (docs/dormant-features/cell-whitelist-correction-plan.md). The tag
-	// order scopes UMI dedup to (cell, feature).
-	cellTag := tagPattern.CELL_TAG
-	if !is_undefined(cellWhitelist) && cellWhitelist != "" {
-		cellTag = tagPattern.CELL_TAG + "#builtin:" + cellWhitelist
-	}
-	refine := applyMitoolMem(exec.builder().
-		software(mitoolSw).
-		cpu(mitoolCPUs)).
-		env("MI_PROGRESS_PREFIX", progressPrefix).
-		arg("refine-tags").
-		arg("-t").arg(cellTag).
-		arg("-t").arg(tagPattern.FEATURE_TAG + "#file:panel.txt").
-		arg("-t").arg(tagPattern.UMI_TAG).
-		arg("--report").arg("refine_report.txt").saveFile("refine_report.txt").
-		arg("--json-report").arg("refine_report.json").saveFile("refine_report.json").
-		addFile("panel.txt", panel.getFile("panel.txt")).
-		addFile("parsed.mic", parse.getFile("parsed.mic"), { tag: "reads" }).
-		arg("parsed.mic").arg("refined.mic").saveFile("refined.mic").
-		printErrStreamToStdout().saveStdoutStream().run()
+	// Step 2: emit panel + refine-tags (fb-refine boundary).
+	refineRun := render.create(fbRefineTpl, {
+		parsedMic: parsedMic,
+		tagsCsv: tagsCsv,
+		barcodeSeqColumn: barcodeSeqColumn,
+		cellWhitelist: cellWhitelist,
+		mitoolCPUs: mitoolCPUs,
+		mitoolBaseMemGB: memBaseGB,
+		mitoolMemOverrideGB: memOverrideGB
+	})
+	refinedMic := refineRun.output("refinedMic")
+	refineReport := refineRun.output("refineReport")
+	refineLogStream := refineRun.output("refineLogStream")
 
-	// Step 3: tag-stat -u — per-(cell, feature-barcode) distinct-UMI counts.
-	// Output columns: CELL FEATURE count totalWeight unique_UMI
-	// --use-local-temp puts the count-unique on-disk sort in the exec work dir instead of the shared
-	// system /tmp — team convention for heavy on-disk-sort mitool steps (peptide-extraction mitool sort,
-	// mixcr-shm-trees, miltenyi cite silent /tmp-exhaustion hangs). Supported since mitool #84 (present in
-	// the pinned 2.3.1-131-main). tag-stat -u does exactly such a hierarchical on-disk sort.
-	tagStat := exec.builder().
-		software(mitoolSw).
-		cpu(2).
-		memFormula(tagStatMemFormula, { fallback: string(tagStatBaseGB) + "GiB" }).
-		env("MI_PROGRESS_PREFIX", progressPrefix).
-		arg("tag-stat").
-		arg("--use-local-temp").
-		arg("-t").arg(tagPattern.CELL_TAG).
-		arg("-t").arg(tagPattern.FEATURE_TAG).
-		arg("-u").arg(tagPattern.UMI_TAG).
-		addFile("refined.mic", refine.getFile("refined.mic"), { tag: "mic" }).
-		arg("refined.mic").arg("tagstat.tsv").saveFile("tagstat.tsv").
-		printErrStreamToStdout().saveStdoutStream().run()
+	// Step 3: tag-stat -u (fb-tagstat boundary) — per-(cell, feature-barcode) distinct-UMI counts.
+	tagStatRun := render.create(fbTagstatTpl, {
+		refinedMic: refinedMic
+	})
+	tagstatTsv := tagStatRun.output("tagstatTsv")
+	tagstatLogStream := tagStatRun.output("tagstatLogStream")
 
-	// Per-sample QC summary: reads parsed/matched (parse JSON report) + cell/feature/UMI metrics
-	// (tag-stat) + best-effort panel-assigned fraction (refine JSON report).
-	qc := exec.builder().
-		software(qcReportSw).
-		cpu(1).mem("2GiB").
-		addFile("tagstat.tsv", tagStat.getFile("tagstat.tsv")).
-		addFile("parse_report.json", parse.getFile("parse_report.json")).
-		addFile("refine_report.json", refine.getFile("refine_report.json")).
-		arg("tagstat.tsv").
-		arg("--parse-report").arg("parse_report.json").
-		arg("--refine-report").arg("refine_report.json").
-		arg("--sample-id").arg("sample").
-		arg("--cell-col").arg(tagPattern.CELL_TAG).
-		arg("--feature-col").arg(tagPattern.FEATURE_TAG).
-		arg("--umi-col").arg("unique_" + tagPattern.UMI_TAG).
-		arg("--output").arg("result_qc.csv").saveFile("result_qc.csv").
-		saveFileContent("result_qc.json").
-		printErrStreamToStdout().saveStdoutStream().run()
+	// Step 4: QC report + per-cell metrics (fb-downstream boundary). These consume the drifting mitool
+	// files (tagstat.tsv + parse/refine reports), so they run inside a render boundary and their per-sample
+	// outputs are returned as render outputs — see the file header for why an inline consumer conflicts.
+	downstreamRun := render.create(fbDownstreamTpl, {
+		tagstatTsv: tagstatTsv,
+		parseReport: parseReport,
+		refineReport: refineReport,
+		tagsCsv: tagsCsv,
+		control: control, // undefined -> render.create skips it -> no specificity
+		dominanceThreshold: dominanceThreshold,
+		barcodeSeqColumn: barcodeSeqColumn,
+		featureNameColumn: featureNameColumn
+	})
 
-	// Step 4: per-cell metrics (Python). sampleId is irrelevant here — processColumn prepends the
-	// real sample axis from the iteration key, so we pass a constant and the CSV's sampleId column is
-	// ignored by the import. Column args match the mitool tag names + the tag-stat -u output.
-	hasControl := !is_undefined(control) && control != ""
-	metrics := exec.builder().
-		software(metricsSw).
-		cpu(2).
-		memFormula(metricsMemFormula, { fallback: string(metricsBaseGB) + "GiB" }).
-		addFile("tagstat.tsv", tagStat.getFile("tagstat.tsv"), { tag: "tagstat" }).
-		addFile("tags.csv", tagsCsv).
-		arg("tagstat.tsv").arg("tags.csv").
-		arg("--sample-id").arg("sample").
-		arg("--cell-col").arg(tagPattern.CELL_TAG).
-		arg("--feature-tag-col").arg(tagPattern.FEATURE_TAG).
-		arg("--umi-count-col").arg("unique_" + tagPattern.UMI_TAG).
-		arg("--csv-barcode-col").arg(barcodeSeqColumn).
-		arg("--csv-feature-col").arg(featureNameColumn).
-		arg("--dominance-threshold").arg(string(dominanceThreshold)).
-		arg("--output-prefix").arg("result").
-		saveFile("result_abundance.csv").
-		saveFile("result_fractions.csv").
-		saveFile("result_consensus.csv").
-		saveFile("result_specificity.csv").
-		saveFile("result_per_cell_summary.csv")
-	if hasControl {
-		metrics = metrics.arg("--control").arg(control)
-	}
-	metrics = metrics.printErrStreamToStdout().saveStdoutStream().run()
-
-	// Per-step stdout streams (progress-prefixed for the mitool steps) → the model's live per-step
-	// progress grid. Ordinal step key so the UI can order + name them; qc/metrics are Python (no
-	// progress lines) so they are not tracked here — completion comes from qcJson (completedSamples).
+	// Per-step stdout streams (progress-prefixed) -> the model's live per-step progress grid. Ordinal step
+	// key so the UI can order + name them; qc/metrics are Python (no progress lines) so they are not
+	// tracked here — completion comes from qcJson (completedSamples). Streams are ephemeral, so building
+	// this map in the body (rather than a render boundary) does not risk the dedup conflict above.
 	stepLogs := pcolumn.resourceMapBuilder(1)
-	stepLogs.add(["1-parse"], parse.getStdoutStream())
-	stepLogs.add(["2-refine"], refine.getStdoutStream())
-	stepLogs.add(["3-tagstat"], tagStat.getStdoutStream())
+	stepLogs.add(["1-parse"], parseLogStream)
+	stepLogs.add(["2-refine"], refineLogStream)
+	stepLogs.add(["3-tagstat"], tagstatLogStream)
 
-	// The body must return exactly the defineOutputs set and no output may be undefined. specificity is
-	// meaningful only with a control feature, so the Python always writes result_specificity.csv (empty
-	// header-only when no --control) and we always return it. main.tpl and the model still gate the
-	// specificity *import* on hasControl, so the empty file is simply never read when there is no control.
+	// The body must return exactly the defineOutputs set and no output may be undefined.
 	return {
-		abundance: metrics.getFile("result_abundance.csv"),
-		fractions: metrics.getFile("result_fractions.csv"),
-		consensus: metrics.getFile("result_consensus.csv"),
-		specificity: metrics.getFile("result_specificity.csv"),
-		perCellSummary: metrics.getFile("result_per_cell_summary.csv"),
-		qc: qc.getFile("result_qc.csv"),
-		qcJson: qc.getFileContent("result_qc.json"), // inline content (saveFileContent) so the model can read it
-		// Per-sample mitool stdout (progress-prefixed); surfaced by main.tpl for the model's live progress grid.
-		parseLogStream: parse.getStdoutStream(),
-		// Per-step progress-log map (parse / refine / tag-stat) → model stepProgress → live step display.
+		abundance: downstreamRun.output("abundance"),
+		fractions: downstreamRun.output("fractions"),
+		consensus: downstreamRun.output("consensus"),
+		specificity: downstreamRun.output("specificity"),
+		perCellSummary: downstreamRun.output("perCellSummary"),
+		qc: downstreamRun.output("qc"),
+		qcJson: downstreamRun.output("qcJson"),
+		// Per-sample mitool parse stdout (progress-prefixed); surfaced by main.tpl for the live progress grid.
+		parseLogStream: parseLogStream,
+		// Per-step progress-log map (parse / refine / tag-stat) -> model stepProgress -> live step display.
 		stepLogs: stepLogs.build()
 	}
 })

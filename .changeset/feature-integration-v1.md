@@ -202,3 +202,21 @@ table. The "Raw tag-stat" and "Feature Fraction Distribution" (Graph) tabs are c
 model outputs (`perCellTable` / `tagstatQcTable` / `pf` / `pfPcols`), and the routes are all left intact,
 so a tab is re-enabled by uncommenting one line. The "Per-sample QC" tab stays. The A-0010 export
 contract to VDJ Multiomic Integration is unaffected.
+
+## CIDConflictError fix — isolate mitool stages in render.create sub-templates
+
+The block hit a `CIDConflictError` on every run once the per-sample pipeline was exercised. Root cause:
+each mitool step (`parse` / `refine-tags` / `tag-stat`) captures rate-dependent progress via
+`saveStdoutStream()`, and the SDK's `exec.tpl` is `hash_override`-pinned — so any `getFile(...)` off a
+streaming exec has a stable resource identity but a run-to-run drifting content hash. Feeding such a file
+into a downstream exec's `addFile` and then flattening that exec's per-sample output into a p-frame puts a
+stable-id / drifting-hash node on the deduplication path, which conflicts on re-render.
+
+Fix: every exec stage now runs inside its own `render.create` sub-template (`fb-parse`, `fb-refine`,
+`fb-tagstat`, `fb-downstream`), and `fb-pipeline` is a thin orchestrator that returns only sub-template
+render outputs — never an inline `exec.getFile(...)`. A `render.create` resource has a content-derived
+identity, so a consumer inside a boundary absorbs the drift and its per-sample outputs flatten cleanly
+(the same structure the peptide-extraction block uses). Behaviour is unchanged: the progress grid still
+reads the same `parseLogStream` + `stepLogs` streams, and the A-0010 export contract is untouched. The
+now-unused `saveStdoutStream()` on the panel/qc/metrics execs and the unconsumed `parse_report.txt` /
+`refine_report.txt` reports were dropped along the way.

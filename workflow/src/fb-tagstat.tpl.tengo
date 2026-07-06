@@ -1,0 +1,53 @@
+// tag-stat sub-template (render.create boundary).
+//
+// tag-stat -u computes per-(cell, feature-barcode) distinct-UMI counts and captures rate-dependent
+// progress via saveStdoutStream, so its tagstat.tsv reaches the caller as a *template output* — fed to
+// the qc + per-cell-metrics execs there — rather than tagStat.getFile(...) into an addFile (the
+// CIDConflictError trap; see fb-parse). Output columns: CELL FEATURE count totalWeight unique_UMI.
+//
+// --use-local-temp puts the count-unique on-disk sort in the exec work dir instead of the shared
+// system /tmp — team convention for heavy on-disk-sort mitool steps (peptide-extraction, mixcr-shm-trees,
+// miltenyi cite silent /tmp-exhaustion hangs).
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+exec := import("@platforma-sdk/workflow-tengo:exec")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+tagPattern := import(":tag-pattern")
+
+self.defineOutputs("tagstatTsv", "tagstatLogStream")
+
+progressPrefix := "[==PROGRESS==]"
+
+mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
+
+self.body(func(inputs) {
+	refinedMic := inputs.refinedMic
+
+	// The distinct-UMI on-disk sort scales with input volume, so size RAM from the refined.mic blob
+	// (molecules) on a floor instead of a fixed request (same mixcr-style size formula as parse/refine).
+	tagStatBaseGB := 8
+	formula := exec.formula
+	memFormula := formula.clamp(
+		formula.add(formula.gib(tagStatBaseGB), formula.mul(formula.size("mic"), 4)),
+		formula.gib(tagStatBaseGB),
+		formula.gib(128))
+
+	tagStat := exec.builder().
+		software(mitoolSw).
+		cpu(2).
+		memFormula(memFormula, { fallback: string(tagStatBaseGB) + "GiB" }).
+		env("MI_PROGRESS_PREFIX", progressPrefix).
+		arg("tag-stat").
+		arg("--use-local-temp").
+		arg("-t").arg(tagPattern.CELL_TAG).
+		arg("-t").arg(tagPattern.FEATURE_TAG).
+		arg("-u").arg(tagPattern.UMI_TAG).
+		addFile("refined.mic", refinedMic, { tag: "mic" }).
+		arg("refined.mic").arg("tagstat.tsv").saveFile("tagstat.tsv").
+		printErrStreamToStdout().saveStdoutStream().run()
+
+	return {
+		tagstatTsv: tagStat.getFile("tagstat.tsv"),
+		tagstatLogStream: tagStat.getStdoutStream()
+	}
+})
