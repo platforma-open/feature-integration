@@ -14,7 +14,10 @@ markers stay near zero — CellTypist should call B / plasma lineages.
 Format (verified against import-sc-rnaseq-data):
 - genes-in-rows CSV: first column = gene IDs (real human Ensembl, `^ENSG\\d{11}$` → species=human,
   gene-format=Ensembl auto-detected, no mapping file needed); header = bare-16nt cell barcodes;
-  body = integer counts. `detect_orientation` sees an all-numeric body and defaults to genes-in-rows.
+  body = integer counts. NB: import-sc-rnaseq-data's `detect_orientation` infers orientation from
+  axis lengths and TRANSPOSES a matrix whenever cells outnumber genes, so main() keeps the gene
+  count above the largest per-donor cell count (see the guard there) — otherwise CellTypist gets
+  barcodes as gene names and fails with "No features overlap with the model".
 - Every gene ID is REAL: markers looked up by symbol, filler sampled, from the pipeline's own asset
   `gex/homo_sapiens_gene_annotations.csv` (the same map cell-type-annotation uses Ensembl→symbol).
 
@@ -164,10 +167,25 @@ def main():
 
     rng = random.Random(SEED)
     out_dir.mkdir(parents=True, exist_ok=True)
-    sym2ens, protein_coding = load_gene_map()
-    genes = build_gene_table(rng, sym2ens, protein_coding, n_filler)
     clear = load_clear_antigens(antigen_dir)
     by_donor = read_cell_classes(antigen_dir, clear)
+
+    # import-sc-rnaseq-data's detect_orientation() infers matrix orientation from axis lengths and
+    # TRANSPOSES the matrix whenever there are more cells than genes (blocks/import-sc-rnaseq-data
+    # software/src/counts-csv/generate_counts.py:172). A reduced marker+filler panel with fewer genes
+    # than cells is silently flipped, so CellTypist then reads cell barcodes as gene names and errors
+    # with "No features overlap with the model". Keep the gene count strictly above the largest
+    # per-donor cell count so the importer detects genes-in-rows. (More genes than cells is also the
+    # realistic regime for scRNA-seq.)
+    max_cells = max((len(cells) for cells in by_donor.values()), default=0)
+    n_filler = max(n_filler, max_cells + 200)
+
+    sym2ens, protein_coding = load_gene_map()
+    genes = build_gene_table(rng, sym2ens, protein_coding, n_filler)
+    if len(genes) <= max_cells:
+        raise SystemExit(
+            f"gene count {len(genes)} must exceed max per-donor cell count {max_cells} so "
+            "import-sc-rnaseq-data detects genes-in-rows (see module docstring)")
 
     n_marker = sum(1 for _, p, _ in genes if p != "filler")
     tag = profile
