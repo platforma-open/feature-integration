@@ -64,6 +64,23 @@ def test_qc_metrics_from_parse_report_and_tagstat(tmp_path):
     assert row["panelAssignedFraction"] == ""  # no refine report given
 
 
+def test_qc_survives_header_only_tagstat(tmp_path):
+    # Regression: a sample whose reads are all off-panel (or a wrong read geometry) yields a header-only
+    # tag-stat TSV. polars then infers every column as String, and the old code crashed on
+    # `stat[umi_col].sum()` / `.median()`. QC must instead report zeros without crashing -- the sibling
+    # per_cell_metrics._load handles the same file (test_cli_empty_join_writes_header_only_not_crash).
+    tagstat = tmp_path / "tagstat.tsv"
+    tagstat.write_text("CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\n")  # header only, zero data rows
+    parse_report = tmp_path / "parse.json"
+    parse_report.write_text(json.dumps({"parseReport": {"total": 1000, "matched": 0}}))
+    row = _run(tmp_path, tagstat, parse_report)
+    assert int(row["cellsDetected"]) == 0
+    assert int(row["featuresDetected"]) == 0
+    assert int(row["totalUniqueUmis"]) == 0
+    assert float(row["medianUmisPerCell"]) == 0.0
+    assert int(row["readsTotal"]) == 1000
+
+
 def test_qc_survives_missing_refine_report(tmp_path):
     tagstat = tmp_path / "tagstat.tsv"
     tagstat.write_text("CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\ncell1\tAAAA\t1\t1\t1\n")

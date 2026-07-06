@@ -74,6 +74,11 @@ def main() -> None:
 
     total, matched = _parse_report(args.parse_report)
     stat = pl.read_csv(args.tag_stat_tsv, separator="\t")
+    # A header-only tag-stat (a sample whose reads were all dropped -- e.g. every read off-panel) has no
+    # data rows, so polars infers every column as String. Coerce the UMI-count column to a numeric type
+    # up front, otherwise .sum()/.median() below raise on String arithmetic. On a populated file the
+    # column is already integer and this cast is a no-op. Mirrors per_cell_metrics._load.
+    stat = stat.with_columns(pl.col(args.umi_col).cast(pl.Int64))
 
     cells = int(stat[args.cell_col].n_unique())
     features = int(stat[args.feature_col].n_unique())

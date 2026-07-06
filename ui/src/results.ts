@@ -61,6 +61,14 @@ const REFINE_TAG_LABELS: Record<string, string> = {
   UMI: "UMIs",
 };
 
+// mitool has no machine step token — its progress lines carry only human-readable stage prose, so
+// liveCell() routes on these substrings. Centralized here so a mitool wording change is a one-line edit,
+// not a hunt through liveCell. If mitool renames a stage, the progress cell falls back to the generic
+// phase label (a coarser bar, never a crash). REFINE_INIT = the refine lead-in ("Initialization");
+// TAGSTAT_WRITING = the tag-stat's final monotonic "Writing result" pass.
+const REFINE_INIT_LABEL = /init/i;
+const TAGSTAT_WRITING_LABEL = /writing/i;
+
 // Build the running-state progress cell from mitool's latest live stage label. mitool's per-step
 // progress is structured, so instead of one jumpy percent we surface which sub-step is running:
 //   • parse — one monotonic pass → show the live percent.
@@ -89,7 +97,7 @@ function liveCell(
     // Non-tag global phases keep the stable "Refining barcodes" prefix so the label doesn't jump.
     // mitool's lead-in stage is "Initialization" (bare label); the wrap-up stages (Filtering /
     // Final sorting / Writing result) collapse to ": Finalizing".
-    if (/init/i.test(stage)) {
+    if (REFINE_INIT_LABEL.test(stage)) {
       return { status: "running", text: "Refining barcodes", suffix: "" };
     }
     return { status: "running", text: "Refining barcodes: Finalizing", suffix: "" };
@@ -97,7 +105,7 @@ function liveCell(
 
   if (step === "3-tagstat") {
     // The final "Writing result" pass is monotonic; the preceding on-disk sort is not.
-    if (/writing/i.test(stage) && percentage) {
+    if (TAGSTAT_WRITING_LABEL.test(stage) && percentage) {
       return {
         status: "running",
         percent: Number(percentage),

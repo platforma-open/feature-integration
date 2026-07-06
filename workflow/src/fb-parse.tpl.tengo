@@ -11,15 +11,15 @@ self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 maps := import("@platforma-sdk/workflow-tengo:maps")
+tagPattern := import(":tag-pattern")
 
 json := import("json")
 
 self.defineOutputs("parsedMic", "parseReport", "parseLogStream")
 
 // mitool prints progress lines prefixed with this sentinel (via MI_PROGRESS_PREFIX); the model searches
-// for the same string (ProgressPrefix in model/src/index.ts) — keep the three in sync (see fb-refine,
-// fb-tagstat).
-progressPrefix := "[==PROGRESS==]"
+// for the same string (ProgressPrefix in model/src/index.ts). Single source: tag-pattern.lib.tengo.
+progressPrefix := tagPattern.PROGRESS_PREFIX
 
 // :memory-from-limits sizes the JVM heap from the granted limits — avoids end-of-parse OOM when many
 // tag writers flush (see demultiplex-fastq).

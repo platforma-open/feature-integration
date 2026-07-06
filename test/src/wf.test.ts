@@ -147,22 +147,26 @@ blockTest.skip(
     const pFrameDriver = ml.driverKit.pFrameDriver;
     const fullHandle = tableOutput.value!.fullTableHandle as PTableHandle;
 
-    // One row per (cell, feature): (cellA,AGX), (cellA,BGX), (cellB,AGX).
+    // perCellTable is COLLAPSED to one row per cell [sampleId, cellId] (DECISION 2026-07-02): the
+    // per-(cell,feature) matrix — (cellA,AGX)=2, (cellA,BGX)=1, (cellB,AGX)=1 — becomes 2 rows: cellA,
+    // cellB. (The per-feature matrix is still exported to the pool, just not in this table.)
     const shape = await pFrameDriver.getShape(fullHandle);
-    expect(shape.rows).toBe(3);
+    expect(shape.rows).toBe(2);
 
     const indices = Array.from({ length: shape.columns }, (_, i) => i);
     const data = await pFrameDriver.getData(fullHandle, indices);
 
-    // The only Int column is pl7.app/feature/umiCount. Order is unspecified -> compare sorted.
-    const umiColumns = data.filter((c) => c.type === "Int");
-    expect(umiColumns).toHaveLength(1);
-    const umiCounts = [...umiColumns[0].data].map(Number).sort((a, b) => a - b);
-    expect(umiCounts).toEqual([1, 1, 2]);
-    expect(umiCounts.reduce((a, b) => a + b, 0)).toBe(4);
+    // The only Int column is pl7.app/feature/maxUmiCount (the cell's largest per-feature UMI count):
+    // cellA max(2,1)=2, cellB=1. maxFraction is a Double column, so it is not counted here. Order is
+    // unspecified -> compare sorted.
+    const maxUmiColumns = data.filter((c) => c.type === "Int");
+    expect(maxUmiColumns).toHaveLength(1);
+    const maxUmiCounts = [...maxUmiColumns[0].data].map(Number).sort((a, b) => a - b);
+    expect(maxUmiCounts).toEqual([1, 2]);
+    expect(maxUmiCounts.reduce((a, b) => a + b, 0)).toBe(3);
 
     // Consensus feature per cell: cellA dominant AGX (2 of 3 = 0.67 >= 0.6), cellB single-feature AGX.
-    // Broadcast across the per-(cell,feature) rows -> every row's consensus is "AGX".
+    // The consensusFeature String column is thus "AGX" for both cells.
     const stringColumnValues = data.filter((c) => c.type === "String").map((c) => [...c.data]);
     expect(stringColumnValues.some((vals) => vals.every((v) => v === "AGX"))).toBe(true);
   },

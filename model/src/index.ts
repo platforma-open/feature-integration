@@ -1,4 +1,4 @@
-import type { InferOutputsType } from "@platforma-sdk/model";
+import type { BlockRenderCtx, InferOutputsType } from "@platforma-sdk/model";
 import {
   BlockModelV3,
   createPlDataTableStateV2,
@@ -12,8 +12,9 @@ import type { BlockArgs, BlockData } from "./types";
 export type { BlockArgs, BlockData } from "./types";
 
 // mitool prints progress lines to stderr prefixed with this sentinel; the workflow sets it as
-// MI_PROGRESS_PREFIX on the parse step (fb-pipeline.tpl.tengo) — keep the two in sync. ProgressPattern
-// parses a prefix-stripped line ("<stage>: <pct>% ETA: <eta>") into parts for the UI progress cell.
+// MI_PROGRESS_PREFIX on every mitool exec from the single tengo source PROGRESS_PREFIX in
+// workflow/src/tag-pattern.lib.tengo — this literal must equal that one (crosses the TS/tengo boundary).
+// ProgressPattern parses a prefix-stripped line ("<stage>: <pct>% ETA: <eta>") into UI progress parts.
 export const ProgressPrefix = "[==PROGRESS==]";
 export const ProgressPattern =
   /(?<stage>[^:]*):(?: *(?<progress>[0-9.]+)%)?(?: *ETA: *(?<eta>.+))?/;
@@ -36,11 +37,65 @@ export type QcRow = {
 // Panel-assigned fraction below this flags a sample in the analysis log (panel / read-geometry issue).
 const PANEL_ASSIGNED_FLOOR = 0.5;
 
+// mitool tag-stat emits these columns (see workflow/src/tag-pattern.lib.tengo: the CELL/FEATURE/UMI tags
+// plus tag-stat's count/totalWeight/unique_<UMI> outputs). A user-mapped CSV barcode/feature column that
+// names one of these would corrupt the join or crash group_by in per_cell_metrics.py — which guards it
+// too, but only after the full mitool chain has run. args() rejects it here so Run is disabled up front.
+const RESERVED_TAGSTAT_COLUMNS = new Set(["CELL", "FEATURE", "count", "totalWeight", "unique_UMI"]);
+
 function median(xs: number[]): number | undefined {
   if (xs.length === 0) return undefined;
   const s = [...xs].sort((a, b) => a - b);
   const m = Math.floor(s.length / 2);
   return s.length % 2 === 1 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+// sampleId -> display name from the upstream pl7.app/label column whose axis matches the input FASTQ's
+// sample axis. Shared by the sampleLabels and analysisLog outputs — kept as a module helper (not one
+// output reading another) because each block output is an independent pure function of ctx.
+function resolveSampleLabels(
+  ctx: BlockRenderCtx<BlockArgs, BlockData>,
+): Record<string, string> | undefined {
+  const inputRef = ctx.data.fbFastqRef;
+  if (inputRef === undefined) return undefined;
+  const inputSpec = ctx.resultPool.getSpecByRef(inputRef);
+  if (inputSpec === undefined || !isPColumnSpec(inputSpec)) return undefined;
+  const sampleAxisSpec = inputSpec.axesSpec[0];
+  const obj = ctx.resultPool.getData().entries.find((f) => {
+    const spec = f.obj.spec;
+    if (!isPColumnSpec(spec)) return false;
+    if (spec.name !== "pl7.app/label" || spec.axesSpec.length !== 1) return false;
+    const axisSpec = spec.axesSpec[0];
+    if (axisSpec.name !== sampleAxisSpec.name) return false;
+    if (sampleAxisSpec.domain === undefined || Object.keys(sampleAxisSpec.domain).length === 0)
+      return true;
+    if (axisSpec.domain === undefined) return false;
+    for (const [k, v] of Object.entries(sampleAxisSpec.domain))
+      if (axisSpec.domain[k] !== v) return false;
+    return true;
+  });
+  if (obj === undefined) return undefined;
+  return Object.fromEntries(
+    Object.entries(obj.obj.data.getDataAsJson<{ data: Record<string, string> }>().data).map((e) => [
+      JSON.parse(e[0])[0],
+      e[1],
+    ]),
+  ) as Record<string, string>;
+}
+
+// Per-sample QC rows from qcJson (workflow saveFileContent -> inline JSON content, read synchronously),
+// filtered to settled samples (qcJson is the last per-sample step, so a present entry = that sample
+// finished). Shared by completedSamples / sampleQc / analysisLog. Returns [] when outputs haven't
+// settled; callers that need to distinguish "not started" map that to undefined themselves.
+function parseQcRows(ctx: BlockRenderCtx<BlockArgs, BlockData>) {
+  const outputs = ctx.outputs;
+  if (outputs === undefined) return [];
+  const qcMap = parseResourceMap(
+    outputs.resolve("qcJson"),
+    (acc) => acc.getDataAsJsonOrUndefined<QcRow>(),
+    false,
+  );
+  return (qcMap?.data ?? []).filter((e) => e.value != null);
 }
 
 const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
@@ -67,6 +122,17 @@ export const platforma = BlockModelV3.create(dataModel)
     // disables Run up front instead of burning the pipeline to fail at the end.
     if (data.barcodeSeqColumn === data.featureNameColumn)
       throw new Error("Barcode-sequence and feature-name columns must be different");
+    // Reject a CSV column that collides with a reserved tag-stat column up front (same reason as the
+    // barcode≠feature guard above: the Python guards it too, but only after the full mitool chain runs).
+    for (const [role, col] of [
+      ["Barcode-sequence", data.barcodeSeqColumn],
+      ["Feature-name", data.featureNameColumn],
+    ] as const) {
+      if (RESERVED_TAGSTAT_COLUMNS.has(col))
+        throw new Error(
+          `${role} column "${col}" collides with a reserved tag-stat column; pick another`,
+        );
+    }
     return {
       fbFastqRef: data.fbFastqRef,
       tagFeatureCsvHandle: data.tagFeatureCsvHandle,
@@ -211,56 +277,20 @@ export const platforma = BlockModelV3.create(dataModel)
   // (unlike sampleProgress's FutureRefs) and drives the grid's "Done" state.
   .output("completedSamples", (ctx): string[] | undefined => {
     if (ctx.outputs === undefined) return undefined;
-    const qcMap = parseResourceMap(
-      ctx.outputs.resolve("qcJson"),
-      (acc) => acc.getDataAsJsonOrUndefined<QcRow>(),
-      false,
-    );
-    return qcMap.data.filter((e) => e.value != null).map((e) => String(e.key[0]));
+    return parseQcRows(ctx).map((e) => String(e.key[0]));
   })
   // Per-sample QC metrics (from qcJson) keyed by sampleId — drives the Main grid's Quality + Read
   // recovery columns (derived in ui/src/results.ts). Present per sample once its qc step settles (same
   // source as completedSamples), so the two columns fill in as each sample finishes.
   .output("sampleQc", (ctx): Record<string, QcRow> | undefined => {
     if (ctx.outputs === undefined) return undefined;
-    const qcMap = parseResourceMap(
-      ctx.outputs.resolve("qcJson"),
-      (acc) => acc.getDataAsJsonOrUndefined<QcRow>(),
-      false,
-    );
     const out: Record<string, QcRow> = {};
-    for (const e of qcMap.data) if (e.value != null) out[String(e.key[0])] = e.value as QcRow;
+    for (const e of parseQcRows(ctx)) out[String(e.key[0])] = e.value as QcRow;
     return out;
   })
-  // sampleId -> display name (upstream pl7.app/label), for the progress grid's Sample column. Mirrors
-  // the label lookup inlined in analysisLog below; kept as its own output because each output is a pure
-  // function of ctx and outputs cannot read one another.
-  .output("sampleLabels", (ctx): Record<string, string> | undefined => {
-    const inputRef = ctx.data.fbFastqRef;
-    if (inputRef === undefined) return undefined;
-    const inputSpec = ctx.resultPool.getSpecByRef(inputRef);
-    if (inputSpec === undefined || !isPColumnSpec(inputSpec)) return undefined;
-    const sampleAxisSpec = inputSpec.axesSpec[0];
-    const obj = ctx.resultPool.getData().entries.find((f) => {
-      const spec = f.obj.spec;
-      if (!isPColumnSpec(spec)) return false;
-      if (spec.name !== "pl7.app/label" || spec.axesSpec.length !== 1) return false;
-      const axisSpec = spec.axesSpec[0];
-      if (axisSpec.name !== sampleAxisSpec.name) return false;
-      if (sampleAxisSpec.domain === undefined || Object.keys(sampleAxisSpec.domain).length === 0)
-        return true;
-      if (axisSpec.domain === undefined) return false;
-      for (const [k, v] of Object.entries(sampleAxisSpec.domain))
-        if (axisSpec.domain[k] !== v) return false;
-      return true;
-    });
-    if (obj === undefined) return undefined;
-    return Object.fromEntries(
-      Object.entries(obj.obj.data.getDataAsJson<{ data: Record<string, string> }>().data).map(
-        (e) => [JSON.parse(e[0])[0], e[1]],
-      ),
-    ) as Record<string, string>;
-  })
+  // sampleId -> display name (upstream pl7.app/label), for the progress grid's Sample column. Shares
+  // resolveSampleLabels with analysisLog; kept as its own output because outputs cannot read one another.
+  .output("sampleLabels", (ctx): Record<string, string> | undefined => resolveSampleLabels(ctx))
   // The block's single "Analysis logs" (lines shown in the UI's wide slide-over), built from the
   // per-sample QC JSON (qcJson), which settles incrementally as each sample's qc step finishes:
   //   • while the run is in progress → a live count of samples finished so far ("Processing… N …");
@@ -271,48 +301,11 @@ export const platforma = BlockModelV3.create(dataModel)
     if (ctx.outputs === undefined) return undefined;
 
     // Sample labels (sampleId -> name) from the upstream pl7.app/label column — display names for
-    // flagged samples and the total sample count (heartbeat denominator). Mirrors mixcr-clonotyping.
-    let labels: Record<string, string> | undefined;
-    const inputRef = ctx.data.fbFastqRef;
-    if (inputRef !== undefined) {
-      const inputSpec = ctx.resultPool.getSpecByRef(inputRef);
-      if (inputSpec !== undefined && isPColumnSpec(inputSpec)) {
-        const sampleAxisSpec = inputSpec.axesSpec[0];
-        const obj = ctx.resultPool.getData().entries.find((f) => {
-          const spec = f.obj.spec;
-          if (!isPColumnSpec(spec)) return false;
-          if (spec.name !== "pl7.app/label" || spec.axesSpec.length !== 1) return false;
-          const axisSpec = spec.axesSpec[0];
-          if (axisSpec.name !== sampleAxisSpec.name) return false;
-          if (
-            sampleAxisSpec.domain === undefined ||
-            Object.keys(sampleAxisSpec.domain).length === 0
-          )
-            return true;
-          if (axisSpec.domain === undefined) return false;
-          for (const [k, v] of Object.entries(sampleAxisSpec.domain))
-            if (axisSpec.domain[k] !== v) return false;
-          return true;
-        });
-        if (obj !== undefined) {
-          labels = Object.fromEntries(
-            Object.entries(obj.obj.data.getDataAsJson<{ data: Record<string, string> }>().data).map(
-              (e) => [JSON.parse(e[0])[0], e[1]],
-            ),
-          ) as Record<string, string>;
-        }
-      }
-    }
-    // Per-sample QC metrics; each entry appears as that sample's qc step finishes.
-    // qcJson is per-sample inline JSON content (workflow saveFileContent + getFileContent), so
-    // getDataAsJson reads it synchronously as the parsed row. (getDataAsJson on a saveFile'd file
-    // *handle* returns nothing — the block-dev gotcha; the inline-content pattern is what fixes it.)
-    const qcMap = parseResourceMap(
-      ctx.outputs.resolve("qcJson"),
-      (acc) => acc.getDataAsJsonOrUndefined<QcRow>(),
-      false,
-    );
-    const entries = (qcMap?.data ?? []).filter((e) => e.value != null);
+    // flagged samples. Shared resolver with the sampleLabels output.
+    const labels = resolveSampleLabels(ctx);
+    // Per-sample QC metrics; each entry appears as that sample's qc step finishes (shared with
+    // completedSamples / sampleQc). qcJson is inline JSON content read synchronously.
+    const entries = parseQcRows(ctx);
     const done = entries.length;
     const running = ctx.outputs.getIsReadyOrError() === false;
 

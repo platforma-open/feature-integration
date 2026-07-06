@@ -16,7 +16,9 @@ tagPattern := import(":tag-pattern")
 
 self.defineOutputs("tagstatTsv", "tagstatLogStream")
 
-progressPrefix := "[==PROGRESS==]"
+// mitool progress-line sentinel; single source in tag-pattern.lib.tengo (matched by the model's
+// ProgressPrefix in model/src/index.ts).
+progressPrefix := tagPattern.PROGRESS_PREFIX
 
 mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
 

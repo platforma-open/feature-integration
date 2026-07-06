@@ -311,6 +311,50 @@ def test_cli_empty_join_writes_header_only_not_crash(tags_csv, tmp_path, tagstat
 
 
 @pytest.mark.slow
+def test_cli_per_cell_summary_maxima_match_exported_columns(tagstat_tsv, tags_csv, tmp_path):
+    # The per-cell summary's maxUmiCount / maxFraction / maxSpecificityScore are a collapse of the
+    # exported (cell x feature) columns -- they must equal the per-cell max of those exported CSVs, not a
+    # separately-recomputed value (guards the with_fraction / with_specificity single-compute refactor).
+    subprocess.run(
+        [
+            sys.executable,
+            str(SRC),
+            str(tagstat_tsv),
+            str(tags_csv),
+            "--sample-id",
+            "s1",
+            "--control",
+            "CTRL",
+            "--output-prefix",
+            str(tmp_path / "result"),
+        ],
+        check=True,
+        cwd=tmp_path,
+    )
+
+    def _max_by_cell(path, value_col, cast):
+        by_cell: dict[str, float] = {}
+        with open(path, newline="") as f:
+            for r in csv.DictReader(f):
+                v = cast(r[value_col])
+                by_cell[r["cellId"]] = max(by_cell.get(r["cellId"], v), v)
+        return by_cell
+
+    exp_umi = _max_by_cell(tmp_path / "result_abundance.csv", "umiCount", int)
+    exp_frac = _max_by_cell(tmp_path / "result_fractions.csv", "fraction", float)
+    exp_spec = _max_by_cell(tmp_path / "result_specificity.csv", "specificityScore", float)
+
+    with open(tmp_path / "result_per_cell_summary.csv", newline="") as f:
+        summary = {r["cellId"]: r for r in csv.DictReader(f)}
+
+    assert set(summary) == set(exp_umi)
+    for cell, row in summary.items():
+        assert int(row["maxUmiCount"]) == exp_umi[cell]
+        assert float(row["maxFraction"]) == pytest.approx(exp_frac[cell])
+        assert float(row["maxSpecificityScore"]) == pytest.approx(exp_spec[cell])
+
+
+@pytest.mark.slow
 def test_cli_consensus_matches_pure_rule(tmp_path):
     # Oracle: the vectorized CLI consensus must equal the pure consensus_category rule across cases the
     # committed golden bed doesn't cover (unique winner, exact tie, sub-threshold spread, single feature).

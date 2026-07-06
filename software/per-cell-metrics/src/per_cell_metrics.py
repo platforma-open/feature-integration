@@ -61,29 +61,44 @@ def specificity_score(antigen_umi, control_umi):
     return (1.0 - beta.cdf(0.925, antigen_umi + 1, control_umi + 3)) * 100.0
 
 
-def per_cell_summary(counts: pl.DataFrame, control: str | None) -> pl.DataFrame:
+def with_fraction(counts: pl.DataFrame) -> pl.DataFrame:
+    """Add the within-cell UMI ``fraction`` (each feature's share of its cell's total; sums to 1 per
+    cell) to the (sampleId, cellId, feature, umiCount) long frame. An empty frame carries its schema
+    through. Computed once in main() and reused for both the exported fractions CSV and the per-cell
+    summary so the two never diverge or recompute the window."""
+    return counts.with_columns(
+        (pl.col("umiCount") / pl.col("umiCount").sum().over(["sampleId", "cellId"])).alias("fraction")
+    )
+
+
+def with_specificity(frame: pl.DataFrame, control: str) -> pl.DataFrame:
+    """Add the per-(cell, feature) Cell Ranger specificity score vs the cell's control UMIs (0 when the
+    cell has no control reads). scipy beta.cdf is evaluated once over the whole column (no per-row loop).
+    An empty join carries the schema through. Computed once in main() and reused for both the exported
+    specificity CSV and the per-cell summary's max, so the two never diverge or recompute the betaCDF."""
+    ctrl = frame.filter(pl.col("feature") == control).select(["cellId", pl.col("umiCount").alias("_controlUmi")])
+    joined = frame.join(ctrl, on="cellId", how="left").with_columns(pl.col("_controlUmi").fill_null(0))
+    scores = specificity_score(joined["umiCount"].to_numpy(), joined["_controlUmi"].to_numpy())
+    return joined.with_columns(pl.Series("specificityScore", scores, dtype=pl.Float64)).drop("_controlUmi")
+
+
+def per_cell_summary(per_cell: pl.DataFrame) -> pl.DataFrame:
     """One row per (sampleId, cellId): the cell's max feature UMI count and max feature fraction
-    (and, with a negative control, the max specificity score), plus a ``featureSummary`` string that
-    lists every feature the cell has signal for as ``feature (fraction%, umiCount UMI)``, bullet-
-    separated and sorted by descending fraction (dominant feature first, feature name as tie-break).
-    Fractions display as whole percents, with "<1%" for a nonzero feature that rounds below 1%.
+    (and, when a ``specificityScore`` column is present, the max specificity score), plus a
+    ``featureSummary`` string that lists every feature the cell has signal for as
+    ``feature (fraction%, umiCount UMI)``, bullet-separated and sorted by descending fraction (dominant
+    feature first, feature name as tie-break). Fractions display as whole percents, with "<1%" for a
+    nonzero feature that rounds below 1%.
 
     This is a TABLE-ONLY collapse of the (cell x feature) matrix -- the per-feature abundance,
     fractions, consensus, and specificity outputs (the A-0010 export contract) are unaffected.
-    ``counts`` is the (sampleId, cellId, feature, umiCount) long frame; an empty frame carries its
-    schema through to a header-only summary.
+    ``per_cell`` is the (sampleId, cellId, feature, umiCount) long frame ALREADY carrying the
+    ``fraction`` column (and ``specificityScore`` when a negative control is set) that main() computed
+    once for the exported CSVs -- so the per-cell maxima can never diverge from the exported columns,
+    and the fraction window / betaCDF are not recomputed here. An empty frame carries its schema through
+    to a header-only summary.
     """
-    per_cell = counts.with_columns(
-        (pl.col("umiCount") / pl.col("umiCount").sum().over(["sampleId", "cellId"])).alias("fraction")
-    )
-    has_control = control is not None
-    if has_control:
-        # specificity per (cell, feature) vs the cell's control UMIs (0 when the cell has none) --
-        # same betaCDF path as the exported specificity column; here we keep only the per-cell max.
-        ctrl = per_cell.filter(pl.col("feature") == control).select(["cellId", pl.col("umiCount").alias("_controlUmi")])
-        per_cell = per_cell.join(ctrl, on="cellId", how="left").with_columns(pl.col("_controlUmi").fill_null(0))
-        scores = specificity_score(per_cell["umiCount"].to_numpy(), per_cell["_controlUmi"].to_numpy())
-        per_cell = per_cell.with_columns(pl.Series("specificityScore", scores, dtype=pl.Float64))
+    has_control = "specificityScore" in per_cell.columns
 
     # Whole-percent display of the fraction, with "<1%" for a nonzero feature that rounds below 1% (so a
     # real-but-tiny signal never reads as "0%"). Full-precision fractions stay in the exported columns.
@@ -245,11 +260,12 @@ def main() -> None:
         .write_csv(f"{args.output_prefix}_abundance.csv")
     )
 
-    # within-cell fractions (normalised across features per cell, sum to 1) -- spec A-0010
-    fractions = counts.with_columns(
-        (pl.col("umiCount") / pl.col("umiCount").sum().over("cellId")).alias("fraction")
-    ).select(["sampleId", "cellId", "feature", "fraction"])
-    fractions.sort(["sampleId", "cellId", "feature"]).write_csv(f"{args.output_prefix}_fractions.csv")
+    # within-cell fractions (normalised across features per cell, sum to 1) -- spec A-0010. Computed
+    # once here (with_fraction) and reused for the per-cell summary so the two never diverge.
+    cf = with_fraction(counts)
+    cf.select(["sampleId", "cellId", "feature", "fraction"]).sort(
+        ["sampleId", "cellId", "feature"]
+    ).write_csv(f"{args.output_prefix}_fractions.csv")
 
     # consensus feature per cell (dominant-category rule, spec A-0012), vectorized in polars: the
     # dominant feature is the unique per-cell max whose share of the cell's total is >= the threshold
@@ -276,19 +292,13 @@ def main() -> None:
         .write_csv(f"{args.output_prefix}_consensus.csv")
     )
 
-    # optional specificity score per (cell, feature) vs the negative control (spec A-0014).
-    # specificity_score broadcasts over numpy arrays (scipy beta.cdf is vectorized), so the whole
-    # column is computed at once instead of a per-row Python loop. An empty join carries the schema
-    # through natively -> header-only CSV.
+    # optional specificity score per (cell, feature) vs the negative control (spec A-0014). Computed
+    # once (with_specificity: scipy beta.cdf vectorized over the whole column) and reused for the
+    # per-cell summary's max. An empty join carries the schema through natively -> header-only CSV.
     if args.control is not None:
-        ctrl = counts.filter(pl.col("feature") == args.control).select(
-            ["cellId", pl.col("umiCount").alias("controlUmi")]
-        )
-        spec = counts.join(ctrl, on="cellId", how="left").with_columns(pl.col("controlUmi").fill_null(0))
-        scores = specificity_score(spec["umiCount"].to_numpy(), spec["controlUmi"].to_numpy())
+        summary_frame = with_specificity(cf, args.control)
         (
-            spec.with_columns(pl.Series("specificityScore", scores, dtype=pl.Float64))
-            .select(["sampleId", "cellId", "feature", "specificityScore"])
+            summary_frame.select(["sampleId", "cellId", "feature", "specificityScore"])
             .sort(["sampleId", "cellId", "feature"])
             .write_csv(f"{args.output_prefix}_specificity.csv")
         )
@@ -297,12 +307,14 @@ def main() -> None:
         # fixed output set is satisfied. It is not imported when no control is set (main.tpl and the
         # model gate the specificity column on hasControl).
         pl.DataFrame(schema=_SPECIFICITY_SCHEMA).write_csv(f"{args.output_prefix}_specificity.csv")
+        summary_frame = cf
 
     # per-cell summary (table-only collapse): one row per (sampleId, cellId) with the max feature UMI
-    # count / fraction (/ specificity, with a control) and the "feature : umi : fraction | ..." string.
-    # The maxSpecificityScore column is present only with a control, matching how main.tpl / the model
-    # gate the specificity import on hasControl.
-    per_cell_summary(counts, args.control).write_csv(f"{args.output_prefix}_per_cell_summary.csv")
+    # count / fraction (/ specificity, with a control) and the "feature (fraction%, umi) | ..." string.
+    # summary_frame already carries fraction (+ specificityScore with a control), so nothing is
+    # recomputed. The maxSpecificityScore column is present only with a control, matching how main.tpl /
+    # the model gate the specificity import on hasControl.
+    per_cell_summary(summary_frame).write_csv(f"{args.output_prefix}_per_cell_summary.csv")
 
 
 if __name__ == "__main__":
