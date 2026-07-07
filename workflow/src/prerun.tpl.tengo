@@ -36,7 +36,7 @@ wf.body(func(args) {
 		addFile("tags.csv", csvImport.file).
 		arg("tags.csv").arg("columns.json").
 		saveFileContent("columns.json").
-		printErrStreamToStdout().saveStdoutStream().run()
+		run()
 
 	outputs := {
 		csvFile: file.exportFile(csvImport.file),
@@ -59,7 +59,7 @@ wf.body(func(args) {
 			arg("tags.csv").arg("feature_names.json").
 			arg("--feature-col").arg(args.featureNameColumn).
 			saveFileContent("feature_names.json").
-			printErrStreamToStdout().saveStdoutStream().run()
+			run()
 		outputs.featureNames = features.getFileContent("feature_names.json")
 	}
 

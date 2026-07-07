@@ -220,3 +220,21 @@ identity, so a consumer inside a boundary absorbs the drift and its per-sample o
 reads the same `parseLogStream` + `stepLogs` streams, and the A-0010 export contract is untouched. The
 now-unused `saveStdoutStream()` on the panel/qc/metrics execs and the unconsumed `parse_report.txt` /
 `refine_report.txt` reports were dropped along the way.
+
+## CIDConflictError fix — remove `saveStdoutStream` from the mitool execs
+
+The `render.create` split above was necessary but NOT sufficient: the block still hit `CIDConflictError`
+(non-deterministically on a clean first render, reliably on re-render). Root cause, confirmed against the
+SDK: `saveStdoutStream()` writes the rate-dependent stdout as a saved file INTO the exec's `files` map
+(`exec/index.lib.tengo`), so every `getFile` off a mitool exec resolved to a run-to-run drifting content
+hash while its resource identity stayed pinned (the SDK `exec.tpl` is `hash_override`-pinned) — a
+stable-id / drifting-hash pair that conflicts on any dedup-relevant flatten. `render.create` only
+relocated the conflict; it could not remove it.
+
+Fix: drop `saveStdoutStream` (and the now-dead progress plumbing) from the parse / refine-tags / tag-stat
+execs, so their outputs are deterministic and dedup cleanly. This trades away the live per-step progress
+bars: the Main grid now shows each sample as `Processing…` → `Done` (driven by the per-sample `qcJson`
+completion plus the input sample-label roster), and the Quality / Read-recovery columns still fill in at
+completion. The A-0010 export contract is unchanged. Two unused `saveStdoutStream` calls in `prerun.tpl`
+were also removed (dead trap surface). Keeping the live grid would require `render.createEphemeral` (loses
+per-sample caching) or an SDK stdout-capture mode that keeps the stream out of the dedup-relevant files map.

@@ -30,7 +30,7 @@ fbRefineTpl := assets.importTemplate(":fb-refine")
 fbTagstatTpl := assets.importTemplate(":fb-tagstat")
 fbDownstreamTpl := assets.importTemplate(":fb-downstream")
 
-self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "qc", "qcJson", "parseLogStream", "stepLogs")
+self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "qc", "qcJson")
 
 self.body(func(inputs) {
 	inputData := inputs[pConstants.VALUE_FIELD_NAME]
@@ -116,7 +116,6 @@ self.body(func(inputs) {
 	})
 	parsedMic := parseRun.output("parsedMic")
 	parseReport := parseRun.output("parseReport")
-	parseLogStream := parseRun.output("parseLogStream")
 
 	// Step 2: emit panel + refine-tags (fb-refine boundary).
 	refineRun := render.create(fbRefineTpl, {
@@ -130,14 +129,12 @@ self.body(func(inputs) {
 	})
 	refinedMic := refineRun.output("refinedMic")
 	refineReport := refineRun.output("refineReport")
-	refineLogStream := refineRun.output("refineLogStream")
 
 	// Step 3: tag-stat -u (fb-tagstat boundary) — per-(cell, feature-barcode) distinct-UMI counts.
 	tagStatRun := render.create(fbTagstatTpl, {
 		refinedMic: refinedMic
 	})
 	tagstatTsv := tagStatRun.output("tagstatTsv")
-	tagstatLogStream := tagStatRun.output("tagstatLogStream")
 
 	// Step 4: QC report + per-cell metrics (fb-downstream boundary). These consume the drifting mitool
 	// files (tagstat.tsv + parse/refine reports), so they run inside a render boundary and their per-sample
@@ -153,15 +150,6 @@ self.body(func(inputs) {
 		featureNameColumn: featureNameColumn
 	})
 
-	// Per-step stdout streams (progress-prefixed) -> the model's live per-step progress grid. Ordinal step
-	// key so the UI can order + name them; qc/metrics are Python (no progress lines) so they are not
-	// tracked here — completion comes from qcJson (completedSamples). Streams are ephemeral, so building
-	// this map in the body (rather than a render boundary) does not risk the dedup conflict above.
-	stepLogs := pcolumn.resourceMapBuilder(1)
-	stepLogs.add(["1-parse"], parseLogStream)
-	stepLogs.add(["2-refine"], refineLogStream)
-	stepLogs.add(["3-tagstat"], tagstatLogStream)
-
 	// The body must return exactly the defineOutputs set and no output may be undefined.
 	return {
 		abundance: downstreamRun.output("abundance"),
@@ -170,10 +158,6 @@ self.body(func(inputs) {
 		specificity: downstreamRun.output("specificity"),
 		perCellSummary: downstreamRun.output("perCellSummary"),
 		qc: downstreamRun.output("qc"),
-		qcJson: downstreamRun.output("qcJson"),
-		// Per-sample mitool parse stdout (progress-prefixed); surfaced by main.tpl for the live progress grid.
-		parseLogStream: parseLogStream,
-		// Per-step progress-log map (parse / refine / tag-stat) -> model stepProgress -> live step display.
-		stepLogs: stepLogs.build()
+		qcJson: downstreamRun.output("qcJson")
 	}
 })

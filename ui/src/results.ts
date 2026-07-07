@@ -1,16 +1,12 @@
-import {
-  ProgressPrefix,
-  type QcRow,
-} from "@platforma-open/milaboratories.feature-integration.model";
+import type { QcRow } from "@platforma-open/milaboratories.feature-integration.model";
 import type { Color } from "@platforma-sdk/ui-vue";
 import { Gradient } from "@platforma-sdk/ui-vue";
 import { computed } from "vue";
 import { useApp } from "./app";
-import { parseProgressString } from "./parseProgress";
 
 // Progress-cell config per sample. Maps onto the Progress column cell: status → stage, percent → bar
-// fill (undefined = indeterminate), text → main label, suffix → right-hand note. Shape matches the
-// SDK's ColDefProgress, so the column's `progress` callback passes it through unchanged.
+// fill (undefined = indeterminate), text → main label. Shape matches the SDK's ColDefProgress, so the
+// column's `progress` callback passes it through unchanged.
 export type ProgressCell = {
   status: "not_started" | "running" | "done";
   percent?: number;
@@ -36,98 +32,6 @@ export type RecoveryBar = {
   title: string;
   data: { label: string; value: number; color: Color; description: string }[];
 };
-
-// The framework resolves the FutureRefs inside sampleProgress / stepProgress on serialization, so each
-// entry's value arrives as this shape (or undefined). Cast mirrors blocks/peptide-extraction results.ts.
-type ProgressInfo = { progressLine?: string; live: boolean };
-
-// Ordinal step key (from the workflow stepLogs axis) → friendly display name. Only the mitool steps
-// emit progress; qc/metrics (Python) are not tracked — completion comes from completedSamples.
-const STEP_NAMES: Record<string, string> = {
-  "1-parse": "Parsing reads",
-  "2-refine": "Refining barcodes",
-  "3-tagstat": "Counting UMIs",
-};
-
-// refine-tags corrects the barcode tags in this fixed order (fb-pipeline.tpl.tengo passes
-// `-t CELL -t FEATURE -t UMI`; mitool orders CELL < FEATURE < UMI). mitool labels each progress line
-// with the tag it is currently working on ("Counting CELL", "Correcting FEATURE", "Writing UMI", …),
-// so we surface WHICH tag is in progress and its position ("2 of 3"). Keep in sync with
-// tag-pattern.lib.tengo if the corrected-tag set changes.
-const REFINE_TAGS = ["CELL", "FEATURE", "UMI"];
-const REFINE_TAG_LABELS: Record<string, string> = {
-  CELL: "Cell barcodes",
-  FEATURE: "Feature barcodes",
-  UMI: "UMIs",
-};
-
-// mitool has no machine step token — its progress lines carry only human-readable stage prose, so
-// liveCell() routes on these substrings. Centralized here so a mitool wording change is a one-line edit,
-// not a hunt through liveCell. If mitool renames a stage, the progress cell falls back to the generic
-// phase label (a coarser bar, never a crash). REFINE_INIT = the refine lead-in ("Initialization");
-// TAGSTAT_WRITING = the tag-stat's final monotonic "Writing result" pass.
-const REFINE_INIT_LABEL = /init/i;
-const TAGSTAT_WRITING_LABEL = /writing/i;
-
-// Build the running-state progress cell from mitool's latest live stage label. mitool's per-step
-// progress is structured, so instead of one jumpy percent we surface which sub-step is running:
-//   • parse — one monotonic pass → show the live percent.
-//   • refine-tags — corrects CELL → FEATURE → UMI; per-tag progress is non-monotonic (recursive
-//     correction passes). Keep a stable "Refining barcodes" prefix so the label doesn't jump; vary
-//     only the colon-suffix ("Refining barcodes" on init → ": Cell/Feature barcodes|UMIs" + "N of 3"
-//     per tag → ": Finalizing" on the wrap-up phases), all on an indeterminate (animated) bar.
-//   • tag-stat -u — a data-dependent hierarchical on-disk sort (non-monotonic → indeterminate),
-//     then one monotonic "Writing result" pass → show the live percent for that final phase.
-// Blank suffix on indeterminate cells, else the progress cell defaults the right-hand note to "0%".
-function liveCell(
-  step: string,
-  stage: string,
-  percentage?: string,
-  etaLabel?: string,
-): ProgressCell {
-  if (step === "2-refine") {
-    const tag = REFINE_TAGS.find((t) => stage.includes(t));
-    if (tag) {
-      return {
-        status: "running",
-        text: `Refining barcodes: ${REFINE_TAG_LABELS[tag]}`,
-        suffix: `${REFINE_TAGS.indexOf(tag) + 1} of ${REFINE_TAGS.length}`,
-      };
-    }
-    // Non-tag global phases keep the stable "Refining barcodes" prefix so the label doesn't jump.
-    // mitool's lead-in stage is "Initialization" (bare label); the wrap-up stages (Filtering /
-    // Final sorting / Writing result) collapse to ": Finalizing".
-    if (REFINE_INIT_LABEL.test(stage)) {
-      return { status: "running", text: "Refining barcodes", suffix: "" };
-    }
-    return { status: "running", text: "Refining barcodes: Finalizing", suffix: "" };
-  }
-
-  if (step === "3-tagstat") {
-    // The final "Writing result" pass is monotonic; the preceding on-disk sort is not.
-    if (TAGSTAT_WRITING_LABEL.test(stage) && percentage) {
-      return {
-        status: "running",
-        percent: Number(percentage),
-        text: `Counting UMIs: writing ${percentage}%`,
-        suffix: etaLabel ?? "",
-      };
-    }
-    return { status: "running", text: "Counting UMIs: sorting", suffix: "" };
-  }
-
-  // parse (and any other monotonic step): show the live percent when present, else indeterminate.
-  const name = STEP_NAMES[step] ?? step;
-  if (percentage) {
-    return {
-      status: "running",
-      percent: Number(percentage),
-      text: `${name}: ${percentage}%`,
-      suffix: etaLabel ?? "",
-    };
-  }
-  return { status: "running", text: name, suffix: "" };
-}
 
 // Quality status from the per-sample QC metrics (proposed cutoffs; tune here). Mirrors the analysisLog
 // flags: zero cells detected or a very low panel-assigned fraction → ALERT; a low panel-assigned or
@@ -202,83 +106,40 @@ function recoveryBar(qc: QcRow): RecoveryBar | undefined {
 
 export const sampleResults = computed<SampleResult[] | undefined>(() => {
   const app = useApp();
-  const roster = app.model.outputs.sampleProgress;
-  // undefined until the roster is enumerated — the grid shows its loading overlay in the meantime.
-  if (!roster) return undefined;
+  // The grid appears once the run has started. Live per-step progress bars were removed together with
+  // the mitool stdout streams (to fix the CIDConflictError — see model/src/index.ts), so the roster now
+  // comes from the input dataset's sample labels and each row shows "Processing…" until its QC settles
+  // (completedSamples) and it flips to "Done".
+  if (!app.model.outputs.started) return undefined;
 
-  const stepProg = app.model.outputs.stepProgress;
-  const completed = new Set(app.model.outputs.completedSamples ?? []);
   const labels = app.model.outputs.sampleLabels ?? {};
+  const completed = new Set(app.model.outputs.completedSamples ?? []);
   const qcBySample = app.model.outputs.sampleQc ?? {};
 
-  const sampleIds = new Set<string>();
-  for (const e of roster.data) sampleIds.add(String(e.key[0]));
-
-  // Latest step per sample: prefer a currently-live stream, else the highest-ordinal step seen. Step
-  // keys sort lexicographically ("1-…" < "2-…" < "3-…"), so string compare gives step order.
-  const latest = new Map<string, { step: string; info: ProgressInfo }>();
-  const consider = (sampleId: string, step: string, info: ProgressInfo | undefined) => {
-    if (!info) return;
-    const cur = latest.get(sampleId);
-    if (!cur || (info.live && !cur.info.live) || (info.live === cur.info.live && step > cur.step)) {
-      latest.set(sampleId, { step, info });
-    }
-  };
-  if (stepProg) {
-    for (const e of stepProg.data) {
-      consider(String(e.key[0]), String(e.key[1]), e.value as ProgressInfo | undefined);
-    }
-  }
+  // Roster: every sample in the input dataset (labels), unioned with any completed / QC'd sample as a
+  // fallback in case the upstream label column isn't resolvable yet.
+  const sampleIds = new Set<string>([
+    ...Object.keys(labels),
+    ...completed,
+    ...Object.keys(qcBySample),
+  ]);
+  // Roster not enumerated yet → keep the grid's loading overlay rather than flashing an empty table.
+  if (sampleIds.size === 0) return undefined;
 
   return [...sampleIds]
     .map((sampleId): SampleResult => {
       const label = labels[sampleId] ?? sampleId;
-      // Per-sample QC settles when the sample finishes, so Quality + Read recovery fill in at
-      // completion (blank while running). Same source as completedSamples.
+      // Per-sample QC settles when the sample finishes, so Quality + Read recovery fill in at completion
+      // (blank while running). Same source as completedSamples.
       const qc = qcBySample[sampleId];
       const qcFields = qc ? { quality: qualityStatus(qc), recovery: recoveryBar(qc) } : {};
-
-      // Whole sample finished.
-      if (completed.has(sampleId)) {
-        return {
-          sampleId,
-          label,
-          progress: { status: "done", percent: 100, text: "Done" },
-          ...qcFields,
-        };
-      }
-
-      const cur = latest.get(sampleId);
-      if (!cur) {
-        return {
-          sampleId,
-          label,
-          progress: { status: "not_started", text: "Queued" },
-          ...qcFields,
-        };
-      }
-
-      const name = STEP_NAMES[cur.step] ?? cur.step;
-
-      // Step actively streaming → a descriptive cell built from mitool's structured stage label.
-      if (cur.info.live && cur.info.progressLine) {
-        const p = parseProgressString(cur.info.progressLine.replace(ProgressPrefix, ""));
-        return {
-          sampleId,
-          label,
-          progress: liveCell(cur.step, p.stage ?? "", p.percentage, p.etaLabel),
-          ...qcFields,
-        };
-      }
-
-      // Step finished streaming but the sample isn't done yet — show that step as complete: a full bar
-      // with a "Done" note, keeping the step name. The next step resets the bar when it starts emitting.
-      return {
-        sampleId,
-        label,
-        progress: { status: "running", percent: 100, text: name, suffix: "Done" },
-        ...qcFields,
-      };
+      // suffix:"" suppresses the SDK's default right-hand "0%" for running cells (createAgGridColDef
+      // falls back to `${percent ?? 0}%` when suffix is nullish). With the live per-step stream gone
+      // there is no real percentage to show — the indeterminate bar already conveys "in progress".
+      const progress: ProgressCell = completed.has(sampleId)
+        ? { status: "done", percent: 100, text: "Done" }
+        : { status: "running", text: "Processing…", suffix: "" };
+      return { sampleId, label, progress, ...qcFields };
     })
     .sort((a, b) => a.label.localeCompare(b.label));
 });

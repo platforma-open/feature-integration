@@ -1,26 +1,21 @@
 // refine-tags sub-template (render.create boundary): emit the feature panel, then refine-tags.
 //
-// Same rationale as fb-parse — refine captures rate-dependent progress via saveStdoutStream, so its
-// refined.mic and refine_report.json reach the caller as *template outputs*, not refine.getFile(...)
-// fed into a downstream exec's addFile (the CIDConflictError trap). Mirrors blocks/peptide-extraction
-// umi-consensus.tpl.tengo (which owns the refine -> sort -> consensus chain behind one boundary).
+// Returns refined.mic + refine_report.json to the caller. Progress capture (saveStdoutStream) is
+// deliberately NOT used — see fb-parse.tpl.tengo for why (it injects a drifting stdout file into the
+// exec's files map and caused the CIDConflictError). Mirrors blocks/peptide-extraction
+// umi-consensus.tpl.tengo (minus the log stream).
 //
-// refine-tags error-corrects cell, feature, and UMI barcodes. FEATURE is corrected against the panel
-// whitelist (#file:panel.txt): within-Hamming-1 reads snap to a panel barcode, off-panel reads are
-// dropped. CELL is de-novo corrected by default; a chemistry whitelist snaps it to a 10x built-in
-// (#builtin:<name>) so cellIds match the VDJ producer. The panel-emit exec is deterministic (no
-// saveStdoutStream), so its panel.txt is safe to feed refine.addFile inline within this boundary.
+// refine-tags error-corrects cell, feature, and UMI barcodes. FEATURE snaps to the panel whitelist
+// (#file:panel.txt): within-Hamming-1 reads snap to a panel barcode, off-panel reads are dropped. CELL
+// is de-novo corrected by default; a chemistry whitelist snaps it to a 10x built-in (#builtin:<name>).
+// The panel-emit exec is deterministic (no stream), so its panel.txt is safe to feed refine.addFile.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 tagPattern := import(":tag-pattern")
 
-self.defineOutputs("refinedMic", "refineReport", "refineLogStream")
-
-// mitool progress-line sentinel; single source in tag-pattern.lib.tengo (matched by the model's
-// ProgressPrefix in model/src/index.ts).
-progressPrefix := tagPattern.PROGRESS_PREFIX
+self.defineOutputs("refinedMic", "refineReport")
 
 mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
 emitPanelSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:emit-panel")
@@ -67,7 +62,6 @@ self.body(func(inputs) {
 		refine = refine.memFormula(memFormula, { fallback: memFallback })
 	}
 	refine = refine.
-		env("MI_PROGRESS_PREFIX", progressPrefix).
 		arg("refine-tags").
 		arg("-t").arg(cellTag).
 		arg("-t").arg(tagPattern.FEATURE_TAG + "#file:panel.txt").
@@ -76,11 +70,10 @@ self.body(func(inputs) {
 		addFile("panel.txt", panel.getFile("panel.txt")).
 		addFile("parsed.mic", parsedMic, { tag: "reads" }).
 		arg("parsed.mic").arg("refined.mic").saveFile("refined.mic").
-		printErrStreamToStdout().saveStdoutStream().run()
+		run()
 
 	return {
 		refinedMic: refine.getFile("refined.mic"),
-		refineReport: refine.getFile("refine_report.json"),
-		refineLogStream: refine.getStdoutStream()
+		refineReport: refine.getFile("refine_report.json")
 	}
 })

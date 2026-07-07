@@ -1,12 +1,12 @@
 // tag-stat sub-template (render.create boundary).
 //
-// tag-stat -u computes per-(cell, feature-barcode) distinct-UMI counts and captures rate-dependent
-// progress via saveStdoutStream, so its tagstat.tsv reaches the caller as a *template output* — fed to
-// the qc + per-cell-metrics execs there — rather than tagStat.getFile(...) into an addFile (the
-// CIDConflictError trap; see fb-parse). Output columns: CELL FEATURE count totalWeight unique_UMI.
+// tag-stat -u computes per-(cell, feature-barcode) distinct-UMI counts and returns tagstat.tsv to the
+// caller. Progress capture (saveStdoutStream) is deliberately NOT used — see fb-parse.tpl.tengo for why
+// (it injects a drifting stdout file into the exec's files map and caused the CIDConflictError). Output
+// columns: CELL FEATURE count totalWeight unique_UMI.
 //
-// --use-local-temp puts the count-unique on-disk sort in the exec work dir instead of the shared
-// system /tmp — team convention for heavy on-disk-sort mitool steps (peptide-extraction, mixcr-shm-trees,
+// --use-local-temp puts the count-unique on-disk sort in the exec work dir instead of the shared system
+// /tmp — team convention for heavy on-disk-sort mitool steps (peptide-extraction, mixcr-shm-trees,
 // miltenyi cite silent /tmp-exhaustion hangs).
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
@@ -14,11 +14,7 @@ exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 tagPattern := import(":tag-pattern")
 
-self.defineOutputs("tagstatTsv", "tagstatLogStream")
-
-// mitool progress-line sentinel; single source in tag-pattern.lib.tengo (matched by the model's
-// ProgressPrefix in model/src/index.ts).
-progressPrefix := tagPattern.PROGRESS_PREFIX
+self.defineOutputs("tagstatTsv")
 
 mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
 
@@ -38,7 +34,6 @@ self.body(func(inputs) {
 		software(mitoolSw).
 		cpu(2).
 		memFormula(memFormula, { fallback: string(tagStatBaseGB) + "GiB" }).
-		env("MI_PROGRESS_PREFIX", progressPrefix).
 		arg("tag-stat").
 		arg("--use-local-temp").
 		arg("-t").arg(tagPattern.CELL_TAG).
@@ -46,10 +41,9 @@ self.body(func(inputs) {
 		arg("-u").arg(tagPattern.UMI_TAG).
 		addFile("refined.mic", refinedMic, { tag: "mic" }).
 		arg("refined.mic").arg("tagstat.tsv").saveFile("tagstat.tsv").
-		printErrStreamToStdout().saveStdoutStream().run()
+		run()
 
 	return {
-		tagstatTsv: tagStat.getFile("tagstat.tsv"),
-		tagstatLogStream: tagStat.getStdoutStream()
+		tagstatTsv: tagStat.getFile("tagstat.tsv")
 	}
 })

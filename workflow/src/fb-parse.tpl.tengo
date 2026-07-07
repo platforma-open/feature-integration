@@ -1,11 +1,12 @@
 // mitool parse sub-template (render.create boundary).
 //
-// Split out of fb-pipeline so the parse exec — which captures rate-dependent mitool progress via
-// saveStdoutStream — is sealed behind a render boundary. Its saved files (parsed.mic,
-// parse_report.json) reach the caller as *template outputs* (content-derived AID), never as
-// parse.getFile(...) fed into a downstream exec's addFile. That getField-off-a-streaming-exec-into-
-// addFile chain is the CIDConflictError trap: the SDK exec.tpl is hash_override-pinned, so a streaming
-// exec has a stable AID but a run-to-run drifting CID. Mirrors blocks/peptide-extraction parse.tpl.tengo.
+// Runs mitool parse and returns its saved files (parsed.mic, parse_report.json) to the caller. Progress
+// capture (saveStdoutStream) is deliberately NOT used: saveStdoutStream writes the rate-dependent stdout
+// as a file INTO the exec's `files` map (exec/index.lib.tengo), so every getFile off this exec resolved
+// to a run-to-run drifting CID and produced a CIDConflictError on the per-sample flatten. Without it the
+// exec's outputs are deterministic and dedup cleanly. Live per-step progress was traded away for
+// correctness; the Main grid now shows per-sample Processing -> Done from qcJson. Mirrors
+// blocks/peptide-extraction parse.tpl.tengo (minus the log stream).
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
@@ -15,11 +16,7 @@ tagPattern := import(":tag-pattern")
 
 json := import("json")
 
-self.defineOutputs("parsedMic", "parseReport", "parseLogStream")
-
-// mitool prints progress lines prefixed with this sentinel (via MI_PROGRESS_PREFIX); the model searches
-// for the same string (ProgressPrefix in model/src/index.ts). Single source: tag-pattern.lib.tengo.
-progressPrefix := tagPattern.PROGRESS_PREFIX
+self.defineOutputs("parsedMic", "parseReport")
 
 // :memory-from-limits sizes the JVM heap from the granted limits — avoids end-of-parse OOM when many
 // tag writers flush (see demultiplex-fastq).
@@ -52,7 +49,6 @@ self.body(func(inputs) {
 		parse = parse.memFormula(memFormula, { fallback: memFallback })
 	}
 	parse = parse.
-		env("MI_PROGRESS_PREFIX", progressPrefix).
 		arg("parse").
 		arg("--pattern").arg(pattern).
 		arg("--threads").argWithVar("{system.cpu}")
@@ -68,11 +64,10 @@ self.body(func(inputs) {
 	parse = parse.
 		arg("--json-report").arg("parse_report.json").saveFile("parse_report.json").
 		arg(inputArg).arg("parsed.mic").saveFile("parsed.mic").
-		printErrStreamToStdout().saveStdoutStream().run()
+		run()
 
 	return {
 		parsedMic: parse.getFile("parsed.mic"),
-		parseReport: parse.getFile("parse_report.json"),
-		parseLogStream: parse.getStdoutStream()
+		parseReport: parse.getFile("parse_report.json")
 	}
 })

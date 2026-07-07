@@ -11,14 +11,6 @@ import type { BlockArgs, BlockData } from "./types";
 
 export type { BlockArgs, BlockData } from "./types";
 
-// mitool prints progress lines to stderr prefixed with this sentinel; the workflow sets it as
-// MI_PROGRESS_PREFIX on every mitool exec from the single tengo source PROGRESS_PREFIX in
-// workflow/src/tag-pattern.lib.tengo — this literal must equal that one (crosses the TS/tengo boundary).
-// ProgressPattern parses a prefix-stripped line ("<stage>: <pct>% ETA: <eta>") into UI progress parts.
-export const ProgressPrefix = "[==PROGRESS==]";
-export const ProgressPattern =
-  /(?<stage>[^:]*):(?: *(?<progress>[0-9.]+)%)?(?: *ETA: *(?<eta>.+))?/;
-
 const DOMINANCE_FLOOR = 0.5; // spec A-0012: threshold is user-adjustable down to 0.5, never lower
 
 // Per-sample QC metrics as emitted by qc_report.py (result_qc.json), read by the analysisLog output
@@ -247,34 +239,13 @@ export const platforma = BlockModelV3.create(dataModel)
   // True once the main workflow has begun producing outputs (ctx.outputs settles) — lets the Main page
   // swap the static "run the block" hint for the live per-sample progress grid.
   .output("started", (ctx) => ctx.outputs !== undefined)
-  // Live per-sample progress for the Main-page grid. Resolves the flat per-sample parse-log stream
-  // (workflow parseLogStream) and reads mitool's latest progress line per sample. Gated on
-  // getInputsLocked so the full sample roster is enumerated before any row shows — every sample then
-  // appears at once ("Queued" until its parse emits a line). The per-sample values are FutureRefs the
-  // framework resolves on serialization; the UI reads the resolved { progressLine, live } (mirrors
-  // blocks/peptide-extraction parseProgress).
-  .output("sampleProgress", (ctx) => {
-    const acc = ctx.outputs?.resolve("parseLogStream");
-    if (!acc || !acc.getInputsLocked()) return undefined;
-    return parseResourceMap(acc, (a) => a.getProgressLogWithInfo(ProgressPrefix), true);
-  })
-  // Per-sample × per-step progress (workflow stepLogs: 1-parse / 2-refine / 3-tagstat). Each mitool
-  // step's stdout is progress-prefixed; getProgressLogWithInfo returns the latest line + live flag per
-  // step. Keys flatten to [sampleId, step]; the UI picks the latest active step per sample so the grid
-  // shows which stage each sample is in, not just "Processing…". (qc/metrics are Python — no progress —
-  // so they are not tracked; completion comes from completedSamples.)
-  .output("stepProgress", (ctx) =>
-    ctx.outputs !== undefined
-      ? parseResourceMap(
-          ctx.outputs.resolve("stepLogs"),
-          (acc) => acc.getProgressLogWithInfo(ProgressPrefix),
-          false,
-        )
-      : undefined,
-  )
+  // NOTE: the live per-step progress outputs (sampleProgress / stepProgress) were removed together with
+  // the mitool stdout streams (saveStdoutStream) that fed them — the stream drifted the exec's files map
+  // and caused the CIDConflictError. The Main grid now derives per-sample Processing/Done from
+  // completedSamples + the sampleLabels roster (ui/src/results.ts).
   // sampleIds whose per-sample pipeline has finished. qcJson is the LAST per-sample step and is inline
-  // JSON content, so getDataAsJsonOrUndefined reads it synchronously — the done-set is computed here
-  // (unlike sampleProgress's FutureRefs) and drives the grid's "Done" state.
+  // JSON content, so getDataAsJsonOrUndefined reads it synchronously — the done-set drives the grid's
+  // "Done" state (a sample not in this set is still Processing).
   .output("completedSamples", (ctx): string[] | undefined => {
     if (ctx.outputs === undefined) return undefined;
     return parseQcRows(ctx).map((e) => String(e.key[0]));
