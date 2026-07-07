@@ -216,10 +216,11 @@ Fix: every exec stage now runs inside its own `render.create` sub-template (`fb-
 `fb-tagstat`, `fb-downstream`), and `fb-pipeline` is a thin orchestrator that returns only sub-template
 render outputs — never an inline `exec.getFile(...)`. A `render.create` resource has a content-derived
 identity, so a consumer inside a boundary absorbs the drift and its per-sample outputs flatten cleanly
-(the same structure the peptide-extraction block uses). Behaviour is unchanged: the progress grid still
-reads the same `parseLogStream` + `stepLogs` streams, and the A-0010 export contract is untouched. The
-now-unused `saveStdoutStream()` on the panel/qc/metrics execs and the unconsumed `parse_report.txt` /
-`refine_report.txt` reports were dropped along the way.
+(the same structure the peptide-extraction block uses). The A-0010 export contract is untouched. NOTE:
+this render.create split was an intermediate step that only *relocated* the conflict — the actual fix is
+in the next section (removing `saveStdoutStream`), which also removes the live per-step progress grid this
+section originally described. The unconsumed `parse_report.txt` / `refine_report.txt` reports were dropped
+along the way.
 
 ## CIDConflictError fix — remove `saveStdoutStream` from the mitool execs
 

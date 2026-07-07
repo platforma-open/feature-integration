@@ -18,12 +18,6 @@ CELL_TAG := "CELL"
 FEATURE_TAG := "FEATURE"
 UMI_TAG := "UMI"
 
-// Sentinel mitool prepends to progress lines (set as MI_PROGRESS_PREFIX on each mitool exec). The three
-// exec templates (fb-parse/fb-refine/fb-tagstat) and the model (ProgressPrefix in model/src/index.ts,
-// which parses these lines) must all use this exact string — the single tengo source lives here so the
-// templates cannot drift. The model redeclares the same literal across the TS boundary; keep them equal.
-PROGRESS_PREFIX := "[==PROGRESS==]"
-
 // build assembles the mitool tag pattern from the cell / UMI / feature-barcode geometry.
 //   geom = { cellLen: int, umiLen: int, featureLen: int, paired: bool }
 // paired: R1 carries CELL+UMI, R2 carries the feature barcode (+ ignored remainder).
@@ -44,6 +38,5 @@ export {
 	build: build,
 	CELL_TAG: CELL_TAG,
 	FEATURE_TAG: FEATURE_TAG,
-	UMI_TAG: UMI_TAG,
-	PROGRESS_PREFIX: PROGRESS_PREFIX
+	UMI_TAG: UMI_TAG
 }
