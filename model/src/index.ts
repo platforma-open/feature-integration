@@ -29,6 +29,12 @@ export type QcRow = {
 // Panel-assigned fraction below this flags a sample in the analysis log (panel / read-geometry issue).
 const PANEL_ASSIGNED_FLOOR = 0.5;
 
+// Tag→feature CSV metadata emitted by the prerun's single emit-csv-meta exec (emit_csv_meta.py): the
+// column headers (-> the barcode/feature column dropdowns) and each column's distinct values (-> the
+// negative-control dropdown, indexed by the chosen feature column). One upload-triggered exec feeds all
+// three CSV-derived dropdowns; picking the feature column is then a pure model recompute (no rerun).
+type CsvMeta = { columns: string[]; valuesByColumn: Record<string, string[]> };
+
 // mitool tag-stat emits these columns (see workflow/src/tag-pattern.lib.tengo: the CELL/FEATURE/UMI tags
 // plus tag-stat's count/totalWeight/unique_<UMI> outputs). A user-mapped CSV barcode/feature column that
 // names one of these would corrupt the join or crash group_by in per_cell_metrics.py — which guards it
@@ -90,6 +96,14 @@ function parseQcRows(ctx: BlockRenderCtx<BlockArgs, BlockData>) {
   return (qcMap?.data ?? []).filter((e) => e.value != null);
 }
 
+// Tag→feature CSV metadata from the prerun (emit-csv-meta), or undefined until staging has produced it.
+// Shared by the two column dropdowns, the control dropdown, and the csvColumnsLoading signal.
+function readCsvMeta(ctx: BlockRenderCtx<BlockArgs, BlockData>): CsvMeta | undefined {
+  return ctx.prerun
+    ?.resolve({ field: "csvMeta", allowPermanentAbsence: true })
+    ?.getDataAsJsonOrUndefined<CsvMeta>();
+}
+
 const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
   dominanceThreshold: 0.6,
   // 10x 5' v2 read geometry defaults (cell 16 + UMI 10 on R1; feature barcode 15 on R2). DP-1:
@@ -141,10 +155,12 @@ export const platforma = BlockModelV3.create(dataModel)
       cellWhitelist: data.cellWhitelist ?? "",
     };
   })
+  // Staging depends only on the CSV: emit-csv-meta emits every column's values in one exec, so the
+  // negative-control dropdown no longer needs a rerun when the feature column changes (the model indexes
+  // the already-emitted map). featureNameColumn is deliberately NOT a prerun arg.
   .prerunArgs((data) => ({
     fbFastqRef: data.fbFastqRef,
     tagFeatureCsvHandle: data.tagFeatureCsvHandle,
-    featureNameColumn: data.featureNameColumn,
   }))
   // NOTE on enrichments (.enriches): intentionally NOT declared. `.enriches(args => PlRef[])` is for a
   // block that produces columns sharing the key space of a ref it holds (clonotype-browser enriches its
@@ -191,25 +207,27 @@ export const platforma = BlockModelV3.create(dataModel)
     }
     return parts.length > 0 ? parts.join(" · ") : undefined;
   })
-  // Negative-control dropdown options: the feature/antigen names parsed from the uploaded tag→feature
-  // CSV (spec A-0014). The prerun (staging) emit-features step writes them as a JSON array; staging
-  // auto-reruns on CSV change so the list stays current without a Run. Empty until the CSV is uploaded
-  // and staging completes. NOT isActive: this is a pure prerun read with no side-effecting accessor
-  // (isActive is for upload drivers like getImportProgress); retentive avoids a flicker to [] on rerun.
+  // Negative-control dropdown options (spec A-0014): the distinct values of the chosen feature-name
+  // column, from the prerun's emit-csv-meta valuesByColumn map. No rerun on column change — the map
+  // already carries every column's values, so picking the feature column just re-indexes here.
+  // Retentive avoids a flicker to [] on rerun; empty until the CSV is uploaded and staging completes.
   .retentiveOutput("controlOptions", (ctx): { value: string; label: string }[] => {
-    const names = ctx.prerun
-      ?.resolve({ field: "featureNames", allowPermanentAbsence: true })
-      ?.getDataAsJsonOrUndefined<string[]>();
-    return (names ?? []).map((name) => ({ value: name, label: name }));
+    const col = ctx.data.featureNameColumn;
+    const names = col ? (readCsvMeta(ctx)?.valuesByColumn?.[col] ?? []) : [];
+    return names.map((name) => ({ value: name, label: name }));
   })
-  // CSV column headers (from the prerun emit-columns step) → the barcode/feature column dropdowns
+  // CSV column headers (from the prerun emit-csv-meta step) → the barcode/feature column dropdowns
   // (D4). Retentive so the dropdowns don't blank on rerun; empty until the CSV is uploaded + parsed.
-  .retentiveOutput("csvColumnOptions", (ctx): { value: string; label: string }[] => {
-    const cols = ctx.prerun
-      ?.resolve({ field: "csvColumns", allowPermanentAbsence: true })
-      ?.getDataAsJsonOrUndefined<string[]>();
-    return (cols ?? []).map((c) => ({ value: c, label: c }));
-  })
+  .retentiveOutput("csvColumnOptions", (ctx): { value: string; label: string }[] =>
+    (readCsvMeta(ctx)?.columns ?? []).map((c) => ({ value: c, label: c })),
+  )
+  // True while the uploaded CSV is still being parsed by staging (handle set, but emit-csv-meta hasn't
+  // produced csvMeta yet) — lets the UI show a "reading columns…" state instead of silent empty
+  // dropdowns. NOT retentive: it must report the live loading state, including on a CSV swap.
+  .output(
+    "csvColumnsLoading",
+    (ctx): boolean => !!ctx.data.tagFeatureCsvHandle && readCsvMeta(ctx) === undefined,
+  )
   // Drives the tag→feature CSV upload: getImportProgress() registers the import handle with the
   // middle-layer upload driver so the CSV bytes are actually pushed; isActive keeps it computing even
   // when the block isn't being viewed. Without this the CSV never uploads and every per-sample body

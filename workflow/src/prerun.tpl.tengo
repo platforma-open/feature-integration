@@ -6,21 +6,18 @@
 //      workflow consumes the CSV only deep inside the processColumn fan-out, and the upload driver
 //      never picks up an upload requested only from inside that nested body — so without driving it
 //      here the per-sample mitool exec stalls forever waiting on a blob whose bytes are never pushed.
-//   2. Emit the CSV's column headers (emit-columns entrypoint) so the model can populate the
-//      barcode-sequence / feature-name column dropdowns (D4) as soon as the CSV is uploaded, before the
-//      user has picked either column.
-//   3. Emit the list of feature/antigen names from the CSV (emit-features entrypoint), keyed off the
-//      user's chosen feature-name column, so the model can populate the negative-control dropdown
-//      (spec A-0014) BEFORE the user runs the block. Staging auto-reruns on CSV/column change, so the
-//      options stay current without a Run.
+//   2. Emit the CSV's metadata (emit-csv-meta entrypoint) in ONE exec, keyed off the CSV alone: the
+//      column headers (-> the barcode-sequence / feature-name column dropdowns, D4) AND the distinct
+//      values of every column (-> the negative-control dropdown, spec A-0014, indexed by the chosen
+//      feature column). One upload-triggered exec populates both dropdowns; picking the feature column
+//      is then a pure model recompute over the already-emitted values, with no second exec or rerun.
 
 wf := import("@platforma-sdk/workflow-tengo:workflow")
 file := import("@platforma-sdk/workflow-tengo:file")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 
-featuresSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:emit-features")
-columnsSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:emit-columns")
+csvMetaSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:emit-csv-meta")
 
 wf.body(func(args) {
 	if is_undefined(args.tagFeatureCsvHandle) {
@@ -29,38 +26,25 @@ wf.body(func(args) {
 
 	csvImport := file.importFile(args.tagFeatureCsvHandle)
 
-	// CSV header list -> the barcode/feature column dropdowns (D4). Depends only on the CSV.
-	columns := exec.builder().
-		software(columnsSw).
+	// CSV metadata (headers + per-column distinct values) -> the D4 column dropdowns and the
+	// negative-control dropdown. Depends only on the CSV, so it runs the moment the upload lands.
+	meta := exec.builder().
+		software(csvMetaSw).
 		cpu(1).mem("1GiB").
 		addFile("tags.csv", csvImport.file).
-		arg("tags.csv").arg("columns.json").
-		saveFileContent("columns.json").
+		arg("tags.csv").arg("csv_meta.json").
+		saveFileContent("csv_meta.json").
 		run()
 
 	outputs := {
 		csvFile: file.exportFile(csvImport.file),
-		csvColumns: columns.getFileContent("columns.json"),
+		csvMeta: meta.getFileContent("csv_meta.json"),
 		// Import handle exposed so the model can drive the CSV upload during STAGING (via a ctx.prerun
 		// getImportProgress driver, mirroring samples-and-data). The exportFile demand above does NOT
 		// push the bytes on its own; without a staging-side driver the upload only fires from the main
 		// render, which is unreachable until args() passes — and args() needs the D4 dropdowns this
 		// prerun populates from the uploaded CSV. That circular dependency is the deadlock this fixes.
 		tagFeatureCsvImportHandle: csvImport.handle
-	}
-
-	// Feature names for the negative-control dropdown — only once the user has chosen the feature
-	// column (staging reruns on that choice via prerunArgs).
-	if !is_undefined(args.featureNameColumn) && args.featureNameColumn != "" {
-		features := exec.builder().
-			software(featuresSw).
-			cpu(1).mem("1GiB").
-			addFile("tags.csv", csvImport.file).
-			arg("tags.csv").arg("feature_names.json").
-			arg("--feature-col").arg(args.featureNameColumn).
-			saveFileContent("feature_names.json").
-			run()
-		outputs.featureNames = features.getFileContent("feature_names.json")
 	}
 
 	return { outputs: outputs, exports: {} }

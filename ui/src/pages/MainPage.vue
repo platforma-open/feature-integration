@@ -56,6 +56,11 @@ const controlInfoVisible = computed(
   () => !!app.model.data.tagFeatureCsvHandle && !app.model.data.controlFeature,
 );
 
+// True while staging is still parsing the uploaded tag-feature CSV (handle set, but the column/value
+// metadata hasn't resolved yet). Drives a "reading columns…" note and disables the CSV-derived
+// dropdowns, so their empty state reads as "loading" rather than "no columns found".
+const csvProcessing = computed(() => app.model.outputs.csvColumnsLoading === true);
+
 // --- Running-state progress grid (in-memory AgGridVue, same pattern as blocks/peptide-extraction) ---
 ModuleRegistry.registerModules([ClientSideRowModelModule]);
 
@@ -172,22 +177,26 @@ const gridOptions = {
         :extensions="['csv']"
         required
       />
+      <PlAlert v-if="csvProcessing" type="info"> Reading columns from the uploaded CSV… </PlAlert>
       <PlDropdown
         v-model="app.model.data.barcodeSeqColumn"
         :options="app.model.outputs.csvColumnOptions"
         label="Barcode sequence column"
+        :disabled="csvProcessing"
         required
       />
       <PlDropdown
         v-model="app.model.data.featureNameColumn"
         :options="app.model.outputs.csvColumnOptions"
         label="Feature name column"
+        :disabled="csvProcessing"
         required
       />
       <PlDropdown
         v-model="app.model.data.controlFeature"
         :options="app.model.outputs.controlOptions"
         label="Negative control feature (optional)"
+        :disabled="csvProcessing"
         clearable
       />
       <PlAlert v-if="controlInfoVisible" type="info">
