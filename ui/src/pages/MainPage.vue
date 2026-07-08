@@ -13,6 +13,8 @@ import {
   PlDropdown,
   PlDropdownRef,
   PlFileInput,
+  PlLogView,
+  PlMaskIcon24,
   PlNumberField,
   PlSlideModal,
   autoSizeRowNumberColumn,
@@ -151,8 +153,18 @@ const gridOptions = {
   <PlBlockPage>
     <template #title>Feature Integration</template>
     <template #append>
-      <PlBtnGhost v-if="analysisLog.length > 0" @click.stop="logsOpen = true">Logs</PlBtnGhost>
-      <PlBtnGhost @click.stop="settingsOpen = true">Settings</PlBtnGhost>
+      <PlBtnGhost v-if="analysisLog.length > 0" @click.stop="logsOpen = true">
+        Logs
+        <template #append>
+          <PlMaskIcon24 name="file-logs" />
+        </template>
+      </PlBtnGhost>
+      <PlBtnGhost @click.stop="settingsOpen = true">
+        Settings
+        <template #append>
+          <PlMaskIcon24 name="settings" />
+        </template>
+      </PlBtnGhost>
     </template>
 
     <!-- Main shows ONLY per-sample progress (like MiXCR Clonotyping); the per-cell results table lives
@@ -248,7 +260,7 @@ const gridOptions = {
 
     <PlSlideModal v-model="logsOpen" width="80%">
       <template #title>Analysis logs</template>
-      <pre>{{ analysisLog.join("\n") }}</pre>
+      <PlLogView :value="analysisLog.join('\n')" />
     </PlSlideModal>
   </PlBlockPage>
 </template>
