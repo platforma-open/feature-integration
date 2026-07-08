@@ -61,6 +61,17 @@ const controlInfoVisible = computed(
 // dropdowns, so their empty state reads as "loading" rather than "no columns found".
 const csvProcessing = computed(() => app.model.outputs.csvColumnsLoading === true);
 
+// A negative control is one of the feature-name column's values, so changing the CSV or the feature-name
+// column can make the current selection reference a feature that no longer exists. Clear it on that user
+// gesture. This is a data→data write on an explicit gesture — NOT a watcher on the controlOptions output
+// (that would be the spec-facts-resync hairpin; see hairpin.md). Left stale, args() would still send it
+// and the workflow would silently score specificity against a zero control (inflated scores, no error).
+// If the control is still valid after the change the user re-picks — cheaper than snapshotting the valid
+// set into data to validate in args().
+function clearControlOnInputChange() {
+  app.model.data.controlFeature = undefined;
+}
+
 // --- Running-state progress grid (in-memory AgGridVue, same pattern as blocks/peptide-extraction) ---
 ModuleRegistry.registerModules([ClientSideRowModelModule]);
 
@@ -176,6 +187,7 @@ const gridOptions = {
         placeholder="tags.csv"
         :extensions="['csv']"
         required
+        @update:model-value="clearControlOnInputChange"
       />
       <PlAlert v-if="csvProcessing" type="info"> Reading columns from the uploaded CSV… </PlAlert>
       <PlDropdown
@@ -191,6 +203,7 @@ const gridOptions = {
         label="Feature name column"
         :disabled="csvProcessing"
         required
+        @update:model-value="clearControlOnInputChange"
       />
       <PlDropdown
         v-model="app.model.data.controlFeature"
