@@ -7,8 +7,14 @@ import {
   isPColumnSpec,
   parseResourceMap,
 } from "@platforma-sdk/model";
+import { assemblePattern, CELL_TAG, FEATURE_TAG, UMI_TAG, validatePattern } from "./pattern";
+import { getPreset } from "./presets";
 import type { BlockArgs, BlockData } from "./types";
 
+export { assemblePattern, parsePattern, validatePattern } from "./pattern";
+export type { PatternParts } from "./pattern";
+export { allPresets, getPreset } from "./presets";
+export type { Preset } from "./presets";
 export type { BlockArgs, BlockData } from "./types";
 
 const DOMINANCE_FLOOR = 0.5; // spec A-0012: threshold is user-adjustable down to 0.5, never lower
@@ -35,11 +41,17 @@ const PANEL_ASSIGNED_FLOOR = 0.5;
 // three CSV-derived dropdowns; picking the feature column is then a pure model recompute (no rerun).
 type CsvMeta = { columns: string[]; valuesByColumn: Record<string, string[]> };
 
-// mitool tag-stat emits these columns (see workflow/src/tag-pattern.lib.tengo: the CELL/FEATURE/UMI tags
-// plus tag-stat's count/totalWeight/unique_<UMI> outputs). A user-mapped CSV barcode/feature column that
-// names one of these would corrupt the join or crash group_by in per_cell_metrics.py — which guards it
-// too, but only after the full mitool chain has run. args() rejects it here so Run is disabled up front.
-const RESERVED_TAGSTAT_COLUMNS = new Set(["CELL", "FEATURE", "count", "totalWeight", "unique_UMI"]);
+// mitool tag-stat emits these columns (the CELL/FEATURE/UMI tags — see pattern.ts — plus tag-stat's
+// count/totalWeight/unique_<UMI> outputs). A user-mapped CSV barcode/feature column that names one of
+// these would corrupt the join or crash group_by in per_cell_metrics.py — which guards it too, but only
+// after the full mitool chain has run. args() rejects it here so Run is disabled up front.
+const RESERVED_TAGSTAT_COLUMNS = new Set([
+  CELL_TAG,
+  FEATURE_TAG,
+  "count",
+  "totalWeight",
+  "unique_" + UMI_TAG,
+]);
 
 function median(xs: number[]): number | undefined {
   if (xs.length === 0) return undefined;
@@ -104,18 +116,43 @@ function readCsvMeta(ctx: BlockRenderCtx<BlockArgs, BlockData>): CsvMeta | undef
     ?.getDataAsJsonOrUndefined<CsvMeta>();
 }
 
-const dataModel = new DataModelBuilder().from<BlockData>("v1").init(() => ({
-  dominanceThreshold: 0.6,
-  // 10x 5' v2 read geometry defaults (cell 16 + UMI 10 on R1; feature barcode 15 on R2). DP-1:
-  // configurable per-assay, confirm against real FASTQs (Task 0).
-  cellLen: 16,
-  umiLen: 10,
-  featureLen: 15,
-  cellWhitelist: "", // de-novo CELL correction by default (spec A-0018 defers the scheme)
-  defaultBlockLabel: "",
-  tableState: createPlDataTableStateV2(),
-  qcSummaryTableState: createPlDataTableStateV2(),
-}));
+// v1 (pre-preset) data shape: read geometry was three explicit length fields. v2 replaces them with a
+// preset selector + a mitool tag-pattern string (see model/src/pattern.ts, model/src/presets).
+type BlockDataV1 = Omit<BlockData, "presetId" | "pattern"> & {
+  cellLen: number;
+  umiLen: number;
+  featureLen: number;
+};
+
+const dataModel = new DataModelBuilder()
+  .from<BlockDataV1>("v1")
+  .migrate<BlockData>("v2", ({ cellLen, umiLen, featureLen, ...rest }) => {
+    // The shipped default (16/10/15) maps to the fixed BEAM preset; any other geometry maps to the
+    // generic preset carrying the assembled pattern (offset 0 — the only layout the v1 UI could express).
+    const isBeamDefault = cellLen === 16 && umiLen === 10 && featureLen === 15;
+    return isBeamDefault
+      ? { ...rest, presetId: "tenx-beam" }
+      : {
+          ...rest,
+          presetId: "generic-fb-umi",
+          pattern: assemblePattern({
+            cellLen,
+            umiLen,
+            featureLen,
+            featureOffset: 0,
+            r1TrailingWildcard: true,
+          }),
+        };
+  })
+  .init(() => ({
+    dominanceThreshold: 0.6,
+    // Default preset = the geometry the block shipped with: 10x 5' v2 BEAM (16 / 10 / 15).
+    presetId: "tenx-beam",
+    cellWhitelist: "", // de-novo CELL correction by default (spec A-0018 defers the scheme)
+    defaultBlockLabel: "",
+    tableState: createPlDataTableStateV2(),
+    qcSummaryTableState: createPlDataTableStateV2(),
+  }));
 
 export const platforma = BlockModelV3.create(dataModel)
   .args((data): BlockArgs => {
@@ -139,6 +176,16 @@ export const platforma = BlockModelV3.create(dataModel)
           `${role} column "${col}" collides with a reserved tag-stat column; pick another`,
         );
     }
+    // Read geometry: resolve the selected preset to its effective pattern (fixed preset owns it; the
+    // generic preset carries it in data.pattern), validate it loosely (the required CELL/UMI/FEATURE
+    // tags + R2 capture must be present — the workflow's refine-tags/tag-stat reference them by name;
+    // anything else is passed to mitool verbatim), then hand the string to the workflow directly.
+    const preset = getPreset(data.presetId);
+    if (!preset) throw new Error("Select a read-geometry preset");
+    const pattern = preset.userConfigurable ? (data.pattern ?? "") : preset.pattern;
+    const patternError = validatePattern(pattern);
+    if (patternError) throw new Error(patternError);
+
     return {
       fbFastqRef: data.fbFastqRef,
       tagFeatureCsvHandle: data.tagFeatureCsvHandle,
@@ -147,10 +194,8 @@ export const platforma = BlockModelV3.create(dataModel)
       controlFeature: data.controlFeature,
       // canonicalize + clamp to the 0.5 floor
       dominanceThreshold: Math.max(DOMINANCE_FLOOR, data.dominanceThreshold ?? 0.6),
-      // read geometry (DP-1); fall back to 10x 5' v2 defaults if unset
-      cellLen: data.cellLen ?? 16,
-      umiLen: data.umiLen ?? 10,
-      featureLen: data.featureLen ?? 15,
+      pattern,
+      tags: { cell: CELL_TAG, umi: UMI_TAG, feature: FEATURE_TAG },
       // CELL whitelist: "" = de-novo (default). See docs/dormant-features/cell-whitelist-correction-plan.md.
       cellWhitelist: data.cellWhitelist ?? "",
     };

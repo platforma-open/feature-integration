@@ -14,7 +14,6 @@
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
-tagPattern := import(":tag-pattern")
 
 self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "qc", "qcJson")
 
@@ -25,6 +24,7 @@ self.body(func(inputs) {
 	tagstatTsv := inputs.tagstatTsv
 	parseReport := inputs.parseReport
 	refineReport := inputs.refineReport
+	tags := inputs.tags // { cell, umi, feature } tag names (from the model; see pattern.ts)
 	tagsCsv := inputs.tagsCsv
 	control := inputs.control // undefined / "" -> no specificity score (render.create skips undefined)
 	dominanceThreshold := inputs.dominanceThreshold
@@ -43,9 +43,9 @@ self.body(func(inputs) {
 		arg("--parse-report").arg("parse_report.json").
 		arg("--refine-report").arg("refine_report.json").
 		arg("--sample-id").arg("sample").
-		arg("--cell-col").arg(tagPattern.CELL_TAG).
-		arg("--feature-col").arg(tagPattern.FEATURE_TAG).
-		arg("--umi-col").arg("unique_" + tagPattern.UMI_TAG).
+		arg("--cell-col").arg(tags.cell).
+		arg("--feature-col").arg(tags.feature).
+		arg("--umi-col").arg("unique_" + tags.umi).
 		arg("--output").arg("result_qc.csv").saveFile("result_qc.csv").
 		saveFileContent("result_qc.json").
 		run()
@@ -70,9 +70,9 @@ self.body(func(inputs) {
 		addFile("tags.csv", tagsCsv).
 		arg("tagstat.tsv").arg("tags.csv").
 		arg("--sample-id").arg("sample").
-		arg("--cell-col").arg(tagPattern.CELL_TAG).
-		arg("--feature-tag-col").arg(tagPattern.FEATURE_TAG).
-		arg("--umi-count-col").arg("unique_" + tagPattern.UMI_TAG).
+		arg("--cell-col").arg(tags.cell).
+		arg("--feature-tag-col").arg(tags.feature).
+		arg("--umi-count-col").arg("unique_" + tags.umi).
 		arg("--csv-barcode-col").arg(barcodeSeqColumn).
 		arg("--csv-feature-col").arg(featureNameColumn).
 		arg("--dominance-threshold").arg(string(dominanceThreshold)).

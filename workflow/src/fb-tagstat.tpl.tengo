@@ -12,7 +12,6 @@
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
-tagPattern := import(":tag-pattern")
 
 self.defineOutputs("tagstatTsv")
 
@@ -20,6 +19,7 @@ mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitoo
 
 self.body(func(inputs) {
 	refinedMic := inputs.refinedMic
+	tags := inputs.tags // { cell, umi, feature } tag names (from the model; see pattern.ts)
 
 	// The distinct-UMI on-disk sort scales with input volume, so size RAM from the refined.mic blob
 	// (molecules) on a floor instead of a fixed request (same mixcr-style size formula as parse/refine).
@@ -36,9 +36,9 @@ self.body(func(inputs) {
 		memFormula(memFormula, { fallback: string(tagStatBaseGB) + "GiB" }).
 		arg("tag-stat").
 		arg("--use-local-temp").
-		arg("-t").arg(tagPattern.CELL_TAG).
-		arg("-t").arg(tagPattern.FEATURE_TAG).
-		arg("-u").arg(tagPattern.UMI_TAG).
+		arg("-t").arg(tags.cell).
+		arg("-t").arg(tags.feature).
+		arg("-u").arg(tags.umi).
 		addFile("refined.mic", refinedMic, { tag: "mic" }).
 		arg("refined.mic").arg("tagstat.tsv").saveFile("tagstat.tsv").
 		run()

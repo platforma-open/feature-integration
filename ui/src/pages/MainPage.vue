@@ -16,6 +16,7 @@ import {
   PlLogView,
   PlMaskIcon24,
   PlNumberField,
+  PlSectionSeparator,
   PlSlideModal,
   autoSizeRowNumberColumn,
   createAgGridColDef,
@@ -26,6 +27,7 @@ import { ClientSideRowModelModule, ModuleRegistry } from "ag-grid-enterprise";
 import { AgGridVue } from "ag-grid-vue3";
 import { computed, ref, watch } from "vue";
 import { useApp } from "../app";
+import PatternEditor from "../components/PatternEditor.vue";
 import {
   sampleResults,
   type ProgressCell,
@@ -186,7 +188,7 @@ const gridOptions = {
         @grid-ready="onGridReady"
       />
     </div>
-    <PlSlideModal v-model="settingsOpen">
+    <PlSlideModal v-model="settingsOpen" width="40%">
       <template #title>Settings</template>
       <PlDropdownRef
         v-model="app.model.data.fbFastqRef"
@@ -227,7 +229,11 @@ const gridOptions = {
       <PlAlert v-if="controlInfoVisible" type="info">
         Specificity scores will not be computed without a negative control feature
       </PlAlert>
-      <!-- Less-common params: dominance threshold + read geometry (DP-1: 10x 5' v2 defaults). -->
+      <!-- Read geometry: preset dropdown + pattern builder/string (mitool tag pattern). Replaces the
+           former cell/UMI/feature length fields — their values are now decided inside the editor. -->
+      <PlSectionSeparator compact />
+      <PatternEditor />
+      <!-- Less-common params. -->
       <PlAccordionSection label="Advanced Settings">
         <PlNumberField
           v-model="app.model.data.dominanceThreshold"
@@ -236,24 +242,6 @@ const gridOptions = {
           :step="0.05"
           label="Dominance threshold"
           helper="Fraction of a cell's signal one feature must reach to be the consensus. Floor 0.5 (spec A-0012)."
-        />
-        <PlNumberField
-          v-model="app.model.data.cellLen"
-          :min-value="1"
-          :step="1"
-          label="Cell barcode length (R1)"
-        />
-        <PlNumberField
-          v-model="app.model.data.umiLen"
-          :min-value="1"
-          :step="1"
-          label="UMI length (R1)"
-        />
-        <PlNumberField
-          v-model="app.model.data.featureLen"
-          :min-value="1"
-          :step="1"
-          label="Feature barcode length (R2)"
         />
       </PlAccordionSection>
     </PlSlideModal>

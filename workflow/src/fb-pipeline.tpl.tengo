@@ -37,6 +37,7 @@ self.body(func(inputs) {
 	aggregationAxesNames := inputs[pConstants.AGGREGATION_AXES_NAMES_FIELD_NAME]
 
 	pattern := inputs.pattern
+	tags := inputs.tags // { cell, umi, feature } tag names (from the model; see pattern.ts)
 	tagsCsv := inputs.tagsCsv
 	dominanceThreshold := inputs.dominanceThreshold
 	control := inputs.control // may be undefined / "" -> no specificity score
@@ -120,6 +121,7 @@ self.body(func(inputs) {
 	// Step 2: emit panel + refine-tags (fb-refine boundary).
 	refineRun := render.create(fbRefineTpl, {
 		parsedMic: parsedMic,
+		tags: tags,
 		tagsCsv: tagsCsv,
 		barcodeSeqColumn: barcodeSeqColumn,
 		cellWhitelist: cellWhitelist,
@@ -132,7 +134,8 @@ self.body(func(inputs) {
 
 	// Step 3: tag-stat -u (fb-tagstat boundary) — per-(cell, feature-barcode) distinct-UMI counts.
 	tagStatRun := render.create(fbTagstatTpl, {
-		refinedMic: refinedMic
+		refinedMic: refinedMic,
+		tags: tags
 	})
 	tagstatTsv := tagStatRun.output("tagstatTsv")
 
@@ -143,6 +146,7 @@ self.body(func(inputs) {
 		tagstatTsv: tagstatTsv,
 		parseReport: parseReport,
 		refineReport: refineReport,
+		tags: tags,
 		tagsCsv: tagsCsv,
 		control: control, // undefined -> render.create skips it -> no specificity
 		dominanceThreshold: dominanceThreshold,
