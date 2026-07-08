@@ -55,6 +55,34 @@ def test_consensus_no_signal_is_none():
     assert consensus_category({}, 0.6) is None
 
 
+# --- negative control is a reference, not a callable antigen (spec A-0014) ---
+
+
+def test_consensus_excludes_control_from_candidates():
+    # The control must not win consensus even when it has the most UMIs: AGX 3 / CTRL 5 -> the top
+    # antigen (AGX) share is 3/8 = 0.375 < 0.6 -> ambiguous, NOT "CTRL".
+    assert consensus_category({"AGX": 3, "CTRL": 5}, 0.6, control="CTRL") == "ambiguous"
+
+
+def test_consensus_control_stays_in_denominator():
+    # Control UMIs remain in the denominator, so control signal suppresses (not inflates) dominance.
+    # AGX 7 / CTRL 2 -> 7/9 = 0.78 >= 0.6 -> AGX (control did not spuriously push it under threshold).
+    assert consensus_category({"AGX": 7, "CTRL": 2}, 0.6, control="CTRL") == "AGX"
+    # Were the control dropped from the denominator, AGX 3 / CTRL 5 would renormalise to 1.0 and wrongly
+    # win; keeping it in the denominator makes the control-swamped cell correctly ambiguous.
+    assert consensus_category({"AGX": 3, "CTRL": 5}, 0.6, control="CTRL") == "ambiguous"
+
+
+def test_consensus_control_only_is_ambiguous():
+    # A cell whose only signal is the control has no antigen candidate -> ambiguous, never the control.
+    assert consensus_category({"CTRL": 5}, 0.6, control="CTRL") == "ambiguous"
+
+
+def test_consensus_no_control_arg_is_unchanged():
+    # control=None (no negative control set) keeps the original rule: every feature is a candidate.
+    assert consensus_category({"AGX": 3, "OTHER": 5}, 0.6) == "OTHER"
+
+
 # --- specificity score (spec A-0014, Cell Ranger betaCDF) ---
 
 
@@ -429,6 +457,90 @@ def test_cli_specificity_matches_pure_score(tagstat_tsv, tags_csv, tmp_path):
     with open(tmp_path / "result_specificity.csv", newline="") as f:
         rows = list(csv.DictReader(f))
     assert rows  # non-empty: the committed bed has cells and features
+    assert "CTRL" not in {r["feature"] for r in rows}  # control is the reference, not a scored feature
     for r in rows:
         expected = specificity_score(umi[(r["cellId"], r["feature"])], control_umi[r["cellId"]])
         assert float(r["specificityScore"]) == pytest.approx(float(expected))
+
+
+@pytest.mark.slow
+def test_cli_consensus_excludes_control(tmp_path):
+    # With --control set, the control is a reference and never a called antigen (spec A-0014): a
+    # control-dominated cell must be "ambiguous", not the control. Control UMIs stay in the denominator,
+    # so they suppress dominance rather than being renormalised away.
+    tags = tmp_path / "tags.csv"
+    tags.write_text("tag,feature\nAAAA,AGX\nGGGG,CTRL\n")
+    tagstat = tmp_path / "tagstat.tsv"
+    tagstat.write_text(
+        "CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\n"
+        "cellP\tAAAA\t3\t3\t3\n"
+        "cellP\tGGGG\t5\t5\t5\n"  # AGX 3 / CTRL 5 -> top antigen 3/8 < 0.6 -> ambiguous (NOT CTRL)
+        "cellQ\tAAAA\t7\t7\t7\n"
+        "cellQ\tGGGG\t2\t2\t2\n"  # AGX 7 / CTRL 2 -> 7/9 = 0.78 >= 0.6 -> AGX
+        "cellR\tGGGG\t5\t5\t5\n"  # only control signal -> ambiguous
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            str(SRC),
+            str(tagstat),
+            str(tags),
+            "--sample-id",
+            "s1",
+            "--control",
+            "CTRL",
+            "--dominance-threshold",
+            "0.6",
+            "--output-prefix",
+            str(tmp_path / "result"),
+        ],
+        check=True,
+        cwd=tmp_path,
+    )
+    with open(tmp_path / "result_consensus.csv", newline="") as f:
+        got = {r["cellId"]: r["consensusFeature"] for r in csv.DictReader(f)}
+    assert got == {"cellP": "ambiguous", "cellQ": "AGX", "cellR": "ambiguous"}
+    # ...and the vectorized CLI agrees with the pure rule (guards against a vacuous match).
+    assert got == {
+        "cellP": consensus_category({"AGX": 3, "CTRL": 5}, 0.6, control="CTRL"),
+        "cellQ": consensus_category({"AGX": 7, "CTRL": 2}, 0.6, control="CTRL"),
+        "cellR": consensus_category({"CTRL": 5}, 0.6, control="CTRL"),
+    }
+
+
+@pytest.mark.slow
+def test_cli_control_not_scored_as_feature(tmp_path):
+    # The control is the specificity reference, not a scored antigen: it must not appear as a feature in
+    # the specificity output, and a control-heavy cell's maxSpecificityScore must be the real antigen's
+    # score vs the control, never the control's self-score.
+    tags = tmp_path / "tags.csv"
+    tags.write_text("tag,feature\nAAAA,AGX\nGGGG,CTRL\n")
+    tagstat = tmp_path / "tagstat.tsv"
+    tagstat.write_text(
+        "CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\n"
+        "cellP\tAAAA\t3\t3\t3\n"
+        "cellP\tGGGG\t9\t9\t9\n"  # control-heavy cell
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            str(SRC),
+            str(tagstat),
+            str(tags),
+            "--sample-id",
+            "s1",
+            "--control",
+            "CTRL",
+            "--output-prefix",
+            str(tmp_path / "result"),
+        ],
+        check=True,
+        cwd=tmp_path,
+    )
+    with open(tmp_path / "result_specificity.csv", newline="") as f:
+        spec_features = {r["feature"] for r in csv.DictReader(f)}
+    assert spec_features == {"AGX"}  # CTRL is not emitted as a scored feature
+    with open(tmp_path / "result_per_cell_summary.csv", newline="") as f:
+        summary = {r["cellId"]: r for r in csv.DictReader(f)}
+    # AGX 3 UMIs vs CTRL 9 UMIs — the antigen's score, not specificity_score(9, 9) (the control self-score)
+    assert float(summary["cellP"]["maxSpecificityScore"]) == pytest.approx(specificity_score(3, 9))

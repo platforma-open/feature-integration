@@ -31,21 +31,30 @@ _SPECIFICITY_SCHEMA = {
 }
 
 
-def consensus_category(counts: dict[str, float], threshold: float) -> str | None:
+def consensus_category(counts: dict[str, float], threshold: float, control: str | None = None) -> str | None:
     """Dominant-category rule (spec A-0012).
 
     Returns the single dominant category when it is the unique maximum AND its share of the total is
     >= threshold; "ambiguous" when signal exists but no unique category passes (a spread distribution,
     or an exact split at the 0.5 floor); None when there is no signal at all. ``threshold`` is clamped
     up to the 0.5 floor.
+
+    The negative ``control`` (spec A-0014) is a reference, not a callable antigen: it is excluded from
+    the winner candidates, so a control-dominated cell is "ambiguous", never the control. Its UMIs are
+    still counted in ``total`` (the denominator), so control signal SUPPRESSES antigen dominance rather
+    than being renormalised away — a cell swamped by control correctly fails the threshold instead of
+    having its top antigen inflated to 100%.
     """
     threshold = max(threshold, DOMINANCE_FLOOR)
     positive = {k: v for k, v in counts.items() if v > 0}
     total = sum(positive.values())
     if total <= 0:
         return None
-    max_val = max(positive.values())
-    winners = [k for k, v in positive.items() if v == max_val]
+    candidates = {k: v for k, v in positive.items() if k != control}
+    if not candidates:
+        return "ambiguous"  # only control (or no) signal — no antigen to call
+    max_val = max(candidates.values())
+    winners = [k for k, v in candidates.items() if v == max_val]
     if len(winners) == 1 and (max_val / total) >= threshold:
         return winners[0]
     return "ambiguous"
@@ -75,11 +84,24 @@ def with_specificity(frame: pl.DataFrame, control: str) -> pl.DataFrame:
     """Add the per-(cell, feature) Cell Ranger specificity score vs the cell's control UMIs (0 when the
     cell has no control reads). scipy beta.cdf is evaluated once over the whole column (no per-row loop).
     An empty join carries the schema through. Computed once in main() and reused for both the exported
-    specificity CSV and the per-cell summary's max, so the two never diverge or recompute the betaCDF."""
+    specificity CSV and the per-cell summary's max, so the two never diverge or recompute the betaCDF.
+
+    The control itself is the reference, not a scored antigen: its own row's score is nulled, so the
+    control never appears as a scored feature in the exported specificity CSV (main() drops null scores)
+    and never drives the per-cell maxSpecificityScore (a max skips nulls). spec A-0014."""
     ctrl = frame.filter(pl.col("feature") == control).select(["cellId", pl.col("umiCount").alias("_controlUmi")])
     joined = frame.join(ctrl, on="cellId", how="left").with_columns(pl.col("_controlUmi").fill_null(0))
     scores = specificity_score(joined["umiCount"].to_numpy(), joined["_controlUmi"].to_numpy())
-    return joined.with_columns(pl.Series("specificityScore", scores, dtype=pl.Float64)).drop("_controlUmi")
+    return (
+        joined.with_columns(pl.Series("specificityScore", scores, dtype=pl.Float64))
+        .with_columns(
+            pl.when(pl.col("feature") == control)
+            .then(pl.lit(None, dtype=pl.Float64))
+            .otherwise(pl.col("specificityScore"))
+            .alias("specificityScore")
+        )
+        .drop("_controlUmi")
+    )
 
 
 def per_cell_summary(per_cell: pl.DataFrame) -> pl.DataFrame:
@@ -263,9 +285,9 @@ def main() -> None:
     # within-cell fractions (normalised across features per cell, sum to 1) -- spec A-0010. Computed
     # once here (with_fraction) and reused for the per-cell summary so the two never diverge.
     cf = with_fraction(counts)
-    cf.select(["sampleId", "cellId", "feature", "fraction"]).sort(
-        ["sampleId", "cellId", "feature"]
-    ).write_csv(f"{args.output_prefix}_fractions.csv")
+    cf.select(["sampleId", "cellId", "feature", "fraction"]).sort(["sampleId", "cellId", "feature"]).write_csv(
+        f"{args.output_prefix}_fractions.csv"
+    )
 
     # consensus feature per cell (dominant-category rule, spec A-0012), vectorized in polars: the
     # dominant feature is the unique per-cell max whose share of the cell's total is >= the threshold
@@ -273,16 +295,27 @@ def main() -> None:
     # counts are all > 0), so None is never produced. Mirrors consensus_category, which the tests pin
     # (and an oracle test cross-checks this vectorized path against it).
     threshold = max(args.dominance_threshold, DOMINANCE_FLOOR)
+    # The negative control is a reference, not a callable antigen (spec A-0014): exclude it from the
+    # winner candidates so a control-dominated cell is "ambiguous", never the control. Its UMIs stay in
+    # `_total` (the denominator, computed from the full `counts`), so control signal suppresses dominance
+    # rather than being renormalised away. Mirrors consensus_category(control=...), which the oracle test
+    # pins the vectorized path against.
+    antigens = counts if args.control is None else counts.filter(pl.col("feature") != args.control)
+    totals = counts.group_by(["sampleId", "cellId"]).agg(pl.col("umiCount").sum().alias("_total"))
+    tops = antigens.group_by(["sampleId", "cellId"]).agg(
+        pl.col("umiCount").max().alias("_max"),
+        (pl.col("umiCount") == pl.col("umiCount").max()).sum().alias("_nAtMax"),
+        pl.col("feature").sort_by("umiCount", descending=True).first().alias("_top"),
+    )
     (
-        counts.group_by(["sampleId", "cellId"])
-        .agg(
-            pl.col("umiCount").sum().alias("_total"),
-            pl.col("umiCount").max().alias("_max"),
-            (pl.col("umiCount") == pl.col("umiCount").max()).sum().alias("_nAtMax"),
-            pl.col("feature").sort_by("umiCount", descending=True).first().alias("_top"),
-        )
+        totals.join(tops, on=["sampleId", "cellId"], how="left")
         .with_columns(
-            pl.when((pl.col("_nAtMax") == 1) & (pl.col("_max") / pl.col("_total") >= threshold))
+            # _top is null for a cell whose only signal is the control -> ambiguous.
+            pl.when(
+                pl.col("_top").is_not_null()
+                & (pl.col("_nAtMax") == 1)
+                & (pl.col("_max") / pl.col("_total") >= threshold)
+            )
             .then(pl.col("_top"))
             .otherwise(pl.lit("ambiguous"))
             .alias("consensusFeature")
@@ -298,7 +331,11 @@ def main() -> None:
     if args.control is not None:
         summary_frame = with_specificity(cf, args.control)
         (
-            summary_frame.select(["sampleId", "cellId", "feature", "specificityScore"])
+            # The control's own row carries a null score (it is the reference, not a scored antigen) --
+            # drop those so the exported specificity is antigen-only. summary_frame KEEPS the control row
+            # (with a null score) so the per-cell summary's umi/fraction breakdown still shows it.
+            summary_frame.filter(pl.col("specificityScore").is_not_null())
+            .select(["sampleId", "cellId", "feature", "specificityScore"])
             .sort(["sampleId", "cellId", "feature"])
             .write_csv(f"{args.output_prefix}_specificity.csv")
         )
