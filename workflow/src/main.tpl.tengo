@@ -17,19 +17,12 @@ pframes := import("@platforma-sdk/workflow-tengo:pframes")
 pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
 ll := import("@platforma-sdk/workflow-tengo:ll")
 file := import("@platforma-sdk/workflow-tengo:file")
-tagPattern := import(":tag-pattern")
 columnSpecs := import(":column-specs")
 
 fbPipelineTpl := assets.importTemplate(":fb-pipeline")
 prerunTpl := assets.importTemplate(":prerun")
 qcSummaryTpl := assets.importTemplate(":qc-summary")
 
-// 10x 5' v2 read geometry defaults (CELL 16 + UMI 10 on R1; feature barcode 15 on R2). Configurable
-// per-assay via block args (DP-1 "parameterize + proceed"); exact geometry must be confirmed against
-// real FASTQs (Task 0).
-defaultCellLen := 16
-defaultUmiLen := 10
-defaultFeatureLen := 15
 defaultMitoolMemGB := 16
 defaultMitoolCPUs := 4
 
@@ -56,14 +49,10 @@ wf.body(func(args) {
 	csvImport := file.importFile(args.tagFeatureCsvHandle)
 	csvFile := csvImport.file
 
-	// Build the mitool tag pattern from the read geometry (defensive defaults if args omit them).
-	geom := {
-		cellLen: is_undefined(args.cellLen) ? defaultCellLen : args.cellLen,
-		umiLen: is_undefined(args.umiLen) ? defaultUmiLen : args.umiLen,
-		featureLen: is_undefined(args.featureLen) ? defaultFeatureLen : args.featureLen,
-		paired: true
-	}
-	pattern := tagPattern.build(geom)
+	// The mitool tag pattern, assembled + validated in the model's args() and passed through verbatim
+	// (see model/src/pattern.ts). It carries the CELL/UMI/FEATURE tags + R2 capture the downstream
+	// refine-tags/tag-stat steps reference by name; any extra flanks/spacers/anchors reach mitool as-is.
+	pattern := args.pattern
 
 	control := args.controlFeature
 	hasControl := !is_undefined(control) && control != ""
@@ -78,6 +67,7 @@ wf.body(func(args) {
 	// Therefore `control` is added only when a control feature is configured.
 	extraInputs := {
 		pattern: pattern,
+		tags: args.tags, // mitool tag names (CELL/UMI/FEATURE) — single source is the model (pattern.ts)
 		tagsCsv: csvFile,
 		dominanceThreshold: dominanceThreshold,
 		fileExtension: fileExtension,

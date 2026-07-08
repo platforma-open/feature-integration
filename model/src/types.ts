@@ -8,12 +8,9 @@ export type BlockArgs = {
   featureNameColumn: string; // CSV column holding the feature/antigen name (spec A-0009)
   controlFeature?: string; // negative-control feature name (spec A-0014); omitted -> no score
   dominanceThreshold: number; // spec A-0012, default 0.6, floor 0.5
-  // Read geometry for the mitool tag pattern (DP-1 "parameterize + proceed"; 10x 5' v2 defaults).
-  // The exact assay geometry must be confirmed against real FASTQs (Task 0); it is configurable here
-  // rather than hardcoded, with a clean seam for a future whitelist-translation step.
-  cellLen: number; // cell barcode length on R1 (10x 5' v2: 16)
-  umiLen: number; // UMI length on R1 (10x 5' v2: 10)
-  featureLen: number; // feature barcode length on R2 (assay-specific; default 15)
+  pattern: string; // Mitool tag pattern
+  // mitool tag names baked into `pattern`
+  tags: { cell: string; umi: string; feature: string };
   // Cell-barcode whitelist for refine-tags CELL correction. "" = de-novo (default; non-10x/synthetic).
   // A 10x built-in name (e.g. 737K-august-2016) makes cellIds match the VDJ producer by construction.
   // See docs/dormant-features/cell-whitelist-correction-plan.md.
@@ -28,9 +25,8 @@ export type BlockData = {
   featureNameColumn?: string;
   controlFeature?: string;
   dominanceThreshold: number;
-  cellLen: number;
-  umiLen: number;
-  featureLen: number;
+  presetId?: string;
+  pattern?: string;
   cellWhitelist?: string; // optional (defaults to "" = de-novo); see BlockArgs.cellWhitelist
   defaultBlockLabel?: string; // UI-only: sidebar subtitle, mirrored from the suggestedBlockLabel output
   tableState: PlDataTableStateV2; // per-cell results grid state (UI-only, never projected to args)

@@ -126,9 +126,7 @@ blockTest.skip(
         fbFastqRef: fiOutputs1.fastqOptions[0].ref,
         tagFeatureCsvHandle: csvHandle,
         dominanceThreshold: 0.6,
-        cellLen: 16,
-        umiLen: 10,
-        featureLen: 15,
+        presetId: "tenx-beam", // 10x 5' v2 BEAM geometry (16/10/15); pattern owned by the preset
         tableState: createPlDataTableStateV2(),
         qcSummaryTableState: createPlDataTableStateV2(),
       } satisfies BlockData,

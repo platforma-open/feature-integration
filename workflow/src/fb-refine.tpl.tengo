@@ -13,7 +13,6 @@
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
-tagPattern := import(":tag-pattern")
 
 self.defineOutputs("refinedMic", "refineReport")
 
@@ -22,6 +21,7 @@ emitPanelSw := assets.importSoftware("@platforma-open/milaboratories.feature-int
 
 self.body(func(inputs) {
 	parsedMic := inputs.parsedMic
+	tags := inputs.tags // { cell, umi, feature } tag names (from the model; see pattern.ts)
 	tagsCsv := inputs.tagsCsv
 	barcodeSeqColumn := inputs.barcodeSeqColumn
 	cellWhitelist := inputs.cellWhitelist // "" = de-novo CELL correction (default); else a 10x built-in
@@ -48,9 +48,9 @@ self.body(func(inputs) {
 		formula.gib(128))
 	memFallback := string(memBaseGB) + "GiB"
 
-	cellTag := tagPattern.CELL_TAG
+	cellTag := tags.cell
 	if !is_undefined(cellWhitelist) && cellWhitelist != "" {
-		cellTag = tagPattern.CELL_TAG + "#builtin:" + cellWhitelist
+		cellTag = tags.cell + "#builtin:" + cellWhitelist
 	}
 
 	refine := exec.builder().
@@ -64,8 +64,8 @@ self.body(func(inputs) {
 	refine = refine.
 		arg("refine-tags").
 		arg("-t").arg(cellTag).
-		arg("-t").arg(tagPattern.FEATURE_TAG + "#file:panel.txt").
-		arg("-t").arg(tagPattern.UMI_TAG).
+		arg("-t").arg(tags.feature + "#file:panel.txt").
+		arg("-t").arg(tags.umi).
 		arg("--json-report").arg("refine_report.json").saveFile("refine_report.json").
 		addFile("panel.txt", panel.getFile("panel.txt")).
 		addFile("parsed.mic", parsedMic, { tag: "reads" }).
