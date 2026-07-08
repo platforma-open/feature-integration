@@ -1,47 +1,22 @@
-"""Generate the VDJ (BCR) arm of the BEAM-Ab multiomics manual test — Tier 0.
+"""VDJ (BCR, single-cell) arm generator.
 
-The ANTIGEN arm already exists (realistic, mitool-validated) at
-`../antigen/` (2 donors, real 10x BEAM-Ab panel, ground-truth consensus).
-This script builds a *coherent* single-cell BCR repertoire ON TOP of it: it reads each cell's
-planted dominant antigen and groups cells into clonotypes so that a clonotype's cells bind the
-same antigen — exactly the biology `vdj-multiomic-integration` is meant to surface (per-clonotype
-antigen binding → antibody lead selection).
+Builds a *coherent* single-cell BCR repertoire ON TOP of the antigen arm: it reads each cell's planted
+dominant antigen (from the antigen arm's expected-consensus.tsv) and groups cells into clonotypes so a
+clonotype's cells bind the same antigen — exactly the biology vdj-multiomic-integration surfaces
+(per-clonotype antigen binding -> antibody lead selection).
 
-Output = one AIRR-`airr-sc` rearrangement TSV per donor (import-vdj-data, format "AIRR single
-cell", cellKeyMode=direct → cell_id used verbatim). The cell_id is the SAME bare-16nt barcode the
-antigen FASTQ carries — the canonical cellId that makes the convergence inner-join line up.
-
-Run:  python3 generate_vdj.py
-Deterministic (seeded). stdlib only. Everything here is gitignored.
-
-Tier 0 = VDJ + antigen → vdj-multiomic-integration (feature + linker only; no GEX yet).
+Output = one AIRR-`airr-sc` rearrangement TSV per donor (import-vdj-data, format "AIRR single cell",
+cellKeyMode=direct -> cell_id used verbatim). cell_id is the SAME bare-16nt barcode the antigen FASTQ
+carries — the canonical cellId the convergence inner-join lines up on.
 """
 
-import argparse
 import csv
-import random
-from pathlib import Path
+import os
 
-SEED = 6496
-HERE = Path(__file__).resolve().parent
-ANTIGEN_DIR = HERE.parent / "antigen"
-OUT_DIR = HERE / "vdj"
+from .common import VDJ_SEED, new_rng
+from .panel import load_clear_antigens
 
-CONTROL_NAME = "negative_control"
 DOMINANT_FRACTION = 0.6  # fraction of a (donor, antigen) group that forms the lead clone
-
-
-def load_clear_antigens(antigen_dir) -> set[str]:
-    """Clear (real) antigens = every feature in the antigen arm's panel except the negative control.
-    Panel-derived so this scales with --panel-size instead of a hardcoded 4-antigen set."""
-    path = antigen_dir / "tags.csv"
-    if not path.exists():
-        raise SystemExit(f"panel not found: {path}\nGenerate the antigen arm first.")
-    names = set()
-    with open(path, newline="") as fh:
-        for row in csv.DictReader(fh):
-            names.add(row["feature"])
-    return {n for n in names if n != CONTROL_NAME}
 
 # Real IMGT gene names (human BCR). Light chain modeled as kappa for simplicity.
 HEAVY_V = ["IGHV1-2", "IGHV1-69", "IGHV3-23", "IGHV3-30", "IGHV4-34", "IGHV4-59", "IGHV5-51"]
@@ -51,8 +26,8 @@ KAPPA_V = ["IGKV1-5", "IGKV1-39", "IGKV2-28", "IGKV3-11", "IGKV3-20", "IGKV4-1"]
 KAPPA_J = ["IGKJ1", "IGKJ2", "IGKJ3", "IGKJ4", "IGKJ5"]
 KAPPA_C = ["IGKC"]
 
-# Standard genetic code; '*' = stop. Sense codons are used for junction generation so every
-# synthetic CDR3 is in-frame and productive (no stop).
+# Standard genetic code; '*' = stop. Sense codons are used for junction generation so every synthetic
+# CDR3 is in-frame and productive (no stop).
 CODON_TABLE = {
     "TTT": "F", "TTC": "F", "TTA": "L", "TTG": "L", "CTT": "L", "CTC": "L", "CTA": "L", "CTG": "L",
     "ATT": "I", "ATC": "I", "ATA": "I", "ATG": "M", "GTT": "V", "GTC": "V", "GTA": "V", "GTG": "V",
@@ -71,7 +46,18 @@ AIRR_HEADER = [
 ]
 
 
-def make_junction(rng: random.Random, n_codons: int) -> tuple[str, str]:
+def read_cells(consensus_tsv):
+    """{donor: [(cellId, plantedConsensus), ...]} from the antigen arm's ground truth."""
+    if not os.path.exists(consensus_tsv):
+        raise SystemExit(f"antigen arm not found: {consensus_tsv}\nGenerate the antigen arm first.")
+    by_donor = {}
+    with open(consensus_tsv, newline="") as fh:
+        for row in csv.DictReader(fh, delimiter="\t"):
+            by_donor.setdefault(row["sample"], []).append((row["cellId"], row["planted_consensus"]))
+    return by_donor
+
+
+def make_junction(rng, n_codons):
     """A conventional-looking CDR3: starts with Cys (TGT), ends with Trp (TGG), sense codons between."""
     mids = [rng.choice(SENSE_CODONS) for _ in range(n_codons - 2)]
     codons = ["TGT"] + mids + ["TGG"]
@@ -80,7 +66,7 @@ def make_junction(rng: random.Random, n_codons: int) -> tuple[str, str]:
     return nt, aa
 
 
-def make_bcr(rng: random.Random) -> dict:
+def make_bcr(rng):
     """One paired heavy+light rearrangement (a clonotype's sequences)."""
     return {
         "IGH": {
@@ -94,22 +80,10 @@ def make_bcr(rng: random.Random) -> dict:
     }
 
 
-def read_cells(antigen_dir) -> dict[str, list[tuple[str, str]]]:
-    """{donor: [(cellId, plantedConsensus), ...]} from the antigen arm's ground truth."""
-    path = antigen_dir / "expected-consensus.tsv"
-    if not path.exists():
-        raise SystemExit(f"antigen arm not found: {path}\nMove antigen into place first.")
-    by_donor: dict[str, list[tuple[str, str]]] = {}
-    with open(path, newline="") as fh:
-        for row in csv.DictReader(fh, delimiter="\t"):
-            by_donor.setdefault(row["sample"], []).append((row["cellId"], row["planted_consensus"]))
-    return by_donor
-
-
-def build_clones(rng: random.Random, cells: list[tuple[str, str]], clear_antigens: set[str]) -> list[dict]:
-    """Group a donor's cells into clonotypes. Clear-antigen cells → one lead clone (~60%) + singletons,
-    all binding that antigen (coherent). Ambiguous cells → singleton clones (no clear target)."""
-    by_antigen: dict[str, list[str]] = {}
+def build_clones(rng, cells, clear_antigens):
+    """Group a donor's cells into clonotypes. Clear-antigen cells -> one lead clone (~60%) + singletons,
+    all binding that antigen (coherent). Ambiguous cells -> singleton clones (no clear target)."""
+    by_antigen = {}
     for cell_id, consensus in cells:
         by_antigen.setdefault(consensus, []).append(cell_id)
 
@@ -142,7 +116,7 @@ def build_clones(rng: random.Random, cells: list[tuple[str, str]], clear_antigen
     return clones
 
 
-def write_airr(path: Path, clones: list[dict], rng: random.Random) -> int:
+def write_airr(path, clones, rng):
     n_rows = 0
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh, delimiter="\t")
@@ -159,7 +133,7 @@ def write_airr(path: Path, clones: list[dict], rng: random.Random) -> int:
     return n_rows
 
 
-def write_truth(path: Path, all_clones: dict[str, list[dict]]):
+def write_truth(path, all_clones):
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["donor", "cloneId", "kind", "targetAntigen", "nCells",
@@ -171,46 +145,27 @@ def write_truth(path: Path, all_clones: dict[str, list[dict]]):
                             h["v"], h["j"], h["c"], k["v"], k["j"], h["junction_aa"], k["junction_aa"]])
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--realistic", action="store_true", help="alias for --profile realistic")
-    ap.add_argument(
-        "--profile", default="default", choices=["default", "realistic", "whitelist737k"],
-        help="build on the matching antigen profile's consensus (antigen/<profile>/) "
-             "and write to vdj/<profile>/ — the default vdj/ output is untouched. whitelist737k = the "
-             "737K-august-2016-compliant chain.",
-    )
-    args = ap.parse_args()
-    profile = "realistic" if args.realistic else args.profile
-    subdir = None if profile == "default" else profile
-    antigen_dir = ANTIGEN_DIR / subdir if subdir else ANTIGEN_DIR
-    out_dir = OUT_DIR / subdir if subdir else OUT_DIR
-
-    rng = random.Random(SEED)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    by_donor = read_cells(antigen_dir)
-    clear = load_clear_antigens(antigen_dir)
+def build(tags_csv, consensus_tsv, out_dir, truth_dir, seed=VDJ_SEED):
+    """Build the VDJ arm from the antigen arm's ground truth. Writes out_dir/<donor>.tsv (AIRR-sc) +
+    truth_dir/truth_clonotypes.csv. The filename stem is the bare donor id so Samples & Data mints ONE
+    shared sampleId across all three arms — a per-library suffix would fork the donor into separate
+    samples and the convergence [sampleId,cellId] join would then match nothing."""
+    os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(truth_dir, exist_ok=True)
+    rng = new_rng(seed)
+    by_donor = read_cells(consensus_tsv)
+    clear = load_clear_antigens(tags_csv)
 
     all_clones = {}
-    print(f"Generated VDJ (airr-sc) arm ({profile}) on the antigen ground truth "
+    print(f"[vdj] airr-sc arm on the antigen ground truth "
           f"({len(by_donor)} donors, {len(clear)} clear antigens):")
     for donor in sorted(by_donor):
         clones = build_clones(rng, by_donor[donor], clear)
         all_clones[donor] = clones
-        # Filename is the bare donor id (no `_airr_sc` library suffix): Samples & Data derives the
-        # sample name from the filename stem, so all three arms MUST yield the same stem to share one
-        # sampleId. A per-library suffix forks the donor into separate samples and the convergence
-        # [sampleId,cellId] join then matches nothing. Real deliveries may carry such suffixes — see
-        # README "Sample model & assumptions (revisit against real data)".
-        n_rows = write_airr(out_dir / f"{donor}.tsv", clones, rng)
+        n_rows = write_airr(os.path.join(out_dir, f"{donor}.tsv"), clones, rng)
         n_cells = sum(len(c["cells"]) for c in clones)
         n_lead = sum(1 for c in clones if c["kind"] == "lead")
         print(f"  {donor}: {n_cells} cells, {len(clones)} clonotypes "
-              f"({n_lead} lead) -> {n_rows} contig rows ({out_dir.name}/{donor}.tsv)")
-    write_truth(out_dir / "truth_clonotypes.csv", all_clones)
-    print(f"  truth -> {out_dir.name}/truth_clonotypes.csv")
-    print(f"\nAntigen arm (reused): {antigen_dir}/<donor>_R{{1,2}}.fastq.gz + tags.csv")
-
-
-if __name__ == "__main__":
-    main()
+              f"({n_lead} lead) -> {n_rows} contig rows (vdj/{donor}.tsv)")
+    write_truth(os.path.join(truth_dir, "truth_clonotypes.csv"), all_clones)
+    print("  truth -> truth/truth_clonotypes.csv")
