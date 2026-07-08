@@ -36,7 +36,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
 from lib import antigen, gex, panelswap, validate, vdj  # noqa: E402
-from lib import panel as panel_mod
+from lib import panel as panel_mod  # noqa: E402
 from lib.antigen import AntigenConfig  # noqa: E402
 
 ASSETS_DIR = os.path.join(HERE, "assets")

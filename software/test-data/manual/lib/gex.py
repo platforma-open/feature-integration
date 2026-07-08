@@ -26,11 +26,11 @@ from .panel import load_clear_antigens
 
 # Marker programs (gene symbols). Means are per (program, cell class): (binder, naive).
 PROGRAMS = {
-    "housekeeping": (["ACTB", "GAPDH", "B2M", "MALAT1", "TMSB4X", "FTL", "FTH1", "EEF1A1", "HLA-A", "HLA-DRA"], (45, 40)),
+    "housekeeping": (["ACTB", "GAPDH", "B2M", "MALAT1", "TMSB4X", "FTL", "FTH1", "EEF1A1", "HLA-A", "HLA-DRA"], (45, 40)),  # noqa: E501
     "b_core":       (["MS4A1", "CD19", "CD79A", "CD79B", "CD74", "BANK1", "CD27"], (20, 35)),
     "naive_b":      (["TCL1A", "IGHD", "IGHM"], (3, 42)),
-    "plasma":       (["MZB1", "XBP1", "PRDM1", "SDC1", "TNFRSF17", "CD38", "IRF4", "JCHAIN", "IGHG1", "SLAMF7"], (65, 4)),
-    "other_lineage":(["CD3D", "CD3E", "CD8A", "IL7R", "NKG7", "GNLY", "LYZ", "CD14", "FCGR3A", "S100A8", "S100A9"], (0.4, 0.4)),
+    "plasma":       (["MZB1", "XBP1", "PRDM1", "SDC1", "TNFRSF17", "CD38", "IRF4", "JCHAIN", "IGHG1", "SLAMF7"], (65, 4)),  # noqa: E501
+    "other_lineage":(["CD3D", "CD3E", "CD8A", "IL7R", "NKG7", "GNLY", "LYZ", "CD14", "FCGR3A", "S100A8", "S100A9"], (0.4, 0.4)),  # noqa: E501
 }
 
 
