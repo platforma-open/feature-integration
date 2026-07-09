@@ -32,7 +32,7 @@ export type PatternParts = {
 // The fixed BEAM shape. The trailing `*` on Read 1 is captured (group 3) so the builder can round-trip
 // it; it tolerates R1 sequenced longer than CELL+UMI (e.g. the 28 nt R1 common in 5' runs).
 const PATTERN_RE =
-  /^\^\(CELL:N\{(\d+)\}\)\(UMI:N\{(\d+)\}\)(\*)?\\\^(?:\(N\{(\d+)\}\))?\(FEATURE:N\{(\d+)\}\)\(R2:\*\)$/;
+  /^\^\(CELL:N\{(\d+)\}\)\(UMI:N\{(\d+)\}\)(\*)?\\\^(?:N\{(\d+)\})?\(FEATURE:N\{(\d+)\}\)\(R2:\*\)$/;
 
 /** Parse a BEAM feature-barcode pattern into its structured parts, or null if it is not the BEAM shape. */
 export function parsePattern(s: string): PatternParts | null {
@@ -73,7 +73,10 @@ export function validatePattern(s: string): string | null {
 /** Assemble the mitool pattern string from structured parts (R1 trailing `*` and R2 offset optional). */
 export function assemblePattern(p: PatternParts): string {
   const trailing = p.r1TrailingWildcard ? "*" : "";
-  const skip = p.featureOffset > 0 ? `(N{${p.featureOffset}})` : "";
+  // Anonymous N-skip — bare (no parentheses). mitool reads `(...)` as a `(TAG:pattern)` group, so a
+  // parenthesized `(N{n})` is rejected with "Unexpected character in tag identifier"; a bare `N{n}` is
+  // matched but not captured, which is exactly what an offset should be. Verified against mitool 2.3.1.
+  const skip = p.featureOffset > 0 ? `N{${p.featureOffset}}` : "";
   return (
     `^(${CELL_TAG}:N{${p.cellLen}})(${UMI_TAG}:N{${p.umiLen}})${trailing}` +
     `\\^${skip}(${FEATURE_TAG}:N{${p.featureLen}})(R2:*)`
