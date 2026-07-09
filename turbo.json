@@ -44,6 +44,10 @@
     "mark-stable": {
       "passThroughEnv": ["PL_REGISTRY", "AWS_*"],
       "cache": false
+    },
+    "software:reqs": {
+      "cache": false,
+      "outputs": ["./src/requirements.txt"]
     }
   }
 }
