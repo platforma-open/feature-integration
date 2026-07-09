@@ -12,6 +12,7 @@ import {
   PlCheckbox,
   PlDropdown,
   PlNumberField,
+  PlSectionSeparator,
   PlTextField,
 } from "@platforma-sdk/ui-vue";
 import { computed, reactive, ref, watch } from "vue";
@@ -213,6 +214,10 @@ watch(editorMode, (mode) => {
         </PlNumberField>
       </template>
     </template>
+
+    <!-- Divider marking the end of the custom read-layout block (shown only for the configurable
+         preset), so it reads as its own section apart from the Tag-feature CSV below. -->
+    <PlSectionSeparator compact />
   </template>
 </template>
 

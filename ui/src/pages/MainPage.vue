@@ -228,6 +228,9 @@ const gridOptions = {
         label="Select dataset"
         @update:model-value="clearSampleAwareOnInputChange"
       />
+      <!-- Read layout: preset dropdown + pattern builder/string (mitool tag pattern). Replaces the
+           former cell/UMI/feature length fields — their values are now decided inside the editor. -->
+      <PatternEditor />
       <PlFileInput
         v-model="app.model.data.tagFeatureCsvHandle"
         label="Tag-feature CSV"
@@ -273,10 +276,9 @@ const gridOptions = {
           @update:model-value="setSampleColumn"
         >
           <template #tooltip>
-            Set this only when the same feature barcode maps to different features in different
-            samples. Pick the CSV column holding the sample name (must match the dataset's sample
-            names); the mapping is then applied per sample. Leave empty for one mapping shared
-            across all samples.
+            <b>Optional</b> — leave empty unless the same feature barcode maps to a different
+            feature depending on the sample. If so, pick the Tag-feature CSV column holding the
+            sample name (must match the dataset's sample names).
           </template>
         </PlDropdown>
       </PlRow>
@@ -286,10 +288,6 @@ const gridOptions = {
       <PlAlert v-if="sampleMappingWarning?.length" type="warn">
         <div v-for="(line, i) in sampleMappingWarning" :key="i">{{ line }}</div>
       </PlAlert>
-      <!-- Read geometry: preset dropdown + pattern builder/string (mitool tag pattern). Replaces the
-           former cell/UMI/feature length fields — their values are now decided inside the editor. -->
-      <PlSectionSeparator compact />
-      <PatternEditor />
       <!-- Less-common params. -->
       <PlAccordionSection label="Advanced Settings">
         <PlNumberField
