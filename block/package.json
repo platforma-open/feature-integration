@@ -46,7 +46,7 @@
       "logo": "file:../logos/block-logo.png",
       "url": "https://github.com/platforma-open/feature-integration",
       "support": "mailto:support@milaboratories.com",
-      "description": "Assign features (antigens) to single cells from feature-barcode reads.",
+      "description": "Assign antigens to single cells from BEAM / LIBRA-seq style feature-barcode reads",
       "longDescription": "file:../docs/description.md",
       "changelog": "file:../CHANGELOG.md",
       "tags": [
