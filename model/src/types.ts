@@ -11,6 +11,10 @@ export type BlockArgs = {
   pattern: string; // Mitool tag pattern
   // mitool tag names baked into `pattern`
   tags: { cell: string; umi: string; feature: string };
+  // Sample-aware tag→feature mapping (optional). When set, the same feature barcode may map to different
+  // features per sample.
+  sampleColumn?: string; // the CSV column holding the (user-friendly) sample name
+  sampleLabels?: Record<string, string>; // a snapshot of sampleId→name
   // Cell-barcode whitelist for refine-tags CELL correction. "" = de-novo (default; non-10x/synthetic).
   // A 10x built-in name (e.g. 737K-august-2016) makes cellIds match the VDJ producer by construction.
   // See docs/dormant-features/cell-whitelist-correction-plan.md.
@@ -24,6 +28,11 @@ export type BlockData = {
   barcodeSeqColumn?: string;
   featureNameColumn?: string;
   controlFeature?: string;
+  sampleColumn?: string;
+  sampleLabelSnapshot?: Record<string, string>;
+  // Distinct values of the chosen sample column at pick time — snapshotted alongside the label map so
+  // args() can gate Run purely from data (block when a dataset sample has no rows in the CSV).
+  sampleColumnValues?: string[];
   dominanceThreshold: number;
   presetId?: string;
   pattern?: string;

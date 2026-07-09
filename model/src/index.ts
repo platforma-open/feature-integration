@@ -186,6 +186,26 @@ export const platforma = BlockModelV3.create(dataModel)
     const patternError = validatePattern(pattern);
     if (patternError) throw new Error(patternError);
 
+    // Sample-aware mapping (optional): when a sample column is chosen, the per-sample workflow body
+    // filters the CSV to its own sample's rows, so pass the column name + the sampleId→name snapshot it
+    // needs to translate its iteration key. The snapshot is taken on the same gesture that sets the
+    // column (MainPage.setSampleColumn); require it here so a stale/half-set state disables Run.
+    const sampleAware = !!data.sampleColumn;
+    if (sampleAware) {
+      if (!data.sampleLabelSnapshot)
+        throw new Error("Re-select the sample column (sample labels not captured)");
+      // Block Run when a dataset sample has no rows in the CSV's sample column — it would silently get
+      // no features. Gate purely from the snapshots taken when the column was picked (args is data-only).
+      const csvValues = new Set(data.sampleColumnValues ?? []);
+      const missing = Object.values(data.sampleLabelSnapshot).filter((n) => !csvValues.has(n));
+      if (missing.length > 0)
+        throw new Error(
+          `${missing.length} dataset sample(s) have no rows in the tag CSV's "${data.sampleColumn}" column ` +
+            `(${missing.slice(0, 5).join(", ")}${missing.length > 5 ? "…" : ""}). ` +
+            `Add rows for them, or clear the sample column to use one mapping for all samples.`,
+        );
+    }
+
     return {
       fbFastqRef: data.fbFastqRef,
       tagFeatureCsvHandle: data.tagFeatureCsvHandle,
@@ -196,6 +216,9 @@ export const platforma = BlockModelV3.create(dataModel)
       dominanceThreshold: Math.max(DOMINANCE_FLOOR, data.dominanceThreshold ?? 0.6),
       pattern,
       tags: { cell: CELL_TAG, umi: UMI_TAG, feature: FEATURE_TAG },
+      ...(sampleAware
+        ? { sampleColumn: data.sampleColumn, sampleLabels: data.sampleLabelSnapshot }
+        : {}),
       // CELL whitelist: "" = de-novo (default). See docs/dormant-features/cell-whitelist-correction-plan.md.
       cellWhitelist: data.cellWhitelist ?? "",
     };
@@ -266,6 +289,39 @@ export const platforma = BlockModelV3.create(dataModel)
   .retentiveOutput("csvColumnOptions", (ctx): { value: string; label: string }[] =>
     (readCsvMeta(ctx)?.columns ?? []).map((c) => ({ value: c, label: c })),
   )
+  // Every CSV column's distinct values (from the prerun emit-csv-meta step). The UI reads this when the
+  // sample column is picked, to snapshot that column's values into data (args gates Run on them).
+  .retentiveOutput(
+    "csvValuesByColumn",
+    (ctx): Record<string, string[]> => readCsvMeta(ctx)?.valuesByColumn ?? {},
+  )
+  // Sample-aware mapping sanity check (UI warning only; args is the authoritative gate). When a sample
+  // column is chosen, compare its CSV values against the dataset's sample names: flag dataset samples
+  // absent from the CSV (they would get no features) and CSV values matching no dataset sample (typos).
+  .output("sampleMappingWarning", (ctx): string[] | undefined => {
+    const col = ctx.data.sampleColumn;
+    if (!col) return undefined;
+    const meta = readCsvMeta(ctx);
+    const labels = resolveSampleLabels(ctx);
+    if (!meta || !labels) return undefined; // CSV or labels not resolved yet
+    const csvSamples = new Set(meta.valuesByColumn?.[col] ?? []);
+    const datasetNames = new Set(Object.values(labels));
+    const fmt = (xs: string[]) => `${xs.slice(0, 5).join(", ")}${xs.length > 5 ? "…" : ""}`;
+    const missing = [...datasetNames].filter((n) => !csvSamples.has(n));
+    const extra = [...csvSamples].filter((s) => !datasetNames.has(s));
+    // One line per issue (the UI renders each on its own line). Missing samples block Run (args throws);
+    // extra CSV values are only informational (those rows are simply never used).
+    const lines: string[] = [];
+    if (missing.length > 0)
+      lines.push(
+        `${missing.length} dataset sample(s) have no rows in the CSV — Run is blocked until every sample is mapped (or the sample column is cleared): ${fmt(missing)}.`,
+      );
+    if (extra.length > 0)
+      lines.push(
+        `${extra.length} CSV sample value(s) match no dataset sample (ignored): ${fmt(extra)}.`,
+      );
+    return lines.length > 0 ? lines : undefined;
+  })
   // True while the uploaded CSV is still being parsed by staging (handle set, but emit-csv-meta hasn't
   // produced csvMeta yet) — lets the UI show a "reading columns…" state instead of silent empty
   // dropdowns. NOT retentive: it must report the live loading state, including on a CSV swap.
