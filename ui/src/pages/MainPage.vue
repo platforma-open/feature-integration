@@ -84,7 +84,7 @@ function setSampleColumn(col: string | undefined) {
   app.model.data.sampleColumn = col || undefined;
   // Snapshot both the dataset's sampleId→name map AND the chosen column's CSV values, so args() can both
   // filter per sample and gate Run (block when a dataset sample has no CSV rows) purely from data.
-  app.model.data.sampleLabelSnapshot = col ? (app.model.outputs.sampleLabels ?? {}) : undefined;
+  app.model.data.sampleLabelSnapshot = col ? app.model.outputs.sampleLabels : undefined;
   app.model.data.sampleColumnValues = col
     ? (app.model.outputs.csvValuesByColumn?.[col] ?? [])
     : undefined;

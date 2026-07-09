@@ -192,7 +192,7 @@ export const platforma = BlockModelV3.create(dataModel)
     // column (MainPage.setSampleColumn); require it here so a stale/half-set state disables Run.
     const sampleAware = !!data.sampleColumn;
     if (sampleAware) {
-      if (!data.sampleLabelSnapshot)
+      if (!data.sampleLabelSnapshot || Object.keys(data.sampleLabelSnapshot).length === 0)
         throw new Error("Re-select the sample column (sample labels not captured)");
       // Block Run when a dataset sample has no rows in the CSV's sample column — it would silently get
       // no features. Gate purely from the snapshots taken when the column was picked (args is data-only).
@@ -298,7 +298,7 @@ export const platforma = BlockModelV3.create(dataModel)
   // Sample-aware mapping sanity check (UI warning only; args is the authoritative gate). When a sample
   // column is chosen, compare its CSV values against the dataset's sample names: flag dataset samples
   // absent from the CSV (they would get no features) and CSV values matching no dataset sample (typos).
-  .output("sampleMappingWarning", (ctx): string[] | undefined => {
+  .retentiveOutput("sampleMappingWarning", (ctx): string[] | undefined => {
     const col = ctx.data.sampleColumn;
     if (!col) return undefined;
     const meta = readCsvMeta(ctx);
