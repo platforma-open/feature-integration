@@ -22,6 +22,7 @@ maps := import("@platforma-sdk/workflow-tengo:maps")
 ll := import("@platforma-sdk/workflow-tengo:ll")
 pConstants := import("@platforma-sdk/workflow-tengo:pframes.constants")
 pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
+pt := import("@platforma-sdk/workflow-tengo:pt")
 
 json := import("json")
 
@@ -55,6 +56,25 @@ self.body(func(inputs) {
 	memOverrideGB := is_undefined(inputs.mitoolMemOverrideGB) ? 0 : inputs.mitoolMemOverrideGB
 
 	ll.assert(!is_undefined(pattern) && pattern != "", "tag pattern is required")
+
+	// Sample-aware tag->feature mapping (optional). When a sample column is set, the tag CSV maps the same
+	// barcode to different features per sample, so filter it to THIS sample's rows before it feeds the
+	// panel (fb-refine) and the naming join (fb-downstream).
+	// sampleColumn == "" -> global mapping, CSV passed through untouched.
+	sampleColumn := inputs.sampleColumn
+	tagsCsvForSample := tagsCsv
+	if sampleColumn != "" {
+		key := inputs[pConstants.KEY_FIELD_NAME]
+		sampleId := key[0]
+		sampleName := inputs.sampleLabels[sampleId]
+		ll.assert(!is_undefined(sampleName), "no sample label captured for sampleId %v (re-select the sample column)", sampleId)
+
+		ptWf := pt.workflow().inLightQueue().cpu(1).mem("2GiB")
+		filtered := ptWf.frame(tagsCsv, { xsvType: "csv", inferSchema: false }).
+			filter(pt.col(sampleColumn).eq(sampleName))
+		filtered.save("sample-tags.csv", { xsvType: "csv" })
+		tagsCsvForSample = ptWf.run().getFile("sample-tags.csv")
+	}
 
 	meta := inputData.getDataAsJson()
 	fileMap := inputData.inputs()
@@ -122,7 +142,7 @@ self.body(func(inputs) {
 	refineRun := render.create(fbRefineTpl, {
 		parsedMic: parsedMic,
 		tags: tags,
-		tagsCsv: tagsCsv,
+		tagsCsv: tagsCsvForSample,
 		barcodeSeqColumn: barcodeSeqColumn,
 		cellWhitelist: cellWhitelist,
 		mitoolCPUs: mitoolCPUs,
@@ -147,7 +167,7 @@ self.body(func(inputs) {
 		parseReport: parseReport,
 		refineReport: refineReport,
 		tags: tags,
-		tagsCsv: tagsCsv,
+		tagsCsv: tagsCsvForSample,
 		control: control, // undefined -> render.create skips it -> no specificity
 		dominanceThreshold: dominanceThreshold,
 		barcodeSeqColumn: barcodeSeqColumn,

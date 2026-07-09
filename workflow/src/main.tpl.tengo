@@ -68,6 +68,10 @@ wf.body(func(args) {
 	extraInputs := {
 		pattern: pattern,
 		tags: args.tags, // mitool tag names (CELL/UMI/FEATURE) — single source is the model (pattern.ts)
+		// Sample-aware mapping (optional). "" = off (global mapping). When set, the per-sample body filters
+		// the CSV to its own sample's rows using sampleLabels[sampleId] (sampleId from the passKey key).
+		sampleColumn: is_undefined(args.sampleColumn) ? "" : args.sampleColumn,
+		sampleLabels: is_undefined(args.sampleLabels) ? {} : args.sampleLabels,
 		tagsCsv: csvFile,
 		dominanceThreshold: dominanceThreshold,
 		fileExtension: fileExtension,
@@ -118,6 +122,7 @@ wf.body(func(args) {
 				{ name: "pl7.app/sequencing/readIndex", optional: true }
 			],
 			passAggregationAxesNames: true,
+			passKey: true, // give the body its [sampleId] iteration key (for sample-aware CSV filtering)
 			extra: extraInputs,
 			metaExtra: metaExtra
 		}

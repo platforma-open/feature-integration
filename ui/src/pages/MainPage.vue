@@ -16,6 +16,7 @@ import {
   PlLogView,
   PlMaskIcon24,
   PlNumberField,
+  PlRow,
   PlSectionSeparator,
   PlSlideModal,
   autoSizeRowNumberColumn,
@@ -75,6 +76,37 @@ const csvProcessing = computed(() => app.model.outputs.csvColumnsLoading === tru
 function clearControlOnInputChange() {
   app.model.data.controlFeature = undefined;
 }
+
+// Sample-aware mapping (optional). Picking the sample column snapshots the CURRENT dataset's
+// sampleId→name map into data, so the args projection stays pure (model.md) and the per-sample workflow
+// body can translate its iteration key.
+function setSampleColumn(col: string | undefined) {
+  app.model.data.sampleColumn = col || undefined;
+  // Snapshot both the dataset's sampleId→name map AND the chosen column's CSV values, so args() can both
+  // filter per sample and gate Run (block when a dataset sample has no CSV rows) purely from data.
+  app.model.data.sampleLabelSnapshot = col ? app.model.outputs.sampleLabels : undefined;
+  app.model.data.sampleColumnValues = col
+    ? (app.model.outputs.csvValuesByColumn?.[col] ?? [])
+    : undefined;
+}
+
+// The snapshot goes stale if the dataset changes (different sampleId→name) or the CSV changes (different
+// columns/values), so clear the sample-aware selection on those gestures — the user re-picks.
+function clearSampleAwareOnInputChange() {
+  app.model.data.sampleColumn = undefined;
+  app.model.data.sampleLabelSnapshot = undefined;
+  app.model.data.sampleColumnValues = undefined;
+}
+
+// CSV swap invalidates both the negative control and the sample-aware selection (columns/values change).
+function clearOnCsvChange() {
+  clearControlOnInputChange();
+  clearSampleAwareOnInputChange();
+}
+
+// Sample-aware mapping sanity warning from the model (dataset samples missing from the CSV / CSV sample
+// values matching no dataset sample). Only present once a sample column is chosen.
+const sampleMappingWarning = computed(() => app.model.outputs.sampleMappingWarning);
 
 // --- Running-state progress grid (in-memory AgGridVue, same pattern as blocks/peptide-extraction) ---
 ModuleRegistry.registerModules([ClientSideRowModelModule]);
@@ -194,14 +226,18 @@ const gridOptions = {
         v-model="app.model.data.fbFastqRef"
         :options="app.model.outputs.fastqOptions"
         label="Select dataset"
+        @update:model-value="clearSampleAwareOnInputChange"
       />
+      <!-- Read layout: preset dropdown + pattern builder/string (mitool tag pattern). Replaces the
+           former cell/UMI/feature length fields — their values are now decided inside the editor. -->
+      <PatternEditor />
       <PlFileInput
         v-model="app.model.data.tagFeatureCsvHandle"
         label="Tag-feature CSV"
         placeholder="tags.csv"
         :extensions="['csv']"
         required
-        @update:model-value="clearControlOnInputChange"
+        @update:model-value="clearOnCsvChange"
       />
       <PlAlert v-if="csvProcessing" type="info"> Reading columns from the uploaded CSV… </PlAlert>
       <PlDropdown
@@ -219,20 +255,39 @@ const gridOptions = {
         required
         @update:model-value="clearControlOnInputChange"
       />
-      <PlDropdown
-        v-model="app.model.data.controlFeature"
-        :options="app.model.outputs.controlOptions"
-        label="Negative control feature (optional)"
-        :disabled="csvProcessing"
-        clearable
-      />
+      <PlSectionSeparator compact> Optional settings </PlSectionSeparator>
+      <PlRow>
+        <PlDropdown
+          v-model="app.model.data.controlFeature"
+          :options="app.model.outputs.controlOptions"
+          label="Negative control feature"
+          :disabled="csvProcessing"
+          clearable
+          :style="{ flex: 1 }"
+        />
+
+        <PlDropdown
+          :model-value="app.model.data.sampleColumn"
+          :options="app.model.outputs.csvColumnOptions"
+          label="Sample column"
+          :disabled="csvProcessing"
+          clearable
+          :style="{ flex: 1 }"
+          @update:model-value="setSampleColumn"
+        >
+          <template #tooltip>
+            <b>Optional</b> — leave empty unless the same feature barcode maps to a different
+            feature depending on the sample. If so, pick the Tag-feature CSV column holding the
+            sample name (must match the dataset's sample names).
+          </template>
+        </PlDropdown>
+      </PlRow>
       <PlAlert v-if="controlInfoVisible" type="info">
         Specificity scores will not be computed without a negative control feature
       </PlAlert>
-      <!-- Read geometry: preset dropdown + pattern builder/string (mitool tag pattern). Replaces the
-           former cell/UMI/feature length fields — their values are now decided inside the editor. -->
-      <PlSectionSeparator compact />
-      <PatternEditor />
+      <PlAlert v-if="sampleMappingWarning?.length" type="warn">
+        <div v-for="(line, i) in sampleMappingWarning" :key="i">{{ line }}</div>
+      </PlAlert>
       <!-- Less-common params. -->
       <PlAccordionSection label="Advanced Settings">
         <PlNumberField
