@@ -41,25 +41,24 @@ self.body(func(inputs) {
 		saveFile("panel.txt").
 		run()
 
+	// RAM = base + reads*4, capped at 128 GiB; static fallback = base. workflow-tengo 6.7.0 fluent
+	// formula API fed via .resources({ onCPU }) (see fb-parse for the migration note).
 	formula := exec.formula
-	memFormula := formula.clamp(
-		formula.add(formula.gib(memBaseGB), formula.mul(formula.size("reads"), 4)),
-		formula.gib(memBaseGB),
-		formula.gib(128))
-	memFallback := string(memBaseGB) + "GiB"
+	memFormula := formula.gib(memBaseGB).
+		plus(formula.size("reads").times(4)).
+		between(formula.gib(memBaseGB), formula.gib(128)).
+		staticFallback(formula.gib(memBaseGB))
 
 	cellTag := tags.cell
 	if !is_undefined(cellWhitelist) && cellWhitelist != "" {
 		cellTag = tags.cell + "#builtin:" + cellWhitelist
 	}
 
-	refine := exec.builder().
-		software(mitoolSw).
-		cpu(mitoolCPUs)
+	refine := exec.builder().software(mitoolSw)
 	if memOverrideGB > 0 {
-		refine = refine.mem(string(memOverrideGB) + "GiB")
+		refine = refine.cpu(mitoolCPUs).mem(string(memOverrideGB) + "GiB")
 	} else {
-		refine = refine.memFormula(memFormula, { fallback: memFallback })
+		refine = refine.resources({ onCPU: { cpu: mitoolCPUs, ram: memFormula } })
 	}
 	refine = refine.
 		arg("refine-tags").

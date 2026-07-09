@@ -32,20 +32,19 @@ self.body(func(inputs) {
 	// volume (mixcr-clonotyping / demultiplex-fastq). size("reads") reads only blob metadata.
 	memOverrideGB := inputs.mitoolMemOverrideGB
 
+	// RAM = base + reads*4, capped at 128 GiB; static fallback = base for backends that can't evaluate
+	// resource formulas at run time.
 	formula := exec.formula
-	memFormula := formula.clamp(
-		formula.add(formula.gib(memBaseGB), formula.mul(formula.size("reads"), 4)),
-		formula.gib(memBaseGB),
-		formula.gib(128))
-	memFallback := string(memBaseGB) + "GiB"
+	memFormula := formula.gib(memBaseGB).
+		plus(formula.size("reads").times(4)).
+		between(formula.gib(memBaseGB), formula.gib(128)).
+		staticFallback(formula.gib(memBaseGB))
 
-	parse := exec.builder().
-		software(mitoolSw).
-		cpu(mitoolCPUs)
+	parse := exec.builder().software(mitoolSw)
 	if memOverrideGB > 0 {
-		parse = parse.mem(string(memOverrideGB) + "GiB")
+		parse = parse.cpu(mitoolCPUs).mem(string(memOverrideGB) + "GiB")
 	} else {
-		parse = parse.memFormula(memFormula, { fallback: memFallback })
+		parse = parse.resources({ onCPU: { cpu: mitoolCPUs, ram: memFormula } })
 	}
 	parse = parse.
 		arg("parse").

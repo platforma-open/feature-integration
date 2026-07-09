@@ -24,16 +24,16 @@ self.body(func(inputs) {
 	// The distinct-UMI on-disk sort scales with input volume, so size RAM from the refined.mic blob
 	// (molecules) on a floor instead of a fixed request (same mixcr-style size formula as parse/refine).
 	tagStatBaseGB := 8
+	// workflow-tengo 6.7.0 fluent formula API fed via .resources({ onCPU }) (see fb-parse for the note).
 	formula := exec.formula
-	memFormula := formula.clamp(
-		formula.add(formula.gib(tagStatBaseGB), formula.mul(formula.size("mic"), 4)),
-		formula.gib(tagStatBaseGB),
-		formula.gib(128))
+	memFormula := formula.gib(tagStatBaseGB).
+		plus(formula.size("mic").times(4)).
+		between(formula.gib(tagStatBaseGB), formula.gib(128)).
+		staticFallback(formula.gib(tagStatBaseGB))
 
 	tagStat := exec.builder().
 		software(mitoolSw).
-		cpu(2).
-		memFormula(memFormula, { fallback: string(tagStatBaseGB) + "GiB" }).
+		resources({ onCPU: { cpu: 2, ram: memFormula } }).
 		arg("tag-stat").
 		arg("--use-local-temp").
 		arg("-t").arg(tags.cell).

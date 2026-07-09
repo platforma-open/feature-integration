@@ -55,17 +55,17 @@ self.body(func(inputs) {
 	// import. The distinct-UMI polars read scales with input volume, so size RAM from the tagstat.tsv blob
 	// (tag "tagstat") on a floor instead of a fixed request.
 	metricsBaseGB := 8
+	// workflow-tengo 6.7.0 fluent formula API fed via .resources({ onCPU }) (see fb-parse for the note).
 	formula := exec.formula
-	metricsMemFormula := formula.clamp(
-		formula.add(formula.gib(metricsBaseGB), formula.mul(formula.size("tagstat"), 8)),
-		formula.gib(metricsBaseGB),
-		formula.gib(128))
+	metricsMemFormula := formula.gib(metricsBaseGB).
+		plus(formula.size("tagstat").times(8)).
+		between(formula.gib(metricsBaseGB), formula.gib(128)).
+		staticFallback(formula.gib(metricsBaseGB))
 
 	hasControl := !is_undefined(control) && control != ""
 	metrics := exec.builder().
 		software(metricsSw).
-		cpu(2).
-		memFormula(metricsMemFormula, { fallback: string(metricsBaseGB) + "GiB" }).
+		resources({ onCPU: { cpu: 2, ram: metricsMemFormula } }).
 		addFile("tagstat.tsv", tagstatTsv, { tag: "tagstat" }).
 		addFile("tags.csv", tagsCsv).
 		arg("tagstat.tsv").arg("tags.csv").
