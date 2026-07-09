@@ -6,15 +6,15 @@
   ],
   "type": "module",
   "scripts": {
-    "build": "pl-pkg build",
-    "prepublishOnly": "pl-pkg prepublish",
+    "build": "block-tools software build",
     "software:reqs": "uv --directory .. pip compile --group per-cell-metrics --no-deps --no-annotate --custom-compile-command \"pnpm software:reqs\" -o per-cell-metrics/src/requirements.txt",
     "changeset": "changeset",
-    "version-packages": "changeset version"
+    "version-packages": "changeset version",
+    "do-pack": "shx rm -f *.tgz && block-tools software build && pnpm pack && shx mv platforma-open*.tgz package.tgz"
   },
   "devDependencies": {
     "@platforma-open/milaboratories.runenv-python-3": "catalog:",
-    "@platforma-sdk/package-builder": "catalog:"
+    "@platforma-sdk/block-tools": "catalog:"
   },
   "block-software": {
     "entrypoints": {
