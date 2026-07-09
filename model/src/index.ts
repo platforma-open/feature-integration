@@ -71,6 +71,16 @@ function resolveSampleLabels(
   const inputSpec = ctx.resultPool.getSpecByRef(inputRef);
   if (inputSpec === undefined || !isPColumnSpec(inputSpec)) return undefined;
   const sampleAxisSpec = inputSpec.axesSpec[0];
+  // Selected dataset's own sampleId keys (axis 0), from the dataset spec's axisKeys annotation.
+  let datasetSampleIds: Set<string> | undefined;
+  const axisKeys0 = inputSpec.annotations?.["pl7.app/axisKeys/0"];
+  if (axisKeys0 !== undefined) {
+    try {
+      datasetSampleIds = new Set((JSON.parse(axisKeys0) as unknown[]).map(String));
+    } catch {
+      datasetSampleIds = undefined; // malformed → don't scope (fall back to the full map below)
+    }
+  }
   const obj = ctx.resultPool.getData().entries.find((f) => {
     const spec = f.obj.spec;
     if (!isPColumnSpec(spec)) return false;
@@ -85,12 +95,18 @@ function resolveSampleLabels(
     return true;
   });
   if (obj === undefined) return undefined;
-  return Object.fromEntries(
+  const full = Object.fromEntries(
     Object.entries(obj.obj.data.getDataAsJson<{ data: Record<string, string> }>().data).map((e) => [
       JSON.parse(e[0])[0],
       e[1],
     ]),
   ) as Record<string, string>;
+  // Restrict to the selected dataset's samples (fall back to the full map if the annotation was missing).
+  return datasetSampleIds
+    ? Object.fromEntries(
+        Object.entries(full).filter(([sampleId]) => datasetSampleIds.has(sampleId)),
+      )
+    : full;
 }
 
 // Per-sample QC rows from qcJson (workflow saveFileContent -> inline JSON content, read synchronously),
