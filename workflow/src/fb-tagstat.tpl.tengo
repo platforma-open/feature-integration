@@ -24,6 +24,13 @@ mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitoo
 self.body(func(inputs) {
 	refinedMic := inputs.refinedMic
 	tags := inputs.tags // { cell, umi, feature } tag names (from the model; see pattern.ts)
+	mitoolCPUs := inputs.mitoolCPUs
+
+	// tag-stat's distinct-UMI sort parallelizes to ~5 cores (benchmarked); beyond that no gain, so cap
+	// there and never exceed the granted CPUs. Ties to the same perProcessCPUs knob as parse/refine
+	// (default 4).
+	TAGSTAT_CPU_CAP := 5
+	tagStatCPU := mitoolCPUs < TAGSTAT_CPU_CAP ? mitoolCPUs : TAGSTAT_CPU_CAP
 
 	// The distinct-UMI on-disk sort scales with input volume, so size RAM from the refined.mic blob
 	// (molecules) on a floor instead of a fixed request (same mixcr-style size formula as parse/refine).
@@ -40,7 +47,7 @@ self.body(func(inputs) {
 		saveStdoutStream().
 		env("MI_PROGRESS_PREFIX", progressPrefix).
 		software(mitoolSw).
-		resources({ onCPU: { cpu: 2, ram: memFormula } }).
+		resources({ onCPU: { cpu: tagStatCPU, ram: memFormula } }).
 		arg("tag-stat").
 		arg("--use-local-temp").
 		arg("-t").arg(tags.cell).

@@ -55,7 +55,8 @@ self.body(func(inputs) {
 
 	tagStatRun := render.create(fbTagstatTpl, {
 		refinedMic: refineRun.output("refinedMic"),
-		tags: tags
+		tags: tags,
+		mitoolCPUs: inputs.mitoolCPUs
 	})
 
 	stepLogs := pcolumn.resourceMapBuilder(1)
