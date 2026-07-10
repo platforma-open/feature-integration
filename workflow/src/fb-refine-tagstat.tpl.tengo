@@ -8,18 +8,21 @@
 //                     empty refine report the gate already synthesized. The downstream Python is
 //                     empty-safe (a header-only tag-stat yields empty results), so the sample completes
 //                     with zero cells instead of failing the whole block.
-// Pure routing: no exec of its own (the gate produced the fallbacks), so both branches just wire files.
+// It also assembles the per-sample step-log map (parse / refine / tag-stat stdout streams) keyed by an
+// ordinal step axis, so the model can show live per-step progress. A no-match sample only ran parse, so
+// its map carries just the parse step.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 render := import("@platforma-sdk/workflow-tengo:render")
+pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
 
 json := import("json")
 
 fbRefineTpl := assets.importTemplate(":fb-refine")
 fbTagstatTpl := assets.importTemplate(":fb-tagstat")
 
-self.defineOutputs("tagstatTsv", "refineReport")
+self.defineOutputs("tagstatTsv", "refineReport", "stepLogs")
 
 self.body(func(inputs) {
 	shouldContinue := json.decode(string(inputs.decision.getData())).shouldContinue
@@ -27,14 +30,18 @@ self.body(func(inputs) {
 	tags := inputs.tags
 
 	if !shouldContinue {
-		// No-match branch: use the gate's header-only tag-stat + empty refine report.
+		// No-match branch: use the gate's header-only tag-stat + empty refine report. Only the parse step
+		// ran, so the step-log map carries just that stream.
+		stepLogs := pcolumn.resourceMapBuilder(1)
+		stepLogs.add(["1-parse"], inputs.parseLogStream)
 		return {
 			tagstatTsv: inputs.emptyTagstat,
-			refineReport: inputs.emptyRefineReport
+			refineReport: inputs.emptyRefineReport,
+			stepLogs: stepLogs.build()
 		}
 	}
 
-	// Normal branch: refine-tags -> tag-stat, each in its own render boundary (unchanged).
+	// Normal branch: refine-tags -> tag-stat, each in its own render boundary.
 	refineRun := render.create(fbRefineTpl, {
 		parsedMic: inputs.parsedMic,
 		tags: tags,
@@ -51,8 +58,14 @@ self.body(func(inputs) {
 		tags: tags
 	})
 
+	stepLogs := pcolumn.resourceMapBuilder(1)
+	stepLogs.add(["1-parse"], inputs.parseLogStream)
+	stepLogs.add(["2-refine"], refineRun.output("refineLogStream"))
+	stepLogs.add(["3-tagstat"], tagStatRun.output("tagstatLogStream"))
+
 	return {
 		tagstatTsv: tagStatRun.output("tagstatTsv"),
-		refineReport: refineRun.output("refineReport")
+		refineReport: refineRun.output("refineReport"),
+		stepLogs: stepLogs.build()
 	}
 })

@@ -3,16 +3,9 @@ import type { Color } from "@platforma-sdk/ui-vue";
 import { Gradient } from "@platforma-sdk/ui-vue";
 import { computed } from "vue";
 import { useApp } from "./app";
+import { buildProgressMap, deriveProgress, type ProgressCell } from "./progress";
 
-// Progress-cell config per sample. Maps onto the Progress column cell: status → stage, percent → bar
-// fill (undefined = indeterminate), text → main label. Shape matches the SDK's ColDefProgress, so the
-// column's `progress` callback passes it through unchanged.
-export type ProgressCell = {
-  status: "not_started" | "running" | "done";
-  percent?: number;
-  text: string;
-  suffix?: string;
-};
+export type { ProgressCell } from "./progress";
 
 export type SampleResult = {
   sampleId: string;
@@ -106,22 +99,22 @@ function recoveryBar(qc: QcRow): RecoveryBar | undefined {
 
 export const sampleResults = computed<SampleResult[] | undefined>(() => {
   const app = useApp();
-  // The grid appears once the run has started. Live per-step progress bars were removed together with
-  // the mitool stdout streams (to fix the CIDConflictError — see model/src/index.ts), so the roster now
-  // comes from the input dataset's sample labels and each row shows "Processing…" until its QC settles
-  // (completedSamples) and it flips to "Done".
   if (!app.model.outputs.started) return undefined;
 
   const labels = app.model.outputs.sampleLabels ?? {};
   const completed = new Set(app.model.outputs.completedSamples ?? []);
   const qcBySample = app.model.outputs.sampleQc ?? {};
+  const progress = app.model.outputs.progress;
+  const parseProgress = app.model.outputs.parseProgress;
 
-  // Roster: every sample in the input dataset (labels), unioned with any completed / QC'd sample as a
-  // fallback in case the upstream label column isn't resolvable yet.
+  const progressMap = buildProgressMap(progress, parseProgress);
+
+  // Roster: dataset labels ∪ completed ∪ QC'd ∪ any sample with a progress entry.
   const sampleIds = new Set<string>([
     ...Object.keys(labels),
     ...completed,
     ...Object.keys(qcBySample),
+    ...progressMap.keys(),
   ]);
   // Roster not enumerated yet → keep the grid's loading overlay rather than flashing an empty table.
   if (sampleIds.size === 0) return undefined;
@@ -129,17 +122,11 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
   return [...sampleIds]
     .map((sampleId): SampleResult => {
       const label = labels[sampleId] ?? sampleId;
-      // Per-sample QC settles when the sample finishes, so Quality + Read recovery fill in at completion
-      // (blank while running). Same source as completedSamples.
+      // Per-sample QC settles when the sample finishes, so Quality + Read recovery fill in at completion.
       const qc = qcBySample[sampleId];
       const qcFields = qc ? { quality: qualityStatus(qc), recovery: recoveryBar(qc) } : {};
-      // suffix:"" suppresses the SDK's default right-hand "0%" for running cells (createAgGridColDef
-      // falls back to `${percent ?? 0}%` when suffix is nullish). With the live per-step stream gone
-      // there is no real percentage to show — the indeterminate bar already conveys "in progress".
-      const progress: ProgressCell = completed.has(sampleId)
-        ? { status: "done", percent: 100, text: "Done" }
-        : { status: "running", text: "Processing…", suffix: "" };
-      return { sampleId, label, progress, ...qcFields };
+      const progressCell = deriveProgress(sampleId, completed, progressMap);
+      return { sampleId, label, progress: progressCell, ...qcFields };
     })
     .sort((a, b) => a.label.localeCompare(b.label));
 });

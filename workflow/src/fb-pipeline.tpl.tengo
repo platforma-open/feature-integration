@@ -33,7 +33,7 @@ fbParseTpl := assets.importTemplate(":fb-parse")
 fbRefineTagstatTpl := assets.importTemplate(":fb-refine-tagstat")
 fbDownstreamTpl := assets.importTemplate(":fb-downstream")
 
-self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "qc", "qcJson")
+self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "qc", "qcJson", "parseLogStream", "stepLogs")
 
 self.body(func(inputs) {
 	inputData := inputs[pConstants.VALUE_FIELD_NAME]
@@ -164,6 +164,7 @@ self.body(func(inputs) {
 	refineTagstatRun := render.create(fbRefineTagstatTpl, {
 		decision: gate.getFileContent("decision.json"),
 		parsedMic: parsedMic,
+		parseLogStream: parseRun.output("parseLogStream"),
 		emptyTagstat: gate.getFile("tagstat_empty.tsv"),
 		emptyRefineReport: gate.getFile("refine_report_empty.json"),
 		tags: tags,
@@ -176,6 +177,7 @@ self.body(func(inputs) {
 	})
 	tagstatTsv := refineTagstatRun.output("tagstatTsv")
 	refineReport := refineTagstatRun.output("refineReport")
+	stepLogs := refineTagstatRun.output("stepLogs")
 
 	// Step 4: QC report + per-cell metrics (fb-downstream boundary). These consume the drifting mitool
 	// files (tagstat.tsv + parse/refine reports), so they run inside a render boundary and their per-sample
@@ -200,6 +202,10 @@ self.body(func(inputs) {
 		specificity: downstreamRun.output("specificity"),
 		perCellSummary: downstreamRun.output("perCellSummary"),
 		qc: downstreamRun.output("qc"),
-		qcJson: downstreamRun.output("qcJson")
+		qcJson: downstreamRun.output("qcJson"),
+		// Per-sample mitool parse stdout stream (live parse progress + early sample roster).
+		parseLogStream: parseRun.output("parseLogStream"),
+		// Per-sample step-log map (parse / refine / tag-stat stdout streams) for live per-step progress.
+		stepLogs: stepLogs
 	}
 })

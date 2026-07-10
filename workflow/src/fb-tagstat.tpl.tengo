@@ -13,7 +13,11 @@ self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 
-self.defineOutputs("tagstatTsv")
+// mitool emits progress on stderr with this prefix; printErrStreamToStdout() folds it into the captured
+// stdout stream so the model can parse live progress lines from it.
+progressPrefix := "[==PROGRESS==]"
+
+self.defineOutputs("tagstatTsv", "tagstatLogStream")
 
 mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
 
@@ -32,6 +36,9 @@ self.body(func(inputs) {
 		staticFallback(formula.gib(tagStatBaseGB))
 
 	tagStat := exec.builder().
+		printErrStreamToStdout().
+		saveStdoutStream().
+		env("MI_PROGRESS_PREFIX", progressPrefix).
 		software(mitoolSw).
 		resources({ onCPU: { cpu: 2, ram: memFormula } }).
 		arg("tag-stat").
@@ -44,6 +51,7 @@ self.body(func(inputs) {
 		run()
 
 	return {
-		tagstatTsv: tagStat.getFile("tagstat.tsv")
+		tagstatTsv: tagStat.getFile("tagstat.tsv"),
+		tagstatLogStream: tagStat.getStdoutStream()
 	}
 })

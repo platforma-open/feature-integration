@@ -100,6 +100,31 @@ wf.body(func(args) {
 		},
 		name: "qcJson"
 	})
+	// Per-sample mitool parse stdout stream, keyed [sampleId]. Drives the model's live parse progress and
+	// the early sample roster (available before any sample finishes).
+	outputs = append(outputs, {
+		type: "Resource",
+		spec: {
+			kind: "PColumn",
+			name: "pl7.app/log",
+			domain: { "pl7.app/blockId": blockId, "pl7.app/feature/step": "1-parse" },
+			valueType: "Log"
+		},
+		name: "parseLogStream"
+	})
+	// Per-sample step-log map: one mitool stdout stream per pipeline step (parse / refine / tag-stat),
+	// keyed [sampleId, step]. Drives the model's live per-step progress.
+	outputs = append(outputs, {
+		type: "ResourceMap",
+		spec: {
+			kind: "PColumn",
+			name: "pl7.app/log",
+			domain: { "pl7.app/blockId": blockId },
+			valueType: "Log",
+			axesSpec: [{ name: "pl7.app/feature/step", type: "String" }]
+		},
+		name: "stepLogs"
+	})
 
 	// mitool resource meta (mixcr semantics): pass the base memory floor always; add the override key
 	// only when the user set one (Advanced Settings) so fb-pipeline treats it as a hard fixed request.
@@ -185,6 +210,10 @@ wf.body(func(args) {
 			// Per-sample QC metrics as JSON (fb-pipeline qcJson) -> model builds the live "Analysis logs"
 			// (completed-sample heartbeat + run-level summary) from it.
 			qcJson: perSampleResults.outputData("qcJson"),
+			// Per-sample parse stdout stream -> model live parse progress + early sample roster.
+			parseLogStream: perSampleResults.outputData("parseLogStream"),
+			// Per-sample x per-step stdout-stream map -> model live per-step progress.
+			stepLogs: perSampleResults.outputData("stepLogs"),
 			// Expose the tag->feature CSV import HANDLE so the model can watch it via getImportProgress()
 			// (model/src/index.ts). That model output is the actual upload driver: it registers the import
 			// with the middle-layer so the CSV bytes are pushed. Without it the CSV blob never materialises

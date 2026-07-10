@@ -19,6 +19,13 @@ export type { BlockArgs, BlockData } from "./types";
 
 const DOMINANCE_FLOOR = 0.5; // threshold is user-adjustable down to 0.5, never lower
 
+// mitool prints progress to stdout prefixed with this marker (set as MI_PROGRESS_PREFIX in the workflow).
+// The model reads the latest such line per step to drive the live per-step progress grid.
+export const ProgressPrefix = "[==PROGRESS==]";
+// Splits a mitool progress line into stage / percent / ETA (all optional after the stage).
+export const ProgressPattern =
+  /(?<stage>[^:]*):(?: *(?<progress>[0-9.]+)%)?(?: *ETA: *(?<eta>.+))?/;
+
 // Per-sample QC metrics as emitted by qc_report.py (result_qc.json), read by the analysisLog output
 // and (per sample) by the Main grid's Quality + Read recovery columns (derived in ui/src/results.ts).
 export type QcRow = {
@@ -374,10 +381,32 @@ export const platforma = BlockModelV3.create(dataModel)
   // True once the main workflow has begun producing outputs (ctx.outputs settles) — lets the Main page
   // swap the static "run the block" hint for the live per-sample progress grid.
   .output("started", (ctx) => ctx.outputs !== undefined)
-  // NOTE: the live per-step progress outputs (sampleProgress / stepProgress) were removed together with
-  // the mitool stdout streams (saveStdoutStream) that fed them — the stream drifted the exec's files map
-  // and caused the CIDConflictError. The Main grid now derives per-sample Processing/Done from
-  // completedSamples + the sampleLabels roster (ui/src/results.ts).
+  // Live log handles per [sampleId, step] — the mitool stdout stream for each pipeline step.
+  .output("stepLogs", (ctx) =>
+    ctx.outputs !== undefined
+      ? parseResourceMap(ctx.outputs.resolve("stepLogs"), (acc) => acc.getLogHandle(), false)
+      : undefined,
+  )
+  // Live per-step progress: the latest mitool progress line per [sampleId, step].
+  .output("progress", (ctx) =>
+    ctx.outputs !== undefined
+      ? parseResourceMap(
+          ctx.outputs.resolve("stepLogs"),
+          (acc) => acc.getProgressLogWithInfo(ProgressPrefix),
+          false,
+        )
+      : undefined,
+  )
+  // Live parse progress from the flat parse stream — fires before any sample finishes (early roster).
+  .output("parseProgress", (ctx) =>
+    ctx.outputs !== undefined
+      ? parseResourceMap(
+          ctx.outputs.resolve("parseLogStream"),
+          (acc) => acc.getProgressLogWithInfo(ProgressPrefix),
+          false,
+        )
+      : undefined,
+  )
   // sampleIds whose per-sample pipeline has finished. qcJson is the LAST per-sample step and is inline
   // JSON content, so getDataAsJsonOrUndefined reads it synchronously — the done-set drives the grid's
   // "Done" state (a sample not in this set is still Processing).
