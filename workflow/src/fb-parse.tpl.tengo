@@ -40,7 +40,9 @@ self.body(func(inputs) {
 		between(formula.gib(memBaseGB), formula.gib(128)).
 		staticFallback(formula.gib(memBaseGB))
 
-	parse := exec.builder().software(mitoolSw)
+	parse := exec.builder().
+		writeFile("parsed.mic", bytes(0), { writable: true }).
+		software(mitoolSw)
 	if memOverrideGB > 0 {
 		parse = parse.cpu(mitoolCPUs).mem(string(memOverrideGB) + "GiB")
 	} else {
