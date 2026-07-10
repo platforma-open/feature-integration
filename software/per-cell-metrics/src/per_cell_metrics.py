@@ -200,10 +200,7 @@ def _load(
     # join below out once per copy, and the group_by(...).sum() that follows would then multiply that
     # barcode's molecule counts silently DOUBLING counts.
     dup_barcodes = (
-        mapping.group_by(csv_barcode_col)
-        .agg(pl.len().alias("_n"))
-        .filter(pl.col("_n") > 1)[csv_barcode_col]
-        .to_list()
+        mapping.group_by(csv_barcode_col).agg(pl.len().alias("_n")).filter(pl.col("_n") > 1)[csv_barcode_col].to_list()
     )
     if dup_barcodes:
         raise SystemExit(
