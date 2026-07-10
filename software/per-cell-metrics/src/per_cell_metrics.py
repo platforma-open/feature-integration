@@ -183,6 +183,11 @@ def _load(
     # file the column is already integer and this cast is a no-op.
     stat = stat.with_columns(pl.col(umi_count_col).cast(pl.Int64))
     mapping = pl.read_csv(tag_feature_csv)  # columns: csv_barcode_col (feature barcode), csv_feature_col
+    # Normalize the join key + feature name like mitool.
+    mapping = mapping.with_columns(
+        pl.col(csv_barcode_col).cast(pl.Utf8).str.strip_chars(),
+        pl.col(csv_feature_col).cast(pl.Utf8).str.strip_chars(),
+    )
     print(
         f"[per-cell-metrics] tag-stat: {stat.height} rows, columns={stat.columns}",
         file=sys.stderr,
@@ -191,6 +196,21 @@ def _load(
         f"[per-cell-metrics] tag->feature CSV: {mapping.height} rows, columns={mapping.columns}",
         file=sys.stderr,
     )
+    # A barcode must appear on exactly one CSV row. A barcode repeated across rows would fan the inner
+    # join below out once per copy, and the group_by(...).sum() that follows would then multiply that
+    # barcode's molecule counts silently DOUBLING counts.
+    dup_barcodes = (
+        mapping.group_by(csv_barcode_col)
+        .agg(pl.len().alias("_n"))
+        .filter(pl.col("_n") > 1)[csv_barcode_col]
+        .to_list()
+    )
+    if dup_barcodes:
+        raise SystemExit(
+            f"tag->feature CSV has {len(dup_barcodes)} barcode(s) on more than one row "
+            f"(column {csv_barcode_col!r}); each feature barcode must map to exactly one feature. "
+            f"Remove the duplicate rows: {dup_barcodes[:8]}"
+        )
     joined = stat.join(mapping, left_on=feature_tag_col, right_on=csv_barcode_col, how="inner")
     print(
         f"[per-cell-metrics] inner-join {feature_tag_col}={csv_barcode_col} -> {joined.height} rows",

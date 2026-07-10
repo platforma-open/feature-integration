@@ -98,8 +98,12 @@ function clearSampleAwareOnInputChange() {
   app.model.data.sampleColumnValues = undefined;
 }
 
-// CSV swap invalidates both the negative control and the sample-aware selection (columns/values change).
+// CSV swap invalidates every CSV-derived selection: the barcode / feature-name columns (the new file's
+// headers differ), the negative control, and the sample-aware selection (columns/values change). Clear
+// them all so the user re-picks against the new CSV.
 function clearOnCsvChange() {
+  app.model.data.barcodeSeqColumn = undefined;
+  app.model.data.featureNameColumn = undefined;
   clearControlOnInputChange();
   clearSampleAwareOnInputChange();
 }

@@ -29,8 +29,10 @@ self.body(func(inputs) {
 	memBaseGB := inputs.mitoolBaseMemGB
 	memOverrideGB := inputs.mitoolMemOverrideGB // 0 = formula-sized; >0 = hard fixed request
 
-	// Build the feature-barcode panel (panel.txt) from the user's tag->feature CSV. Sample-independent,
-	// so this exec dedups across samples by CID (same tags.csv input) even though it runs per sample.
+	// Build the feature-barcode panel (panel.txt) from the tag->feature CSV. With no sample column the
+	// CSV is identical across samples, so this exec dedups across samples by CID (same tags.csv input);
+	// in sample-aware mode tagsCsv is already the per-sample filtered file (fb-pipeline), so the panel is
+	// correctly per-sample and must NOT be shared — do not "optimize" this into one panel for all samples.
 	panel := exec.builder().
 		software(emitPanelSw).
 		cpu(1).

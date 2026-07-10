@@ -10,6 +10,7 @@ when no refine report is available. Stdlib + polars only.
 import argparse
 import csv
 import json
+import sys
 
 import polars as pl
 
@@ -33,15 +34,16 @@ def _parse_report(path: str) -> tuple[int, int]:
     return int(pr.get("total", 0)), int(pr.get("matched", 0))
 
 
-def _refine_assigned_fraction(path: str | None) -> float | None:
+def _refine_assigned_fraction(path: str | None, feature_tag: str = "FEATURE") -> float | None:
     """Panel-assigned fraction from the refine-tags JSON report.
 
-    The FEATURE refine step corrects each feature barcode against the panel whitelist and drops reads
+    The feature refine step corrects each feature barcode against the panel whitelist and drops reads
     whose barcode is not within correction distance of any panel entry. The panel-assigned fraction is
     that step's ``outputCount / inputCount`` — the fraction of reads entering feature correction that
-    were kept (assigned to a panel feature).
+    were kept (assigned to a panel feature). ``feature_tag`` is the mitool tag name to match against the
+    report's per-step ``tagName``.
 
-    Returns None (blank in the CSV) when the report is absent/unreadable, carries no FEATURE step, or
+    Returns None (blank in the CSV) when the report is absent/unreadable, carries no matching step, or
     that step has zero input reads, so QC never crashes on a missing or edge-case report.
     """
     if not path:
@@ -51,12 +53,21 @@ def _refine_assigned_fraction(path: str | None) -> float | None:
             rep = json.load(fh)
     except (FileNotFoundError, json.JSONDecodeError):
         return None
-    for step in rep.get("steps", []):
-        if step.get("tagName") == "FEATURE":
+    steps = rep.get("steps", [])
+    for step in steps:
+        if step.get("tagName") == feature_tag:
             input_count = step.get("inputCount", 0)
             if not input_count:
                 return None
             return step.get("outputCount", 0) / input_count
+    # A report with steps but none matching the feature tag means the report schema or tag naming
+    # drifted from what we expect — surface it rather than silently blanking the metric for every sample.
+    if steps:
+        print(
+            f"[qc-report] refine report has no {feature_tag!r} step "
+            f"(saw tags {[s.get('tagName') for s in steps]}); panel-assigned fraction left blank",
+            file=sys.stderr,
+        )
     return None
 
 
@@ -85,7 +96,7 @@ def main() -> None:
     total_umis = int(stat[args.umi_col].sum())
     per_cell = stat.group_by(args.cell_col).agg(pl.col(args.umi_col).sum().alias("u"))
     median_umis = float(per_cell["u"].median()) if per_cell.height else 0.0
-    assigned = _refine_assigned_fraction(args.refine_report)
+    assigned = _refine_assigned_fraction(args.refine_report, args.feature_col)
 
     row = {
         "sampleId": args.sample_id,
