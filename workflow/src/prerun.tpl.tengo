@@ -7,8 +7,8 @@
 //      never picks up an upload requested only from inside that nested body — so without driving it
 //      here the per-sample mitool exec stalls forever waiting on a blob whose bytes are never pushed.
 //   2. Emit the CSV's metadata (emit-csv-meta entrypoint) in ONE exec, keyed off the CSV alone: the
-//      column headers (-> the barcode-sequence / feature-name column dropdowns, D4) AND the distinct
-//      values of every column (-> the negative-control dropdown, spec A-0014, indexed by the chosen
+//      column headers (-> the barcode-sequence / feature-name column dropdowns) AND the distinct
+//      values of every column (-> the negative-control dropdown, indexed by the chosen
 //      feature column). One upload-triggered exec populates both dropdowns; picking the feature column
 //      is then a pure model recompute over the already-emitted values, with no second exec or rerun.
 
@@ -26,7 +26,7 @@ wf.body(func(args) {
 
 	csvImport := file.importFile(args.tagFeatureCsvHandle)
 
-	// CSV metadata (headers + per-column distinct values) -> the D4 column dropdowns and the
+	// CSV metadata (headers + per-column distinct values) -> the CSV column dropdowns and the
 	// negative-control dropdown. Depends only on the CSV, so it runs the moment the upload lands.
 	meta := exec.builder().
 		software(csvMetaSw).
@@ -42,7 +42,7 @@ wf.body(func(args) {
 		// Import handle exposed so the model can drive the CSV upload during STAGING (via a ctx.prerun
 		// getImportProgress driver, mirroring samples-and-data). The exportFile demand above does NOT
 		// push the bytes on its own; without a staging-side driver the upload only fires from the main
-		// render, which is unreachable until args() passes — and args() needs the D4 dropdowns this
+		// render, which is unreachable until args() passes — and args() needs the CSV dropdowns this
 		// prerun populates from the uploaded CSV. That circular dependency is the deadlock this fixes.
 		tagFeatureCsvImportHandle: csvImport.handle
 	}

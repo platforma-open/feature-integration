@@ -11,8 +11,7 @@ const app = useApp();
 
 // The collapsed per-cell results table (one row per [sampleId, cellId]): consensus feature + per-cell
 // aggregates (Max UMI / fraction / specificity) + the "Feature breakdown" string. This was the block's
-// original Main page; Main is now the progress grid, so the table lives on its own tab (operator
-// feedback 2026-07-03). The perCellTable model output has stayed in place throughout.
+// original Main page; Main is now the progress grid, so the table lives on its own tab. The perCellTable model output has stayed in place throughout.
 const tableSettings = usePlDataTableSettingsV2({
   model: () => app.model.outputs.perCellTable,
 });

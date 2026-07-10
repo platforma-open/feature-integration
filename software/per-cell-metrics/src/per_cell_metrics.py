@@ -1,8 +1,8 @@
 """Per-cell feature metrics for the Feature Integration block.
 
 Collapses mitool tag-stat output into a (cell x feature) UMI matrix, then computes within-cell
-fractions, the consensus feature (dominant-category rule, spec A-0012), and an optional Cell Ranger
-specificity score (spec A-0014).
+fractions, the consensus feature (dominant-category rule), and an optional Cell Ranger
+specificity score.
 
 The math functions are pure and unit-tested; the CLI wires them to CSV I/O. Every output is sorted
 before writing: stable row order makes the CLI deterministic and keeps the workflow's pure-template
@@ -16,7 +16,7 @@ import sys
 import polars as pl
 from scipy.stats import beta
 
-DOMINANCE_FLOOR = 0.5  # spec A-0012: threshold is user-adjustable down to 0.5, never lower
+DOMINANCE_FLOOR = 0.5  # threshold is user-adjustable down to 0.5, never lower
 
 # Schema for the no-control specificity output only. When no negative control is set we still emit a
 # header-only specificity CSV (the workflow's output set is fixed), and that frame has no source rows,
@@ -32,14 +32,14 @@ _SPECIFICITY_SCHEMA = {
 
 
 def consensus_category(counts: dict[str, float], threshold: float, control: str | None = None) -> str | None:
-    """Dominant-category rule (spec A-0012).
+    """Dominant-category rule.
 
     Returns the single dominant category when it is the unique maximum AND its share of the total is
     >= threshold; "ambiguous" when signal exists but no unique category passes (a spread distribution,
     or an exact split at the 0.5 floor); None when there is no signal at all. ``threshold`` is clamped
     up to the 0.5 floor.
 
-    The negative ``control`` (spec A-0014) is a reference, not a callable antigen: it is excluded from
+    The negative ``control`` is a reference, not a callable antigen: it is excluded from
     the winner candidates, so a control-dominated cell is "ambiguous", never the control. Its UMIs are
     still counted in ``total`` (the denominator), so control signal SUPPRESSES antigen dominance rather
     than being renormalised away — a cell swamped by control correctly fails the threshold instead of
@@ -61,7 +61,7 @@ def consensus_category(counts: dict[str, float], threshold: float, control: str 
 
 
 def specificity_score(antigen_umi, control_umi):
-    """Cell Ranger BEAM specificity score (spec A-0014), constants are Cell Ranger's:
+    """Cell Ranger BEAM specificity score, constants are Cell Ranger's:
     (1 - betaCDF(0.925, antigenUMI + 1, controlUMI + 3)) * 100.
 
     Accepts scalars or numpy arrays. scipy's beta.cdf is vectorized, so the CLI passes whole columns
@@ -88,7 +88,7 @@ def with_specificity(frame: pl.DataFrame, control: str) -> pl.DataFrame:
 
     The control itself is the reference, not a scored antigen: its own row's score is nulled, so the
     control never appears as a scored feature in the exported specificity CSV (main() drops null scores)
-    and never drives the per-cell maxSpecificityScore (a max skips nulls). spec A-0014."""
+    and never drives the per-cell maxSpecificityScore (a max skips nulls)."""
     ctrl = frame.filter(pl.col("feature") == control).select(["cellId", pl.col("umiCount").alias("_controlUmi")])
     joined = frame.join(ctrl, on="cellId", how="left").with_columns(pl.col("_controlUmi").fill_null(0))
     scores = specificity_score(joined["umiCount"].to_numpy(), joined["_controlUmi"].to_numpy())
@@ -113,7 +113,7 @@ def per_cell_summary(per_cell: pl.DataFrame) -> pl.DataFrame:
     nonzero feature that rounds below 1%.
 
     This is a TABLE-ONLY collapse of the (cell x feature) matrix -- the per-feature abundance,
-    fractions, consensus, and specificity outputs (the A-0010 export contract) are unaffected.
+    fractions, consensus, and specificity outputs (the per-cell export contract) are unaffected.
     ``per_cell`` is the (sampleId, cellId, feature, umiCount) long frame ALREADY carrying the
     ``fraction`` column (and ``specificityScore`` when a negative control is set) that main() computed
     once for the exported CSVs -- so the per-cell maxima can never diverge from the exported columns,
@@ -171,8 +171,8 @@ def _load(
     columns ``CELL FEATURE count totalWeight unique_UMI``. ``unique_UMI`` is the distinct-UMI
     (molecule) count for the group -- mitool does the deduplication, so we take that column directly
     rather than counting raw UMI rows ourselves. The tag->feature CSV maps the feature barcode to its
-    feature/antigen name (spec A-0004, A-0009); ``csv_barcode_col``/``csv_feature_col`` let the user
-    map arbitrary CSV header names to that barcode/feature role (D4). We sum the distinct-UMI counts
+    feature/antigen name; ``csv_barcode_col``/``csv_feature_col`` let the user
+    map arbitrary CSV header names to that barcode/feature role. We sum the distinct-UMI counts
     across barcodes that map to the same feature. The output column is always named ``feature``
     regardless of the source CSV's header, since downstream Xsv import depends on that name.
     """
@@ -231,19 +231,19 @@ def main() -> None:
     p.add_argument(
         "--csv-barcode-col",
         default="tag",
-        help="CSV column holding the feature barcode (join key; spec A-0004)",
+        help="CSV column holding the feature barcode (join key)",
     )
     p.add_argument(
         "--csv-feature-col",
         default="feature",
-        help="CSV column holding the feature/antigen name (spec A-0004, A-0009)",
+        help="CSV column holding the feature/antigen name",
     )
     p.add_argument("--dominance-threshold", type=float, default=0.6)
-    p.add_argument("--control", default=None, help="negative-control feature name (spec A-0014)")
+    p.add_argument("--control", default=None, help="negative-control feature name")
     p.add_argument("--output-prefix", default="result")
     args = p.parse_args()
 
-    # Guard the user-mapped CSV column names (D4): the two roles must be distinct, and neither may
+    # Guard the user-mapped CSV column names: the two roles must be distinct, and neither may
     # collide with a tag-stat column. On the inner join, every tag-stat column is carried into the
     # joined frame -- so a --csv-feature-col that names ANY tag-stat column (e.g. `count`,
     # `totalWeight`, `unique_UMI`, or the CELL/FEATURE keys) would otherwise pass through the
@@ -282,20 +282,20 @@ def main() -> None:
         .write_csv(f"{args.output_prefix}_abundance.csv")
     )
 
-    # within-cell fractions (normalised across features per cell, sum to 1) -- spec A-0010. Computed
+    # within-cell fractions (normalised across features per cell, sum to 1). Computed
     # once here (with_fraction) and reused for the per-cell summary so the two never diverge.
     cf = with_fraction(counts)
     cf.select(["sampleId", "cellId", "feature", "fraction"]).sort(["sampleId", "cellId", "feature"]).write_csv(
         f"{args.output_prefix}_fractions.csv"
     )
 
-    # consensus feature per cell (dominant-category rule, spec A-0012), vectorized in polars: the
+    # consensus feature per cell (dominant-category rule), vectorized in polars: the
     # dominant feature is the unique per-cell max whose share of the cell's total is >= the threshold
     # (clamped to the 0.5 floor); otherwise "ambiguous". No-signal cells never occur here (tag-stat
     # counts are all > 0), so None is never produced. Mirrors consensus_category, which the tests pin
     # (and an oracle test cross-checks this vectorized path against it).
     threshold = max(args.dominance_threshold, DOMINANCE_FLOOR)
-    # The negative control is a reference, not a callable antigen (spec A-0014): exclude it from the
+    # The negative control is a reference, not a callable antigen: exclude it from the
     # winner candidates so a control-dominated cell is "ambiguous", never the control. Its UMIs stay in
     # `_total` (the denominator, computed from the full `counts`), so control signal suppresses dominance
     # rather than being renormalised away. Mirrors consensus_category(control=...), which the oracle test
@@ -325,7 +325,7 @@ def main() -> None:
         .write_csv(f"{args.output_prefix}_consensus.csv")
     )
 
-    # optional specificity score per (cell, feature) vs the negative control (spec A-0014). Computed
+    # optional specificity score per (cell, feature) vs the negative control. Computed
     # once (with_specificity: scipy beta.cdf vectorized over the whole column) and reused for the
     # per-cell summary's max. An empty join carries the schema through natively -> header-only CSV.
     if args.control is not None:

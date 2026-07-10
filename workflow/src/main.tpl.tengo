@@ -1,7 +1,7 @@
 // Feature Integration — main workflow template.
 //
 // FASTQ (feature-barcode) -> per-sample mitool (parse/refine/tag-stat -u) + per-cell-metrics Python
-// (processColumn -> fb-pipeline.tpl.tengo) -> import the per-cell result CSVs as the A-0010 contract
+// (processColumn -> fb-pipeline.tpl.tengo) -> import the per-cell result CSVs as the per-cell contract
 // p-columns keyed [pl7.app/sampleId, pl7.app/sc/cellId, pl7.app/feature/featureId], exported to the
 // result pool (consumed by VDJ Multiomic Integration) and surfaced as a results table.
 //
@@ -83,7 +83,7 @@ wf.body(func(args) {
 		extraInputs.control = control
 	}
 
-	// processColumn outputs: the A-0010 contract value columns + the per-sample QC CSV collected as a
+	// processColumn outputs: the per-cell contract value columns + the per-sample QC CSV collected as a
 	// [sampleId] file map (assembled into a table by qc-summary.tpl, NOT imported here — a per-sample
 	// scalar cannot be xsv-imported inside the shared processColumn) + the per-sample QC-JSON map (read
 	// by the model to build the Analysis logs). Column/axis specs come from column-specs.lib.tengo.
@@ -146,7 +146,7 @@ wf.body(func(args) {
 		}
 	}
 
-	// Exported A-0010 contract frame (goes to the result pool -> VDJ Multiomic Integration). This is the
+	// Exported per-cell contract frame (goes to the result pool -> VDJ Multiomic Integration). This is the
 	// full per-(cell x feature) matrix and is UNCHANGED by the table collapse below — downstream still
 	// consumes abundance/fractions/consensus/specificity at [sampleId, cellId, featureId].
 	fb := pframes.pFrameBuilder()

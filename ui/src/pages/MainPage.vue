@@ -296,7 +296,7 @@ const gridOptions = {
           :max-value="1"
           :step="0.05"
           label="Dominance threshold"
-          helper="Fraction of a cell's signal one feature must reach to be the consensus. Floor 0.5 (spec A-0012)."
+          helper="Fraction of a cell's signal one feature must reach to be the consensus. Floor 0.5."
         />
       </PlAccordionSection>
     </PlSlideModal>

@@ -1,7 +1,7 @@
 """Emit the feature-barcode panel as a plain sequence list for mitool refine-tags
 whitelist correction (``-t FEATURE#file:panel.txt``).
 
-The panel is the user-provided tag->feature CSV's tag column (spec A-0004): the
+The panel is the user-provided tag->feature CSV's tag column: the
 authoritative set of feature barcodes. We write one barcode per line, deduplicated and
 sorted, so the output is deterministic (canonical) and the workflow's pure-template dedup
 stays stable. Only the standard library is used -- no polars -- so this stays a trivial,

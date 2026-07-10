@@ -1,6 +1,6 @@
 """Emit the tag->feature CSV's column headers and the distinct values of each column as one JSON.
 
-A single staging pre-step (D4 + spec A-0014), replacing the former emit-columns + emit-features pair.
+A single staging pre-step, replacing the former emit-columns + emit-features pair.
 The block's barcode-sequence / feature-name column dropdowns read ``columns``; the negative-control
 dropdown reads ``valuesByColumn[<feature column>]`` for whichever column the user maps to the
 feature-name role. Emitting the distinct values of EVERY column up front (the tag->feature CSV is a

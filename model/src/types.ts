@@ -3,11 +3,11 @@ import type { ImportFileHandle, PlDataTableStateV2, PlRef } from "@platforma-sdk
 /** Workflow inputs (projected from BlockData by the args lambda; validated there). */
 export type BlockArgs = {
   fbFastqRef: PlRef; // feature-barcode FASTQ column (from samples-and-data, result pool)
-  tagFeatureCsvHandle: ImportFileHandle; // tag->feature CSV, user-uploaded (spec A-0004, A-0009)
-  barcodeSeqColumn: string; // CSV column holding the feature barcode (whitelist/panel; spec A-0023)
-  featureNameColumn: string; // CSV column holding the feature/antigen name (spec A-0009)
-  controlFeature?: string; // negative-control feature name (spec A-0014); omitted -> no score
-  dominanceThreshold: number; // spec A-0012, default 0.6, floor 0.5
+  tagFeatureCsvHandle: ImportFileHandle; // tag->feature CSV, user-uploaded
+  barcodeSeqColumn: string; // CSV column holding the feature barcode (whitelist/panel)
+  featureNameColumn: string; // CSV column holding the feature/antigen name
+  controlFeature?: string; // negative-control feature name; omitted -> no score
+  dominanceThreshold: number; // default 0.6, floor 0.5
   pattern: string; // Mitool tag pattern
   // mitool tag names baked into `pattern`
   tags: { cell: string; umi: string; feature: string };

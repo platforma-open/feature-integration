@@ -1,7 +1,7 @@
 // Downstream per-sample QC + per-cell metrics sub-template (render.create boundary).
 //
 // The final consumers of the mitool chain: the QC-report exec (parsed/matched + cell/feature/UMI +
-// panel-assigned fraction) and the per-cell-metrics Python (collapse to the A-0010 (cell x feature)
+// panel-assigned fraction) and the per-cell-metrics Python (collapse to the per-cell (cell x feature)
 // outputs). Both consume files produced by saveStdoutStream execs — tagstat.tsv (fb-tagstat) plus the
 // parse/refine JSON reports (fb-parse/fb-refine) — whose resolved CIDs drift run-to-run because a
 // streaming exec's files map carries the ephemeral stdout ref. Running these consumers INSIDE a

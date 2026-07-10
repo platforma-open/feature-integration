@@ -3,7 +3,7 @@
 // One invocation per sample group (the FASTQ column is aggregated over lane + readIndex). Runs the
 // mitool chain — parse -> refine-tags -> tag-stat -u — to produce per-(cell, feature-barcode)
 // distinct-UMI counts, then hands that table plus the user's tag->feature CSV to the per-cell-metrics
-// Python software, which collapses to the (cell x feature) outputs (spec A-0010/A-0012/A-0014).
+// Python software, which collapses to the (cell x feature) outputs.
 //
 // Every exec runs inside a render.create sub-template (fb-parse / fb-refine / fb-tagstat produce the
 // mitool files; fb-downstream runs the QC + per-cell-metrics consumers) so this body returns ONLY render

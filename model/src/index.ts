@@ -17,7 +17,7 @@ export { allPresets, getPreset } from "./presets";
 export type { Preset } from "./presets";
 export type { BlockArgs, BlockData } from "./types";
 
-const DOMINANCE_FLOOR = 0.5; // spec A-0012: threshold is user-adjustable down to 0.5, never lower
+const DOMINANCE_FLOOR = 0.5; // threshold is user-adjustable down to 0.5, never lower
 
 // Per-sample QC metrics as emitted by qc_report.py (result_qc.json), read by the analysisLog output
 // and (per sample) by the Main grid's Quality + Read recovery columns (derived in ui/src/results.ts).
@@ -164,7 +164,7 @@ const dataModel = new DataModelBuilder()
     dominanceThreshold: 0.6,
     // Default preset = the geometry the block shipped with: 10x 5' v2 BEAM (16 / 10 / 15).
     presetId: "tenx-beam",
-    cellWhitelist: "", // de-novo CELL correction by default (spec A-0018 defers the scheme)
+    cellWhitelist: "", // de-novo CELL correction by default
     defaultBlockLabel: "",
     tableState: createPlDataTableStateV2(),
     qcSummaryTableState: createPlDataTableStateV2(),
@@ -291,7 +291,7 @@ export const platforma = BlockModelV3.create(dataModel)
     }
     return parts.length > 0 ? parts.join(" · ") : undefined;
   })
-  // Negative-control dropdown options (spec A-0014): the distinct values of the chosen feature-name
+  // Negative-control dropdown options: the distinct values of the chosen feature-name
   // column, from the prerun's emit-csv-meta valuesByColumn map. No rerun on column change — the map
   // already carries every column's values, so picking the feature column just re-indexes here.
   // Retentive avoids a flicker to [] on rerun; empty until the CSV is uploaded and staging completes.
@@ -301,7 +301,7 @@ export const platforma = BlockModelV3.create(dataModel)
     return names.map((name) => ({ value: name, label: name }));
   })
   // CSV column headers (from the prerun emit-csv-meta step) → the barcode/feature column dropdowns
-  // (D4). Retentive so the dropdowns don't blank on rerun; empty until the CSV is uploaded + parsed.
+  // Retentive so the dropdowns don't blank on rerun; empty until the CSV is uploaded + parsed.
   .retentiveOutput("csvColumnOptions", (ctx): { value: string; label: string }[] =>
     (readCsvMeta(ctx)?.columns ?? []).map((c) => ({ value: c, label: c })),
   )
@@ -355,7 +355,7 @@ export const platforma = BlockModelV3.create(dataModel)
     { isActive: true },
   )
   // Same upload driver, but resolved from the PRERUN (staging) render — this is the one that fires
-  // before Run. The D4 dropdowns (csvColumnOptions / controlOptions) are populated by the prerun
+  // before Run. The CSV-derived dropdowns (csvColumnOptions / controlOptions) are populated by the prerun
   // reading the uploaded CSV, and their values are REQUIRED by args(). The main driver above only
   // fires once args() passes, so on its own it deadlocks: no upload → empty dropdowns → args() throws
   // → no main render → no upload. Driving the upload from staging breaks the cycle (mirrors
@@ -479,19 +479,18 @@ export const platforma = BlockModelV3.create(dataModel)
     lines.push("", "Analysis complete. Full per-sample statistics are on the QC page.");
     return lines;
   })
-  // DECISION (2026-07-02, operator): the Main table is now ONE ROW PER CELL [sampleId, cellId].
-  // Supersedes the 2026-07-01 "single unified matrix table" decision — the per-(cell x feature) rows
+  // The Main table is ONE ROW PER CELL [sampleId, cellId]. The per-(cell x feature) rows
   // moved OUT of this table into the collapsed workflow frame (consensus + the per-cell summary
   // columns: Max Feature UMI count, Max Feature Fraction, Max Specificity score, and a "Feature
   // breakdown" string listing every feature as "feature (fraction%, umi)" sorted by descending fraction). The
   // per-feature matrix is not lost: it is still exported to the result pool (perCellFeatures, the
-  // A-0010 contract) for VDJ Multiomic Integration. This output resolves the workflow's collapsed
+  // per-cell export contract) for VDJ Multiomic Integration. This output resolves the workflow's collapsed
   // perCellTable PFrame; undefined until the workflow emits it (guarded by the UI).
   //
   // Uses createPlDataTableV2 (columns passed directly via getPColumns), NOT V3. This frame is our OWN
   // self-contained, non-batch processColumn output. createPlDataTableV3's discovery cannot render it:
   // the object (scoped-sources) form returns undefined for this frame regardless of anchor/maxHops
-  // config (verified 2026-07-01), and the array-columns form runs discoverLabelColumnVariants over the
+  // config, and the array-columns form runs discoverLabelColumnVariants over the
   // ENTIRE result pool and hangs forever on the upstream Samples&Data FASTQ File-dataset
   // (no_data:<sndBlock>:pf.dataset.*). V2 takes the columns as-is and auto-joins the sampleId label —
   // the pattern blocks/peptide-extraction uses for the same non-batch processColumn + samples-and-data
@@ -531,7 +530,7 @@ export const platforma = BlockModelV3.create(dataModel)
   // Main (the per-sample progress grid) is always shown. The result tabs — Per-sample QC and the
   // per-cell results table — appear only once the block has produced outputs, so a fresh/unrun block
   // shows only Main. ctx.outputs settles when the workflow starts emitting (the same signal as the
-  // `started` output). The Graph and Raw tag-stat views were removed (2026-07-03, operator).
+  // `started` output). The Graph and Raw tag-stat views were removed.
   .sections((ctx) => {
     const hasRun = ctx.outputs !== undefined;
     return [

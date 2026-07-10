@@ -1,7 +1,7 @@
 // mitool tag-pattern (read-geometry) model for the Feature Integration block.
 //
 // Feature-barcode reads have a FIXED single-cell layout across every documented 10x 5' antigen-capture
-// variant (verified against the 10x docs — see docs/text/work/projects/beam-seq):
+// variant (verified against the 10x docs):
 //   Read 1: CELL barcode + UMI          Read 2: [optional leading skip] + FEATURE barcode + remainder
 // so — unlike the general peptide-amplicon builder in blocks/peptide-extraction — there are no anchors,
 // no per-read insert assignment, no reverse-complement mirroring, and no single-end case. The only
