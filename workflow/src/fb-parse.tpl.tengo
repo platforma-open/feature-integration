@@ -1,0 +1,71 @@
+// mitool parse sub-template (render.create boundary).
+//
+// Runs mitool parse and returns its saved files (parsed.mic, parse_report.json) to the caller. Progress
+// capture (saveStdoutStream) is deliberately NOT used: saveStdoutStream writes the rate-dependent stdout
+// as a file INTO the exec's `files` map (exec/index.lib.tengo), so every getFile off this exec resolved
+// to a run-to-run drifting CID and produced a CIDConflictError on the per-sample flatten. Without it the
+// exec's outputs are deterministic and dedup cleanly. Live per-step progress was traded away for
+// correctness; the Main grid now shows per-sample Processing -> Done from qcJson. Mirrors
+// blocks/peptide-extraction parse.tpl.tengo (minus the log stream).
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+exec := import("@platforma-sdk/workflow-tengo:exec")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+
+json := import("json")
+
+self.defineOutputs("parsedMic", "parseReport")
+
+// :memory-from-limits sizes the JVM heap from the granted limits — avoids end-of-parse OOM when many
+// tag writers flush (see demultiplex-fastq).
+mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
+
+self.body(func(inputs) {
+	pattern := inputs.pattern
+	inputArg := inputs.inputArg
+	inputFiles := inputs.inputFiles
+	mitoolCPUs := inputs.mitoolCPUs
+	memBaseGB := inputs.mitoolBaseMemGB
+	// 0 = no user override (Advanced Settings) -> size RAM from the input reads' blob size on a floor;
+	// >0 = a hard fixed request. parse OOMs at end-of-parse as tag writers flush, which scales with input
+	// volume (mixcr-clonotyping / demultiplex-fastq). size("reads") reads only blob metadata.
+	memOverrideGB := inputs.mitoolMemOverrideGB
+
+	// RAM = base + reads*4, capped at 128 GiB; static fallback = base for backends that can't evaluate
+	// resource formulas at run time.
+	formula := exec.formula
+	memFormula := formula.gib(memBaseGB).
+		plus(formula.size("reads").times(4)).
+		between(formula.gib(memBaseGB), formula.gib(128)).
+		staticFallback(formula.gib(memBaseGB))
+
+	parse := exec.builder().software(mitoolSw)
+	if memOverrideGB > 0 {
+		parse = parse.cpu(mitoolCPUs).mem(string(memOverrideGB) + "GiB")
+	} else {
+		parse = parse.resources({ onCPU: { cpu: mitoolCPUs, ram: memFormula } })
+	}
+	parse = parse.
+		arg("parse").
+		arg("--pattern").arg(pattern).
+		arg("--threads").argWithVar("{system.cpu}")
+
+	// inputFiles is a ResourceMap keyed by JSON-encoded [filename] arrays — decode to recover the
+	// mitool-expected filename (e.g. "input_R1.fastq.gz"). Tag "reads" feeds the size formula above.
+	filesMap := inputFiles.inputs()
+	for encKey in maps.getKeys(filesMap) {
+		key := json.decode(encKey)
+		parse = parse.addFile(key[0], filesMap[encKey], { tag: "reads" })
+	}
+
+	parse = parse.
+		arg("--json-report").arg("parse_report.json").saveFile("parse_report.json").
+		arg(inputArg).arg("parsed.mic").saveFile("parsed.mic").
+		run()
+
+	return {
+		parsedMic: parse.getFile("parsed.mic"),
+		parseReport: parse.getFile("parse_report.json")
+	}
+})

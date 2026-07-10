@@ -1,6 +1,7 @@
 {
   "name": "@platforma-open/milaboratories.feature-integration.ui",
   "version": "1.0.0",
+  "private": true,
   "type": "module",
   "scripts": {
     "fmt": "ts-builder format",
@@ -12,6 +13,8 @@
   "dependencies": {
     "@platforma-open/milaboratories.feature-integration.model": "workspace:*",
     "@platforma-sdk/ui-vue": "catalog:",
+    "ag-grid-enterprise": "catalog:",
+    "ag-grid-vue3": "catalog:",
     "vue": "catalog:"
   },
   "devDependencies": {

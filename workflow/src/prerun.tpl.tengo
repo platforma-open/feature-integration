@@ -1,0 +1,51 @@
+// Prerun (staging) template.
+//
+// Jobs, all driven off the user-uploaded tag->feature CSV:
+//   1. Import + export the CSV so the staging phase DEMANDS its blob, which drives the client upload
+//      before production needs it (same as blocks/immune-assay-data prerun.tpl.tengo). The production
+//      workflow consumes the CSV only deep inside the processColumn fan-out, and the upload driver
+//      never picks up an upload requested only from inside that nested body — so without driving it
+//      here the per-sample mitool exec stalls forever waiting on a blob whose bytes are never pushed.
+//   2. Emit the CSV's metadata (emit-csv-meta entrypoint) in ONE exec, keyed off the CSV alone: the
+//      column headers (-> the barcode-sequence / feature-name column dropdowns) AND the distinct
+//      values of every column (-> the negative-control dropdown, indexed by the chosen
+//      feature column). One upload-triggered exec populates both dropdowns; picking the feature column
+//      is then a pure model recompute over the already-emitted values, with no second exec or rerun.
+
+wf := import("@platforma-sdk/workflow-tengo:workflow")
+file := import("@platforma-sdk/workflow-tengo:file")
+exec := import("@platforma-sdk/workflow-tengo:exec")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+
+csvMetaSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:emit-csv-meta")
+
+wf.body(func(args) {
+	if is_undefined(args.tagFeatureCsvHandle) {
+		return { outputs: {}, exports: {} }
+	}
+
+	csvImport := file.importFile(args.tagFeatureCsvHandle)
+
+	// CSV metadata (headers + per-column distinct values) -> the CSV column dropdowns and the
+	// negative-control dropdown. Depends only on the CSV, so it runs the moment the upload lands.
+	meta := exec.builder().
+		software(csvMetaSw).
+		cpu(1).mem("1GiB").
+		addFile("tags.csv", csvImport.file).
+		arg("tags.csv").arg("csv_meta.json").
+		saveFileContent("csv_meta.json").
+		run()
+
+	outputs := {
+		csvFile: file.exportFile(csvImport.file),
+		csvMeta: meta.getFileContent("csv_meta.json"),
+		// Import handle exposed so the model can drive the CSV upload during STAGING (via a ctx.prerun
+		// getImportProgress driver, mirroring samples-and-data). The exportFile demand above does NOT
+		// push the bytes on its own; without a staging-side driver the upload only fires from the main
+		// render, which is unreachable until args() passes — and args() needs the CSV dropdowns this
+		// prerun populates from the uploaded CSV. That circular dependency is the deadlock this fixes.
+		tagFeatureCsvImportHandle: csvImport.handle
+	}
+
+	return { outputs: outputs, exports: {} }
+})

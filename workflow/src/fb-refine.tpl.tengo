@@ -1,0 +1,80 @@
+// refine-tags sub-template (render.create boundary): emit the feature panel, then refine-tags.
+//
+// Returns refined.mic + refine_report.json to the caller. Progress capture (saveStdoutStream) is
+// deliberately NOT used — see fb-parse.tpl.tengo for why (it injects a drifting stdout file into the
+// exec's files map and caused the CIDConflictError). Mirrors blocks/peptide-extraction
+// umi-consensus.tpl.tengo (minus the log stream).
+//
+// refine-tags error-corrects cell, feature, and UMI barcodes. FEATURE snaps to the panel whitelist
+// (#file:panel.txt): within-Hamming-1 reads snap to a panel barcode, off-panel reads are dropped. CELL
+// is de-novo corrected by default; a chemistry whitelist snaps it to a 10x built-in (#builtin:<name>).
+// The panel-emit exec is deterministic (no stream), so its panel.txt is safe to feed refine.addFile.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+exec := import("@platforma-sdk/workflow-tengo:exec")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+
+self.defineOutputs("refinedMic", "refineReport")
+
+mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
+emitPanelSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:emit-panel")
+
+self.body(func(inputs) {
+	parsedMic := inputs.parsedMic
+	tags := inputs.tags // { cell, umi, feature } tag names (from the model; see pattern.ts)
+	tagsCsv := inputs.tagsCsv
+	barcodeSeqColumn := inputs.barcodeSeqColumn
+	cellWhitelist := inputs.cellWhitelist // "" = de-novo CELL correction (default); else a 10x built-in
+	mitoolCPUs := inputs.mitoolCPUs
+	memBaseGB := inputs.mitoolBaseMemGB
+	memOverrideGB := inputs.mitoolMemOverrideGB // 0 = formula-sized; >0 = hard fixed request
+
+	// Build the feature-barcode panel (panel.txt) from the tag->feature CSV. With no sample column the
+	// CSV is identical across samples, so this exec dedups across samples by CID (same tags.csv input);
+	// in sample-aware mode tagsCsv is already the per-sample filtered file (fb-pipeline), so the panel is
+	// correctly per-sample and must NOT be shared — do not "optimize" this into one panel for all samples.
+	panel := exec.builder().
+		software(emitPanelSw).
+		cpu(1).
+		mem("2GiB").
+		addFile("tags.csv", tagsCsv).
+		arg("tags.csv").arg("panel.txt").
+		arg("--tag-col").arg(barcodeSeqColumn).
+		saveFile("panel.txt").
+		run()
+
+	// RAM = base + reads*4, capped at 128 GiB; static fallback = base. workflow-tengo 6.7.0 fluent
+	// formula API fed via .resources({ onCPU }) (see fb-parse for the migration note).
+	formula := exec.formula
+	memFormula := formula.gib(memBaseGB).
+		plus(formula.size("reads").times(4)).
+		between(formula.gib(memBaseGB), formula.gib(128)).
+		staticFallback(formula.gib(memBaseGB))
+
+	cellTag := tags.cell
+	if !is_undefined(cellWhitelist) && cellWhitelist != "" {
+		cellTag = tags.cell + "#builtin:" + cellWhitelist
+	}
+
+	refine := exec.builder().software(mitoolSw)
+	if memOverrideGB > 0 {
+		refine = refine.cpu(mitoolCPUs).mem(string(memOverrideGB) + "GiB")
+	} else {
+		refine = refine.resources({ onCPU: { cpu: mitoolCPUs, ram: memFormula } })
+	}
+	refine = refine.
+		arg("refine-tags").
+		arg("-t").arg(cellTag).
+		arg("-t").arg(tags.feature + "#file:panel.txt").
+		arg("-t").arg(tags.umi).
+		arg("--json-report").arg("refine_report.json").saveFile("refine_report.json").
+		addFile("panel.txt", panel.getFile("panel.txt")).
+		addFile("parsed.mic", parsedMic, { tag: "reads" }).
+		arg("parsed.mic").arg("refined.mic").saveFile("refined.mic").
+		run()
+
+	return {
+		refinedMic: refine.getFile("refined.mic"),
+		refineReport: refine.getFile("refine_report.json")
+	}
+})

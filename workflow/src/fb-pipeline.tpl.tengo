@@ -1,0 +1,187 @@
+// Per-sample feature-barcode pipeline (processColumn body).
+//
+// One invocation per sample group (the FASTQ column is aggregated over lane + readIndex). Runs the
+// mitool chain — parse -> refine-tags -> tag-stat -u — to produce per-(cell, feature-barcode)
+// distinct-UMI counts, then hands that table plus the user's tag->feature CSV to the per-cell-metrics
+// Python software, which collapses to the (cell x feature) outputs.
+//
+// Every exec runs inside a render.create sub-template (fb-parse / fb-refine / fb-tagstat produce the
+// mitool files; fb-downstream runs the QC + per-cell-metrics consumers) so this body returns ONLY render
+// outputs, never an inline exec's getFile. That is the CIDConflictError fix: parse/refine/tag-stat
+// capture rate-dependent mitool progress via saveStdoutStream, which makes a streaming exec's files map
+// (hence any getFile off it) resolve to a run-to-run drifting CID; the SDK exec.tpl is hash_override-
+// pinned, so an inline consumer has a stable AID + drifting CID and conflicts when its per-sample output
+// is flattened. A render.create resource has a content-derived AID (render.lib builds a plain struct, no
+// hash_override), so a consumer inside a boundary absorbs the drift and its outputs flatten cleanly.
+// Mirrors blocks/peptide-extraction (parse.tpl + umi-consensus.tpl + downstream-pipeline.tpl).
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+render := import("@platforma-sdk/workflow-tengo:render")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+pConstants := import("@platforma-sdk/workflow-tengo:pframes.constants")
+pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+
+json := import("json")
+
+fbParseTpl := assets.importTemplate(":fb-parse")
+fbRefineTpl := assets.importTemplate(":fb-refine")
+fbTagstatTpl := assets.importTemplate(":fb-tagstat")
+fbDownstreamTpl := assets.importTemplate(":fb-downstream")
+
+self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "qc", "qcJson")
+
+self.body(func(inputs) {
+	inputData := inputs[pConstants.VALUE_FIELD_NAME]
+	aggregationAxesNames := inputs[pConstants.AGGREGATION_AXES_NAMES_FIELD_NAME]
+
+	pattern := inputs.pattern
+	tags := inputs.tags // { cell, umi, feature } tag names (from the model; see pattern.ts)
+	tagsCsv := inputs.tagsCsv
+	dominanceThreshold := inputs.dominanceThreshold
+	control := inputs.control // may be undefined / "" -> no specificity score
+	fileExtension := inputs.fileExtension
+	mitoolCPUs := inputs.mitoolCPUs
+	barcodeSeqColumn := inputs.barcodeSeqColumn
+	featureNameColumn := inputs.featureNameColumn
+	cellWhitelist := inputs.cellWhitelist // "" = de-novo CELL correction (default); else a 10x built-in
+	memBaseGB := inputs.mitoolBaseMemGB
+
+	// mitool memory override (Advanced Settings): passed to the parse/refine sub-templates. 0 = no
+	// override (size RAM from the input blob on a floor); >0 = a hard fixed request. A sentinel keeps the
+	// render.create input a plain number (the model only sets metaExtra.mitoolMemOverrideGB when the user
+	// configures one, so inputs.mitoolMemOverrideGB is otherwise undefined).
+	memOverrideGB := is_undefined(inputs.mitoolMemOverrideGB) ? 0 : inputs.mitoolMemOverrideGB
+
+	ll.assert(!is_undefined(pattern) && pattern != "", "tag pattern is required")
+
+	// Sample-aware tag->feature mapping (optional). When a sample column is set, the tag CSV maps the same
+	// barcode to different features per sample, so filter it to THIS sample's rows before it feeds the
+	// panel (fb-refine) and the naming join (fb-downstream).
+	// sampleColumn == "" -> global mapping, CSV passed through untouched.
+	sampleColumn := inputs.sampleColumn
+	tagsCsvForSample := tagsCsv
+	if sampleColumn != "" {
+		key := inputs[pConstants.KEY_FIELD_NAME]
+		sampleId := key[0]
+		sampleName := inputs.sampleLabels[sampleId]
+		ll.assert(!is_undefined(sampleName), "no sample label captured for sampleId %v (re-select the sample column)", sampleId)
+
+		ptWf := pt.workflow().inLightQueue().cpu(1).mem("2GiB")
+		filtered := ptWf.frame(tagsCsv, { xsvType: "csv", inferSchema: false }).
+			filter(pt.col(sampleColumn).eq(sampleName))
+		filtered.save("sample-tags.csv", { xsvType: "csv" })
+		tagsCsvForSample = ptWf.run().getFile("sample-tags.csv")
+	}
+
+	meta := inputData.getDataAsJson()
+	fileMap := inputData.inputs()
+
+	// Collect R1/R2 FASTQ files and build the mitool input arg from the aggregation layout
+	// (readIndex -> R1/R2; optional lane). Feature barcoding is paired: cell+UMI on R1, feature on R2.
+	R1Files := []
+	R2Files := []
+	inputArg := ""
+	if meta.keyLength == 1 {
+		ll.assert(
+			aggregationAxesNames == ["pl7.app/sequencing/readIndex"],
+			"unexpected aggregation axes names: " + json.encode(aggregationAxesNames)
+		)
+		for sKey in maps.getKeys(fileMap) {
+			key := json.decode(sKey)
+			if key[0] == "R1" {
+				R1Files = append(R1Files, { name: "input_R1." + fileExtension, file: fileMap[sKey] })
+			} else if key[0] == "R2" {
+				R2Files = append(R2Files, { name: "input_R2." + fileExtension, file: fileMap[sKey] })
+			}
+		}
+		inputArg = "input_{{R}}." + fileExtension
+	} else if meta.keyLength == 2 {
+		ll.assert(
+			aggregationAxesNames == ["pl7.app/sequencing/lane", "pl7.app/sequencing/readIndex"],
+			"unexpected aggregation axes names: " + json.encode(aggregationAxesNames)
+		)
+		for sKey in maps.getKeys(fileMap) {
+			key := json.decode(sKey)
+			lane := key[0]
+			r := key[1]
+			if r == "R1" {
+				R1Files = append(R1Files, { name: "input_L" + lane + "_R1." + fileExtension, file: fileMap[sKey] })
+			} else if r == "R2" {
+				R2Files = append(R2Files, { name: "input_L" + lane + "_R2." + fileExtension, file: fileMap[sKey] })
+			}
+		}
+		inputArg = "input_L{{n}}_{{R}}." + fileExtension
+	} else {
+		ll.panic("feature-barcode parsing requires paired (R1/R2) reads; unsupported key layout: %v", meta.keyLength)
+	}
+
+	ll.assert(len(R1Files) > 0, "no R1 FASTQ files found")
+	ll.assert(len(R2Files) > 0, "no R2 FASTQ files found (feature barcode is read from R2)")
+
+	// Step 1: mitool parse (fb-parse boundary) — extract CELL + UMI (R1) and the feature barcode (R2).
+	// The FASTQ files go in as a ResourceMap keyed by [filename] (decoded back inside fb-parse).
+	inputFilesBuilder := pcolumn.resourceMapBuilder(1)
+	for f in R1Files { inputFilesBuilder.add([f.name], f.file) }
+	for f in R2Files { inputFilesBuilder.add([f.name], f.file) }
+
+	parseRun := render.create(fbParseTpl, {
+		pattern: pattern,
+		inputArg: inputArg,
+		inputFiles: inputFilesBuilder.build(),
+		mitoolCPUs: mitoolCPUs,
+		mitoolBaseMemGB: memBaseGB,
+		mitoolMemOverrideGB: memOverrideGB
+	})
+	parsedMic := parseRun.output("parsedMic")
+	parseReport := parseRun.output("parseReport")
+
+	// Step 2: emit panel + refine-tags (fb-refine boundary).
+	refineRun := render.create(fbRefineTpl, {
+		parsedMic: parsedMic,
+		tags: tags,
+		tagsCsv: tagsCsvForSample,
+		barcodeSeqColumn: barcodeSeqColumn,
+		cellWhitelist: cellWhitelist,
+		mitoolCPUs: mitoolCPUs,
+		mitoolBaseMemGB: memBaseGB,
+		mitoolMemOverrideGB: memOverrideGB
+	})
+	refinedMic := refineRun.output("refinedMic")
+	refineReport := refineRun.output("refineReport")
+
+	// Step 3: tag-stat -u (fb-tagstat boundary) — per-(cell, feature-barcode) distinct-UMI counts.
+	tagStatRun := render.create(fbTagstatTpl, {
+		refinedMic: refinedMic,
+		tags: tags
+	})
+	tagstatTsv := tagStatRun.output("tagstatTsv")
+
+	// Step 4: QC report + per-cell metrics (fb-downstream boundary). These consume the drifting mitool
+	// files (tagstat.tsv + parse/refine reports), so they run inside a render boundary and their per-sample
+	// outputs are returned as render outputs — see the file header for why an inline consumer conflicts.
+	downstreamRun := render.create(fbDownstreamTpl, {
+		tagstatTsv: tagstatTsv,
+		parseReport: parseReport,
+		refineReport: refineReport,
+		tags: tags,
+		tagsCsv: tagsCsvForSample,
+		control: control, // undefined -> render.create skips it -> no specificity
+		dominanceThreshold: dominanceThreshold,
+		barcodeSeqColumn: barcodeSeqColumn,
+		featureNameColumn: featureNameColumn
+	})
+
+	// The body must return exactly the defineOutputs set and no output may be undefined.
+	return {
+		abundance: downstreamRun.output("abundance"),
+		fractions: downstreamRun.output("fractions"),
+		consensus: downstreamRun.output("consensus"),
+		specificity: downstreamRun.output("specificity"),
+		perCellSummary: downstreamRun.output("perCellSummary"),
+		qc: downstreamRun.output("qc"),
+		qcJson: downstreamRun.output("qcJson")
+	}
+})

@@ -55,6 +55,34 @@ def test_consensus_no_signal_is_none():
     assert consensus_category({}, 0.6) is None
 
 
+# --- negative control is a reference, not a callable antigen (spec A-0014) ---
+
+
+def test_consensus_excludes_control_from_candidates():
+    # The control must not win consensus even when it has the most UMIs: AGX 3 / CTRL 5 -> the top
+    # antigen (AGX) share is 3/8 = 0.375 < 0.6 -> ambiguous, NOT "CTRL".
+    assert consensus_category({"AGX": 3, "CTRL": 5}, 0.6, control="CTRL") == "ambiguous"
+
+
+def test_consensus_control_stays_in_denominator():
+    # Control UMIs remain in the denominator, so control signal suppresses (not inflates) dominance.
+    # AGX 7 / CTRL 2 -> 7/9 = 0.78 >= 0.6 -> AGX (control did not spuriously push it under threshold).
+    assert consensus_category({"AGX": 7, "CTRL": 2}, 0.6, control="CTRL") == "AGX"
+    # Were the control dropped from the denominator, AGX 3 / CTRL 5 would renormalise to 1.0 and wrongly
+    # win; keeping it in the denominator makes the control-swamped cell correctly ambiguous.
+    assert consensus_category({"AGX": 3, "CTRL": 5}, 0.6, control="CTRL") == "ambiguous"
+
+
+def test_consensus_control_only_is_ambiguous():
+    # A cell whose only signal is the control has no antigen candidate -> ambiguous, never the control.
+    assert consensus_category({"CTRL": 5}, 0.6, control="CTRL") == "ambiguous"
+
+
+def test_consensus_no_control_arg_is_unchanged():
+    # control=None (no negative control set) keeps the original rule: every feature is a candidate.
+    assert consensus_category({"AGX": 3, "OTHER": 5}, 0.6) == "OTHER"
+
+
 # --- specificity score (spec A-0014, Cell Ranger betaCDF) ---
 
 
@@ -157,6 +185,92 @@ def test_cli_consensus_golden(tagstat_tsv, tags_csv, tmp_path):
 
 
 @pytest.mark.slow
+def test_cli_abundance_uses_unique_umi(tagstat_tsv, tags_csv, tmp_path):
+    # DP-2: the matrix must use mitool's deduplicated `unique_UMI` (cell1/AGX = 3 distinct UMIs),
+    # NOT the raw read `count` (which is 7 in the bed). Guards against reading the wrong column.
+    subprocess.run(
+        [
+            sys.executable,
+            str(SRC),
+            str(tagstat_tsv),
+            str(tags_csv),
+            "--sample-id",
+            "s1",
+            "--output-prefix",
+            str(tmp_path / "result"),
+        ],
+        check=True,
+        cwd=tmp_path,
+    )
+    with open(tmp_path / "result_abundance.csv", newline="") as f:
+        umi = {(r["cellId"], r["feature"]): int(r["umiCount"]) for r in csv.DictReader(f)}
+    assert umi[("cell1", "AGX")] == 3  # unique_UMI, not count=7
+    assert umi[("cell1", "BGX")] == 1
+    assert umi[("cell3", "AGX")] == 2
+
+
+@pytest.mark.slow
+def test_cli_with_renamed_csv_columns(tagstat_tsv, tmp_path):
+    # D4: the CSV's barcode/feature columns can be named anything -- --csv-barcode-col /
+    # --csv-feature-col map them to the join key and output "feature" column. Barcode values
+    # (AAAA, CCCC) match the committed tagstat_main.tsv bed; mapped to the same AGX/BGX names the
+    # golden test expects, just via a differently-named CSV.
+    renamed_csv = tmp_path / "renamed_tags.csv"
+    renamed_csv.write_text("barcode,antigen\nAAAA,AGX\nCCCC,BGX\n")
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(SRC),
+            str(tagstat_tsv),
+            str(renamed_csv),
+            "--sample-id",
+            "s1",
+            "--csv-barcode-col",
+            "barcode",
+            "--csv-feature-col",
+            "antigen",
+            "--output-prefix",
+            str(tmp_path / "result"),
+        ],
+        check=True,
+        cwd=tmp_path,
+    )
+    out = tmp_path / "result_abundance.csv"
+    assert out.exists()
+    with open(out, newline="") as f:
+        features = {row["feature"] for row in csv.DictReader(f)}
+    assert features == {"AGX", "BGX"}
+
+
+@pytest.mark.slow
+def test_cli_rejects_colliding_feature_col(tagstat_tsv, tmp_path):
+    # D4 guard: mapping --csv-feature-col onto a tag-stat column name (e.g. `count`) would otherwise
+    # silently corrupt the output `feature` column with the wrong data. It must exit non-zero instead.
+    renamed_csv = tmp_path / "renamed_tags.csv"
+    renamed_csv.write_text("barcode,count\nAAAA,AGX\nCCCC,BGX\n")
+
+    r = subprocess.run(
+        [
+            sys.executable,
+            str(SRC),
+            str(tagstat_tsv),
+            str(renamed_csv),
+            "--sample-id",
+            "s1",
+            "--csv-barcode-col",
+            "barcode",
+            "--csv-feature-col",
+            "count",
+            "--output-prefix",
+            str(tmp_path / "result"),
+        ],
+        cwd=tmp_path,
+    )
+    assert r.returncode != 0
+
+
+@pytest.mark.slow
 def test_cli_with_control_writes_specificity(tagstat_tsv, tags_csv, tmp_path):
     subprocess.run(
         [
@@ -175,3 +289,258 @@ def test_cli_with_control_writes_specificity(tagstat_tsv, tags_csv, tmp_path):
         cwd=tmp_path,
     )
     assert (tmp_path / "result_specificity.csv").exists()
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "tagstat_body",
+    [
+        "cellX\tTTTT\t5\t5\t3\n",  # a real tag-stat row whose feature barcode is off-panel (not in tags.csv)
+        "",  # a tag-stat with no rows at all (header only)
+    ],
+    ids=["off-panel-rows", "header-only"],
+)
+def test_cli_empty_join_writes_header_only_not_crash(tags_csv, tmp_path, tagstat_body):
+    # Regression: when no (cell, feature) pair survives the tag->feature join -- a wrong read geometry,
+    # or a sample with no on-panel reads -- the run must still emit all four CSVs header-only, never
+    # crash. --control exercises the specificity write too. (consensus and specificity are pure-polars
+    # transforms that carry their schema through the empty case; this guards that they stay header-only.)
+    tagstat = tmp_path / "tagstat.tsv"
+    tagstat.write_text("CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\n" + tagstat_body)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(SRC),
+            str(tagstat),
+            str(tags_csv),
+            "--sample-id",
+            "s1",
+            "--control",
+            "CTRL",
+            "--output-prefix",
+            str(tmp_path / "result"),
+        ],
+        check=True,  # the old crash exited non-zero -> this would fail here
+        cwd=tmp_path,
+    )
+    for name, header in [
+        ("result_abundance.csv", ["sampleId", "cellId", "feature", "umiCount"]),
+        ("result_fractions.csv", ["sampleId", "cellId", "feature", "fraction"]),
+        ("result_consensus.csv", ["sampleId", "cellId", "consensusFeature"]),
+        ("result_specificity.csv", ["sampleId", "cellId", "feature", "specificityScore"]),
+    ]:
+        p = tmp_path / name
+        assert p.exists(), f"missing {name}"
+        with open(p, newline="") as f:
+            reader = csv.DictReader(f)
+            assert reader.fieldnames == header  # schema/header preserved
+            assert list(reader) == []  # zero data rows (empty result)
+
+
+@pytest.mark.slow
+def test_cli_per_cell_summary_maxima_match_exported_columns(tagstat_tsv, tags_csv, tmp_path):
+    # The per-cell summary's maxUmiCount / maxFraction / maxSpecificityScore are a collapse of the
+    # exported (cell x feature) columns -- they must equal the per-cell max of those exported CSVs, not a
+    # separately-recomputed value (guards the with_fraction / with_specificity single-compute refactor).
+    subprocess.run(
+        [
+            sys.executable,
+            str(SRC),
+            str(tagstat_tsv),
+            str(tags_csv),
+            "--sample-id",
+            "s1",
+            "--control",
+            "CTRL",
+            "--output-prefix",
+            str(tmp_path / "result"),
+        ],
+        check=True,
+        cwd=tmp_path,
+    )
+
+    def _max_by_cell(path, value_col, cast):
+        by_cell: dict[str, float] = {}
+        with open(path, newline="") as f:
+            for r in csv.DictReader(f):
+                v = cast(r[value_col])
+                by_cell[r["cellId"]] = max(by_cell.get(r["cellId"], v), v)
+        return by_cell
+
+    exp_umi = _max_by_cell(tmp_path / "result_abundance.csv", "umiCount", int)
+    exp_frac = _max_by_cell(tmp_path / "result_fractions.csv", "fraction", float)
+    exp_spec = _max_by_cell(tmp_path / "result_specificity.csv", "specificityScore", float)
+
+    with open(tmp_path / "result_per_cell_summary.csv", newline="") as f:
+        summary = {r["cellId"]: r for r in csv.DictReader(f)}
+
+    assert set(summary) == set(exp_umi)
+    for cell, row in summary.items():
+        assert int(row["maxUmiCount"]) == exp_umi[cell]
+        assert float(row["maxFraction"]) == pytest.approx(exp_frac[cell])
+        assert float(row["maxSpecificityScore"]) == pytest.approx(exp_spec[cell])
+
+
+@pytest.mark.slow
+def test_cli_consensus_matches_pure_rule(tmp_path):
+    # Oracle: the vectorized CLI consensus must equal the pure consensus_category rule across cases the
+    # committed golden bed doesn't cover (unique winner, exact tie, sub-threshold spread, single feature).
+    tags = tmp_path / "tags.csv"
+    tags.write_text("tag,feature\nAAAA,AGX\nCCCC,BGX\nGGGG,CGX\n")
+    tagstat = tmp_path / "tagstat.tsv"
+    tagstat.write_text(
+        "CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\n"
+        "cellW\tAAAA\t8\t8\t8\n"
+        "cellW\tCCCC\t1\t1\t1\n"
+        "cellW\tGGGG\t1\t1\t1\n"  # AGX 8 / BGX 1 / CGX 1 -> unique winner AGX (0.8 >= 0.6)
+        "cellX\tAAAA\t5\t5\t5\n"
+        "cellX\tCCCC\t5\t5\t5\n"  # AGX 5 / BGX 5 -> tie, 0.5 < 0.6 -> ambiguous
+        "cellY\tAAAA\t4\t4\t4\n"
+        "cellY\tCCCC\t3\t3\t3\n"
+        "cellY\tGGGG\t3\t3\t3\n"  # max share 0.4 < 0.6 -> ambiguous
+        "cellZ\tAAAA\t6\t6\t6\n"  # single feature -> AGX
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            str(SRC),
+            str(tagstat),
+            str(tags),
+            "--sample-id",
+            "s1",
+            "--dominance-threshold",
+            "0.6",
+            "--output-prefix",
+            str(tmp_path / "result"),
+        ],
+        check=True,
+        cwd=tmp_path,
+    )
+    with open(tmp_path / "result_consensus.csv", newline="") as f:
+        got = {r["cellId"]: r["consensusFeature"] for r in csv.DictReader(f)}
+    expected = {
+        "cellW": consensus_category({"AGX": 8, "BGX": 1, "CGX": 1}, 0.6),
+        "cellX": consensus_category({"AGX": 5, "BGX": 5}, 0.6),
+        "cellY": consensus_category({"AGX": 4, "BGX": 3, "CGX": 3}, 0.6),
+        "cellZ": consensus_category({"AGX": 6}, 0.6),
+    }
+    assert got == expected  # vectorized CLI == the pure rule
+    # ...and the pure rule is what we think (guards against a vacuous match to a wrong rule)
+    assert expected == {"cellW": "AGX", "cellX": "ambiguous", "cellY": "ambiguous", "cellZ": "AGX"}
+
+
+@pytest.mark.slow
+def test_cli_specificity_matches_pure_score(tagstat_tsv, tags_csv, tmp_path):
+    # Oracle: the vectorized specificity column must equal the pure specificity_score per (cell, feature)
+    # vs the cell's control (CTRL) UMIs -- 0 when the cell has no control reads. Guards the array path
+    # (scipy beta.cdf over whole columns) against the scalar formula, including the fill_null(0) case.
+    subprocess.run(
+        [
+            sys.executable,
+            str(SRC),
+            str(tagstat_tsv),
+            str(tags_csv),
+            "--sample-id",
+            "s1",
+            "--control",
+            "CTRL",
+            "--output-prefix",
+            str(tmp_path / "result"),
+        ],
+        check=True,
+        cwd=tmp_path,
+    )
+    with open(tmp_path / "result_abundance.csv", newline="") as f:
+        umi = {(r["cellId"], r["feature"]): int(r["umiCount"]) for r in csv.DictReader(f)}
+    control_umi = {cell: umi.get((cell, "CTRL"), 0) for (cell, _feat) in umi}
+    with open(tmp_path / "result_specificity.csv", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert rows  # non-empty: the committed bed has cells and features
+    assert "CTRL" not in {r["feature"] for r in rows}  # control is the reference, not a scored feature
+    for r in rows:
+        expected = specificity_score(umi[(r["cellId"], r["feature"])], control_umi[r["cellId"]])
+        assert float(r["specificityScore"]) == pytest.approx(float(expected))
+
+
+@pytest.mark.slow
+def test_cli_consensus_excludes_control(tmp_path):
+    # With --control set, the control is a reference and never a called antigen (spec A-0014): a
+    # control-dominated cell must be "ambiguous", not the control. Control UMIs stay in the denominator,
+    # so they suppress dominance rather than being renormalised away.
+    tags = tmp_path / "tags.csv"
+    tags.write_text("tag,feature\nAAAA,AGX\nGGGG,CTRL\n")
+    tagstat = tmp_path / "tagstat.tsv"
+    tagstat.write_text(
+        "CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\n"
+        "cellP\tAAAA\t3\t3\t3\n"
+        "cellP\tGGGG\t5\t5\t5\n"  # AGX 3 / CTRL 5 -> top antigen 3/8 < 0.6 -> ambiguous (NOT CTRL)
+        "cellQ\tAAAA\t7\t7\t7\n"
+        "cellQ\tGGGG\t2\t2\t2\n"  # AGX 7 / CTRL 2 -> 7/9 = 0.78 >= 0.6 -> AGX
+        "cellR\tGGGG\t5\t5\t5\n"  # only control signal -> ambiguous
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            str(SRC),
+            str(tagstat),
+            str(tags),
+            "--sample-id",
+            "s1",
+            "--control",
+            "CTRL",
+            "--dominance-threshold",
+            "0.6",
+            "--output-prefix",
+            str(tmp_path / "result"),
+        ],
+        check=True,
+        cwd=tmp_path,
+    )
+    with open(tmp_path / "result_consensus.csv", newline="") as f:
+        got = {r["cellId"]: r["consensusFeature"] for r in csv.DictReader(f)}
+    assert got == {"cellP": "ambiguous", "cellQ": "AGX", "cellR": "ambiguous"}
+    # ...and the vectorized CLI agrees with the pure rule (guards against a vacuous match).
+    assert got == {
+        "cellP": consensus_category({"AGX": 3, "CTRL": 5}, 0.6, control="CTRL"),
+        "cellQ": consensus_category({"AGX": 7, "CTRL": 2}, 0.6, control="CTRL"),
+        "cellR": consensus_category({"CTRL": 5}, 0.6, control="CTRL"),
+    }
+
+
+@pytest.mark.slow
+def test_cli_control_not_scored_as_feature(tmp_path):
+    # The control is the specificity reference, not a scored antigen: it must not appear as a feature in
+    # the specificity output, and a control-heavy cell's maxSpecificityScore must be the real antigen's
+    # score vs the control, never the control's self-score.
+    tags = tmp_path / "tags.csv"
+    tags.write_text("tag,feature\nAAAA,AGX\nGGGG,CTRL\n")
+    tagstat = tmp_path / "tagstat.tsv"
+    tagstat.write_text(
+        "CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\n"
+        "cellP\tAAAA\t3\t3\t3\n"
+        "cellP\tGGGG\t9\t9\t9\n"  # control-heavy cell
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            str(SRC),
+            str(tagstat),
+            str(tags),
+            "--sample-id",
+            "s1",
+            "--control",
+            "CTRL",
+            "--output-prefix",
+            str(tmp_path / "result"),
+        ],
+        check=True,
+        cwd=tmp_path,
+    )
+    with open(tmp_path / "result_specificity.csv", newline="") as f:
+        spec_features = {r["feature"] for r in csv.DictReader(f)}
+    assert spec_features == {"AGX"}  # CTRL is not emitted as a scored feature
+    with open(tmp_path / "result_per_cell_summary.csv", newline="") as f:
+        summary = {r["cellId"]: r for r in csv.DictReader(f)}
+    # AGX 3 UMIs vs CTRL 9 UMIs — the antigen's score, not specificity_score(9, 9) (the control self-score)
+    assert float(summary["cellP"]["maxSpecificityScore"]) == pytest.approx(specificity_score(3, 9))

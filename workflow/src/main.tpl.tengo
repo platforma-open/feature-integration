@@ -1,12 +1,199 @@
-// Placeholder workflow. The real feature-barcode pipeline (mitool parse -> refine-tags -> tag-stat
-// -> per-cell-metrics python) lands in plan Tasks 3-4, which are blocked on the Task-0 design spike
-// (assay tag pattern + cell-barcode source). Until then this stub builds and produces no outputs, so
-// the model, UI and block compose and build end to end.
+// Feature Integration — main workflow template.
+//
+// FASTQ (feature-barcode) -> per-sample mitool (parse/refine/tag-stat -u) + per-cell-metrics Python
+// (processColumn -> fb-pipeline.tpl.tengo) -> import the per-cell result CSVs as the per-cell contract
+// p-columns keyed [pl7.app/sampleId, pl7.app/sc/cellId, pl7.app/feature/featureId], exported to the
+// result pool (consumed by VDJ Multiomic Integration) and surfaced as a results table.
+//
+// processColumn's `Xsv` outputs import each per-sample CSV and prepend the sample axis from the
+// iteration key (so the per-sample CSVs need only cell/feature columns). Modeled on
+// blocks/peptide-extraction main.tpl.tengo + blocks/cell-ranger process.tpl.tengo. Column/axis specs
+// live in column-specs.lib.tengo (peptide-extraction pattern).
+
 wf := import("@platforma-sdk/workflow-tengo:workflow")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+render := import("@platforma-sdk/workflow-tengo:render")
+pframes := import("@platforma-sdk/workflow-tengo:pframes")
+pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+file := import("@platforma-sdk/workflow-tengo:file")
+columnSpecs := import(":column-specs")
+
+fbPipelineTpl := assets.importTemplate(":fb-pipeline")
+prerunTpl := assets.importTemplate(":prerun")
+qcSummaryTpl := assets.importTemplate(":qc-summary")
+
+defaultMitoolMemGB := 16
+defaultMitoolCPUs := 4
+
+// Staging imports + exports the CSV to drive its upload before production needs it, and emits the
+// feature-name list for the control dropdown (see prerun.tpl).
+wf.setPreRun(prerunTpl)
+
+wf.prepare(func(args) {
+	return {
+		resolvedFastq: wf.resolve(args.fbFastqRef)
+	}
+})
 
 wf.body(func(args) {
+	blockId := wf.blockId().getDataAsJson()
+
+	inputSpec := args.resolvedFastq.spec
+	inputData := args.resolvedFastq.data
+	sampleAxis := inputSpec.axesSpec[0] // pl7.app/sampleId — inherited verbatim
+	fileExtension := inputSpec.domain["pl7.app/fileExtension"]
+
+	// Import the user-uploaded tag->feature CSV and share its blob across every per-sample body
+	// invocation (the mapping is identical for all samples). The model guarantees the handle is set.
+	csvImport := file.importFile(args.tagFeatureCsvHandle)
+	csvFile := csvImport.file
+
+	// The mitool tag pattern, assembled + validated in the model's args() and passed through verbatim
+	// (see model/src/pattern.ts). It carries the CELL/UMI/FEATURE tags + R2 capture the downstream
+	// refine-tags/tag-stat steps reference by name; any extra flanks/spacers/anchors reach mitool as-is.
+	pattern := args.pattern
+
+	control := args.controlFeature
+	hasControl := !is_undefined(control) && control != ""
+	dominanceThreshold := is_undefined(args.dominanceThreshold) ? 0.6 : args.dominanceThreshold
+	// Cell-barcode whitelist for refine-tags CELL correction. "" = de-novo (default). Always a defined
+	// string so the extra-input field below resolves and never stalls the body.
+	cellWhitelist := is_undefined(args.cellWhitelist) ? "" : args.cellWhitelist
+
+	// Per-sample body inputs. processColumn binds EVERY extra key as a body input field and waits for
+	// each to be set before firing the body (pframes/index.lib.tengo: `renderInputs["__extra_"+k]=v`),
+	// so a key whose value is `undefined` creates a field that never resolves and stalls the body.
+	// Therefore `control` is added only when a control feature is configured.
+	extraInputs := {
+		pattern: pattern,
+		tags: args.tags, // mitool tag names (CELL/UMI/FEATURE) — single source is the model (pattern.ts)
+		// Sample-aware mapping (optional). "" = off (global mapping). When set, the per-sample body filters
+		// the CSV to its own sample's rows using sampleLabels[sampleId] (sampleId from the passKey key).
+		sampleColumn: is_undefined(args.sampleColumn) ? "" : args.sampleColumn,
+		sampleLabels: is_undefined(args.sampleLabels) ? {} : args.sampleLabels,
+		tagsCsv: csvFile,
+		dominanceThreshold: dominanceThreshold,
+		fileExtension: fileExtension,
+		barcodeSeqColumn: args.barcodeSeqColumn,
+		featureNameColumn: args.featureNameColumn,
+		cellWhitelist: cellWhitelist
+	}
+	if hasControl {
+		extraInputs.control = control
+	}
+
+	// processColumn outputs: the per-cell contract value columns + the per-sample QC CSV collected as a
+	// [sampleId] file map (assembled into a table by qc-summary.tpl, NOT imported here — a per-sample
+	// scalar cannot be xsv-imported inside the shared processColumn) + the per-sample QC-JSON map (read
+	// by the model to build the Analysis logs). Column/axis specs come from column-specs.lib.tengo.
+	outputs := columnSpecs.valueOutputs(blockId, sampleAxis.name, hasControl)
+	outputs = append(outputs, columnSpecs.perCellSummaryOutput(blockId, sampleAxis.name, hasControl))
+	outputs = append(outputs, columnSpecs.qcFileMapOutput(blockId))
+	outputs = append(outputs, {
+		type: "Resource",
+		spec: {
+			kind: "PColumn",
+			name: "pl7.app/feature/qcJsonFile",
+			domain: { "pl7.app/blockId": blockId },
+			valueType: "File"
+		},
+		name: "qcJson"
+	})
+
+	// mitool resource meta (mixcr semantics): pass the base memory floor always; add the override key
+	// only when the user set one (Advanced Settings) so fb-pipeline treats it as a hard fixed request.
+	// A distinct meta when overridden is correct — it must not dedup with the formula-sized run.
+	metaExtra := {
+		mitoolBaseMemGB: defaultMitoolMemGB,
+		mitoolCPUs: is_undefined(args.perProcessCPUs) ? defaultMitoolCPUs : args.perProcessCPUs
+	}
+	if !is_undefined(args.perProcessMemGB) {
+		metaExtra.mitoolMemOverrideGB = args.perProcessMemGB
+	}
+
+	perSampleResults := pframes.processColumn(
+		{ spec: inputSpec, data: inputData },
+		fbPipelineTpl,
+		outputs,
+		{
+			aggregate: [
+				{ name: "pl7.app/sequencing/lane", optional: true },
+				{ name: "pl7.app/sequencing/readIndex", optional: true }
+			],
+			passAggregationAxesNames: true,
+			passKey: true, // give the body its [sampleId] iteration key (for sample-aware CSV filtering)
+			extra: extraInputs,
+			metaExtra: metaExtra
+		}
+	)
+
+	// --- assemble the per-cell p-frame, injecting a single trace ---
+	trace := pSpec.makeTrace(inputSpec, {
+		type: "milaboratories.feature-integration",
+		id: blockId,
+		importance: 30,
+		label: "Feature Integration"
+	})
+
+	addXsvTo := func(fb, outputName) {
+		for col in perSampleResults.listXsvColumns(outputName) {
+			fb.add(
+				outputName + "/" + col,
+				trace.inject(perSampleResults.outputSpec(outputName, col)),
+				perSampleResults.outputData(outputName, col)
+			)
+		}
+	}
+
+	// Exported per-cell contract frame (goes to the result pool -> VDJ Multiomic Integration). This is the
+	// full per-(cell x feature) matrix and is UNCHANGED by the table collapse below — downstream still
+	// consumes abundance/fractions/consensus/specificity at [sampleId, cellId, featureId].
+	fb := pframes.pFrameBuilder()
+	addXsvTo(fb, "abundance")
+	addXsvTo(fb, "fractions")
+	addXsvTo(fb, "consensus")
+	if hasControl {
+		addXsvTo(fb, "specificity")
+	}
+	finalPf := fb.build()
+
+	// Main results table (table-only): one row per [sampleId, cellId] — the consensus feature plus the
+	// per-cell summary aggregates (max UMI count / fraction, max specificity with a control) and the
+	// "feature : umi : fraction | ..." string listing every feature the cell has signal for. This
+	// collapses the matrix above for display; the export contract is unaffected.
+	tableFb := pframes.pFrameBuilder()
+	addXsvTo(tableFb, "consensus")
+	addXsvTo(tableFb, "perCellSummary")
+	tablePf := tableFb.build()
+
+	// Per-sample QC summary (outputs-only): concatenate the per-sample one-row QC CSVs (collected above
+	// as a [sampleId] file map) into one table and import it keyed [sampleId]. Done in a child template
+	// (qc-summary.tpl.tengo) because the file map must be awaited before its per-sample keys can be
+	// iterated — see its header. A per-sample scalar table cannot be produced by an xsv import.
+	qcSummaryResult := render.create(qcSummaryTpl, {
+		qcData: perSampleResults.outputData("qc"),
+		sampleAxisSpec: sampleAxis
+	})
+
 	return {
-		outputs: {},
-		exports: {}
+		outputs: {
+			// Collapsed per-cell results table (one row per [sampleId, cellId]).
+			perCellTable: pframes.exportFrame(tablePf),
+			// Per-sample QC summary table (outputs-only): reads parsed/matched, cells/features, UMIs.
+			qcSummaryTable: pframes.exportFrame(qcSummaryResult.output("qcSummaryTable")),
+			// Per-sample QC metrics as JSON (fb-pipeline qcJson) -> model builds the live "Analysis logs"
+			// (completed-sample heartbeat + run-level summary) from it.
+			qcJson: perSampleResults.outputData("qcJson"),
+			// Expose the tag->feature CSV import HANDLE so the model can watch it via getImportProgress()
+			// (model/src/index.ts). That model output is the actual upload driver: it registers the import
+			// with the middle-layer so the CSV bytes are pushed. Without it the CSV blob never materialises
+			// and every per-sample body hangs on __extra_tagsCsv. Mirrors immune-assay-data
+			// (`dataImportHandle: importFile.handle` + model getImportProgress).
+			tagFeatureCsvImportHandle: csvImport.handle
+		},
+		exports: {
+			perCellFeatures: finalPf
+		}
 	}
 })

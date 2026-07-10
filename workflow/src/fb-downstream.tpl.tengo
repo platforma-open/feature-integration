@@ -1,0 +1,102 @@
+// Downstream per-sample QC + per-cell metrics sub-template (render.create boundary).
+//
+// The final consumers of the mitool chain: the QC-report exec (parsed/matched + cell/feature/UMI +
+// panel-assigned fraction) and the per-cell-metrics Python (collapse to the per-cell (cell x feature)
+// outputs). Both consume files produced by saveStdoutStream execs — tagstat.tsv (fb-tagstat) plus the
+// parse/refine JSON reports (fb-parse/fb-refine) — whose resolved CIDs drift run-to-run because a
+// streaming exec's files map carries the ephemeral stdout ref. Running these consumers INSIDE a
+// render.create boundary is what absorbs that drift: the render resource has a content-derived AID
+// (render.lib.tengo builds a plain struct, no hash_override), so unlike a pinned exec inline in the
+// processColumn body its per-sample outputs flatten without a CIDConflictError. Mirrors
+// blocks/peptide-extraction downstream-pipeline.tpl.tengo (which likewise returns the flattened
+// per-sample table + QC as render outputs). Neither exec captures a stdout stream (nothing consumes it).
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+exec := import("@platforma-sdk/workflow-tengo:exec")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+
+self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "qc", "qcJson")
+
+metricsSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:main")
+qcReportSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:qc-report")
+
+self.body(func(inputs) {
+	tagstatTsv := inputs.tagstatTsv
+	parseReport := inputs.parseReport
+	refineReport := inputs.refineReport
+	tags := inputs.tags // { cell, umi, feature } tag names (from the model; see pattern.ts)
+	tagsCsv := inputs.tagsCsv
+	control := inputs.control // undefined / "" -> no specificity score (render.create skips undefined)
+	dominanceThreshold := inputs.dominanceThreshold
+	barcodeSeqColumn := inputs.barcodeSeqColumn
+	featureNameColumn := inputs.featureNameColumn
+
+	// Per-sample QC summary: reads parsed/matched (parse JSON report) + cell/feature/UMI metrics
+	// (tag-stat) + best-effort panel-assigned fraction (refine JSON report).
+	qc := exec.builder().
+		software(qcReportSw).
+		cpu(1).mem("2GiB").
+		addFile("tagstat.tsv", tagstatTsv).
+		addFile("parse_report.json", parseReport).
+		addFile("refine_report.json", refineReport).
+		arg("tagstat.tsv").
+		arg("--parse-report").arg("parse_report.json").
+		arg("--refine-report").arg("refine_report.json").
+		arg("--sample-id").arg("sample").
+		arg("--cell-col").arg(tags.cell).
+		arg("--feature-col").arg(tags.feature).
+		arg("--umi-col").arg("unique_" + tags.umi).
+		arg("--output").arg("result_qc.csv").saveFile("result_qc.csv").
+		saveFileContent("result_qc.json").
+		run()
+
+	// Per-cell metrics (Python). sampleId is irrelevant here — processColumn prepends the real sample
+	// axis from the iteration key, so we pass a constant and the CSV's sampleId column is ignored by the
+	// import. The distinct-UMI polars read scales with input volume, so size RAM from the tagstat.tsv blob
+	// (tag "tagstat") on a floor instead of a fixed request.
+	metricsBaseGB := 8
+	// workflow-tengo 6.7.0 fluent formula API fed via .resources({ onCPU }) (see fb-parse for the note).
+	formula := exec.formula
+	metricsMemFormula := formula.gib(metricsBaseGB).
+		plus(formula.size("tagstat").times(8)).
+		between(formula.gib(metricsBaseGB), formula.gib(128)).
+		staticFallback(formula.gib(metricsBaseGB))
+
+	hasControl := !is_undefined(control) && control != ""
+	metrics := exec.builder().
+		software(metricsSw).
+		resources({ onCPU: { cpu: 2, ram: metricsMemFormula } }).
+		addFile("tagstat.tsv", tagstatTsv, { tag: "tagstat" }).
+		addFile("tags.csv", tagsCsv).
+		arg("tagstat.tsv").arg("tags.csv").
+		arg("--sample-id").arg("sample").
+		arg("--cell-col").arg(tags.cell).
+		arg("--feature-tag-col").arg(tags.feature).
+		arg("--umi-count-col").arg("unique_" + tags.umi).
+		arg("--csv-barcode-col").arg(barcodeSeqColumn).
+		arg("--csv-feature-col").arg(featureNameColumn).
+		arg("--dominance-threshold").arg(string(dominanceThreshold)).
+		arg("--output-prefix").arg("result").
+		saveFile("result_abundance.csv").
+		saveFile("result_fractions.csv").
+		saveFile("result_consensus.csv").
+		saveFile("result_specificity.csv").
+		saveFile("result_per_cell_summary.csv")
+	if hasControl {
+		metrics = metrics.arg("--control").arg(control)
+	}
+	metrics = metrics.run()
+
+	// specificity is meaningful only with a control feature, so the Python always writes
+	// result_specificity.csv (empty header-only when no --control) and we always return it. main.tpl and
+	// the model gate the specificity *import* on hasControl, so the empty file is simply never read.
+	return {
+		abundance: metrics.getFile("result_abundance.csv"),
+		fractions: metrics.getFile("result_fractions.csv"),
+		consensus: metrics.getFile("result_consensus.csv"),
+		specificity: metrics.getFile("result_specificity.csv"),
+		perCellSummary: metrics.getFile("result_per_cell_summary.csv"),
+		qc: qc.getFile("result_qc.csv"),
+		qcJson: qc.getFileContent("result_qc.json") // inline content (saveFileContent) so the model can read it
+	}
+})

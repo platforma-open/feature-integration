@@ -1,6 +1,7 @@
 {
   "name": "@platforma-open/milaboratories.feature-integration.model",
   "version": "1.0.0",
+  "private": true,
   "description": "Block model",
   "type": "module",
   "main": "dist/index.cjs",

@@ -1,0 +1,326 @@
+// Export column + axis specs for the Feature Integration block.
+//
+// Centralised here (mirrors blocks/peptide-extraction column-specs.lib.tengo and
+// blocks/mixcr-clonotyping calculate-export-specs.lib.tengo) so main.tpl.tengo stays readable and the
+// per-cell contract columns carry the full standard annotation set (abundance flags, order priority,
+// table visibility). Annotations do NOT affect p-column identity (name + domain + axes do), so the
+// downstream discovery contract is unchanged by anything in this file.
+
+maps := import("@platforma-sdk/workflow-tengo:maps")
+
+json := import("json")
+
+// Standard table annotations: order priority + default visibility.
+// visibility: undefined -> hidden, true -> default, false -> optional.
+a := func(order, defaultVisibility, spec) {
+	return maps.merge(spec, {
+		"pl7.app/table/orderPriority": string(order),
+		"pl7.app/table/visibility": is_undefined(defaultVisibility) ? "hidden" : defaultVisibility ? "default" : "optional"
+	})
+}
+
+// --- Axes (per-cell contract: [pl7.app/sampleId, pl7.app/sc/cellId, pl7.app/feature/featureId]) ---
+// The sample axis is prepended by processColumn from the iteration key; these are the per-sample axes.
+
+// cellAxis: the single-cell barcode. `parents` records the sampleId axis it nests under (the sample
+// axis name is inherited verbatim from the input FASTQ column).
+cellAxis := func(sampleAxisName) {
+	return {
+		name: "pl7.app/sc/cellId",
+		type: "String",
+		annotations: {
+			"pl7.app/label": "Cell ID",
+			"pl7.app/table/fontFamily": "monospace",
+			"pl7.app/parents": string(json.encode([sampleAxisName]))
+		}
+	}
+}
+
+// featureAxis: the feature/antigen name (block-scoped domain so distinct blocks' features don't collide).
+featureAxis := func(blockId) {
+	return {
+		name: "pl7.app/feature/featureId",
+		type: "String",
+		domain: { "pl7.app/blockId": blockId },
+		annotations: { "pl7.app/label": "Feature" }
+	}
+}
+
+// valueOutputs: the per-cell contract value columns, as processColumn `Xsv` output declarations.
+// hasControl gates the specificity score — only meaningful with a negative control.
+//
+// umiCount is the primary abundance (abundance/isPrimary). It is deliberately NOT isAnchor: this
+// column is meant to be DISCOVERED under the downstream VDJ single-cell anchor (via the cellLinker),
+// not to be an anchor itself, so marking it isAnchor would be semantically wrong here.
+valueOutputs := func(blockId, sampleAxisName, hasControl) {
+	cell := cellAxis(sampleAxisName)
+	feat := featureAxis(blockId)
+
+	abundance := {
+		type: "Xsv",
+		xsvType: "csv",
+		settings: {
+			axes: [{ column: "cellId", spec: cell }, { column: "feature", spec: feat }],
+			columns: [{
+				column: "umiCount", id: "umiCount",
+				spec: {
+					name: "pl7.app/feature/umiCount",
+					valueType: "Int",
+					annotations: a(90000, true, {
+						"pl7.app/label": "Feature UMI count",
+						"pl7.app/min": "0",
+						"pl7.app/isAbundance": "true",
+						"pl7.app/abundance/unit": "molecules",
+						"pl7.app/abundance/normalized": "false",
+						"pl7.app/abundance/isPrimary": "true"
+					})
+				}
+			}],
+			storageFormat: "Parquet",
+			partitionKeyLength: 0
+		},
+		name: "abundance",
+		path: ["abundance"]
+	}
+
+	fractions := {
+		type: "Xsv",
+		xsvType: "csv",
+		settings: {
+			axes: [{ column: "cellId", spec: cell }, { column: "feature", spec: feat }],
+			columns: [{
+				column: "fraction", id: "fraction",
+				spec: {
+					name: "pl7.app/feature/fraction",
+					valueType: "Double",
+					annotations: a(89000, true, {
+						"pl7.app/label": "Feature fraction",
+						"pl7.app/description": "This feature's share of the cell's total feature signal: its UMI count divided by the cell's total UMI count across all features. A cell's fractions sum to 1, so binding is comparable across cells with different capture depth.",
+						"pl7.app/min": "0",
+						"pl7.app/max": "1",
+						"pl7.app/isAbundance": "true",
+						"pl7.app/abundance/unit": "molecules",
+						"pl7.app/abundance/normalized": "true",
+						"pl7.app/format": ".2p"
+					})
+				}
+			}],
+			storageFormat: "Parquet",
+			partitionKeyLength: 0
+		},
+		name: "fractions",
+		path: ["fractions"]
+	}
+
+	consensus := {
+		type: "Xsv",
+		xsvType: "csv",
+		settings: {
+			axes: [{ column: "cellId", spec: cell }],
+			columns: [{
+				column: "consensusFeature", id: "consensusFeature",
+				spec: {
+					name: "pl7.app/feature/consensusFeature",
+					valueType: "String",
+					annotations: a(88000, true, {
+						"pl7.app/label": "Consensus feature",
+						"pl7.app/description": "The cell's dominant feature/antigen — assigned only when one feature's share reaches the dominance threshold (default 0.6); otherwise 'ambiguous'.",
+						"pl7.app/isDiscreteFilter": "true"
+					})
+				}
+			}],
+			storageFormat: "Parquet",
+			partitionKeyLength: 0
+		},
+		name: "consensus",
+		path: ["consensus"]
+	}
+
+	outputs := [abundance, fractions, consensus]
+
+	if hasControl {
+		outputs = append(outputs, {
+			type: "Xsv",
+			xsvType: "csv",
+			settings: {
+				axes: [{ column: "cellId", spec: cell }, { column: "feature", spec: feat }],
+				columns: [{
+					column: "specificityScore", id: "specificityScore",
+					spec: {
+						name: "pl7.app/feature/specificityScore",
+						valueType: "Double",
+						annotations: a(87000, true, {
+							"pl7.app/label": "Specificity score",
+							"pl7.app/description": "Cell Ranger's BEAM specificity score (0–100): confidence that this antigen's binding exceeds the negative control, from their UMI counts — not binding strength or affinity. Needs a designated negative control.",
+							"pl7.app/min": "0",
+							"pl7.app/max": "100",
+							"pl7.app/isScore": "true",
+							"pl7.app/format": ".1f"
+						})
+					}
+				}],
+				storageFormat: "Parquet",
+				partitionKeyLength: 0
+			},
+			name: "specificity",
+			path: ["specificity"]
+		})
+	}
+
+	return outputs
+}
+
+// perCellSummaryOutput: the TABLE-ONLY per-cell collapse (one row per [sampleId, cellId]) produced by
+// per_cell_metrics.py's result_per_cell_summary.csv. Its columns are the cell's max feature UMI count
+// / max feature fraction (/ max specificity score, with a control) plus a "feature : umi : fraction |
+// ..." summary string sorted by descending fraction. This drives the Main results table INSTEAD of the
+// per-(cell x feature) matrix; the per-cell export contract (abundance/fractions/consensus/specificity)
+// is unchanged. The "Max ..." labels distinguish these aggregates from the exported per-feature
+// columns. maxSpecificityScore is emitted (and imported) only with a negative control — same gating as
+// the per-feature specificity column. Keyed [cellId]; the sample axis is prepended by processColumn.
+perCellSummaryOutput := func(blockId, sampleAxisName, hasControl) {
+	cell := cellAxis(sampleAxisName)
+
+	cols := [
+		{
+			column: "maxUmiCount", id: "maxUmiCount",
+			spec: {
+				name: "pl7.app/feature/maxUmiCount",
+				valueType: "Int",
+				annotations: a(87000, true, {
+					"pl7.app/label": "Max Feature UMI count",
+					"pl7.app/description": "The cell's largest per-feature UMI count (the dominant feature's molecule count). The full per-feature counts are in the Feature breakdown column and the exported abundance matrix.",
+					"pl7.app/min": "0"
+				})
+			}
+		},
+		{
+			column: "maxFraction", id: "maxFraction",
+			spec: {
+				name: "pl7.app/feature/maxFraction",
+				valueType: "Double",
+				annotations: a(86000, true, {
+					"pl7.app/label": "Max Feature Fraction",
+					"pl7.app/description": "The cell's largest per-feature fraction (the dominant feature's share of the cell's total feature signal).",
+					"pl7.app/min": "0",
+					"pl7.app/max": "1",
+					"pl7.app/format": ".2p"
+				})
+			}
+		}
+	]
+
+	if hasControl {
+		cols = append(cols, {
+			column: "maxSpecificityScore", id: "maxSpecificityScore",
+			spec: {
+				name: "pl7.app/feature/maxSpecificityScore",
+				valueType: "Double",
+				annotations: a(85000, true, {
+					"pl7.app/label": "Max Specificity score",
+					"pl7.app/description": "The cell's highest per-feature Cell Ranger BEAM specificity score (0–100): confidence that the best-supported feature's binding exceeds the negative control. Needs a designated negative control.",
+					"pl7.app/min": "0",
+					"pl7.app/max": "100",
+					"pl7.app/isScore": "true",
+					"pl7.app/format": ".1f"
+				})
+			}
+		})
+	}
+
+	// The "all features" summary string (mirrors antibody-sequence-liabilities' pl7.app/isSummary
+	// column). Listed last (lowest orderPriority) so the headline aggregates read first.
+	cols = append(cols, {
+		column: "featureSummary", id: "featureSummary",
+		spec: {
+			name: "pl7.app/feature/featureSummary",
+			valueType: "String",
+			annotations: a(84000, true, {
+				"pl7.app/label": "Feature breakdown",
+				"pl7.app/description": "Every feature this cell has signal for, as 'feature (fraction%, UMI count)', sorted by descending fraction (dominant feature first).",
+				"pl7.app/isSummary": "true"
+			})
+		}
+	})
+
+	return {
+		type: "Xsv",
+		xsvType: "csv",
+		settings: {
+			axes: [{ column: "cellId", spec: cell }],
+			columns: cols,
+			storageFormat: "Parquet",
+			partitionKeyLength: 0
+		},
+		name: "perCellSummary",
+		path: ["perCellSummary"]
+	}
+}
+
+// qcFileMapOutput: collect the per-sample QC CSV (fb-pipeline `qc` output) into a resource map keyed
+// [sampleId]. A per-sample QC row is a SCALAR (0 within-sample axes); an xsv import cannot emit that
+// (it requires >=1 within-file axis: xsv-import-file.lib.tengo asserts partitionKeyLength < len(axes)),
+// which is why the old empty-axes Xsv output crashed the SHARED processColumn render and took the whole
+// perCellTable down with it. Instead the per-sample one-row CSVs are concatenated (real sampleId
+// injected per row) and imported ONCE, keyed [sampleId], by qc-summary.tpl.tengo. `type: "Resource"`
+// yields a [sampleId] -> file map (same mechanism as blocks/mixcr-clonotyping's `clns`/`qc` outputs);
+// the default path ["qc"] matches the fb-pipeline body's `qc:` return (the old path ["qcSummary"] was
+// itself wrong — no such body output exists). Not part of the per-cell export contract; outputs-only.
+qcFileMapOutput := func(blockId) {
+	return {
+		type: "Resource",
+		spec: {
+			kind: "PColumn",
+			name: "pl7.app/feature/qcSummaryFile",
+			domain: { "pl7.app/blockId": blockId },
+			valueType: "File"
+		},
+		name: "qc"
+	}
+}
+
+// qcSummaryColumnsSpec: the xsv.importFile spec for the COMBINED per-sample QC table (one row per
+// sample), used by qc-summary.tpl.tengo. Keyed [sampleId] with the axis spec inherited verbatim from
+// the block's sampleId axis, so the QC table's sampleId axis unifies with the per-cell contract columns.
+// Each metric keeps its own valueType/label/orderPriority/format. Not part of the per-cell export
+// contract; outputs-only.
+qcSummaryColumnsSpec := func(sampleAxisSpec) {
+	numCol := func(id, colName, label, order, fmt, ...desc) {
+		spec := {
+			name: "pl7.app/qc/" + id,
+			valueType: "Double",
+			annotations: a(order, true, { "pl7.app/label": label })
+		}
+		if !is_undefined(fmt) {
+			spec.annotations["pl7.app/format"] = fmt
+		}
+		if len(desc) > 0 && !is_undefined(desc[0]) && desc[0] != "" {
+			spec.annotations["pl7.app/description"] = desc[0]
+		}
+		return { column: colName, id: id, spec: spec }
+	}
+	return {
+		axes: [{ column: "sampleId", spec: sampleAxisSpec }],
+		columns: [
+			numCol("readsTotal", "readsTotal", "Reads parsed", 90000, undefined),
+			numCol("readsMatched", "readsMatched", "Reads matched", 89000, undefined),
+			numCol("matchedFraction", "matchedFraction", "Matched fraction", 88000, ".2p"),
+			numCol("cellsDetected", "cellsDetected", "Cells detected", 87000, undefined),
+			numCol("featuresDetected", "featuresDetected", "Features detected", 86000, undefined),
+			numCol("totalUniqueUmis", "totalUniqueUmis", "Total distinct UMIs", 85000, undefined),
+			numCol("medianUmisPerCell", "medianUmisPerCell", "Median UMIs / cell", 84000, ".1f"),
+			numCol("panelAssignedFraction", "panelAssignedFraction", "Panel-assigned fraction", 83000, ".2p", "Fraction of feature-barcode reads kept after correcting their barcode against the panel; reads too far from any panel entry are dropped. A low value flags a panel or read-geometry mismatch.")
+		],
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}
+}
+
+export {
+	cellAxis: cellAxis,
+	featureAxis: featureAxis,
+	valueOutputs: valueOutputs,
+	perCellSummaryOutput: perCellSummaryOutput,
+	qcFileMapOutput: qcFileMapOutput,
+	qcSummaryColumnsSpec: qcSummaryColumnsSpec
+}

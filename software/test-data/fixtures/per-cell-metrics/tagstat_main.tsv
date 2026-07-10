@@ -1,0 +1,7 @@
+CELL	FEATURE	count	totalWeight	unique_UMI
+cell1	AAAA	7	7	3
+cell3	AAAA	5	5	2
+cell1	CCCC	2	2	1
+cell2	AAAA	4	4	1
+cell2	CCCC	3	3	1
+cell2	GGGG	6	6	1
