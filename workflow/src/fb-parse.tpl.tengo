@@ -1,8 +1,9 @@
 // mitool parse sub-template (render.create boundary).
 //
-// Runs mitool parse and returns parsed.mic + parse_report.json, plus a stdout stream capturing mitool's
-// progress lines for the model's live per-step progress. The parse exec runs inside this render boundary
-// so its per-sample outputs flatten cleanly.
+// Runs mitool parse and returns parsed.mic + parse_report.json. No stdout stream is captured:
+// saveStdoutStream writes the rate-dependent stdout into the exec's content-hashed files map, which
+// drifts every getFile off it and throws CIDConflictError on a stale re-render. Per-step progress is
+// instead derived deterministically from which stage reports have settled (see the model's sampleStep).
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
@@ -11,11 +12,7 @@ maps := import("@platforma-sdk/workflow-tengo:maps")
 
 json := import("json")
 
-// mitool emits progress on stderr with this prefix; printErrStreamToStdout() folds it into the captured
-// stdout stream so the (future) model can parse live progress lines from it.
-progressPrefix := "[==PROGRESS==]"
-
-self.defineOutputs("parsedMic", "parseReport", "parseLogStream")
+self.defineOutputs("parsedMic", "parseReport")
 
 // :memory-from-limits sizes the JVM heap from the granted limits — avoids end-of-parse OOM when many
 // tag writers flush (see demultiplex-fastq).
@@ -42,9 +39,6 @@ self.body(func(inputs) {
 
 	parse := exec.builder().
 		writeFile("parsed.mic", bytes(0), { writable: true }).
-		printErrStreamToStdout().
-		saveStdoutStream().
-		env("MI_PROGRESS_PREFIX", progressPrefix).
 		software(mitoolSw)
 	if memOverrideGB > 0 {
 		parse = parse.cpu(mitoolCPUs).mem(string(memOverrideGB) + "GiB")
@@ -71,7 +65,6 @@ self.body(func(inputs) {
 
 	return {
 		parsedMic: parse.getFile("parsed.mic"),
-		parseReport: parse.getFile("parse_report.json"),
-		parseLogStream: parse.getStdoutStream()
+		parseReport: parse.getFile("parse_report.json")
 	}
 })

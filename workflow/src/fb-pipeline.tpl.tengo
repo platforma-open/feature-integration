@@ -6,13 +6,11 @@
 // Python software, which collapses to the (cell x feature) outputs.
 //
 // Every exec runs inside a render.create sub-template (fb-parse / fb-refine / fb-tagstat produce the
-// mitool files; fb-downstream runs the QC + per-cell-metrics consumers) so this body returns ONLY render
-// outputs, never an inline exec's getFile. That is the CIDConflictError fix: parse/refine/tag-stat
-// capture rate-dependent mitool progress via saveStdoutStream, which makes a streaming exec's files map
-// (hence any getFile off it) resolve to a run-to-run drifting CID; the SDK exec.tpl is hash_override-
-// pinned, so an inline consumer has a stable AID + drifting CID and conflicts when its per-sample output
-// is flattened. A render.create resource has a content-derived AID (render.lib builds a plain struct, no
-// hash_override), so a consumer inside a boundary absorbs the drift and its outputs flatten cleanly.
+// mitool files; fb-downstream runs the QC + per-cell-metrics consumers) so this body returns only render
+// outputs. The mitool execs deliberately do NOT capture a stdout progress stream: saveStdoutStream saves
+// the rate-dependent stdout into the exec's content-hashed files map, drifting every getFile off it and
+// throwing CIDConflictError on a stale re-render. Per-step progress is derived deterministically instead,
+// from which stage reports have settled (stepReports -> the model's sampleStep).
 // Mirrors blocks/peptide-extraction (parse.tpl + umi-consensus.tpl + downstream-pipeline.tpl).
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
@@ -33,7 +31,7 @@ fbParseTpl := assets.importTemplate(":fb-parse")
 fbRefineTagstatTpl := assets.importTemplate(":fb-refine-tagstat")
 fbDownstreamTpl := assets.importTemplate(":fb-downstream")
 
-self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "qc", "qcJson", "parseLogStream", "stepLogs")
+self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "qc", "qcJson", "stepReports")
 
 self.body(func(inputs) {
 	inputData := inputs[pConstants.VALUE_FIELD_NAME]
@@ -164,7 +162,7 @@ self.body(func(inputs) {
 	refineTagstatRun := render.create(fbRefineTagstatTpl, {
 		decision: gate.getFileContent("decision.json"),
 		parsedMic: parsedMic,
-		parseLogStream: parseRun.output("parseLogStream"),
+		parseReport: parseReport,
 		emptyTagstat: gate.getFile("tagstat_empty.tsv"),
 		emptyRefineReport: gate.getFile("refine_report_empty.json"),
 		tags: tags,
@@ -177,7 +175,7 @@ self.body(func(inputs) {
 	})
 	tagstatTsv := refineTagstatRun.output("tagstatTsv")
 	refineReport := refineTagstatRun.output("refineReport")
-	stepLogs := refineTagstatRun.output("stepLogs")
+	stepReports := refineTagstatRun.output("stepReports")
 
 	// Step 4: QC report + per-cell metrics (fb-downstream boundary). These consume the drifting mitool
 	// files (tagstat.tsv + parse/refine reports), so they run inside a render boundary and their per-sample
@@ -203,9 +201,8 @@ self.body(func(inputs) {
 		perCellSummary: downstreamRun.output("perCellSummary"),
 		qc: downstreamRun.output("qc"),
 		qcJson: downstreamRun.output("qcJson"),
-		// Per-sample mitool parse stdout stream (live parse progress + early sample roster).
-		parseLogStream: parseRun.output("parseLogStream"),
-		// Per-sample step-log map (parse / refine / tag-stat stdout streams) for live per-step progress.
-		stepLogs: stepLogs
+		// Per-sample step-report map (parse / refine / tag-stat output files) — the model reads which are
+		// present to derive the sample's current step (deterministic, no stdout streams).
+		stepReports: stepReports
 	}
 })
