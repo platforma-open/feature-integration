@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.feature-integration
 
+## 2.1.0
+
+### Minor Changes
+
+- 1b83867: Trigger release
+
 ## 2.0.0
 
 ### Major Changes
