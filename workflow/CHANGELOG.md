@@ -1,5 +1,16 @@
 # @platforma-open/milaboratories.feature-integration.workflow
 
+## 2.1.0
+
+### Minor Changes
+
+- c44afc8: Add progress bar
+
+### Patch Changes
+
+- Updated dependencies [c44afc8]
+  - @platforma-open/milaboratories.feature-integration.per-cell-metrics@2.1.0
+
 ## 2.0.0
 
 ### Major Changes

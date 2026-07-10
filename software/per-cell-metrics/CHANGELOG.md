@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.feature-integration.per-cell-metrics
 
+## 2.1.0
+
+### Minor Changes
+
+- c44afc8: Add progress bar
+
 ## 2.0.0
 
 ### Major Changes
