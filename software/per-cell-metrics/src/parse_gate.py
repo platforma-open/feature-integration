@@ -1,8 +1,8 @@
 """Parse gate for the Feature Integration block.
 
-This gate reads the parse report and emits a ``decision.json`` the workflow branches on: 
+This gate reads the parse report and emits a ``decision.json`` the workflow branches on:
 continue the mitool chain only when at least one read matched; otherwise skip
-refine/tag-stat (they would crash on the empty input) and feed the empty fallbacks this 
+refine/tag-stat (they would crash on the empty input) and feed the empty fallbacks this
 gate also writes into the unchanged downstream:
 
   * ``--empty-tagstat``       a header-only tag-stat TSV (the columns mitool ``tag-stat -t CELL -t
