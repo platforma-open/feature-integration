@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.feature-integration.model
 
+## 2.1.1
+
+### Patch Changes
+
+- b878b6b: Remove standard output usage
+
 ## 2.1.0
 
 ### Minor Changes
