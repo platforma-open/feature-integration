@@ -19,12 +19,15 @@ export type { BlockArgs, BlockData } from "./types";
 
 const DOMINANCE_FLOOR = 0.5; // threshold is user-adjustable down to 0.5, never lower
 
-// mitool prints progress to stdout prefixed with this marker (set as MI_PROGRESS_PREFIX in the workflow).
-// The model reads the latest such line per step to drive the live per-step progress grid.
-export const ProgressPrefix = "[==PROGRESS==]";
-// Splits a mitool progress line into stage / percent / ETA (all optional after the stage).
-export const ProgressPattern =
-  /(?<stage>[^:]*):(?: *(?<progress>[0-9.]+)%)?(?: *ETA: *(?<eta>.+))?/;
+// Ordinal step key -> the step a sample is CURRENTLY on once that report has settled. A stepReports entry
+// appears when its step finishes, so the furthest-present report implies the next running step
+export type SampleStep = "parsing" | "refining" | "counting" | "metrics";
+const STEP_AFTER: Record<string, SampleStep> = {
+  "1-parse": "refining",
+  "2-refine": "counting",
+  "3-tagstat": "metrics",
+};
+const STEP_ORDER = ["1-parse", "2-refine", "3-tagstat"];
 
 // Per-sample QC metrics as emitted by qc_report.py (result_qc.json), read by the analysisLog output
 // and (per sample) by the Main grid's Quality + Read recovery columns (derived in ui/src/results.ts).
@@ -381,32 +384,32 @@ export const platforma = BlockModelV3.create(dataModel)
   // True once the main workflow has begun producing outputs (ctx.outputs settles) — lets the Main page
   // swap the static "run the block" hint for the live per-sample progress grid.
   .output("started", (ctx) => ctx.outputs !== undefined)
-  // Live log handles per [sampleId, step] — the mitool stdout stream for each pipeline step.
-  .output("stepLogs", (ctx) =>
-    ctx.outputs !== undefined
-      ? parseResourceMap(ctx.outputs.resolve("stepLogs"), (acc) => acc.getLogHandle(), false)
-      : undefined,
-  )
-  // Live per-step progress: the latest mitool progress line per [sampleId, step].
-  .output("progress", (ctx) =>
-    ctx.outputs !== undefined
-      ? parseResourceMap(
-          ctx.outputs.resolve("stepLogs"),
-          (acc) => acc.getProgressLogWithInfo(ProgressPrefix),
-          false,
-        )
-      : undefined,
-  )
-  // Live parse progress from the flat parse stream — fires before any sample finishes (early roster).
-  .output("parseProgress", (ctx) =>
-    ctx.outputs !== undefined
-      ? parseResourceMap(
-          ctx.outputs.resolve("parseLogStream"),
-          (acc) => acc.getProgressLogWithInfo(ProgressPrefix),
-          false,
-        )
-      : undefined,
-  )
+  // Per-sample current step, derived from which stepReports entries have settled (a report appears when
+  // its step finishes).
+  .output("sampleStep", (ctx): Record<string, SampleStep> | undefined => {
+    if (ctx.outputs === undefined) return undefined;
+    const reports = parseResourceMap(
+      ctx.outputs.resolve("stepReports"),
+      (acc) => acc.getFileHandle(),
+      false,
+    );
+    if (!reports) return {};
+    // Per sample, the furthest step whose report is present.
+    const furthest: Record<string, string> = {};
+    for (const e of reports.data) {
+      if (e.value == null) continue;
+      const sampleId = String(e.key[0]);
+      const step = String(e.key[1]);
+      if (
+        furthest[sampleId] === undefined ||
+        STEP_ORDER.indexOf(step) > STEP_ORDER.indexOf(furthest[sampleId])
+      )
+        furthest[sampleId] = step;
+    }
+    const out: Record<string, SampleStep> = {};
+    for (const [sampleId, step] of Object.entries(furthest)) out[sampleId] = STEP_AFTER[step];
+    return out;
+  })
   // sampleIds whose per-sample pipeline has finished. qcJson is the LAST per-sample step and is inline
   // JSON content, so getDataAsJsonOrUndefined reads it synchronously — the done-set drives the grid's
   // "Done" state (a sample not in this set is still Processing).

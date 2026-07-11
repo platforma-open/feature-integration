@@ -14,11 +14,7 @@ self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 
-// mitool emits progress on stderr with this prefix; printErrStreamToStdout() folds it into the captured
-// stdout stream so the model can parse live progress lines from it.
-progressPrefix := "[==PROGRESS==]"
-
-self.defineOutputs("refinedMic", "refineReport", "refineLogStream")
+self.defineOutputs("refinedMic", "refineReport")
 
 mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
 emitPanelSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:emit-panel")
@@ -61,9 +57,6 @@ self.body(func(inputs) {
 	}
 
 	refine := exec.builder().
-		printErrStreamToStdout().
-		saveStdoutStream().
-		env("MI_PROGRESS_PREFIX", progressPrefix).
 		software(mitoolSw)
 	if memOverrideGB > 0 {
 		refine = refine.cpu(mitoolCPUs).mem(string(memOverrideGB) + "GiB")
@@ -83,7 +76,6 @@ self.body(func(inputs) {
 
 	return {
 		refinedMic: refine.getFile("refined.mic"),
-		refineReport: refine.getFile("refine_report.json"),
-		refineLogStream: refine.getStdoutStream()
+		refineReport: refine.getFile("refine_report.json")
 	}
 })

@@ -3,7 +3,7 @@ import type { Color } from "@platforma-sdk/ui-vue";
 import { Gradient } from "@platforma-sdk/ui-vue";
 import { computed } from "vue";
 import { useApp } from "./app";
-import { buildProgressMap, deriveProgress, type ProgressCell } from "./progress";
+import { deriveProgress, type ProgressCell } from "./progress";
 
 export type { ProgressCell } from "./progress";
 
@@ -104,17 +104,14 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
   const labels = app.model.outputs.sampleLabels ?? {};
   const completed = new Set(app.model.outputs.completedSamples ?? []);
   const qcBySample = app.model.outputs.sampleQc ?? {};
-  const progress = app.model.outputs.progress;
-  const parseProgress = app.model.outputs.parseProgress;
+  const sampleStep = app.model.outputs.sampleStep;
 
-  const progressMap = buildProgressMap(progress, parseProgress);
-
-  // Roster: dataset labels ∪ completed ∪ QC'd ∪ any sample with a progress entry.
+  // Roster: dataset labels ∪ completed ∪ QC'd ∪ any sample with a step signal.
   const sampleIds = new Set<string>([
     ...Object.keys(labels),
     ...completed,
     ...Object.keys(qcBySample),
-    ...progressMap.keys(),
+    ...Object.keys(sampleStep ?? {}),
   ]);
   // Roster not enumerated yet → keep the grid's loading overlay rather than flashing an empty table.
   if (sampleIds.size === 0) return undefined;
@@ -125,7 +122,7 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
       // Per-sample QC settles when the sample finishes, so Quality + Read recovery fill in at completion.
       const qc = qcBySample[sampleId];
       const qcFields = qc ? { quality: qualityStatus(qc), recovery: recoveryBar(qc) } : {};
-      const progressCell = deriveProgress(sampleId, completed, progressMap);
+      const progressCell = deriveProgress(sampleId, completed, sampleStep);
       return { sampleId, label, progress: progressCell, ...qcFields };
     })
     .sort((a, b) => a.label.localeCompare(b.label));

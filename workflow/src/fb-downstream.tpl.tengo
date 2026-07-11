@@ -2,14 +2,9 @@
 //
 // The final consumers of the mitool chain: the QC-report exec (parsed/matched + cell/feature/UMI +
 // panel-assigned fraction) and the per-cell-metrics Python (collapse to the per-cell (cell x feature)
-// outputs). Both consume files produced by saveStdoutStream execs — tagstat.tsv (fb-tagstat) plus the
-// parse/refine JSON reports (fb-parse/fb-refine) — whose resolved CIDs drift run-to-run because a
-// streaming exec's files map carries the ephemeral stdout ref. Running these consumers INSIDE a
-// render.create boundary is what absorbs that drift: the render resource has a content-derived AID
-// (render.lib.tengo builds a plain struct, no hash_override), so unlike a pinned exec inline in the
-// processColumn body its per-sample outputs flatten without a CIDConflictError. Mirrors
-// blocks/peptide-extraction downstream-pipeline.tpl.tengo (which likewise returns the flattened
-// per-sample table + QC as render outputs). Neither exec captures a stdout stream (nothing consumes it).
+// outputs). They consume tagstat.tsv (fb-tagstat) plus the parse/refine JSON reports (fb-parse /
+// fb-refine). Running them inside this render.create boundary returns their per-sample outputs as render
+// outputs that flatten cleanly. Mirrors blocks/peptide-extraction downstream-pipeline.tpl.tengo.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")

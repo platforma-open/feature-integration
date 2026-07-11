@@ -8,21 +8,24 @@
 //                     empty refine report the gate already synthesized. The downstream Python is
 //                     empty-safe (a header-only tag-stat yields empty results), so the sample completes
 //                     with zero cells instead of failing the whole block.
-// It also assembles the per-sample step-log map (parse / refine / tag-stat stdout streams) keyed by an
-// ordinal step axis, so the model can show live per-step progress. A no-match sample only ran parse, so
-// its map carries just the parse step.
+// It also assembles the per-sample step-report map (the parse / refine / tag-stat output files) keyed by
+// an ordinal step axis. These files are deterministic, so surfacing them is CID-safe; the model reads
+// only their PRESENCE to derive which step a sample has reached (see the model's sampleStep) — a report
+// appears once its step finishes. A no-match sample still gets all three (parse's real report plus the
+// gate's empty refine report + header-only tag-stat), so it advances to Done like any other sample.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 render := import("@platforma-sdk/workflow-tengo:render")
 pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
+file := import("@platforma-sdk/workflow-tengo:file")
 
 json := import("json")
 
 fbRefineTpl := assets.importTemplate(":fb-refine")
 fbTagstatTpl := assets.importTemplate(":fb-tagstat")
 
-self.defineOutputs("tagstatTsv", "refineReport", "stepLogs")
+self.defineOutputs("tagstatTsv", "refineReport", "stepReports")
 
 self.body(func(inputs) {
 	shouldContinue := json.decode(string(inputs.decision.getData())).shouldContinue
@@ -30,14 +33,18 @@ self.body(func(inputs) {
 	tags := inputs.tags
 
 	if !shouldContinue {
-		// No-match branch: use the gate's header-only tag-stat + empty refine report. Only the parse step
-		// ran, so the step-log map carries just that stream.
-		stepLogs := pcolumn.resourceMapBuilder(1)
-		stepLogs.add(["1-parse"], inputs.parseLogStream)
+		// No-match branch: use the gate's header-only tag-stat + empty refine report (refine / tag-stat
+		// never ran). The step-report map carries parse's real report plus those fallbacks.
+		// Reports are exported (file.exportFile) so each map value is a downloadable Blob the model can
+		// probe with getFileHandle; the model only reads their PRESENCE, never the content.
+		stepReports := pcolumn.resourceMapBuilder(1)
+		stepReports.add(["1-parse"], file.exportFile(inputs.parseReport))
+		stepReports.add(["2-refine"], file.exportFile(inputs.emptyRefineReport))
+		stepReports.add(["3-tagstat"], file.exportFile(inputs.emptyTagstat))
 		return {
 			tagstatTsv: inputs.emptyTagstat,
 			refineReport: inputs.emptyRefineReport,
-			stepLogs: stepLogs.build()
+			stepReports: stepReports.build()
 		}
 	}
 
@@ -59,14 +66,14 @@ self.body(func(inputs) {
 		mitoolCPUs: inputs.mitoolCPUs
 	})
 
-	stepLogs := pcolumn.resourceMapBuilder(1)
-	stepLogs.add(["1-parse"], inputs.parseLogStream)
-	stepLogs.add(["2-refine"], refineRun.output("refineLogStream"))
-	stepLogs.add(["3-tagstat"], tagStatRun.output("tagstatLogStream"))
+	stepReports := pcolumn.resourceMapBuilder(1)
+	stepReports.add(["1-parse"], file.exportFile(inputs.parseReport))
+	stepReports.add(["2-refine"], file.exportFile(refineRun.output("refineReport")))
+	stepReports.add(["3-tagstat"], file.exportFile(tagStatRun.output("tagstatTsv")))
 
 	return {
 		tagstatTsv: tagStatRun.output("tagstatTsv"),
 		refineReport: refineRun.output("refineReport"),
-		stepLogs: stepLogs.build()
+		stepReports: stepReports.build()
 	}
 })

@@ -100,30 +100,19 @@ wf.body(func(args) {
 		},
 		name: "qcJson"
 	})
-	// Per-sample mitool parse stdout stream, keyed [sampleId]. Drives the model's live parse progress and
-	// the early sample roster (available before any sample finishes).
-	outputs = append(outputs, {
-		type: "Resource",
-		spec: {
-			kind: "PColumn",
-			name: "pl7.app/log",
-			domain: { "pl7.app/blockId": blockId, "pl7.app/feature/step": "1-parse" },
-			valueType: "Log"
-		},
-		name: "parseLogStream"
-	})
-	// Per-sample step-log map: one mitool stdout stream per pipeline step (parse / refine / tag-stat),
-	// keyed [sampleId, step]. Drives the model's live per-step progress.
+	// Per-sample step-report map: one mitool output file per pipeline step (parse / refine / tag-stat),
+	// keyed [sampleId, step]. The model reads which entries are present to derive each sample's current
+	// step.
 	outputs = append(outputs, {
 		type: "ResourceMap",
 		spec: {
 			kind: "PColumn",
-			name: "pl7.app/log",
+			name: "pl7.app/feature/stepReport",
 			domain: { "pl7.app/blockId": blockId },
-			valueType: "Log",
+			valueType: "File",
 			axesSpec: [{ name: "pl7.app/feature/step", type: "String" }]
 		},
-		name: "stepLogs"
+		name: "stepReports"
 	})
 
 	// mitool resource meta (mixcr semantics): pass the base memory floor always; add the override key
@@ -210,10 +199,9 @@ wf.body(func(args) {
 			// Per-sample QC metrics as JSON (fb-pipeline qcJson) -> model builds the live "Analysis logs"
 			// (completed-sample heartbeat + run-level summary) from it.
 			qcJson: perSampleResults.outputData("qcJson"),
-			// Per-sample parse stdout stream -> model live parse progress + early sample roster.
-			parseLogStream: perSampleResults.outputData("parseLogStream"),
-			// Per-sample x per-step stdout-stream map -> model live per-step progress.
-			stepLogs: perSampleResults.outputData("stepLogs"),
+			// Per-sample x per-step report-file map -> model derives each sample's current step from
+			// which reports are present (deterministic per-step progress, no stdout streams).
+			stepReports: perSampleResults.outputData("stepReports"),
 			// Expose the tag->feature CSV import HANDLE so the model can watch it via getImportProgress()
 			// (model/src/index.ts). That model output is the actual upload driver: it registers the import
 			// with the middle-layer so the CSV bytes are pushed. Without it the CSV blob never materialises
