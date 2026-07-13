@@ -66,6 +66,15 @@ const controlInfoVisible = computed(
 // dropdowns, so their empty state reads as "loading" rather than "no columns found".
 const csvProcessing = computed(() => app.model.outputs.csvColumnsLoading === true);
 
+// The CSV-derived tag-mapping dropdowns (barcode / feature / control / sample columns) have nothing to
+// offer until a tag-feature CSV is uploaded AND its columns are parsed. Disable + dim them when no CSV
+// handle exists yet, or while staging is still reading its columns — so their empty state reads as
+// "waiting for a CSV" rather than "no columns found". Reuses the SDK disabled/dimmed affordance already
+// used for the parse window (csvProcessing).
+const tagMappingDisabled = computed(
+  () => !app.model.data.tagFeatureCsvHandle || csvProcessing.value,
+);
+
 // A negative control is one of the feature-name column's values, so changing the CSV or the feature-name
 // column can make the current selection reference a feature that no longer exists. Clear it on that user
 // gesture. This is a data→data write on an explicit gesture — NOT a watcher on the controlOptions output
@@ -259,7 +268,7 @@ const gridOptions = {
         v-model="app.model.data.barcodeSeqColumn"
         :options="app.model.outputs.csvColumnOptions"
         label="Barcode sequence column"
-        :disabled="csvProcessing"
+        :disabled="tagMappingDisabled"
         required
       >
         <template #tooltip>
@@ -271,7 +280,7 @@ const gridOptions = {
         v-model="app.model.data.featureNameColumn"
         :options="app.model.outputs.csvColumnOptions"
         label="Feature name column"
-        :disabled="csvProcessing"
+        :disabled="tagMappingDisabled"
         required
         @update:model-value="clearControlOnInputChange"
       >
@@ -286,7 +295,7 @@ const gridOptions = {
           v-model="app.model.data.controlFeature"
           :options="app.model.outputs.controlOptions"
           label="Negative control feature"
-          :disabled="csvProcessing"
+          :disabled="tagMappingDisabled"
           clearable
           :style="{ flex: 1 }"
         >
@@ -301,7 +310,7 @@ const gridOptions = {
           :model-value="app.model.data.sampleColumn"
           :options="app.model.outputs.csvColumnOptions"
           label="Sample column"
-          :disabled="csvProcessing"
+          :disabled="tagMappingDisabled"
           clearable
           :style="{ flex: 1 }"
           @update:model-value="setSampleColumn"
