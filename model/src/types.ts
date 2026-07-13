@@ -17,7 +17,6 @@ export type BlockArgs = {
   sampleLabels?: Record<string, string>; // a snapshot of sampleId→name
   // Cell-barcode whitelist for refine-tags CELL correction. "" = de-novo (default; non-10x/synthetic).
   // A 10x built-in name (e.g. 737K-august-2016) makes cellIds match the VDJ producer by construction.
-  // See docs/dormant-features/cell-whitelist-correction-plan.md.
   cellWhitelist: string;
 };
 

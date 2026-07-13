@@ -245,7 +245,7 @@ export const platforma = BlockModelV3.create(dataModel)
       ...(sampleAware
         ? { sampleColumn: data.sampleColumn, sampleLabels: data.sampleLabelSnapshot }
         : {}),
-      // CELL whitelist: "" = de-novo (default). See docs/dormant-features/cell-whitelist-correction-plan.md.
+      // CELL whitelist: "" = de-novo CELL correction (default; no external whitelist).
       cellWhitelist: data.cellWhitelist ?? "",
     };
   })
