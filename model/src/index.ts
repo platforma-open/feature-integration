@@ -492,7 +492,7 @@ export const platforma = BlockModelV3.create(dataModel)
 
     const medMatched = median(matched);
     const medAssigned = median(assigned);
-    const lines: string[] = ["Feature Integration — analysis log", ""];
+    const lines: string[] = ["Feature Barcode Analysis — analysis log", ""];
     lines.push(`Processed ${done} sample${done === 1 ? "" : "s"}.`);
     lines.push(
       `Reads parsed: ${nf(readsTotal)} total` +
@@ -561,7 +561,7 @@ export const platforma = BlockModelV3.create(dataModel)
     },
     { retentive: true, withStatus: true },
   )
-  .title(() => "Feature Integration")
+  .title(() => "Feature Barcode Analysis")
   // Standard block-label subtitle. The subtitle render context is args-only (no result pool / outputs
   // — touching them renders "Invalid subtitle"), so the dynamic "<dataset> · <barcode> - <feature>"
   // string is derived in the `suggestedBlockLabel` OUTPUT (which HAS the pool) and copied into

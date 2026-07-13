@@ -42,7 +42,7 @@
       "ui": "@platforma-open/milaboratories.feature-integration.ui/dist"
     },
     "meta": {
-      "title": "Feature Integration",
+      "title": "Feature Barcode Analysis",
       "logo": "file:../logos/block-logo.png",
       "url": "https://github.com/platforma-open/feature-integration",
       "support": "mailto:support@milaboratories.com",

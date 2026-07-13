@@ -147,7 +147,7 @@ wf.body(func(args) {
 		type: "milaboratories.feature-integration",
 		id: blockId,
 		importance: 30,
-		label: "Feature Integration"
+		label: "Feature Barcode Analysis"
 	})
 
 	addXsvTo := func(fb, outputName) {

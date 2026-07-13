@@ -198,7 +198,7 @@ const gridOptions = {
 
 <template>
   <PlBlockPage>
-    <template #title>Feature Integration</template>
+    <template #title>Feature Barcode Analysis</template>
     <template #append>
       <PlBtnGhost v-if="analysisLog.length > 0" @click.stop="logsOpen = true">
         Logs
