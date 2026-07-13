@@ -169,7 +169,14 @@ const columnDefs: ColDef<SampleResult>[] = [
     colId: "quality",
     field: "quality",
     headerName: "Quality",
-    headerComponentParams: { type: "Text" } satisfies PlAgHeaderComponentParams,
+    headerComponentParams: {
+      type: "Text",
+      info:
+        "Per-sample QC status.\n" +
+        "ALERT — no cells detected, or under 25% of reads assigned to the panel.\n" +
+        "WARN — under 50% of reads panel-assigned, or under 80% matched the read pattern.\n" +
+        "OK — otherwise.",
+    } satisfies PlAgHeaderComponentParams,
     width: 120,
     cellRendererSelector: (params) =>
       params.data?.quality
@@ -181,7 +188,14 @@ const columnDefs: ColDef<SampleResult>[] = [
     colId: "recovery",
     field: "recovery",
     headerName: "Read recovery",
-    headerComponentParams: { type: "Text" } satisfies PlAgHeaderComponentParams,
+    headerComponentParams: {
+      type: "Text",
+      info:
+        "Where each sample's reads went, by count. Bar segments left → right:\n" +
+        "Usable (green) — matched the read pattern and kept after feature-barcode panel correction.\n" +
+        "Off-panel (orange-red) — matched the pattern but the feature barcode was dropped as off-panel.\n" +
+        "No pattern match (purple) — did not match the read pattern.",
+    } satisfies PlAgHeaderComponentParams,
     flex: 2,
     cellStyle: { "--ag-cell-horizontal-padding": "12px" },
     cellRendererSelector: (params) =>
