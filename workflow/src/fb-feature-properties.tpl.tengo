@@ -1,0 +1,69 @@
+// Per-feature property import (render.create boundary).
+//
+// Feature Integration imports every EXTRA column of the tag->feature CSV — every column beyond the
+// user-mapped barcode-sequence + feature-name roles — as a per-feature property, and surfaces each as
+// a p-column keyed on the shared feature axis (pl7.app/feature/featureId). The properties then ride
+// that axis into VDJ Multiomic Integration's per-feature outputs and lead selection, so downstream can
+// group / aggregate the binding profile by property (e.g. all human vs all cyno antigens) with no
+// re-import (spec A-0026 / A-0015).
+//
+// emit_feature_properties.py (run in main.tpl.tengo) produced two inputs: the wide per-feature CSV
+// (`feature` + one column per property) and a meta JSON listing the property column names + each
+// property's distinct values. The property NAMES are user data, unknown at graph-build time, so this
+// template reads the meta content via .getData() to build one xsv import column per property (the same
+// "inspect file content inside a sub-template that receives it" pattern as fb-refine-tagstat.tpl.tengo;
+// the dynamic-columns-from-a-tool-output pattern mirrors VDJ Multiomic Integration's finalize.tpl).
+//
+// Returns a BUILT pFrame (like VDJM's clonotypeProperties export) that main.tpl publishes as the
+// `featureProperties` export. When the CSV carries no extra columns the frame is empty (a no-op export).
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
+pframes := import("@platforma-sdk/workflow-tengo:pframes")
+pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
+columnSpecs := import(":column-specs")
+
+json := import("json")
+
+self.defineOutputs("featureProperties")
+
+self.body(func(inputs) {
+	blockId := inputs.blockId
+
+	// Property column names + distinct values, read as a value (content resource received as input).
+	meta := json.decode(string(inputs.propertyMeta.getData()))
+	propertyColumns := is_undefined(meta.columns) ? [] : meta.columns
+	valuesByColumn := is_undefined(meta.valuesByColumn) ? {} : meta.valuesByColumn
+
+	fb := pframes.pFrameBuilder()
+
+	// No extra columns -> no properties to import; publish an empty frame. Skipping the xsv import here is
+	// required (an empty `columns` list fails the import spec validation) and correct (nothing to key).
+	if len(propertyColumns) > 0 {
+		// Same trace step as the per-cell contract columns (deterministic; seeded from the input FASTQ
+		// spec + blockId), so the properties carry consistent provenance / labels.
+		trace := pSpec.makeTrace(inputs.traceSeedSpec, {
+			type: "milaboratories.feature-integration",
+			id: blockId,
+			importance: 30,
+			label: "Feature Barcode Analysis"
+		})
+
+		featureAxis := columnSpecs.featureAxis(blockId)
+		importColumns := columnSpecs.featurePropertyImportColumns(propertyColumns, valuesByColumn)
+
+		rawPf := xsv.importFile(inputs.propertiesFile, "csv", {
+			axes: [{ column: "feature", spec: featureAxis }],
+			columns: importColumns,
+			storageFormat: "Parquet",
+			partitionKeyLength: 0
+		}, { splitDataAndSpec: true })
+		for k, v in rawPf {
+			fb.add(k, trace.inject(v.spec), v.data)
+		}
+	}
+
+	return {
+		featureProperties: fb.build()
+	}
+})

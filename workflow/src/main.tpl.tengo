@@ -15,6 +15,7 @@ assets := import("@platforma-sdk/workflow-tengo:assets")
 render := import("@platforma-sdk/workflow-tengo:render")
 pframes := import("@platforma-sdk/workflow-tengo:pframes")
 pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
+exec := import("@platforma-sdk/workflow-tengo:exec")
 ll := import("@platforma-sdk/workflow-tengo:ll")
 file := import("@platforma-sdk/workflow-tengo:file")
 columnSpecs := import(":column-specs")
@@ -22,6 +23,9 @@ columnSpecs := import(":column-specs")
 fbPipelineTpl := assets.importTemplate(":fb-pipeline")
 prerunTpl := assets.importTemplate(":prerun")
 qcSummaryTpl := assets.importTemplate(":qc-summary")
+featurePropsTpl := assets.importTemplate(":fb-feature-properties")
+
+featurePropsSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:feature-properties")
 
 defaultMitoolMemGB := 16
 defaultMitoolCPUs := 4
@@ -190,6 +194,34 @@ wf.body(func(args) {
 		sampleAxisSpec: sampleAxis
 	})
 
+	// --- per-feature properties (A-0026) ---
+	// Import every EXTRA tag-CSV column (beyond the mapped barcode-sequence + feature-name roles) as a
+	// per-feature property and surface it on the shared feature axis, so downstream can group / filter the
+	// binding profile by property (A-0015). Panel-global (one value per feature, same for every sample), so
+	// this runs ONCE on the shared CSV blob OUTSIDE the per-sample processColumn fan-out — not per sample.
+	// emit_feature_properties.py writes the wide per-feature CSV + a meta JSON (property names + distinct
+	// values); fb-feature-properties.tpl reads the meta and builds one p-column per property keyed on the
+	// feature axis. The sample column, when set, is a role too (not a property) and is excluded.
+	featurePropsSampleColumn := is_undefined(args.sampleColumn) ? "" : args.sampleColumn
+	featurePropsRun := exec.builder().
+		software(featurePropsSw).
+		cpu(1).mem("1GiB").
+		addFile("tags.csv", csvFile).
+		arg("tags.csv").
+		arg("--csv-barcode-col").arg(args.barcodeSeqColumn).
+		arg("--csv-feature-col").arg(args.featureNameColumn).
+		arg("--sample-col").arg(featurePropsSampleColumn).
+		arg("--output-prefix").arg("result").
+		saveFile("result_feature_properties.csv").
+		saveFileContent("result_feature_property_meta.json").
+		run()
+	featurePropsResult := render.create(featurePropsTpl, {
+		propertiesFile: featurePropsRun.getFile("result_feature_properties.csv"),
+		propertyMeta: featurePropsRun.getFileContent("result_feature_property_meta.json"),
+		blockId: blockId,
+		traceSeedSpec: inputSpec
+	})
+
 	return {
 		outputs: {
 			// Collapsed per-cell results table (one row per [sampleId, cellId]).
@@ -210,7 +242,13 @@ wf.body(func(args) {
 			tagFeatureCsvImportHandle: csvImport.handle
 		},
 		exports: {
-			perCellFeatures: finalPf
+			perCellFeatures: finalPf,
+			// Per-feature properties (A-0026), keyed on the shared feature axis (pl7.app/feature/featureId).
+			// A separate frame keeps the per-cell contract above unchanged; the result pool is flat, so
+			// these are discoverable/joinable by the feature axis downstream (VDJ Multiomic Integration
+			// reuses this exact feature axis for its per-feature outputs). Empty when the CSV has no extra
+			// columns.
+			featureProperties: featurePropsResult.output("featureProperties")
 		}
 	}
 })
