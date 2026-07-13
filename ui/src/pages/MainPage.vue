@@ -231,7 +231,12 @@ const gridOptions = {
         :options="app.model.outputs.fastqOptions"
         label="Select dataset"
         @update:model-value="clearSampleAwareOnInputChange"
-      />
+      >
+        <template #tooltip>
+          Feature-barcode FASTQ dataset to analyze. Its reads are parsed to identify which antigen
+          (feature) each cell bound.
+        </template>
+      </PlDropdownRef>
       <!-- Read layout: preset dropdown + pattern builder/string (mitool tag pattern). Replaces the
            former cell/UMI/feature length fields — their values are now decided inside the editor. -->
       <PatternEditor />
@@ -242,7 +247,13 @@ const gridOptions = {
         :extensions="['csv']"
         required
         @update:model-value="clearOnCsvChange"
-      />
+      >
+        <template #tooltip>
+          CSV mapping each feature barcode to its feature (antigen) name — one row per barcode. Use
+          the columns below to tell the block which column holds the barcode sequence and which holds
+          the feature name.
+        </template>
+      </PlFileInput>
       <PlAlert v-if="csvProcessing" type="info"> Reading columns from the uploaded CSV… </PlAlert>
       <PlDropdown
         v-model="app.model.data.barcodeSeqColumn"
@@ -250,7 +261,12 @@ const gridOptions = {
         label="Barcode sequence column"
         :disabled="csvProcessing"
         required
-      />
+      >
+        <template #tooltip>
+          CSV column holding the feature-barcode nucleotide sequence. Matched against the
+          <code>FEATURE</code> capture on Read 2.
+        </template>
+      </PlDropdown>
       <PlDropdown
         v-model="app.model.data.featureNameColumn"
         :options="app.model.outputs.csvColumnOptions"
@@ -258,7 +274,12 @@ const gridOptions = {
         :disabled="csvProcessing"
         required
         @update:model-value="clearControlOnInputChange"
-      />
+      >
+        <template #tooltip>
+          CSV column holding the feature (antigen) name each barcode maps to. These names label the
+          per-cell antigen assignments.
+        </template>
+      </PlDropdown>
       <PlSectionSeparator compact> Optional settings </PlSectionSeparator>
       <PlRow>
         <PlDropdown
@@ -268,7 +289,13 @@ const gridOptions = {
           :disabled="csvProcessing"
           clearable
           :style="{ flex: 1 }"
-        />
+        >
+          <template #tooltip>
+            <b>Optional</b> — a feature designated as a non-binding background control. When set, a
+            per-antigen specificity score is computed that separates genuine binders from background
+            signal.
+          </template>
+        </PlDropdown>
 
         <PlDropdown
           :model-value="app.model.data.sampleColumn"

@@ -137,7 +137,12 @@ watch(editorMode, (mode) => {
     :required="true"
     :error="!selectedPreset ? 'Select a preset' : undefined"
     @update:model-value="setPresetId"
-  />
+  >
+    <template #tooltip>
+      Feature-barcode chemistry preset. Sets the tag pattern — cell barcode + UMI on Read 1, feature
+      barcode on Read 2. Pick the configurable preset to edit the read layout by hand.
+    </template>
+  </PlDropdown>
 
   <!-- User-configurable preset: unlock the Add/Build editor (same shape as blocks/peptide-extraction). -->
   <template v-if="isUserConfigurable">
