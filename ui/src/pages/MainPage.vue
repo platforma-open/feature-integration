@@ -259,8 +259,8 @@ const gridOptions = {
       >
         <template #tooltip>
           CSV mapping each feature barcode to its feature (antigen) name — one row per barcode. Use
-          the columns below to tell the block which column holds the barcode sequence and which holds
-          the feature name.
+          the columns below to tell the block which column holds the barcode sequence and which
+          holds the feature name.
         </template>
       </PlFileInput>
       <PlAlert v-if="csvProcessing" type="info"> Reading columns from the uploaded CSV… </PlAlert>
@@ -346,8 +346,8 @@ const gridOptions = {
           label="mitool CPUs per sample"
         >
           <template #tooltip>
-            CPUs allocated to each per-sample mitool step (parse / refine / tag-stat). Raising this can
-            speed up large samples. Leave empty to use the default (4).
+            CPUs allocated to each per-sample mitool step (parse / refine / tag-stat). Raising this
+            can speed up large samples. Leave empty to use the default (4).
           </template>
         </PlNumberField>
         <PlNumberField
@@ -358,8 +358,8 @@ const gridOptions = {
           label="mitool memory per sample (GiB)"
         >
           <template #tooltip>
-            Fixed RAM (GiB) for each per-sample mitool step. Leave empty to size memory automatically
-            from the input read volume; raise it only if a sample runs out of memory.
+            Fixed RAM (GiB) for each per-sample mitool step. Leave empty to size memory
+            automatically from the input read volume; raise it only if a sample runs out of memory.
           </template>
         </PlNumberField>
       </PlAccordionSection>
