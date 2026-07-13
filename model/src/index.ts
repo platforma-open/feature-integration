@@ -299,7 +299,16 @@ export const platforma = BlockModelV3.create(dataModel)
     if (ctx.data?.barcodeSeqColumn && ctx.data?.featureNameColumn) {
       parts.push(`${ctx.data.barcodeSeqColumn} - ${ctx.data.featureNameColumn}`);
     }
-    return parts.length > 0 ? parts.join(" · ") : undefined;
+    if (parts.length === 0) return undefined;
+    // Stan's request (S1): the default subtitle must never render with dots. Periods come from a dotted
+    // dataset/file label; the " · " and " - " separators are a middot and hyphen, not periods, so
+    // stripping "." leaves them intact. Replace periods with spaces and collapse the doubles they create.
+    // A subtitle the user types in the sidebar is not routed through this output, so overrides are safe.
+    return parts
+      .join(" · ")
+      .replace(/\./g, " ")
+      .replace(/ {2,}/g, " ")
+      .trim();
   })
   // Negative-control dropdown options: the distinct values of the chosen feature-name
   // column, from the prerun's emit-csv-meta valuesByColumn map. No rerun on column change — the map
