@@ -247,6 +247,15 @@ export const platforma = BlockModelV3.create(dataModel)
         : {}),
       // CELL whitelist: "" = de-novo CELL correction (default; no external whitelist).
       cellWhitelist: data.cellWhitelist ?? "",
+      // Optional mitool resource overrides (Advanced Settings). Project only positive integers so a blank
+      // or zero field falls through to the workflow defaults (4 CPUs; formula-sized RAM) instead of
+      // sending a meaningless request or staling the block on an empty edit.
+      ...(typeof data.perProcessCPUs === "number" && data.perProcessCPUs >= 1
+        ? { perProcessCPUs: Math.round(data.perProcessCPUs) }
+        : {}),
+      ...(typeof data.perProcessMemGB === "number" && data.perProcessMemGB >= 1
+        ? { perProcessMemGB: Math.round(data.perProcessMemGB) }
+        : {}),
     };
   })
   // Staging depends only on the CSV: emit-csv-meta emits every column's values in one exec, so the

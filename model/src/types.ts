@@ -18,6 +18,10 @@ export type BlockArgs = {
   // Cell-barcode whitelist for refine-tags CELL correction. "" = de-novo (default; non-10x/synthetic).
   // A 10x built-in name (e.g. 737K-august-2016) makes cellIds match the VDJ producer by construction.
   cellWhitelist: string;
+  // Optional mitool resource overrides (Advanced Settings). Undefined -> workflow defaults (4 CPUs; RAM
+  // sized by the input-blob formula). When set, perProcessMemGB is a hard fixed RAM request per sample.
+  perProcessCPUs?: number;
+  perProcessMemGB?: number;
 };
 
 /** Unified persisted UI state. */
@@ -36,6 +40,9 @@ export type BlockData = {
   presetId?: string;
   pattern?: string;
   cellWhitelist?: string; // optional (defaults to "" = de-novo); see BlockArgs.cellWhitelist
+  // Optional mitool resource overrides (Advanced Settings); undefined = workflow defaults.
+  perProcessCPUs?: number;
+  perProcessMemGB?: number;
   defaultBlockLabel?: string; // UI-only: sidebar subtitle, mirrored from the suggestedBlockLabel output
   tableState: PlDataTableStateV2; // per-cell results grid state (UI-only, never projected to args)
   qcSummaryTableState: PlDataTableStateV2; // per-sample QC summary grid state (UI-only)

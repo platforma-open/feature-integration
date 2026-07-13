@@ -338,6 +338,30 @@ const gridOptions = {
           label="Dominance threshold"
           helper="Fraction of a cell's signal one feature must reach to be the consensus. Floor 0.5."
         />
+        <PlNumberField
+          v-model="app.model.data.perProcessCPUs"
+          :min-value="1"
+          :step="1"
+          clearable
+          label="mitool CPUs per sample"
+        >
+          <template #tooltip>
+            CPUs allocated to each per-sample mitool step (parse / refine / tag-stat). Raising this can
+            speed up large samples. Leave empty to use the default (4).
+          </template>
+        </PlNumberField>
+        <PlNumberField
+          v-model="app.model.data.perProcessMemGB"
+          :min-value="1"
+          :step="1"
+          clearable
+          label="mitool memory per sample (GiB)"
+        >
+          <template #tooltip>
+            Fixed RAM (GiB) for each per-sample mitool step. Leave empty to size memory automatically
+            from the input read volume; raise it only if a sample runs out of memory.
+          </template>
+        </PlNumberField>
       </PlAccordionSection>
     </PlSlideModal>
 
