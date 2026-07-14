@@ -14,7 +14,7 @@ import sys
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
-from per_cell_metrics import consensus_category, specificity_score
+from per_cell_metrics import _load, combine_barcode_counts, consensus_category, specificity_score
 
 SRC = pathlib.Path(__file__).parents[1] / "src" / "per_cell_metrics.py"
 
@@ -135,6 +135,122 @@ def test_specificity_bounded_0_100(antigen, control):
 def test_specificity_monotonic_in_antigen(control, base, delta):
     # More antigen UMIs (same control) never lowers confidence.
     assert specificity_score(base + delta, control) >= specificity_score(base, control)
+
+
+# --- multi-barcode antigen combine modes: sum (OR) / all (AND) ---
+
+# A dual-barcode antigen (BG505 read out by b1 + b2) alongside a single-barcode antigen (OTHER = cx).
+_B2F = {"b1": "BG505", "b2": "BG505", "cx": "OTHER"}
+_FB = {"BG505": {"b1", "b2"}, "OTHER": {"cx"}}
+
+
+def test_combine_sum_is_default_and_adds_members():
+    # No modes -> everything sums (OR); the two BG505 barcodes add up, matching historical behaviour.
+    assert combine_barcode_counts({"b1": 3, "b2": 4, "cx": 2}, _B2F, _FB, {}) == {"BG505": 7, "OTHER": 2}
+
+
+def test_combine_all_both_fire_emits_summed():
+    assert combine_barcode_counts({"b1": 3, "b2": 4}, _B2F, _FB, {"BG505": "all"}) == {"BG505": 7}
+
+
+def test_combine_all_one_missing_omits_feature():
+    # Only one BG505 barcode fired -> under AND the antigen is NOT called; the cell has no BG505 entry
+    # at all (omitted, not zero), so it never competes for dominance or takes a fraction.
+    assert combine_barcode_counts({"b1": 5}, _B2F, _FB, {"BG505": "all"}) == {}
+
+
+def test_combine_all_respects_min_umi():
+    # Both present but b2 below the min-UMI floor -> not all fired -> omitted.
+    assert combine_barcode_counts({"b1": 9, "b2": 2}, _B2F, _FB, {"BG505": "all"}, min_umi=3) == {}
+    # b2 at the floor -> now both fired -> called, summed.
+    assert combine_barcode_counts({"b1": 9, "b2": 3}, _B2F, _FB, {"BG505": "all"}, min_umi=3) == {"BG505": 12}
+
+
+def test_combine_mixed_modes_in_one_cell():
+    # BG505 = AND, OTHER = OR (default). Both barcodes of BG505 present -> both features called.
+    assert combine_barcode_counts({"b1": 2, "b2": 2, "cx": 5}, _B2F, _FB, {"BG505": "all"}) == {
+        "BG505": 4,
+        "OTHER": 5,
+    }
+    # Drop one BG505 barcode -> BG505 gone, OTHER (OR) still called.
+    assert combine_barcode_counts({"b1": 2, "cx": 5}, _B2F, _FB, {"BG505": "all"}) == {"OTHER": 5}
+
+
+def test_combine_off_panel_barcode_ignored():
+    # A barcode with no feature mapping is ignored (mirrors the tag->feature inner join).
+    assert combine_barcode_counts({"b1": 1, "b2": 1, "zzz": 99}, _B2F, _FB, {"BG505": "all"}) == {"BG505": 2}
+
+
+def test_combine_single_barcode_all_is_presence():
+    # A single-barcode feature under AND reduces to "present at >= min_umi".
+    assert combine_barcode_counts({"cx": 1}, _B2F, _FB, {"OTHER": "all"}) == {"OTHER": 1}
+
+
+@given(
+    st.dictionaries(st.sampled_from(["b1", "b2", "cx"]), st.integers(min_value=1, max_value=50), max_size=3),
+    st.integers(min_value=1, max_value=10),
+)
+def test_combine_all_never_calls_without_every_member(cell, min_umi):
+    # Property: an "all"-mode feature appears in the output ONLY when every member barcode is present
+    # with umi >= min_umi. (BG505 is AND here; OTHER is OR.)
+    out = combine_barcode_counts(cell, _B2F, _FB, {"BG505": "all"}, min_umi=float(min_umi))
+    if "BG505" in out:
+        assert all(cell.get(bc, 0) >= min_umi for bc in _FB["BG505"])
+        assert out["BG505"] == sum(cell[bc] for bc in _FB["BG505"])
+
+
+def test_load_no_combine_col_sums_shared_feature(tmp_path):
+    # Backward-compat: with no combine column, two barcodes on one feature name still sum (OR).
+    tags = tmp_path / "tags.csv"
+    tags.write_text("tag,feature\nb1,BG505\nb2,BG505\n")
+    tagstat = tmp_path / "tagstat.tsv"
+    tagstat.write_text("CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\nc1\tb1\t3\t3\t3\nc1\tb2\t4\t4\t4\n")
+    df = _load(str(tagstat), str(tags), "CELL", "FEATURE", "unique_UMI", "tag", "feature")
+    got = {(r["cellId"], r["feature"]): int(r["umiCount"]) for r in df.to_dicts()}
+    assert got == {("c1", "BG505"): 7}
+
+
+def test_load_matches_pure_combine(tmp_path):
+    # Oracle: the vectorized _load AND/OR gate must equal the pure combine_barcode_counts rule.
+    tags = tmp_path / "tags.csv"
+    tags.write_text("tag,feature,combine\nb1,BG505,all\nb2,BG505,all\ncx,OTHER,sum\n")
+    tagstat = tmp_path / "tagstat.tsv"
+    tagstat.write_text(
+        "CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\n"
+        "cellBoth\tb1\t3\t3\t3\n"
+        "cellBoth\tb2\t4\t4\t4\n"  # both BG505 barcodes fire -> BG505 = 7
+        "cellBoth\tcx\t2\t2\t2\n"  # OTHER = 2
+        "cellOne\tb1\t5\t5\t5\n"  # only b1 -> BG505 omitted (AND)
+        "cellOne\tcx\t9\t9\t9\n"  # OTHER = 9
+        "cellOther\tcx\t1\t1\t1\n"  # only OTHER
+    )
+    df = _load(
+        str(tagstat),
+        str(tags),
+        "CELL",
+        "FEATURE",
+        "unique_UMI",
+        "tag",
+        "feature",
+        combine_col="combine",
+        min_umi=1.0,
+    )
+    got = {(r["cellId"], r["feature"]): int(r["umiCount"]) for r in df.to_dicts()}
+
+    modes = {"BG505": "all", "OTHER": "sum"}
+    cells = {
+        "cellBoth": {"b1": 3, "b2": 4, "cx": 2},
+        "cellOne": {"b1": 5, "cx": 9},
+        "cellOther": {"cx": 1},
+    }
+    expected = {}
+    for cell, bc in cells.items():
+        for feat, umi in combine_barcode_counts(bc, _B2F, _FB, modes).items():
+            expected[(cell, feat)] = int(umi)
+    assert got == expected  # vectorized _load == pure rule
+    # ...and spell out the AND effect so the oracle isn't vacuous.
+    assert ("cellOne", "BG505") not in got
+    assert got[("cellBoth", "BG505")] == 7
 
 
 # --- end-to-end CLI over the committed bed (slow lane) ---
@@ -544,3 +660,72 @@ def test_cli_control_not_scored_as_feature(tmp_path):
         summary = {r["cellId"]: r for r in csv.DictReader(f)}
     # AGX 3 UMIs vs CTRL 9 UMIs — the antigen's score, not specificity_score(9, 9) (the control self-score)
     assert float(summary["cellP"]["maxSpecificityScore"]) == pytest.approx(specificity_score(3, 9))
+
+
+@pytest.mark.slow
+def test_cli_combine_all_gates_dual_barcode_antigen(tmp_path):
+    # End-to-end: a dual-barcode antigen (BG505 = b1 + b2) in "all" (AND) mode is called only in cells
+    # where BOTH barcodes fired; a single-barcode antigen (OTHER = cx) stays OR. Mirrors the LIBRA-seq
+    # dual-probe design (a cell is BG505-specific only when both probe barcodes are present).
+    tags = tmp_path / "tags.csv"
+    tags.write_text("tag,feature,combine\nb1,BG505,all\nb2,BG505,all\ncx,OTHER,sum\n")
+    tagstat = tmp_path / "tagstat.tsv"
+    tagstat.write_text(
+        "CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\n"
+        "cellBoth\tb1\t6\t6\t6\n"
+        "cellBoth\tb2\t6\t6\t6\n"  # both BG505 barcodes fire -> BG505 called (12), dominant
+        "cellOne\tb1\t9\t9\t9\n"  # only b1 fired -> BG505 NOT called
+        "cellOne\tcx\t1\t1\t1\n"  # OTHER present
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            str(SRC),
+            str(tagstat),
+            str(tags),
+            "--sample-id",
+            "s1",
+            "--combine-col",
+            "combine",
+            "--output-prefix",
+            str(tmp_path / "result"),
+        ],
+        check=True,
+        cwd=tmp_path,
+    )
+    with open(tmp_path / "result_abundance.csv", newline="") as f:
+        umi = {(r["cellId"], r["feature"]): int(r["umiCount"]) for r in csv.DictReader(f)}
+    assert umi[("cellBoth", "BG505")] == 12  # AND: both fired -> summed
+    assert ("cellOne", "BG505") not in umi  # AND: only one fired -> omitted entirely
+    assert umi[("cellOne", "OTHER")] == 1
+    # consensus follows: cellBoth is BG505; cellOne has only OTHER present -> OTHER
+    with open(tmp_path / "result_consensus.csv", newline="") as f:
+        cons = {r["cellId"]: r["consensusFeature"] for r in csv.DictReader(f)}
+    assert cons["cellBoth"] == "BG505"
+    assert cons["cellOne"] == "OTHER"
+
+
+@pytest.mark.slow
+def test_cli_rejects_conflicting_combine_mode(tmp_path):
+    # A feature whose rows disagree on the combine mode is a user error -> exit non-zero, never a silent
+    # pick of one mode.
+    tags = tmp_path / "tags.csv"
+    tags.write_text("tag,feature,combine\nb1,BG505,all\nb2,BG505,sum\n")  # BG505 rows disagree
+    tagstat = tmp_path / "tagstat.tsv"
+    tagstat.write_text("CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\ncA\tb1\t1\t1\t1\n")
+    r = subprocess.run(
+        [
+            sys.executable,
+            str(SRC),
+            str(tagstat),
+            str(tags),
+            "--sample-id",
+            "s1",
+            "--combine-col",
+            "combine",
+            "--output-prefix",
+            str(tmp_path / "result"),
+        ],
+        cwd=tmp_path,
+    )
+    assert r.returncode != 0
