@@ -46,7 +46,7 @@ self.body(func(inputs) {
 			type: "milaboratories.feature-integration",
 			id: blockId,
 			importance: 30,
-			label: "Feature Barcode Analysis"
+			label: "Feature Barcode Profiling"
 		})
 
 		featureAxis := columnSpecs.featureAxis(blockId)

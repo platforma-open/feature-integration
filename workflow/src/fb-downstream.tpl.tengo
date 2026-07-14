@@ -25,6 +25,11 @@ self.body(func(inputs) {
 	dominanceThreshold := inputs.dominanceThreshold
 	barcodeSeqColumn := inputs.barcodeSeqColumn
 	featureNameColumn := inputs.featureNameColumn
+	// Optional multi-barcode antigen combine mode. "" = off (per_cell_metrics defaults every feature to
+	// OR/sum). When set, it names the tag-CSV column giving each feature's mode (sum | all); minUmi is the
+	// AND per-barcode "fired" floor.
+	combineColumn := is_undefined(inputs.combineColumn) ? "" : inputs.combineColumn
+	minUmi := is_undefined(inputs.minUmi) ? 1 : inputs.minUmi
 
 	// Per-sample QC summary: reads parsed/matched (parse JSON report) + cell/feature/UMI metrics
 	// (tag-stat) + best-effort panel-assigned fraction (refine JSON report).
@@ -79,6 +84,12 @@ self.body(func(inputs) {
 		saveFile("result_per_cell_summary.csv")
 	if hasControl {
 		metrics = metrics.arg("--control").arg(control)
+	}
+	// Multi-barcode antigen combine mode (optional). Only pass --combine-col when a column is configured;
+	// otherwise per_cell_metrics defaults every feature to OR/sum (unchanged behaviour). --min-umi is the
+	// AND per-barcode "fired" floor and is harmless when no combine column is set.
+	if combineColumn != "" {
+		metrics = metrics.arg("--combine-col").arg(combineColumn).arg("--min-umi").arg(string(minUmi))
 	}
 	metrics = metrics.run()
 

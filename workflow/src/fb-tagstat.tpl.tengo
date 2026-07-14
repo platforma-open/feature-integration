@@ -1,9 +1,9 @@
 // tag-stat sub-template (render.create boundary).
 //
-// tag-stat -u computes per-(cell, feature-barcode) distinct-UMI counts and returns tagstat.tsv to the
-// caller. Progress capture (saveStdoutStream) is deliberately NOT used — see fb-parse.tpl.tengo for why
-// (it injects a drifting stdout file into the exec's files map and caused the CIDConflictError). Output
-// columns: CELL FEATURE count totalWeight unique_UMI.
+// tag-stat -u computes per-(cell, feature-barcode) distinct-UMI counts and returns tagstat.tsv + a live
+// stdout stream (tagstatLogStream) to the caller. Capturing stdout is safe now that main.tpl content-hash-
+// persists the mitool intermediates (see fb-parse.tpl.tengo header) — it used to cause the CIDConflictError.
+// Output columns: CELL FEATURE count totalWeight unique_UMI.
 //
 // --use-local-temp puts the count-unique on-disk sort in the exec work dir instead of the shared system
 // /tmp — team convention for heavy on-disk-sort mitool steps (peptide-extraction, mixcr-shm-trees,
@@ -13,9 +13,12 @@ self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 
-self.defineOutputs("tagstatTsv")
+self.defineOutputs("tagstatTsv", "tagstatLogStream")
 
 mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
+
+// mitool progress-line marker (see fb-parse.tpl.tengo) — drives the model's per-step live log/progress.
+progressPrefix := "[==PROGRESS==]"
 
 self.body(func(inputs) {
 	refinedMic := inputs.refinedMic
@@ -39,6 +42,9 @@ self.body(func(inputs) {
 		staticFallback(formula.gib(tagStatBaseGB))
 
 	tagStat := exec.builder().
+		printErrStreamToStdout().
+		saveStdoutStream().
+		env("MI_PROGRESS_PREFIX", progressPrefix).
 		software(mitoolSw).
 		resources({ onCPU: { cpu: tagStatCPU, ram: memFormula } }).
 		arg("tag-stat").
@@ -51,6 +57,7 @@ self.body(func(inputs) {
 		run()
 
 	return {
-		tagstatTsv: tagStat.getFile("tagstat.tsv")
+		tagstatTsv: tagStat.getFile("tagstat.tsv"),
+		tagstatLogStream: tagStat.getStdoutStream()
 	}
 })

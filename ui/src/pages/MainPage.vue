@@ -10,6 +10,7 @@ import {
   PlAlert,
   PlBlockPage,
   PlBtnGhost,
+  PlBtnGroup,
   PlDropdown,
   PlDropdownRef,
   PlFileInput,
@@ -29,6 +30,7 @@ import { AgGridVue } from "ag-grid-vue3";
 import { computed, ref, watch } from "vue";
 import { useApp } from "../app";
 import PatternEditor from "../components/PatternEditor.vue";
+import SampleReportPanel from "./SampleReportPanel.vue";
 import {
   sampleResults,
   type ProgressCell,
@@ -55,6 +57,21 @@ watch(
 const analysisLog = computed(() => app.model.outputs.analysisLog ?? []);
 const logsOpen = ref(false);
 
+// Per-sample report slide-over (live per-step mitool logs). Opened by double-clicking a grid row; the
+// modal is shown whenever a sample is selected.
+const selectedSample = ref<string | undefined>(undefined);
+const sampleReportOpen = computed({
+  get: () => selectedSample.value !== undefined,
+  set: (open: boolean) => {
+    if (!open) selectedSample.value = undefined;
+  },
+});
+const selectedSampleLabel = computed(() =>
+  selectedSample.value !== undefined
+    ? (app.model.outputs.sampleLabels?.[selectedSample.value] ?? selectedSample.value)
+    : "",
+);
+
 // No-negative-control info note in the Settings drawer: appears once the tag-feature CSV is added,
 // and hides as soon as a negative control feature is selected.
 const controlInfoVisible = computed(
@@ -73,6 +90,51 @@ const csvProcessing = computed(() => app.model.outputs.csvColumnsLoading === tru
 // used for the parse window (csvProcessing).
 const tagMappingDisabled = computed(
   () => !app.model.data.tagFeatureCsvHandle || csvProcessing.value,
+);
+
+// Combine-mode column options exclude the columns already bound to the barcode/feature roles: those hold
+// DNA barcodes / feature names, not per-feature modes ("sum"/"all"), so offering them only invites a
+// mis-pick. The model's args() also rejects such a collision (belt-and-suspenders), but filtering the
+// dropdown prevents the mistake up front.
+const combineColumnOptions = computed(() =>
+  (app.model.outputs.csvColumnOptions ?? []).filter(
+    (o) =>
+      o.value !== app.model.data.barcodeSeqColumn && o.value !== app.model.data.featureNameColumn,
+  ),
+);
+
+// Visible reason when the Combine-mode column is invalid, so a disabled Run button is explained rather
+// than mysterious. The model's args() is the authoritative gate (it throws and greys out Run); this
+// mirrors the same condition into an inline alert the user actually sees. Fires when the chosen column
+// collides with the barcode/feature roles — e.g. a value left stale after changing the feature column.
+const combineColumnError = computed(() => {
+  const c = app.model.data.combineColumn;
+  if (!c) return undefined;
+  if (c === app.model.data.barcodeSeqColumn || c === app.model.data.featureNameColumn)
+    return (
+      `The Combine-mode column must be a column of its own — it holds each feature's mode ` +
+      `("sum" or "all"), not barcodes or feature names. It's currently set to "${c}", the same ` +
+      `column used for the ${c === app.model.data.barcodeSeqColumn ? "barcode sequence" : "feature name"}. ` +
+      `Pick a different column, or clear it to sum all co-barcodes.`
+    );
+  return undefined;
+});
+
+// Run mode: read-limited Preview (dry run) vs full run — same PlBtnGroup pattern as mixcr-clonotyping /
+// demultiplex-fastq (Preview first). Feature-barcode is single-cell + shallow per cell, so the dry-run
+// default matches mixcr's single-cell recommendation (500k reads/sample).
+const runModeOptions = [
+  { label: "Preview", value: "dry" as const },
+  { label: "Full run", value: "full" as const },
+];
+const DRY_RUN_READS_DEFAULT = 500_000;
+// Auto-fill the read limit when the user switches to Preview and hasn't set one (mirrors mixcr).
+watch(
+  () => app.model.data.runMode,
+  (mode) => {
+    if (mode === "dry" && app.model.data.limitInput == null)
+      app.model.data.limitInput = DRY_RUN_READS_DEFAULT;
+  },
 );
 
 // A negative control is one of the feature-name column's values, so changing the CSV or the feature-name
@@ -113,6 +175,7 @@ function clearSampleAwareOnInputChange() {
 function clearOnCsvChange() {
   app.model.data.barcodeSeqColumn = undefined;
   app.model.data.featureNameColumn = undefined;
+  app.model.data.combineColumn = undefined;
   clearControlOnInputChange();
   clearSampleAwareOnInputChange();
 }
@@ -158,7 +221,10 @@ const columnDefs: ColDef<SampleResult>[] = [
     colId: "progress",
     field: "progress",
     headerName: "Progress",
-    headerComponentParams: { type: "Progress" } satisfies PlAgHeaderComponentParams,
+    headerComponentParams: {
+      type: "Progress",
+      info: "Double-click a sample to open its per-step logs (parse, refine tags, count UMIs).",
+    } satisfies PlAgHeaderComponentParams,
     flex: 2,
     // results.ts already produces the cell config (status / percent / text / suffix); pass it through.
     progress: (value) => value,
@@ -207,12 +273,16 @@ const columnDefs: ColDef<SampleResult>[] = [
 
 const gridOptions = {
   getRowId: (row: { data: SampleResult }) => row.data.sampleId,
+  // Double-click a sample row -> open its per-step logs panel.
+  onRowDoubleClicked: (e: { data?: SampleResult }) => {
+    if (e.data?.sampleId !== undefined) selectedSample.value = e.data.sampleId;
+  },
 };
 </script>
 
 <template>
   <PlBlockPage>
-    <template #title>Feature Barcode Analysis</template>
+    <template #title>Feature Barcode Profiling</template>
     <template #append>
       <PlBtnGhost v-if="analysisLog.length > 0" @click.stop="logsOpen = true">
         Logs
@@ -303,6 +373,31 @@ const gridOptions = {
           per-cell antigen assignments.
         </template>
       </PlDropdown>
+      <PlBtnGroup v-model="app.model.data.runMode" :options="runModeOptions" label="Run mode">
+        <template #tooltip>
+          Preview — runs on only the first N reads per sample. Use it to check that settings (read
+          geometry, tag CSV, negative control) are correct and results look reasonable before
+          launching a full run, which may take much longer.
+        </template>
+      </PlBtnGroup>
+      <template v-if="app.model.data.runMode === 'dry'">
+        <PlNumberField
+          v-model="app.model.data.limitInput"
+          label="Reads per sample limit"
+          :clearable="true"
+          :min-value="1"
+          :error-message="
+            app.model.data.limitInput == null
+              ? 'Read limit is required for Preview mode'
+              : undefined
+          "
+        >
+          <template #tooltip>
+            Number of reads to use per sample in the dry run. Feature-barcode libraries are shallow
+            per cell; 500,000 gives a representative slice.
+          </template>
+        </PlNumberField>
+      </template>
       <PlSectionSeparator compact> Optional settings </PlSectionSeparator>
       <PlRow>
         <PlDropdown
@@ -336,6 +431,23 @@ const gridOptions = {
           </template>
         </PlDropdown>
       </PlRow>
+      <PlDropdown
+        v-model="app.model.data.combineColumn"
+        :options="combineColumnOptions"
+        label="Combine-mode column"
+        :disabled="tagMappingDisabled"
+        clearable
+      >
+        <template #tooltip>
+          <b>Optional</b> — for antigens read out by more than one barcode (e.g. a dual-labeled
+          probe). Pick a Tag-feature CSV column whose value per feature is <b>sum</b> (add the
+          barcodes — the default) or <b>all</b> (call the antigen only in cells where
+          <i>every</i> one of its barcodes fired). Leave empty to sum all co-barcodes.
+        </template>
+      </PlDropdown>
+      <PlAlert v-if="combineColumnError" type="warn">
+        {{ combineColumnError }}
+      </PlAlert>
       <PlAlert v-if="controlInfoVisible" type="info">
         Specificity scores will not be computed without a negative control feature
       </PlAlert>
@@ -352,6 +464,19 @@ const gridOptions = {
           label="Dominance threshold"
           helper="Fraction of a cell's signal one feature must reach to be the consensus. Floor 0.5."
         />
+        <PlNumberField
+          v-model="app.model.data.minUmi"
+          :min-value="1"
+          :step="1"
+          clearable
+          label="Min UMIs per barcode (AND combine)"
+        >
+          <template #tooltip>
+            Minimum distinct-UMI count for a barcode to count as "fired" under the <b>all</b> (AND)
+            combine mode. Only applies to features set to "all" in the Combine-mode column. Leave
+            empty for the default (1).
+          </template>
+        </PlNumberField>
         <PlNumberField
           v-model="app.model.data.perProcessCPUs"
           :min-value="1"
@@ -382,6 +507,11 @@ const gridOptions = {
     <PlSlideModal v-model="logsOpen" width="80%">
       <template #title>Analysis logs</template>
       <PlLogView :value="analysisLog.join('\n')" />
+    </PlSlideModal>
+
+    <PlSlideModal v-model="sampleReportOpen" width="60%">
+      <template #title>{{ selectedSampleLabel }} — step logs</template>
+      <SampleReportPanel v-model="selectedSample" />
     </PlSlideModal>
   </PlBlockPage>
 </template>

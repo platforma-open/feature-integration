@@ -81,10 +81,19 @@ wf.body(func(args) {
 		fileExtension: fileExtension,
 		barcodeSeqColumn: args.barcodeSeqColumn,
 		featureNameColumn: args.featureNameColumn,
+		// Optional per-feature combine-mode column (multi-barcode antigens). "" = off (every feature sums
+		// its barcodes = OR). minUmi is the AND-mode per-barcode "fired" floor; always defined (default 1).
+		combineColumn: is_undefined(args.combineColumn) ? "" : args.combineColumn,
+		minUmi: is_undefined(args.minUmi) ? 1 : args.minUmi,
 		cellWhitelist: cellWhitelist
 	}
 	if hasControl {
 		extraInputs.control = control
+	}
+	// Preview (dry-run) read cap. Only add the field when set (an undefined extra-input field would stall
+	// the per-sample body, like `control`); absent -> full run (fb-parse applies no --limit).
+	if !is_undefined(args.limitInput) {
+		extraInputs.limitInput = args.limitInput
 	}
 
 	// processColumn outputs: the per-cell contract value columns + the per-sample QC CSV collected as a
@@ -118,6 +127,54 @@ wf.body(func(args) {
 		},
 		name: "stepReports"
 	})
+	// Per-sample x per-step LIVE stdout-stream map (parse / refine / tag-stat), keyed [step]. The model
+	// exposes these as per-step log handles (PlLogView) and scrapes them for live per-step progress.
+	// Same generic pl7.app/log column peptide-extraction uses, distinguished from the flat parse stream
+	// below by having the step axis rather than a fixed step domain.
+	outputs = append(outputs, {
+		type: "ResourceMap",
+		spec: {
+			kind: "PColumn",
+			name: "pl7.app/log",
+			domain: { "pl7.app/blockId": blockId },
+			valueType: "Log",
+			axesSpec: [{ name: "pl7.app/feature/step", type: "String" }]
+		},
+		name: "stepLogs"
+	})
+	// Flat parse stdout stream (the 1-parse stream, surfaced without the step axis). Registers the moment
+	// the body runs — before any sample finishes — so it drives the live parse % + the early sample roster
+	// (peptide pattern). Same pl7.app/log column, pinned to step 1-parse via domain.
+	outputs = append(outputs, {
+		type: "Resource",
+		spec: {
+			kind: "PColumn",
+			name: "pl7.app/log",
+			domain: { "pl7.app/blockId": blockId, "pl7.app/feature/step": "1-parse" },
+			valueType: "Log"
+		},
+		name: "parseLogStream"
+	})
+	// mitool intermediates persisted by content hash (dedup / CID stability). parse/refine/tag-stat are
+	// deterministic, but a downstream consumer resolving through their outputs (parse/refine reports -> qc;
+	// parsed.mic/tagstat.tsv -> the metrics chain) walks into the streaming execs' files map, whose CID
+	// drifts run-to-run -> CIDConflictError (the reason stdout capture was removed from the mitool steps).
+	// Surfacing them as content-hashed File outputs pins their CIDs so those resolutions stay stable across
+	// re-renders, and downstream reuses them instead of re-running the whole block on a settings change. No
+	// model/UI consumer — the persistence itself is the point. Mirrors blocks/peptide-extraction. Each is a
+	// per-sample Resource -> processColumn yields a [sampleId] map.
+	for pn in ["parsedMic", "parseReport", "refineReport", "tagstatTsv"] {
+		outputs = append(outputs, {
+			type: "Resource",
+			spec: {
+				kind: "PColumn",
+				name: "pl7.app/feature/" + pn,
+				domain: { "pl7.app/blockId": blockId },
+				valueType: "File"
+			},
+			name: pn
+		})
+	}
 
 	// mitool resource meta (mixcr semantics): pass the base memory floor always; add the override key
 	// only when the user set one (Advanced Settings) so fb-pipeline treats it as a hard fixed request.
@@ -151,7 +208,7 @@ wf.body(func(args) {
 		type: "milaboratories.feature-integration",
 		id: blockId,
 		importance: 30,
-		label: "Feature Barcode Analysis"
+		label: "Feature Barcode Profiling"
 	})
 
 	addXsvTo := func(fb, outputName) {
@@ -232,8 +289,18 @@ wf.body(func(args) {
 			// (completed-sample heartbeat + run-level summary) from it.
 			qcJson: perSampleResults.outputData("qcJson"),
 			// Per-sample x per-step report-file map -> model derives each sample's current step from
-			// which reports are present (deterministic per-step progress, no stdout streams).
+			// which reports are present (deterministic per-step progress).
 			stepReports: perSampleResults.outputData("stepReports"),
+			// Per-sample x per-step LIVE stdout-stream map -> model per-step log handles + live progress.
+			stepLogs: perSampleResults.outputData("stepLogs"),
+			// Flat parse stdout stream -> model live parse % + early sample roster (registers first).
+			parseLogStream: perSampleResults.outputData("parseLogStream"),
+			// mitool intermediates kept reachable so they're persisted by content hash (dedup / CID
+			// stability — see the output-spec note above). No model/UI consumer; the persistence is the point.
+			parsedMic: perSampleResults.outputData("parsedMic"),
+			parseReport: perSampleResults.outputData("parseReport"),
+			refineReport: perSampleResults.outputData("refineReport"),
+			tagstatTsv: perSampleResults.outputData("tagstatTsv"),
 			// Expose the tag->feature CSV import HANDLE so the model can watch it via getImportProgress()
 			// (model/src/index.ts). That model output is the actual upload driver: it registers the import
 			// with the middle-layer so the CSV bytes are pushed. Without it the CSV blob never materialises

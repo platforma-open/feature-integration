@@ -29,6 +29,13 @@ const STEP_AFTER: Record<string, SampleStep> = {
 };
 const STEP_ORDER = ["1-parse", "2-refine", "3-tagstat"];
 
+// mitool prefixes its progress lines with this marker (set via MI_PROGRESS_PREFIX in the workflow
+// step templates); the model scrapes matching lines for a live per-sample 0–100% bar. ProgressPattern
+// pulls the stage name + percent + ETA out of a marked line. Same values as blocks/peptide-extraction.
+export const ProgressPrefix = "[==PROGRESS==]";
+export const ProgressPattern =
+  /(?<stage>[^:]*):(?: *(?<progress>[0-9.]+)%)?(?: *ETA: *(?<eta>.+))?/;
+
 // Per-sample QC metrics as emitted by qc_report.py (result_qc.json), read by the analysisLog output
 // and (per sample) by the Main grid's Quality + Read recovery columns (derived in ui/src/results.ts).
 export type QcRow = {
@@ -172,6 +179,7 @@ const dataModel = new DataModelBuilder()
   })
   .init(() => ({
     dominanceThreshold: 0.6,
+    runMode: "full" as const, // full run by default; "dry" = read-limited Preview
     // Default preset = the geometry the block shipped with: 10x 5' v2 BEAM (16 / 10 / 15).
     presetId: "tenx-beam",
     cellWhitelist: "", // de-novo CELL correction by default
@@ -202,6 +210,28 @@ export const platforma = BlockModelV3.create(dataModel)
           `${role} column "${col}" collides with a reserved tag-stat column; pick another`,
         );
     }
+    // Optional combine-mode column: its values are per-feature modes ("sum"/"all"), so it must be its
+    // OWN CSV column — distinct from the barcode-sequence and feature-name roles, and not a reserved
+    // tag-stat column. Python guards this too, but only after the mitool chain runs; reject up front so a
+    // mis-picked column (e.g. the barcode column, whose values are DNA sequences) disables Run with a
+    // clear message instead of failing the pipeline at the end.
+    if (data.combineColumn) {
+      if (
+        data.combineColumn === data.barcodeSeqColumn ||
+        data.combineColumn === data.featureNameColumn
+      )
+        throw new Error(
+          "Combine-mode column must be a separate CSV column from the barcode-sequence and feature-name columns",
+        );
+      if (RESERVED_TAGSTAT_COLUMNS.has(data.combineColumn))
+        throw new Error(
+          `Combine-mode column "${data.combineColumn}" collides with a reserved tag-stat column; pick another`,
+        );
+    }
+    // Preview (dry-run) needs a read limit. Same up-front gate as mixcr-clonotyping: disable Run with a
+    // clear message rather than start a run with no reads to cap.
+    if (data.runMode === "dry" && (data.limitInput == null || data.limitInput < 1))
+      throw new Error("Enter a read limit (≥ 1) for Preview mode, or switch to a full run");
     // Read geometry: resolve the selected preset to its effective pattern (fixed preset owns it; the
     // generic preset carries it in data.pattern), validate it loosely (the required CELL/UMI/FEATURE
     // tags + R2 capture must be present — the workflow's refine-tags/tag-stat reference them by name;
@@ -240,6 +270,19 @@ export const platforma = BlockModelV3.create(dataModel)
       controlFeature: data.controlFeature,
       // canonicalize + clamp to the 0.5 floor
       dominanceThreshold: Math.max(DOMINANCE_FLOOR, data.dominanceThreshold ?? 0.6),
+      // Optional multi-barcode antigen combine mode. combineColumn names a tag-CSV column giving each
+      // feature's mode (sum = OR, the default; all = AND, feature called only when every member barcode
+      // fires). Projected only when set so the workflow default (every feature OR) is untouched otherwise.
+      // minUmi is the AND per-barcode "fired" floor (integer >= 1; default 1 in the workflow/Python).
+      ...(data.combineColumn ? { combineColumn: data.combineColumn } : {}),
+      ...(typeof data.minUmi === "number" && data.minUmi >= 1
+        ? { minUmi: Math.round(data.minUmi) }
+        : {}),
+      // Preview: cap reads only in dry mode; a full run omits it (all reads). Projected only when dry, so
+      // toggling back to full changes the args hash and re-runs on the complete input.
+      ...(data.runMode === "dry" && data.limitInput
+        ? { limitInput: Math.round(data.limitInput) }
+        : {}),
       pattern,
       tags: { cell: CELL_TAG, umi: UMI_TAG, feature: FEATURE_TAG },
       ...(sampleAware
@@ -424,6 +467,39 @@ export const platforma = BlockModelV3.create(dataModel)
     for (const [sampleId, step] of Object.entries(furthest)) out[sampleId] = STEP_AFTER[step];
     return out;
   })
+  // Per-[sampleId, step] live log handles (parse / refine / tag-stat stdout streams), bound by the
+  // per-sample Logs tab (PlLogView) so the user can read each mitool step's output as it runs. A no-match
+  // sample carries only its 1-parse entry (the map key set is variable — see fb-refine-tagstat).
+  .output("stepLogs", (ctx) =>
+    ctx.outputs !== undefined
+      ? parseResourceMap(ctx.outputs.resolve("stepLogs"), (acc) => acc.getLogHandle(), false)
+      : undefined,
+  )
+  // Live per-sample parse progress (0–100%) — reads the flat parseLogStream Log, registered the moment
+  // the per-sample body runs (before parse finishes). Kept mainly as an EARLY roster signal (it appears
+  // before the stepLogs map fills); the per-step bar detail comes from stepProgress below.
+  .output("parseProgress", (ctx) =>
+    ctx.outputs !== undefined
+      ? parseResourceMap(
+          ctx.outputs.resolve("parseLogStream"),
+          (acc) => acc.getProgressLogWithInfo(ProgressPrefix),
+          false,
+        )
+      : undefined,
+  )
+  // Per-[sampleId, step] live progress line (parse / refine / tag-stat), scraped from each step's stdout
+  // stream. Drives the rich per-step text in the grid Progress cell (which tag is being corrected, sort
+  // vs write phase, live %). ui/src/progress.ts composes these into a MONOTONIC cumulative bar (each step
+  // owns a quarter of the bar) so it never resets to zero between steps. Same source as stepLogs.
+  .output("stepProgress", (ctx) =>
+    ctx.outputs !== undefined
+      ? parseResourceMap(
+          ctx.outputs.resolve("stepLogs"),
+          (acc) => acc.getProgressLogWithInfo(ProgressPrefix),
+          false,
+        )
+      : undefined,
+  )
   // sampleIds whose per-sample pipeline has finished. qcJson is the LAST per-sample step and is inline
   // JSON content, so getDataAsJsonOrUndefined reads it synchronously — the done-set drives the grid's
   // "Done" state (a sample not in this set is still Processing).
@@ -497,7 +573,7 @@ export const platforma = BlockModelV3.create(dataModel)
 
     const medMatched = median(matched);
     const medAssigned = median(assigned);
-    const lines: string[] = ["Feature Barcode Analysis — analysis log", ""];
+    const lines: string[] = ["Feature Barcode Profiling — analysis log", ""];
     lines.push(`Processed ${done} sample${done === 1 ? "" : "s"}.`);
     lines.push(
       `Reads parsed: ${nf(readsTotal)} total` +
@@ -566,7 +642,7 @@ export const platforma = BlockModelV3.create(dataModel)
     },
     { retentive: true, withStatus: true },
   )
-  .title(() => "Feature Barcode Analysis")
+  .title(() => "Feature Barcode Profiling")
   // Standard block-label subtitle. The subtitle render context is args-only (no result pool / outputs
   // — touching them renders "Invalid subtitle"), so the dynamic "<dataset> · <barcode> - <feature>"
   // string is derived in the `suggestedBlockLabel` OUTPUT (which HAS the pool) and copied into

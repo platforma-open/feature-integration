@@ -22,6 +22,10 @@ export type BlockArgs = {
   // sized by the input-blob formula). When set, perProcessMemGB is a hard fixed RAM request per sample.
   perProcessCPUs?: number;
   perProcessMemGB?: number;
+  // Preview (dry-run): when set, mitool parse processes only the first `limitInput` reads per sample so
+  // the user can sanity-check settings before the full run. Omitted -> full run (all reads). Mirrors
+  // mixcr-clonotyping / demultiplex-fastq "Preview" mode.
+  limitInput?: number;
 };
 
 /** Unified persisted UI state. */
@@ -37,6 +41,15 @@ export type BlockData = {
   // args() can gate Run purely from data (block when a dataset sample has no rows in the CSV).
   sampleColumnValues?: string[];
   dominanceThreshold: number;
+  // Preview (dry-run) mode. "full" (default) processes all reads; "dry" caps mitool parse to `limitInput`
+  // reads per sample so the user can check settings first. Mirrors mixcr-clonotyping / demultiplex-fastq.
+  runMode?: "dry" | "full";
+  limitInput?: number;
+  // Optional multi-barcode antigen combine mode. combineColumn names a tag-CSV column giving each
+  // feature's mode ("sum" = OR, the default; "all" = AND, feature called only when every member
+  // barcode fires). minUmi is the AND per-barcode "fired" floor (integer >= 1; workflow default 1).
+  combineColumn?: string;
+  minUmi?: number;
   presetId?: string;
   pattern?: string;
   cellWhitelist?: string; // optional (defaults to "" = de-novo); see BlockArgs.cellWhitelist

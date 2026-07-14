@@ -5,9 +5,9 @@
 "@platforma-open/milaboratories.feature-integration.workflow": patch
 ---
 
-Feature Barcode Analysis finishing polish:
+Feature Barcode Profiling finishing polish:
 
-- Rename the block display title to "Feature Barcode Analysis" (display only).
+- Rename the block display title to "Feature Barcode Profiling" (display only).
 - Strip dots from the default block subtitle.
 - Add tooltips to every remaining setting (dataset, tag-feature CSV, barcode / feature / negative-control columns, read-layout preset).
 - Disable and dim the CSV-derived tag-mapping dropdowns until a tag-feature CSV is loaded.
