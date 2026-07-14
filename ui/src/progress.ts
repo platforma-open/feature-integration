@@ -27,14 +27,13 @@ const STEP_ORDINAL: Record<SampleStep, number> = {
 const TOTAL_STEPS = 4;
 const BAND = 100 / TOTAL_STEPS;
 
-// sampleStep (the stage a sample is currently on) → its workflow stepLogs key, so we can pull that step's
-// live progress line. metrics is the Python step and emits no live stream, so it has no key.
-const STEP_TO_WF: Record<SampleStep, string | undefined> = {
-  parsing: "1-parse",
-  refining: "2-refine",
-  counting: "3-tagstat",
-  metrics: undefined,
-};
+// The streaming mitool steps in order, with their bar ordinal. The label follows the FURTHEST of these
+// that currently has a live line (see deriveProgress) — NOT the report-derived sampleStep, which advances
+// a beat early (a step's report settles before the next step's live stream starts). Driving the label off
+// reports made the bar flash the next step's name ("Counting UMIs") during that gap while refine was still
+// streaming; keying off the live stream keeps the label honest to what is actually running.
+const WF_STEPS = ["1-parse", "2-refine", "3-tagstat"] as const;
+const WF_ORDINAL: Record<string, number> = { "1-parse": 0, "2-refine": 1, "3-tagstat": 2 };
 
 // Fallback step label (used when no live line is available for the current step yet).
 const STEP_LABEL: Record<SampleStep, string> = {
@@ -135,29 +134,45 @@ export function deriveProgress(
   sampleId: string,
   completed: Set<string>,
   sampleStep: Record<string, SampleStep> | undefined,
-  liveLineForCurrentStep?: string,
+  liveLines?: Partial<Record<string, string>>,
 ): ProgressCell {
   if (completed.has(sampleId)) return { status: "done", percent: 100, text: "Done" };
 
   const step = sampleStep?.[sampleId] ?? "parsing";
-  const bandFloor = STEP_ORDINAL[step] * BAND;
-  const wfStep = STEP_TO_WF[step];
+  const reportFloor = STEP_ORDINAL[step] * BAND;
 
-  if (wfStep && liveLineForCurrentStep) {
-    const parsed = parseProgressString(liveLineForCurrentStep.replace(ProgressPrefix, ""));
-    const d = stepDisplay(wfStep, parsed.stage ?? "", parsed.percentage, parsed.etaLabel);
-    // Within-band fill from the step's own monotonic %; indeterminate phases hold at the floor.
-    const frac =
-      d.localPercent !== undefined && !Number.isNaN(d.localPercent) ? d.localPercent / 100 : 0;
+  // The label follows the FURTHEST streaming step that actually has a live line — not the report-derived
+  // sampleStep. A step's report settles a beat before the next step's live stream starts, so keying the
+  // label off sampleStep flashed the next step's name ("Counting UMIs") during that gap while refine was
+  // still emitting its last (UMI, 3/3) line. The live stream is the source of truth for WHAT is running.
+  let liveWf: string | undefined;
+  let liveLine: string | undefined;
+  if (liveLines) {
+    for (const wf of WF_STEPS) {
+      if (liveLines[wf]) {
+        liveWf = wf;
+        liveLine = liveLines[wf];
+      }
+    }
+  }
+
+  // metrics (the Python step, no stream) or nothing streaming yet → hold at the report floor with the
+  // step name. metrics sits at 75% through the whole (slow) Python run.
+  if (step === "metrics" || liveWf === undefined || liveLine === undefined) {
     return {
       status: "running",
-      percent: Math.round(bandFloor + frac * BAND),
-      text: d.text,
-      suffix: d.suffix,
+      percent: Math.round(reportFloor),
+      text: STEP_LABEL[step],
+      suffix: "",
     };
   }
 
-  // No live line for the current step yet (or the metrics/Python step, which emits none) — hold the bar
-  // at the band floor with the step name. metrics sits at 75% through the whole (slow) Python run.
-  return { status: "running", percent: Math.round(bandFloor), text: STEP_LABEL[step], suffix: "" };
+  const parsed = parseProgressString(liveLine.replace(ProgressPrefix, ""));
+  const d = stepDisplay(liveWf, parsed.stage ?? "", parsed.percentage, parsed.etaLabel);
+  const liveFloor = WF_ORDINAL[liveWf] * BAND;
+  const frac =
+    d.localPercent !== undefined && !Number.isNaN(d.localPercent) ? d.localPercent / 100 : 0;
+  // Bar stays monotonic: never below the report floor, and it tracks the live step's within-band fill.
+  const percent = Math.max(reportFloor, liveFloor + frac * BAND);
+  return { status: "running", percent: Math.round(percent), text: d.text, suffix: d.suffix };
 }
