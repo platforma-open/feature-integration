@@ -65,6 +65,17 @@ wf.body(func(args) {
 	// string so the extra-input field below resolves and never stalls the body.
 	cellWhitelist := is_undefined(args.cellWhitelist) ? "" : args.cellWhitelist
 
+	// Off-target designation (optional, F2). The model gives offtargetProperty (an imported per-feature
+	// property column, e.g. antigen_class) and offtargetValues (the multi-selected values of that column
+	// marking a feature as off-target). Join the value list into the comma-separated string the Python
+	// --offtarget-values expects; "" for either = feature off (unchanged dominant call).
+	offtargetProperty := is_undefined(args.offtargetProperty) ? "" : args.offtargetProperty
+	offtargetValueList := is_undefined(args.offtargetValues) ? [] : args.offtargetValues
+	offtargetValues := ""
+	for i, v in offtargetValueList {
+		offtargetValues = i == 0 ? v : offtargetValues + "," + v
+	}
+
 	// Per-sample body inputs. processColumn binds EVERY extra key as a body input field and waits for
 	// each to be set before firing the body (pframes/index.lib.tengo: `renderInputs["__extra_"+k]=v`),
 	// so a key whose value is `undefined` creates a field that never resolves and stalls the body.
@@ -85,6 +96,9 @@ wf.body(func(args) {
 		// its barcodes = OR). minUmi is the AND-mode per-barcode "fired" floor; always defined (default 1).
 		combineColumn: is_undefined(args.combineColumn) ? "" : args.combineColumn,
 		minUmi: is_undefined(args.minUmi) ? 1 : args.minUmi,
+		// Off-target designation (F2) — property column + comma-joined off-target values ("" = off).
+		offtargetColumn: offtargetProperty,
+		offtargetValues: offtargetValues,
 		cellWhitelist: cellWhitelist
 	}
 	if hasControl {

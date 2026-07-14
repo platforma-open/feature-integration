@@ -48,6 +48,9 @@ self.body(func(inputs) {
 	featureNameColumn := inputs.featureNameColumn
 	combineColumn := is_undefined(inputs.combineColumn) ? "" : inputs.combineColumn
 	minUmi := is_undefined(inputs.minUmi) ? 1 : inputs.minUmi
+	// Off-target designation (optional, F2) — property column + comma-separated off-target values.
+	offtargetColumn := is_undefined(inputs.offtargetColumn) ? "" : inputs.offtargetColumn
+	offtargetValues := is_undefined(inputs.offtargetValues) ? "" : inputs.offtargetValues
 	cellWhitelist := inputs.cellWhitelist // "" = de-novo CELL correction (default); else a 10x built-in
 	memBaseGB := inputs.mitoolBaseMemGB
 
@@ -201,7 +204,9 @@ self.body(func(inputs) {
 		barcodeSeqColumn: barcodeSeqColumn,
 		featureNameColumn: featureNameColumn,
 		combineColumn: combineColumn,
-		minUmi: minUmi
+		minUmi: minUmi,
+		offtargetColumn: offtargetColumn,
+		offtargetValues: offtargetValues
 	})
 
 	// The body must return exactly the defineOutputs set and no output may be undefined.

@@ -31,7 +31,16 @@ _SPECIFICITY_SCHEMA = {
 }
 
 
-def consensus_category(counts: dict[str, float], threshold: float, control: str | None = None) -> str | None:
+CROSS_REACTIVE = "cross-reactive"
+
+
+def consensus_category(
+    counts: dict[str, float],
+    threshold: float,
+    control: str | None = None,
+    offtargets: frozenset[str] = frozenset(),
+    label_crossreactive: bool = False,
+) -> str | None:
     """Dominant-category rule.
 
     Returns the single dominant category when it is the unique maximum AND its share of the total is
@@ -39,25 +48,71 @@ def consensus_category(counts: dict[str, float], threshold: float, control: str 
     or an exact split at the 0.5 floor); None when there is no signal at all. ``threshold`` is clamped
     up to the 0.5 floor.
 
-    The negative ``control`` is a reference, not a callable antigen: it is excluded from
-    the winner candidates, so a control-dominated cell is "ambiguous", never the control. Its UMIs are
-    still counted in ``total`` (the denominator), so control signal SUPPRESSES antigen dominance rather
-    than being renormalised away — a cell swamped by control correctly fails the threshold instead of
-    having its top antigen inflated to 100%.
+    The negative ``control`` and the ``offtargets`` set are references, not callable antigens: they are
+    excluded from the winner candidates, so a cell dominated by control/off-target signal is "ambiguous",
+    never the control or an off-target. Their UMIs are still counted in ``total`` (the denominator), so
+    control/off-target signal SUPPRESSES antigen dominance rather than being renormalised away — a cell
+    swamped by them correctly fails the threshold instead of having its top on-target inflated to 100%.
+
+    ``offtargets`` designate features whose property (e.g. Type = Off-Target / Decoy) marks them as
+    binders the user does not want to call. When they are supplied and ``label_crossreactive`` is set,
+    the overloaded "ambiguous" bucket is split: a cell whose on-target (non-excluded) signal collectively
+    passes the threshold but is spread across >= 2 on-target features is called "cross-reactive" (a
+    genuine multi-/cross-reactive binder — e.g. the same target's human + cyno variants) rather than
+    lumped with true noise. A cell whose on-target signal fails the threshold (off-target/control-swamped,
+    or a flat spread) stays "ambiguous". With no off-targets designated the rule is unchanged.
     """
     threshold = max(threshold, DOMINANCE_FLOOR)
+    excluded = set(offtargets)
+    if control is not None:
+        excluded.add(control)
     positive = {k: v for k, v in counts.items() if v > 0}
     total = sum(positive.values())
     if total <= 0:
         return None
-    candidates = {k: v for k, v in positive.items() if k != control}
+    candidates = {k: v for k, v in positive.items() if k not in excluded}
     if not candidates:
-        return "ambiguous"  # only control (or no) signal — no antigen to call
+        return "ambiguous"  # only control/off-target (or no) signal — no on-target to call
     max_val = max(candidates.values())
     winners = [k for k, v in candidates.items() if v == max_val]
     if len(winners) == 1 and (max_val / total) >= threshold:
         return winners[0]
+    # cross-reactive: on-target signal collectively dominates but is split across >= 2 on-targets.
+    if label_crossreactive and len(candidates) >= 2 and (sum(candidates.values()) / total) >= threshold:
+        return CROSS_REACTIVE
     return "ambiguous"
+
+
+def offtarget_features(
+    tag_feature_csv: str,
+    csv_feature_col: str,
+    offtarget_col: str,
+    offtarget_values: frozenset[str],
+) -> frozenset[str]:
+    """Feature names whose designated property (``offtarget_col``) value is in ``offtarget_values``.
+
+    The off-target designation is property-driven: the user picks one imported per-feature property
+    column (e.g. ``antigen_class``) and the set of its values that mark a feature as off-target (e.g.
+    {"Off-Target", "Decoy"}). This reads the tag->feature CSV — which carries those property columns —
+    and returns the resolved set of off-target FEATURE names, so the dominant call can exclude them.
+    Values are matched exactly as given (stripped); the block does not normalise or interpret them.
+    """
+    mapping = pl.read_csv(tag_feature_csv)
+    if offtarget_col not in mapping.columns:
+        raise SystemExit(
+            f"--offtarget-col={offtarget_col!r} is not a column of the tag->feature CSV ({mapping.columns})"
+        )
+    wanted = {v.strip() for v in offtarget_values}
+    resolved = (
+        mapping.select(
+            pl.col(csv_feature_col).cast(pl.Utf8).str.strip_chars().alias("_feat"),
+            pl.col(offtarget_col).cast(pl.Utf8).str.strip_chars().alias("_val"),
+        )
+        .filter(pl.col("_val").is_in(list(wanted)))["_feat"]
+        .unique()
+        .to_list()
+    )
+    return frozenset(resolved)
 
 
 def specificity_score(antigen_umi, control_umi):
@@ -367,8 +422,31 @@ def main() -> None:
     )
     p.add_argument("--dominance-threshold", type=float, default=0.6)
     p.add_argument("--control", default=None, help="negative-control feature name")
+    p.add_argument(
+        "--offtarget-col",
+        default=None,
+        help="CSV property column (e.g. antigen_class) designating on/off-target; features whose value "
+        "is in --offtarget-values are excluded from the dominant call (like the control) and enable the "
+        "cross-reactive label",
+    )
+    p.add_argument(
+        "--offtarget-values",
+        default=None,
+        help="comma-separated values of --offtarget-col that mark a feature as off-target (e.g. 'Off-Target,Decoy')",
+    )
     p.add_argument("--output-prefix", default="result")
     args = p.parse_args()
+
+    # Resolve the off-target feature set from the designated property column + values. Both flags must be
+    # given together; features carrying an off-target value are excluded from the dominant call (as the
+    # control is) and turn on the cross-reactive label. Absent -> unchanged behaviour (empty set).
+    offtargets: frozenset[str] = frozenset()
+    if (args.offtarget_col is None) != (args.offtarget_values is None):
+        raise SystemExit("--offtarget-col and --offtarget-values must be given together")
+    if args.offtarget_col is not None:
+        wanted = frozenset(v.strip() for v in args.offtarget_values.split(",") if v.strip())
+        offtargets = offtarget_features(args.tag_feature_csv, args.csv_feature_col, args.offtarget_col, wanted)
+    label_crossreactive = len(offtargets) > 0
 
     # Guard the user-mapped CSV column names: the two roles must be distinct, and neither may
     # collide with a tag-stat column. On the inner join, every tag-stat column is carried into the
@@ -431,28 +509,41 @@ def main() -> None:
     # counts are all > 0), so None is never produced. Mirrors consensus_category, which the tests pin
     # (and an oracle test cross-checks this vectorized path against it).
     threshold = max(args.dominance_threshold, DOMINANCE_FLOOR)
-    # The negative control is a reference, not a callable antigen: exclude it from the
-    # winner candidates so a control-dominated cell is "ambiguous", never the control. Its UMIs stay in
-    # `_total` (the denominator, computed from the full `counts`), so control signal suppresses dominance
-    # rather than being renormalised away. Mirrors consensus_category(control=...), which the oracle test
-    # pins the vectorized path against.
-    antigens = counts if args.control is None else counts.filter(pl.col("feature") != args.control)
+    # The negative control and the off-target features are references, not callable antigens: exclude
+    # them from the winner candidates so a control/off-target-dominated cell is "ambiguous", never the
+    # control or an off-target. Their UMIs stay in `_total` (the denominator, computed from the full
+    # `counts`), so their signal suppresses dominance rather than being renormalised away. When off-
+    # targets are designated, a cell whose on-target signal collectively passes the threshold but is
+    # spread across >= 2 on-targets is "cross-reactive". Mirrors consensus_category(control=..., off
+    # targets=..., label_crossreactive=...), which the oracle test pins the vectorized path against.
+    excluded = list(offtargets) + ([args.control] if args.control is not None else [])
+    antigens = counts if not excluded else counts.filter(~pl.col("feature").is_in(excluded))
     totals = counts.group_by(["sampleId", "cellId"]).agg(pl.col("umiCount").sum().alias("_total"))
     tops = antigens.group_by(["sampleId", "cellId"]).agg(
         pl.col("umiCount").max().alias("_max"),
         (pl.col("umiCount") == pl.col("umiCount").max()).sum().alias("_nAtMax"),
         pl.col("feature").sort_by("umiCount", descending=True).first().alias("_top"),
+        # on-target signal: sum + distinct on-target features present (for the cross-reactive branch)
+        pl.col("umiCount").sum().alias("_onTotal"),
+        pl.col("feature").n_unique().alias("_nOn"),
     )
     (
         totals.join(tops, on=["sampleId", "cellId"], how="left")
         .with_columns(
-            # _top is null for a cell whose only signal is the control -> ambiguous.
+            # _top is null for a cell whose only signal is control/off-target -> ambiguous.
             pl.when(
                 pl.col("_top").is_not_null()
                 & (pl.col("_nAtMax") == 1)
                 & (pl.col("_max") / pl.col("_total") >= threshold)
             )
             .then(pl.col("_top"))
+            .when(
+                # cross-reactive: on-target signal collectively dominates but is split across >= 2 on-targets
+                pl.lit(label_crossreactive)
+                & (pl.col("_nOn") >= 2)
+                & (pl.col("_onTotal") / pl.col("_total") >= threshold)
+            )
+            .then(pl.lit(CROSS_REACTIVE))
             .otherwise(pl.lit("ambiguous"))
             .alias("consensusFeature")
         )

@@ -14,7 +14,14 @@ import sys
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
-from per_cell_metrics import _load, combine_barcode_counts, consensus_category, specificity_score
+from per_cell_metrics import (
+    CROSS_REACTIVE,
+    _load,
+    combine_barcode_counts,
+    consensus_category,
+    offtarget_features,
+    specificity_score,
+)
 
 SRC = pathlib.Path(__file__).parents[1] / "src" / "per_cell_metrics.py"
 
@@ -83,6 +90,90 @@ def test_consensus_no_control_arg_is_unchanged():
     assert consensus_category({"AGX": 3, "OTHER": 5}, 0.6) == "OTHER"
 
 
+# --- off-target-aware dominant call + cross-reactive label (spec A-0014 Type-aware direction, F2) ---
+
+
+def test_consensus_excludes_offtargets_like_control():
+    # An off-target feature is excluded from the winners exactly as the control is: OT swamps the cell,
+    # the single on-target's share of the total is 3/8 = 0.375 < 0.6 -> ambiguous, never "OT".
+    assert consensus_category({"AGX": 3, "OT": 5}, 0.6, offtargets=frozenset({"OT"})) == "ambiguous"
+
+
+def test_consensus_offtargets_stay_in_denominator():
+    # Off-target UMIs remain in the denominator (suppress, not inflate): AGX 7 / OT 2 -> 7/9 >= 0.6 -> AGX.
+    assert consensus_category({"AGX": 7, "OT": 2}, 0.6, offtargets=frozenset({"OT"})) == "AGX"
+
+
+def test_consensus_crossreactive_two_ontargets_pass_together():
+    # Two on-targets (same target's human+cyno) split ~50/50 with only minor off-target signal: neither
+    # passes alone, but the on-target set is 90% of the total across 2 features -> cross-reactive, not
+    # ambiguous. This is the binder F2 rescues from the overloaded "ambiguous" bucket.
+    assert (
+        consensus_category(
+            {"TgtA_human": 45, "TgtA_cyno": 45, "OT": 10},
+            0.6,
+            offtargets=frozenset({"OT"}),
+            label_crossreactive=True,
+        )
+        == CROSS_REACTIVE
+    )
+
+
+def test_consensus_crossreactive_needs_label_flag():
+    # Without the label flag the same split stays "ambiguous" (backward-compatible when the feature is off).
+    assert (
+        consensus_category({"TgtA_human": 45, "TgtA_cyno": 45, "OT": 10}, 0.6, offtargets=frozenset({"OT"}))
+        == "ambiguous"
+    )
+
+
+def test_consensus_offtarget_swamped_is_ambiguous_not_crossreactive():
+    # On-target set collectively below threshold (off-target-dominated) -> ambiguous, never cross-reactive:
+    # TgtA 20 + TgtB 20 = 40 of 100 (0.4 < 0.6); OT 60 swamps.
+    assert (
+        consensus_category(
+            {"TgtA": 20, "TgtB": 20, "OT": 60},
+            0.6,
+            offtargets=frozenset({"OT"}),
+            label_crossreactive=True,
+        )
+        == "ambiguous"
+    )
+
+
+def test_consensus_crossreactive_single_ontarget_still_calls_feature():
+    # A single dominant on-target still wins outright (not cross-reactive): AGX 80 / OT 20 -> AGX.
+    assert (
+        consensus_category({"AGX": 80, "OT": 20}, 0.6, offtargets=frozenset({"OT"}), label_crossreactive=True) == "AGX"
+    )
+
+
+def test_consensus_only_offtarget_signal_is_ambiguous():
+    # A cell whose only signal is off-target has no on-target candidate -> ambiguous.
+    assert consensus_category({"OT": 5}, 0.6, offtargets=frozenset({"OT"}), label_crossreactive=True) == "ambiguous"
+
+
+def test_offtarget_features_resolves_from_property_column(tmp_path):
+    # The off-target feature set is resolved from a designated property column + its off-target values.
+    csv = tmp_path / "tags.csv"
+    csv.write_text(
+        "tag,feature,antigen_class\n"
+        "b1,TgtA,Target\n"
+        "b2,TgtB,Target\n"
+        "b3,DecoyX,Decoy\n"
+        "b4,OTx, Off-Target \n"  # whitespace tolerated (stripped)
+    )
+    got = offtarget_features(str(csv), "feature", "antigen_class", frozenset({"Off-Target", "Decoy"}))
+    assert got == frozenset({"DecoyX", "OTx"})
+
+
+def test_offtarget_features_bad_column_exits(tmp_path):
+    csv = tmp_path / "tags.csv"
+    csv.write_text("tag,feature\nb1,TgtA\n")
+    with pytest.raises(SystemExit):
+        offtarget_features(str(csv), "feature", "nope", frozenset({"Off-Target"}))
+
+
 # --- specificity score (spec A-0014, Cell Ranger betaCDF) ---
 
 
@@ -119,6 +210,18 @@ def test_consensus_result_in_domain(counts, threshold):
     # The result is always a key present in counts, "ambiguous", or None -- never an arbitrary string.
     r = consensus_category(counts, threshold)
     assert r is None or r == "ambiguous" or r in counts
+
+
+@given(
+    st.dictionaries(st.text(min_size=1), st.integers(min_value=0, max_value=1000), max_size=8),
+    st.floats(min_value=0.5, max_value=1.0),
+    st.sets(st.text(min_size=1), max_size=4),
+)
+def test_consensus_offtarget_result_in_domain(counts, threshold, offtargets):
+    # With off-targets + the label on, the result is an on-target key, "cross-reactive", "ambiguous", or
+    # None -- and never an off-target/control key (they can never win).
+    r = consensus_category(counts, threshold, offtargets=frozenset(offtargets), label_crossreactive=True)
+    assert r is None or r in ("ambiguous", CROSS_REACTIVE) or (r in counts and r not in offtargets)
 
 
 @given(st.integers(min_value=0, max_value=10_000), st.integers(min_value=0, max_value=10_000))
@@ -622,6 +725,94 @@ def test_cli_consensus_excludes_control(tmp_path):
         "cellQ": consensus_category({"AGX": 7, "CTRL": 2}, 0.6, control="CTRL"),
         "cellR": consensus_category({"CTRL": 5}, 0.6, control="CTRL"),
     }
+
+
+@pytest.mark.slow
+def test_cli_consensus_offtarget_and_crossreactive(tmp_path):
+    # End-to-end: with an --offtarget-col/--offtarget-values designation the vectorized consensus must
+    # match the pure rule -- off-targets excluded from winners, and an on-target-split cell called
+    # cross-reactive. antigen_class is a per-feature property column of the tag CSV (A-0026 pass-through).
+    tags = tmp_path / "tags.csv"
+    tags.write_text("tag,feature,antigen_class\nAAAA,TgtA_human,Target\nCCCC,TgtA_cyno,Target\nGGGG,OTx,Off-Target\n")
+    tagstat = tmp_path / "tagstat.tsv"
+    tagstat.write_text(
+        "CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\n"
+        "cellX\tAAAA\t45\t45\t45\n"
+        "cellX\tCCCC\t45\t45\t45\n"
+        "cellX\tGGGG\t10\t10\t10\n"  # human+cyno split 45/45, OT 10 -> cross-reactive
+        "cellY\tAAAA\t80\t80\t80\n"
+        "cellY\tGGGG\t20\t20\t20\n"  # single on-target 80/100 -> TgtA_human
+        "cellZ\tAAAA\t20\t20\t20\n"
+        "cellZ\tCCCC\t20\t20\t20\n"
+        "cellZ\tGGGG\t60\t60\t60\n"  # OT-swamped (on-target 40/100 < 0.6) -> ambiguous
+        "cellW\tGGGG\t7\t7\t7\n"  # only off-target signal -> ambiguous
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            str(SRC),
+            str(tagstat),
+            str(tags),
+            "--sample-id",
+            "s1",
+            "--dominance-threshold",
+            "0.6",
+            "--offtarget-col",
+            "antigen_class",
+            "--offtarget-values",
+            "Off-Target,Decoy",
+            "--output-prefix",
+            str(tmp_path / "result"),
+        ],
+        check=True,
+        cwd=tmp_path,
+    )
+    with open(tmp_path / "result_consensus.csv", newline="") as f:
+        got = {r["cellId"]: r["consensusFeature"] for r in csv.DictReader(f)}
+    ot = frozenset({"OTx"})
+    expected = {
+        "cellX": consensus_category(
+            {"TgtA_human": 45, "TgtA_cyno": 45, "OTx": 10}, 0.6, offtargets=ot, label_crossreactive=True
+        ),
+        "cellY": consensus_category({"TgtA_human": 80, "OTx": 20}, 0.6, offtargets=ot, label_crossreactive=True),
+        "cellZ": consensus_category(
+            {"TgtA_human": 20, "TgtA_cyno": 20, "OTx": 60}, 0.6, offtargets=ot, label_crossreactive=True
+        ),
+        "cellW": consensus_category({"OTx": 7}, 0.6, offtargets=ot, label_crossreactive=True),
+    }
+    assert got == expected  # vectorized CLI == pure rule
+    # ...and the pure rule is what we intend (guards against a vacuous match).
+    assert expected == {
+        "cellX": CROSS_REACTIVE,
+        "cellY": "TgtA_human",
+        "cellZ": "ambiguous",
+        "cellW": "ambiguous",
+    }
+
+
+@pytest.mark.slow
+def test_cli_offtarget_flags_require_each_other(tmp_path):
+    # --offtarget-col without --offtarget-values (or vice versa) is a user error -> exit non-zero.
+    tags = tmp_path / "tags.csv"
+    tags.write_text("tag,feature,antigen_class\nAAAA,TgtA,Target\n")
+    tagstat = tmp_path / "tagstat.tsv"
+    tagstat.write_text("CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\ncX\tAAAA\t3\t3\t3\n")
+    r = subprocess.run(
+        [
+            sys.executable,
+            str(SRC),
+            str(tagstat),
+            str(tags),
+            "--sample-id",
+            "s1",
+            "--offtarget-col",
+            "antigen_class",
+            "--output-prefix",
+            str(tmp_path / "result"),
+        ],
+        cwd=tmp_path,
+    )
+    assert r.returncode != 0
 
 
 @pytest.mark.slow

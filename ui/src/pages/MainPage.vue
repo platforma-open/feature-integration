@@ -12,6 +12,7 @@ import {
   PlBtnGhost,
   PlBtnGroup,
   PlDropdown,
+  PlDropdownMulti,
   PlDropdownRef,
   PlFileInput,
   PlLogView,
@@ -119,6 +120,31 @@ const combineColumnError = computed(() => {
     );
   return undefined;
 });
+
+// Off-target designation (F2). The property dropdown offers imported per-feature property columns —
+// csvColumnOptions minus the columns already bound to the barcode/feature/sample roles (those aren't
+// per-feature properties). The values multi-select lists the chosen property's distinct values (from
+// csvValuesByColumn). Features whose property value is selected are excluded from the dominant call
+// (like the control) and enable the "cross-reactive" label.
+const offtargetPropertyOptions = computed(() =>
+  (app.model.outputs.csvColumnOptions ?? []).filter(
+    (o) =>
+      o.value !== app.model.data.barcodeSeqColumn &&
+      o.value !== app.model.data.featureNameColumn &&
+      o.value !== app.model.data.sampleColumn,
+  ),
+);
+const offtargetValueOptions = computed(() => {
+  const prop = app.model.data.offtargetProperty;
+  if (!prop) return [];
+  return (app.model.outputs.csvValuesByColumn?.[prop] ?? []).map((v) => ({ value: v, label: v }));
+});
+// Changing the property invalidates the selected values (they belong to the previous column), so clear
+// them on that explicit gesture — same data→data pattern as clearControlOnInputChange.
+function setOfftargetProperty(prop: string | undefined) {
+  app.model.data.offtargetProperty = prop;
+  app.model.data.offtargetValues = undefined;
+}
 
 // Run mode: read-limited Preview (dry run) vs full run — same PlBtnGroup pattern as mixcr-clonotyping /
 // demultiplex-fastq (Preview first). Feature-barcode is single-cell + shallow per cell, so the dry-run
@@ -445,6 +471,35 @@ const gridOptions = {
           <i>every</i> one of its barcodes fired). Leave empty to sum all co-barcodes.
         </template>
       </PlDropdown>
+      <PlDropdown
+        :model-value="app.model.data.offtargetProperty"
+        :options="offtargetPropertyOptions"
+        label="Off-target property"
+        :disabled="tagMappingDisabled"
+        clearable
+        @update:model-value="setOfftargetProperty"
+      >
+        <template #tooltip>
+          <b>Optional</b> — pick an imported per-feature property column (e.g. antigen type) that
+          marks features as on- or off-target, then choose which of its values mean off-target
+          below. Off-target features are excluded from the dominant call (like the negative
+          control), and a cell/clonotype whose on-target signal is spread across two or more targets
+          is labelled <b>cross-reactive</b> instead of "ambiguous".
+        </template>
+      </PlDropdown>
+      <PlDropdownMulti
+        v-if="app.model.data.offtargetProperty"
+        :model-value="app.model.data.offtargetValues ?? []"
+        :options="offtargetValueOptions"
+        label="Off-target values"
+        :disabled="tagMappingDisabled"
+        @update:model-value="(v) => (app.model.data.offtargetValues = v)"
+      >
+        <template #tooltip>
+          Values of the chosen property that designate a feature as off-target (e.g. "Off-Target",
+          "Decoy"). Features with any of these values are excluded from the dominant call.
+        </template>
+      </PlDropdownMulti>
       <PlAlert v-if="combineColumnError" type="warn">
         {{ combineColumnError }}
       </PlAlert>

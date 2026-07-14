@@ -278,6 +278,14 @@ export const platforma = BlockModelV3.create(dataModel)
       ...(typeof data.minUmi === "number" && data.minUmi >= 1
         ? { minUmi: Math.round(data.minUmi) }
         : {}),
+      // Optional off-target designation (F2). offtargetProperty names an imported per-feature property
+      // column (e.g. antigen_class); offtargetValues are that column's values marking a feature as
+      // off-target. Such features are excluded from the dominant call (like the control) and turn on the
+      // cross-reactive label. Projected only when both are set, so the dominant call is unchanged
+      // otherwise (empty column / values → workflow leaves the rule untouched).
+      ...(data.offtargetProperty && data.offtargetValues && data.offtargetValues.length > 0
+        ? { offtargetProperty: data.offtargetProperty, offtargetValues: data.offtargetValues }
+        : {}),
       // Preview: cap reads only in dry mode; a full run omits it (all reads). Projected only when dry, so
       // toggling back to full changes the args hash and re-runs on the complete input.
       ...(data.runMode === "dry" && data.limitInput

@@ -30,6 +30,12 @@ self.body(func(inputs) {
 	// AND per-barcode "fired" floor.
 	combineColumn := is_undefined(inputs.combineColumn) ? "" : inputs.combineColumn
 	minUmi := is_undefined(inputs.minUmi) ? 1 : inputs.minUmi
+	// Optional off-target designation (F2). offtargetColumn names an imported per-feature property column
+	// (e.g. antigen_class); offtargetValues is the comma-separated set of its values marking a feature as
+	// off-target. Both empty = off (unchanged dominant call). Features so marked are excluded from the
+	// dominant call (like the control) and turn on the cross-reactive label.
+	offtargetColumn := is_undefined(inputs.offtargetColumn) ? "" : inputs.offtargetColumn
+	offtargetValues := is_undefined(inputs.offtargetValues) ? "" : inputs.offtargetValues
 
 	// Per-sample QC summary: reads parsed/matched (parse JSON report) + cell/feature/UMI metrics
 	// (tag-stat) + best-effort panel-assigned fraction (refine JSON report).
@@ -92,6 +98,11 @@ self.body(func(inputs) {
 	// AND per-barcode "fired" floor and is harmless when no combine column is set.
 	if combineColumn != "" {
 		metrics = metrics.arg("--combine-col").arg(combineColumn).arg("--min-umi").arg(string(minUmi))
+	}
+	// Off-target designation (optional, F2). Only pass both flags when a column AND values are configured;
+	// per_cell_metrics requires them together and leaves the dominant call unchanged when absent.
+	if offtargetColumn != "" && offtargetValues != "" {
+		metrics = metrics.arg("--offtarget-col").arg(offtargetColumn).arg("--offtarget-values").arg(offtargetValues)
 	}
 	metrics = metrics.run()
 
