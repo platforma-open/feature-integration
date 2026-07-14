@@ -475,6 +475,18 @@ export const platforma = BlockModelV3.create(dataModel)
       ? parseResourceMap(ctx.outputs.resolve("stepLogs"), (acc) => acc.getLogHandle(), false)
       : undefined,
   )
+  // Per-[sampleId] log handle for the Python per-cell-metrics step (the "4-metrics" step). Surfaced
+  // separately from stepLogs because it's produced after the mitool stepLogs map is built; the UI's
+  // per-step Logs panel reads it when the "4-metrics" step is selected.
+  .output("metricsLog", (ctx) =>
+    ctx.outputs !== undefined
+      ? parseResourceMap(
+          ctx.outputs.resolve("metricsLogStream"),
+          (acc) => acc.getLogHandle(),
+          false,
+        )
+      : undefined,
+  )
   // Live per-sample parse progress (0–100%) — reads the flat parseLogStream Log, registered the moment
   // the per-sample body runs (before parse finishes). Kept mainly as an EARLY roster signal (it appears
   // before the stepLogs map fills); the per-step bar detail comes from stepProgress below.

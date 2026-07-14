@@ -155,6 +155,19 @@ wf.body(func(args) {
 		},
 		name: "parseLogStream"
 	})
+	// per-cell-metrics (Python) stdout — the "4-metrics" step log, surfaced flat (keyed [sampleId] by
+	// processColumn). Kept out of the stepLogs map because that map is built upstream (fb-refine-tagstat)
+	// before the metrics step runs; the model keys this at step "4-metrics" and the UI reads it there.
+	outputs = append(outputs, {
+		type: "Resource",
+		spec: {
+			kind: "PColumn",
+			name: "pl7.app/log",
+			domain: { "pl7.app/blockId": blockId, "pl7.app/feature/step": "4-metrics" },
+			valueType: "Log"
+		},
+		name: "metricsLogStream"
+	})
 	// mitool intermediates persisted by content hash (dedup / CID stability). parse/refine/tag-stat are
 	// deterministic, but a downstream consumer resolving through their outputs (parse/refine reports -> qc;
 	// parsed.mic/tagstat.tsv -> the metrics chain) walks into the streaming execs' files map, whose CID
@@ -173,6 +186,25 @@ wf.body(func(args) {
 				valueType: "File"
 			},
 			name: pn
+		})
+	}
+	// Same content-hash persistence for the per-cell-metrics (Python) exec's file outputs. Required because
+	// fb-downstream now also captures that exec's stdout (the 4-metrics log): the stream makes the exec's
+	// files map rate-dependent, so resolving abundance/fractions/... through it drifts the CID and throws
+	// CIDConflictError (poisoning the whole per-sample body). Pinning these files by content hash keeps
+	// those resolutions stable — the metrics analogue of the mitool loop above. A `path` maps each pin to
+	// the existing body output without colliding with the Xsv/File output of the same name.
+	for pn in ["abundance", "fractions", "consensus", "specificity", "perCellSummary"] {
+		outputs = append(outputs, {
+			type: "Resource",
+			spec: {
+				kind: "PColumn",
+				name: "pl7.app/feature/persist/" + pn,
+				domain: { "pl7.app/blockId": blockId },
+				valueType: "File"
+			},
+			name: pn + "Persist",
+			path: [pn]
 		})
 	}
 
@@ -295,12 +327,21 @@ wf.body(func(args) {
 			stepLogs: perSampleResults.outputData("stepLogs"),
 			// Flat parse stdout stream -> model live parse % + early sample roster (registers first).
 			parseLogStream: perSampleResults.outputData("parseLogStream"),
+			// per-cell-metrics (Python) stdout -> model 4-metrics step log.
+			metricsLogStream: perSampleResults.outputData("metricsLogStream"),
 			// mitool intermediates kept reachable so they're persisted by content hash (dedup / CID
 			// stability — see the output-spec note above). No model/UI consumer; the persistence is the point.
 			parsedMic: perSampleResults.outputData("parsedMic"),
 			parseReport: perSampleResults.outputData("parseReport"),
 			refineReport: perSampleResults.outputData("refineReport"),
 			tagstatTsv: perSampleResults.outputData("tagstatTsv"),
+			// metrics-exec file outputs kept reachable so they're content-hash-persisted (see the persist
+			// loop above) — this is what makes capturing the metrics stdout CID-safe. No model consumer.
+			abundancePersist: perSampleResults.outputData("abundancePersist"),
+			fractionsPersist: perSampleResults.outputData("fractionsPersist"),
+			consensusPersist: perSampleResults.outputData("consensusPersist"),
+			specificityPersist: perSampleResults.outputData("specificityPersist"),
+			perCellSummaryPersist: perSampleResults.outputData("perCellSummaryPersist"),
 			// Expose the tag->feature CSV import HANDLE so the model can watch it via getImportProgress()
 			// (model/src/index.ts). That model output is the actual upload driver: it registers the import
 			// with the middle-layer so the CSV bytes are pushed. Without it the CSV blob never materialises

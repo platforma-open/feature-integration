@@ -10,7 +10,7 @@ self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 
-self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "qc", "qcJson")
+self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "qc", "qcJson", "metricsLogStream")
 
 metricsSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:main")
 qcReportSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:qc-report")
@@ -64,6 +64,8 @@ self.body(func(inputs) {
 
 	hasControl := !is_undefined(control) && control != ""
 	metrics := exec.builder().
+		printErrStreamToStdout().
+		saveStdoutStream().
 		software(metricsSw).
 		resources({ onCPU: { cpu: 2, ram: metricsMemFormula } }).
 		addFile("tagstat.tsv", tagstatTsv, { tag: "tagstat" }).
@@ -103,6 +105,11 @@ self.body(func(inputs) {
 		specificity: metrics.getFile("result_specificity.csv"),
 		perCellSummary: metrics.getFile("result_per_cell_summary.csv"),
 		qc: qc.getFile("result_qc.csv"),
-		qcJson: qc.getFileContent("result_qc.json") // inline content (saveFileContent) so the model can read it
+		qcJson: qc.getFileContent("result_qc.json"), // inline content (saveFileContent) so the model can read it
+		// per-cell-metrics (Python) stdout — the "4-metrics" step log. Surfaced separately (not in the
+		// mitool stepLogs map, which fb-refine-tagstat builds before this step runs). Capturing it here is
+		// CID-safe by the same peptide precedent as the final tag-stat step: the metrics File outputs above
+		// are Xsv-imported downstream, not resolved as raw Files through this streaming exec.
+		metricsLogStream: metrics.getStdoutStream()
 	}
 })

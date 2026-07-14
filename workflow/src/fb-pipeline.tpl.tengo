@@ -31,7 +31,7 @@ fbParseTpl := assets.importTemplate(":fb-parse")
 fbRefineTagstatTpl := assets.importTemplate(":fb-refine-tagstat")
 fbDownstreamTpl := assets.importTemplate(":fb-downstream")
 
-self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "qc", "qcJson", "stepReports", "stepLogs", "parseLogStream", "parsedMic", "parseReport", "refineReport", "tagstatTsv")
+self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "qc", "qcJson", "stepReports", "stepLogs", "parseLogStream", "metricsLogStream", "parsedMic", "parseReport", "refineReport", "tagstatTsv")
 
 self.body(func(inputs) {
 	inputData := inputs[pConstants.VALUE_FIELD_NAME]
@@ -213,6 +213,9 @@ self.body(func(inputs) {
 		perCellSummary: downstreamRun.output("perCellSummary"),
 		qc: downstreamRun.output("qc"),
 		qcJson: downstreamRun.output("qcJson"),
+		// per-cell-metrics (Python) stdout stream -> the 4-metrics step log (surfaced flat; the model keys
+		// it [sampleId] and the UI's per-step Logs panel reads it under the "4-metrics" step).
+		metricsLogStream: downstreamRun.output("metricsLogStream"),
 		// Per-sample step-report map (parse / refine / tag-stat output files) — the model reads which are
 		// present to derive the sample's current step (deterministic).
 		stepReports: stepReports,
