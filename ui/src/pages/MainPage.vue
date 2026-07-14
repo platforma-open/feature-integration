@@ -471,35 +471,44 @@ const gridOptions = {
           <i>every</i> one of its barcodes fired). Leave empty to sum all co-barcodes.
         </template>
       </PlDropdown>
-      <PlDropdown
-        :model-value="app.model.data.offtargetProperty"
-        :options="offtargetPropertyOptions"
-        label="Off-target property"
-        :disabled="tagMappingDisabled"
-        clearable
-        @update:model-value="setOfftargetProperty"
-      >
-        <template #tooltip>
-          <b>Optional</b> — pick an imported per-feature property column (e.g. antigen type) that
-          marks features as on- or off-target, then choose which of its values mean off-target
-          below. Off-target features are excluded from the dominant call (like the negative
-          control), and a cell/clonotype whose on-target signal is spread across two or more targets
-          is labelled <b>cross-reactive</b> instead of "ambiguous".
-        </template>
-      </PlDropdown>
-      <PlDropdownMulti
-        v-if="app.model.data.offtargetProperty"
-        :model-value="app.model.data.offtargetValues ?? []"
-        :options="offtargetValueOptions"
-        label="Off-target values"
-        :disabled="tagMappingDisabled"
-        @update:model-value="(v) => (app.model.data.offtargetValues = v)"
-      >
-        <template #tooltip>
-          Values of the chosen property that designate a feature as off-target (e.g. "Off-Target",
-          "Decoy"). Features with any of these values are excluded from the dominant call.
-        </template>
-      </PlDropdownMulti>
+      <!--
+        Type-aware off-target call + "cross-reactive" label — promised to the customer as coming in a
+        future release (not delivered today). Hidden via v-if="false" so the underlying F2 logic stays
+        in place but dormant: with no designation the dominant call is byte-identical to pre-F2 and the
+        "cross-reactive" value never appears. Re-enable by removing the v-if="false" wrapper below.
+        See MILAB-6496.
+      -->
+      <template v-if="false">
+        <PlDropdown
+          :model-value="app.model.data.offtargetProperty"
+          :options="offtargetPropertyOptions"
+          label="Off-target property"
+          :disabled="tagMappingDisabled"
+          clearable
+          @update:model-value="setOfftargetProperty"
+        >
+          <template #tooltip>
+            <b>Optional</b> — pick an imported per-feature property column (e.g. antigen type) that
+            marks features as on- or off-target, then choose which of its values mean off-target
+            below. Off-target features are excluded from the dominant call (like the negative
+            control), and a cell/clonotype whose on-target signal is spread across two or more
+            targets is labelled <b>cross-reactive</b> instead of "ambiguous".
+          </template>
+        </PlDropdown>
+        <PlDropdownMulti
+          v-if="app.model.data.offtargetProperty"
+          :model-value="app.model.data.offtargetValues ?? []"
+          :options="offtargetValueOptions"
+          label="Off-target values"
+          :disabled="tagMappingDisabled"
+          @update:model-value="(v) => (app.model.data.offtargetValues = v)"
+        >
+          <template #tooltip>
+            Values of the chosen property that designate a feature as off-target (e.g. "Off-Target",
+            "Decoy"). Features with any of these values are excluded from the dominant call.
+          </template>
+        </PlDropdownMulti>
+      </template>
       <PlAlert v-if="combineColumnError" type="warn">
         {{ combineColumnError }}
       </PlAlert>
@@ -517,8 +526,14 @@ const gridOptions = {
           :max-value="1"
           :step="0.05"
           label="Dominance threshold"
-          helper="Fraction of a cell's signal one feature must reach to be the consensus. Floor 0.5."
-        />
+        >
+          <template #tooltip>
+            Share of a cell's total feature signal the top feature must reach to be called that
+            cell's antigen; below it the cell is <b>ambiguous</b>. Raise it (e.g. 0.8) for stricter,
+            cleaner single-antigen calls; lower it toward the 0.5 floor to still call cells with
+            more mixed signal.
+          </template>
+        </PlNumberField>
         <PlNumberField
           v-model="app.model.data.minUmi"
           :min-value="1"
