@@ -56,7 +56,15 @@ const PANEL_ASSIGNED_FLOOR = 0.5;
 // column headers (-> the barcode/feature column dropdowns) and each column's distinct values (-> the
 // negative-control dropdown, indexed by the chosen feature column). One upload-triggered exec feeds all
 // three CSV-derived dropdowns; picking the feature column is then a pure model recompute (no rerun).
-type CsvMeta = { columns: string[]; valuesByColumn: Record<string, string[]> };
+// rowCount (total data rows) is emitted by emit-csv-meta so the model can detect a feature barcode that
+// appears on more than one row (distinct barcode values < rowCount) — the sample-specific-mapping case
+// per_cell_metrics.py guards at the end of the run. Optional so a prerun output predating rowCount still
+// parses (the duplicate check then simply skips).
+type CsvMeta = {
+  columns: string[];
+  valuesByColumn: Record<string, string[]>;
+  rowCount?: number;
+};
 
 // mitool tag-stat emits these columns (the CELL/FEATURE/UMI tags — see pattern.ts — plus tag-stat's
 // count/totalWeight/unique_<UMI> outputs). A user-mapped CSV barcode/feature column that names one of
@@ -147,6 +155,48 @@ function readCsvMeta(ctx: BlockRenderCtx<BlockArgs, BlockData>): CsvMeta | undef
   return ctx.prerun
     ?.resolve({ field: "csvMeta", allowPermanentAbsence: true })
     ?.getDataAsJsonOrUndefined<CsvMeta>();
+}
+
+// The tag CSV column that looks like it names the dataset's samples, or undefined. A CSV is sample-aware
+// when the same barcode maps to different features per sample; the tell is a column whose distinct values
+// cover the dataset's sample names. Return the column whose distinct values are a SUPERSET of the dataset
+// sample names (preferring exact set-equality, then fewest extra values), excluding the columns already
+// bound to the barcode / feature roles. Shared by the suggestedSampleColumn output (UI suggestion) and
+// barcodeMappingIssue (names the fix in the duplicate-barcode message) — kept a module helper because a
+// block output cannot read another output. undefined until both the CSV meta and sample labels resolve.
+function suggestSampleColumn(ctx: BlockRenderCtx<BlockArgs, BlockData>): string | undefined {
+  const meta = readCsvMeta(ctx);
+  const labels = resolveSampleLabels(ctx);
+  if (!meta || !labels) return undefined;
+  const datasetNames = new Set(Object.values(labels));
+  if (datasetNames.size === 0) return undefined;
+  const excluded = new Set(
+    [ctx.data.barcodeSeqColumn, ctx.data.featureNameColumn].filter(
+      (c): c is string => c !== undefined,
+    ),
+  );
+  let best: { col: string; exact: boolean; extra: number } | undefined;
+  for (const col of meta.columns) {
+    if (excluded.has(col)) continue;
+    const values = new Set(meta.valuesByColumn?.[col] ?? []);
+    let isSuperset = true;
+    for (const n of datasetNames)
+      if (!values.has(n)) {
+        isSuperset = false;
+        break;
+      }
+    if (!isSuperset) continue;
+    const exact = values.size === datasetNames.size;
+    const extra = values.size - datasetNames.size;
+    // Prefer exact set-equality; among equals, prefer the fewest extra values.
+    if (
+      best === undefined ||
+      (exact && !best.exact) ||
+      (exact === best.exact && extra < best.extra)
+    )
+      best = { col, exact, extra };
+  }
+  return best?.col;
 }
 
 // v1 (pre-preset) data shape: read geometry was three explicit length fields. v2 replaces them with a
@@ -412,6 +462,33 @@ export const platforma = BlockModelV3.create(dataModel)
         `${extra.length} CSV sample value(s) match no dataset sample (ignored): ${fmt(extra)}.`,
       );
     return lines.length > 0 ? lines : undefined;
+  })
+  // The tag CSV column that looks like it names the dataset's samples (or undefined). The UI offers it as
+  // a one-click "use sample-aware mapping" suggestion. Purely advisory — the user must still pick it (a
+  // gesture that snapshots the sample map into data); this output never writes data. Excludes the columns
+  // already bound to the barcode / feature roles. See suggestSampleColumn for the superset/equality rule.
+  .retentiveOutput("suggestedSampleColumn", (ctx): string | undefined => suggestSampleColumn(ctx))
+  // Duplicate-barcode detection at config time (UI warning only; the Python guards it authoritatively at
+  // the end of the run). Fires when a CSV is uploaded, the barcode column is chosen, no sample column is
+  // set, and that barcode column has fewer distinct values than the CSV has data rows — i.e. some barcode
+  // maps on more than one row, which would fan the per-cell join and double molecule counts. Names the
+  // fix (set the Sample column, suggesting the likely one; else remove the duplicate rows). Skipped when
+  // rowCount is absent (prerun predates it) — then the check can't run and we defer to the Python guard.
+  .retentiveOutput("barcodeMappingIssue", (ctx): string | undefined => {
+    if (!ctx.data.tagFeatureCsvHandle) return undefined;
+    const barcodeCol = ctx.data.barcodeSeqColumn;
+    if (!barcodeCol) return undefined;
+    if (ctx.data.sampleColumn) return undefined; // already sample-aware — the per-sample filter fixes it
+    const meta = readCsvMeta(ctx);
+    if (!meta || meta.rowCount === undefined) return undefined;
+    const distinct = meta.valuesByColumn?.[barcodeCol]?.length ?? 0;
+    if (distinct >= meta.rowCount) return undefined; // no duplicate barcodes
+    const suggested = suggestSampleColumn(ctx);
+    return (
+      "Some feature barcodes appear on multiple rows, so a single mapping is ambiguous. " +
+      `If this CSV is sample-specific, set the Sample column${suggested ? ` (looks like "${suggested}")` : ""}; ` +
+      "otherwise remove the duplicate rows."
+    );
   })
   // True while the uploaded CSV is still being parsed by staging (handle set, but emit-csv-meta hasn't
   // produced csvMeta yet) — lets the UI show a "reading columns…" state instead of silent empty

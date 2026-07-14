@@ -11,6 +11,7 @@ import {
   PlBlockPage,
   PlBtnGhost,
   PlBtnGroup,
+  PlBtnSecondary,
   PlDropdown,
   PlDropdownMulti,
   PlDropdownRef,
@@ -209,6 +210,31 @@ function clearOnCsvChange() {
 // Sample-aware mapping sanity warning from the model (dataset samples missing from the CSV / CSV sample
 // values matching no dataset sample). Only present once a sample column is chosen.
 const sampleMappingWarning = computed(() => app.model.outputs.sampleMappingWarning);
+
+// Sample-aware mapping suggestion (shown only while NO sample column is set — once one is picked the
+// warning above takes over). Two triggers, in priority order:
+//   • barcodeMappingIssue (warn): the barcode column has duplicate rows, so a single mapping is
+//     ambiguous — the model names the fix (set the Sample column, or remove the duplicate rows).
+//   • otherwise, if the model spotted a column that looks like it names the samples (info): offer it.
+// The "Use sample-aware mapping" button applies the suggestion via setSampleColumn — an explicit user
+// gesture (which snapshots the sample map into data), NOT a watcher writing data from an output (the
+// forbidden hairpin this block avoids). Hidden once a sample column is set.
+const barcodeMappingIssue = computed(() => app.model.outputs.barcodeMappingIssue);
+const suggestedSampleColumn = computed(() => app.model.outputs.suggestedSampleColumn);
+const sampleAwareSuggestion = computed(() => {
+  if (app.model.data.sampleColumn) return undefined; // already sample-aware
+  const issue = barcodeMappingIssue.value;
+  if (issue) return { type: "warn" as const, message: issue };
+  const suggested = suggestedSampleColumn.value;
+  if (suggested)
+    return {
+      type: "info" as const,
+      message:
+        `This CSV has a "${suggested}" column whose values match the dataset's sample names. ` +
+        "If the same barcode maps to a different feature per sample, use sample-aware mapping.",
+    };
+  return undefined;
+});
 
 // --- Running-state progress grid (in-memory AgGridVue, same pattern as blocks/peptide-extraction) ---
 ModuleRegistry.registerModules([ClientSideRowModelModule]);
@@ -457,6 +483,20 @@ const gridOptions = {
           </template>
         </PlDropdown>
       </PlRow>
+      <!-- Sample-aware mapping suggestion: a duplicate-barcode warning (barcodeMappingIssue) or, absent
+           duplicates, an info hint when a column looks like it names the samples. The button applies the
+           model's suggested column via setSampleColumn (explicit gesture — snapshots the sample map).
+           Shown only while no sample column is set. -->
+      <PlAlert v-if="sampleAwareSuggestion" :type="sampleAwareSuggestion.type">
+        <div>{{ sampleAwareSuggestion.message }}</div>
+        <PlBtnSecondary
+          v-if="suggestedSampleColumn"
+          :style="{ marginTop: '8px' }"
+          @click.stop="setSampleColumn(suggestedSampleColumn)"
+        >
+          Use sample-aware mapping
+        </PlBtnSecondary>
+      </PlAlert>
       <PlDropdown
         v-model="app.model.data.combineColumn"
         :options="combineColumnOptions"
