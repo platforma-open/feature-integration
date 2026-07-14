@@ -45,15 +45,15 @@ RUNS_DIR = os.path.join(HERE, "runs")
 
 # preset -> default scale/calibration/barcode-source (all overridable on the CLI).
 PRESETS = {
-    "tiny":          dict(samples=2, cells=80, panel_size=4, barcode_source="random"),
-    "realistic":     dict(samples=24, cells=2000, panel_size=15, barcode_source="random"),
+    "tiny": dict(samples=2, cells=80, panel_size=4, barcode_source="random"),
+    "realistic": dict(samples=24, cells=2000, panel_size=15, barcode_source="random"),
     "whitelist737k": dict(samples=24, cells=2000, panel_size=15, barcode_source="whitelist737k"),
 }
 
 # Antigen-only scenarios. errors/offpanel/multilane/control run through antigen.build; the rest have
 # their own generators. Default scenario scale = small (tiny), overridable with --samples/etc.
 ANTIGEN_SCENARIOS = ["errors", "offpanel", "multilane", "control"]
-SPECIAL_SCENARIOS = ["degraded", "panel-swap", "multisample"]
+SPECIAL_SCENARIOS = ["degraded", "panel-swap", "multisample", "libraseq"]
 ALL_SCENARIOS = ANTIGEN_SCENARIOS + SPECIAL_SCENARIOS
 
 
@@ -70,21 +70,29 @@ def build_full_run(run_dir, samples, cells, panel_size, barcode_source, arm, do_
     consensus_tsv = os.path.join(run_dir, "truth", "expected-consensus.tsv")
 
     if arm in ("all", "antigen"):
-        cfg = AntigenConfig(samples=sample_names(samples), cells_per_sample=cells,
-                            barcode_source=barcode_source, assets_dir=ASSETS_DIR)
-        antigen.build(cfg, pnl, "baseline",
-                      fastq_dir=os.path.join(run_dir, "antigen"),
-                      shared_dir=run_dir,
-                      truth_dir=os.path.join(run_dir, "truth"))
+        cfg = AntigenConfig(
+            samples=sample_names(samples), cells_per_sample=cells, barcode_source=barcode_source, assets_dir=ASSETS_DIR
+        )
+        antigen.build(
+            cfg,
+            pnl,
+            "baseline",
+            fastq_dir=os.path.join(run_dir, "antigen"),
+            shared_dir=run_dir,
+            truth_dir=os.path.join(run_dir, "truth"),
+        )
     if arm in ("all", "vdj"):
-        vdj.build(tags_csv, consensus_tsv,
-                  out_dir=os.path.join(run_dir, "vdj"),
-                  truth_dir=os.path.join(run_dir, "truth"))
+        vdj.build(
+            tags_csv, consensus_tsv, out_dir=os.path.join(run_dir, "vdj"), truth_dir=os.path.join(run_dir, "truth")
+        )
     if arm in ("all", "gex"):
-        gex.build(tags_csv, consensus_tsv,
-                  out_dir=os.path.join(run_dir, "gex"),
-                  truth_dir=os.path.join(run_dir, "truth"),
-                  annot_csv=ANNOT_CSV)
+        gex.build(
+            tags_csv,
+            consensus_tsv,
+            out_dir=os.path.join(run_dir, "gex"),
+            truth_dir=os.path.join(run_dir, "truth"),
+            annot_csv=ANNOT_CSV,
+        )
 
     if do_validate and arm == "all":
         print()
@@ -100,9 +108,13 @@ def build_scenario(name, out_dir, samples, cells, panel_size, barcode_source):
     if name == "multisample":
         panelswap.build_multisample(out_dir)
         return
+    cfg = AntigenConfig(
+        samples=sample_names(samples), cells_per_sample=cells, barcode_source=barcode_source, assets_dir=ASSETS_DIR
+    )
+    if name == "libraseq":
+        antigen.build_libraseq(cfg, out_dir)
+        return
     pnl = panel_mod.build_panel(panel_size)
-    cfg = AntigenConfig(samples=sample_names(samples), cells_per_sample=cells,
-                        barcode_source=barcode_source, assets_dir=ASSETS_DIR)
     if name == "degraded":
         antigen.build_degraded(cfg, pnl, out_dir)
     else:
@@ -110,19 +122,31 @@ def build_scenario(name, out_dir, samples, cells, panel_size, barcode_source):
 
 
 def main():
-    ap = argparse.ArgumentParser(
-        formatter_class=argparse.RawDescriptionHelpFormatter, description=__doc__)
-    ap.add_argument("preset", nargs="?", default="realistic", choices=list(PRESETS),
-                    help="which full-run preset to build (default: realistic)")
-    ap.add_argument("--arm", default="all", choices=["all", "antigen", "vdj", "gex"],
-                    help="build only one arm of the run (default: all)")
-    ap.add_argument("--scenario", choices=ALL_SCENARIOS,
-                    help="build an antigen-only scenario into runs/scenarios/<name>/ instead of a "
-                         "full run")
-    ap.add_argument("--no-validate", action="store_true",
-                    help="skip the offline validator after a full run")
-    ap.add_argument("--validate-only", action="store_true",
-                    help="run the offline validator against an existing run and exit (no regeneration)")
+    ap = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter, description=__doc__)
+    ap.add_argument(
+        "preset",
+        nargs="?",
+        default="realistic",
+        choices=list(PRESETS),
+        help="which full-run preset to build (default: realistic)",
+    )
+    ap.add_argument(
+        "--arm",
+        default="all",
+        choices=["all", "antigen", "vdj", "gex"],
+        help="build only one arm of the run (default: all)",
+    )
+    ap.add_argument(
+        "--scenario",
+        choices=ALL_SCENARIOS,
+        help="build an antigen-only scenario into runs/scenarios/<name>/ instead of a full run",
+    )
+    ap.add_argument("--no-validate", action="store_true", help="skip the offline validator after a full run")
+    ap.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="run the offline validator against an existing run and exit (no regeneration)",
+    )
     ap.add_argument("--samples", type=int, help="override donor count")
     ap.add_argument("--cells-per-sample", type=int, help="override cells per donor")
     ap.add_argument("--panel-size", type=int, help="override antigen count (excl. control)")
@@ -148,12 +172,14 @@ def main():
     cells = args.cells_per_sample or p["cells"]
     panel_size = args.panel_size or p["panel_size"]
     run_dir = args.out or os.path.join(RUNS_DIR, args.preset)
-    print(f"=== preset: {args.preset} ({samples} donors x {cells} cells x {panel_size} antigens+control) "
-          f"-> {run_dir} ===")
-    build_full_run(run_dir, samples, cells, panel_size, p["barcode_source"], args.arm,
-                   do_validate=not args.no_validate)
-    print(f"\npanel: {panel_size} antigens + 1 control | samples: {samples} | cells/sample: {cells} "
-          f"| preset: {args.preset}")
+    print(
+        f"=== preset: {args.preset} ({samples} donors x {cells} cells x {panel_size} antigens+control) -> {run_dir} ==="
+    )
+    build_full_run(run_dir, samples, cells, panel_size, p["barcode_source"], args.arm, do_validate=not args.no_validate)
+    print(
+        f"\npanel: {panel_size} antigens + 1 control | samples: {samples} | cells/sample: {cells} "
+        f"| preset: {args.preset}"
+    )
 
 
 if __name__ == "__main__":
