@@ -125,6 +125,24 @@ wf.body(func(args) {
 		},
 		name: "stepLogs"
 	})
+	// mitool intermediates persisted by content hash (dedup / CID stability). parse/refine/tag-stat are
+	// deterministic, but a model consumer resolving through their outputs (qcJson -> refineReport ->
+	// parsedMic) walks into the streaming execs' files map, whose CID drifts run-to-run -> CIDConflictError.
+	// Surfacing them as content-hashed outputs pins their CIDs so those resolutions stay stable across
+	// re-renders (and downstream reuses them instead of re-running). No model/UI consumer — the persistence
+	// itself is the point. Mirrors blocks/peptide-extraction. Keyed [sampleId] (type Resource -> map).
+	for pn in ["parsedMic", "parseReport", "refineReport", "tagstatTsv"] {
+		outputs = append(outputs, {
+			type: "Resource",
+			spec: {
+				kind: "PColumn",
+				name: "pl7.app/feature/" + pn,
+				domain: { "pl7.app/blockId": blockId },
+				valueType: "File"
+			},
+			name: pn
+		})
+	}
 
 	// mitool resource meta (mixcr semantics): pass the base memory floor always; add the override key
 	// only when the user set one (Advanced Settings) so fb-pipeline treats it as a hard fixed request.
@@ -214,6 +232,12 @@ wf.body(func(args) {
 			parseLogStream: perSampleResults.outputData("parseLogStream"),
 			// Per-sample x per-step stdout-stream map -> model live per-step progress.
 			stepLogs: perSampleResults.outputData("stepLogs"),
+			// mitool intermediates kept reachable so they're persisted by content hash (dedup / CID
+			// stability — see the output-spec note above). No model/UI consumer; the persistence is the point.
+			parsedMic: perSampleResults.outputData("parsedMic"),
+			parseReport: perSampleResults.outputData("parseReport"),
+			refineReport: perSampleResults.outputData("refineReport"),
+			tagstatTsv: perSampleResults.outputData("tagstatTsv"),
 			// Expose the tag->feature CSV import HANDLE so the model can watch it via getImportProgress()
 			// (model/src/index.ts). That model output is the actual upload driver: it registers the import
 			// with the middle-layer so the CSV bytes are pushed. Without it the CSV blob never materialises

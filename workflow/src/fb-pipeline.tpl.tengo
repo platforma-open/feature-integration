@@ -33,7 +33,7 @@ fbParseTpl := assets.importTemplate(":fb-parse")
 fbRefineTagstatTpl := assets.importTemplate(":fb-refine-tagstat")
 fbDownstreamTpl := assets.importTemplate(":fb-downstream")
 
-self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "qc", "qcJson", "parseLogStream", "stepLogs")
+self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "qc", "qcJson", "parseLogStream", "stepLogs", "parsedMic", "parseReport", "refineReport", "tagstatTsv")
 
 self.body(func(inputs) {
 	inputData := inputs[pConstants.VALUE_FIELD_NAME]
@@ -206,6 +206,14 @@ self.body(func(inputs) {
 		// Per-sample mitool parse stdout stream (live parse progress + early sample roster).
 		parseLogStream: parseRun.output("parseLogStream"),
 		// Per-sample step-log map (parse / refine / tag-stat stdout streams) for live per-step progress.
-		stepLogs: stepLogs
+		stepLogs: stepLogs,
+		// mitool intermediates surfaced so main.tpl can persist them by content hash (see there). These are
+		// the deterministic parse/refine/tag-stat outputs that the model resolves through (qc/perCell). Once
+		// content-hash-persisted their CIDs stop drifting across re-renders, which is what keeps
+		// getFile-off-a-streaming-exec resolutions stable and prevents the CIDConflictError.
+		parsedMic: parsedMic,
+		parseReport: parseReport,
+		refineReport: refineReport,
+		tagstatTsv: tagstatTsv
 	}
 })
