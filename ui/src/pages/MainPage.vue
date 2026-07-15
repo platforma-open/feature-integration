@@ -57,6 +57,11 @@ watch(
 // run-level summary when it finishes (the model builds the lines from the per-sample QC). Shown in a
 // wide slide-over as one text area; detailed per-sample statistics live on the QC page.
 const analysisLog = computed(() => app.model.outputs.analysisLog ?? []);
+// First line of the Analysis-logs drawer: point users at the richer per-sample logs, which live behind a
+// double-click on each sample row (the run-level analysisLog below is only a summary heartbeat).
+const LOGS_HINT =
+  "Tip: double-click any sample in the progress table to open its own detailed per-step logs (parse, refine tags, count UMIs).";
+const logText = computed(() => [LOGS_HINT, "", ...analysisLog.value].join("\n"));
 const logsOpen = ref(false);
 
 // Per-sample report slide-over (live per-step mitool logs). Opened by double-clicking a grid row; the
@@ -213,9 +218,9 @@ const sampleMappingWarning = computed(() => app.model.outputs.sampleMappingWarni
 
 // Sample-aware mapping suggestion (shown only while NO sample column is set — once one is picked the
 // warning above takes over). Two triggers, in priority order:
-//   • barcodeMappingIssue (warn): the barcode column has duplicate rows, so a single mapping is
+//   - barcodeMappingIssue (warn): the barcode column has duplicate rows, so a single mapping is
 //     ambiguous — the model names the fix (set the Sample column, or remove the duplicate rows).
-//   • otherwise, if the model spotted a column that looks like it names the samples (info): offer it.
+//   - otherwise, if the model spotted a column that looks like it names the samples (info): offer it.
 // The "Use sample-aware mapping" button applies the suggestion via setSampleColumn — an explicit user
 // gesture (which snapshots the sample map into data), NOT a watcher writing data from an output (the
 // forbidden hairpin this block avoids). Hidden once a sample column is set.
@@ -616,7 +621,7 @@ const gridOptions = {
 
     <PlSlideModal v-model="logsOpen" width="80%">
       <template #title>Analysis logs</template>
-      <PlLogView :value="analysisLog.join('\n')" />
+      <PlLogView :value="logText" />
     </PlSlideModal>
 
     <PlSlideModal v-model="sampleReportOpen" width="60%">
