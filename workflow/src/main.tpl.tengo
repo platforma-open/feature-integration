@@ -27,8 +27,11 @@ featurePropsTpl := assets.importTemplate(":fb-feature-properties")
 
 featurePropsSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:feature-properties")
 
-defaultMitoolMemGB := 16
-defaultMitoolCPUs := 4
+// Resource defaults mirror the MiXCR blocks (mixcr-analyze): 16 CPUs and a 64 GiB base per mitool
+// process. FI's parse/refine are as compute- and RAM-heavy as mixcr alignment, so err large by
+// default; users can still override via perProcessCPUs / perProcessMemGB (Advanced Settings).
+defaultMitoolMemGB := 64
+defaultMitoolCPUs := 16
 
 // Staging imports + exports the CSV to drive its upload before production needs it, and emits the
 // feature-name list for the control dropdown (see prerun.tpl).

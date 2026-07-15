@@ -46,12 +46,12 @@ self.body(func(inputs) {
 		saveFile("panel.txt").
 		run()
 
-	// RAM = base + reads*4, capped at 128 GiB; static fallback = base. workflow-tengo 6.7.0 fluent
-	// formula API fed via .resources({ onCPU }) (see fb-parse for the migration note).
+	// RAM = base + reads*4, capped at 256 GiB (mirrors mixcr-analyze); static fallback = base.
+	// workflow-tengo 6.7.0 fluent formula API fed via .resources({ onCPU }) (see fb-parse note).
 	formula := exec.formula
 	memFormula := formula.gib(memBaseGB).
 		plus(formula.size("reads").times(4)).
-		between(formula.gib(memBaseGB), formula.gib(128)).
+		between(formula.gib(memBaseGB), formula.gib(256)).
 		staticFallback(formula.gib(memBaseGB))
 
 	cellTag := tags.cell

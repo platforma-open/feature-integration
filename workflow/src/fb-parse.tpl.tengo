@@ -38,12 +38,12 @@ self.body(func(inputs) {
 	// Preview read cap: 0 = full run; >0 = mitool parse reads only the first N reads (--limit).
 	limitInput := is_undefined(inputs.limitInput) ? 0 : inputs.limitInput
 
-	// RAM = base + reads*4, capped at 128 GiB; static fallback = base for backends that can't evaluate
-	// resource formulas at run time.
+	// RAM = base + reads*4, capped at 256 GiB (mirrors mixcr-analyze); static fallback = base for
+	// backends that can't evaluate resource formulas at run time.
 	formula := exec.formula
 	memFormula := formula.gib(memBaseGB).
 		plus(formula.size("reads").times(4)).
-		between(formula.gib(memBaseGB), formula.gib(128)).
+		between(formula.gib(memBaseGB), formula.gib(256)).
 		staticFallback(formula.gib(memBaseGB))
 
 	parse := exec.builder().

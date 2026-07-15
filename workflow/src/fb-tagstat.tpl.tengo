@@ -27,18 +27,18 @@ self.body(func(inputs) {
 
 	// tag-stat's distinct-UMI sort parallelizes to ~5 cores (benchmarked); beyond that no gain, so cap
 	// there and never exceed the granted CPUs. Ties to the same perProcessCPUs knob as parse/refine
-	// (default 4).
+	// (default 16).
 	TAGSTAT_CPU_CAP := 5
 	tagStatCPU := mitoolCPUs < TAGSTAT_CPU_CAP ? mitoolCPUs : TAGSTAT_CPU_CAP
 
 	// The distinct-UMI on-disk sort scales with input volume, so size RAM from the refined.mic blob
 	// (molecules) on a floor instead of a fixed request (same mixcr-style size formula as parse/refine).
-	tagStatBaseGB := 8
+	tagStatBaseGB := 16
 	// workflow-tengo 6.7.0 fluent formula API fed via .resources({ onCPU }) (see fb-parse for the note).
 	formula := exec.formula
 	memFormula := formula.gib(tagStatBaseGB).
 		plus(formula.size("mic").times(4)).
-		between(formula.gib(tagStatBaseGB), formula.gib(128)).
+		between(formula.gib(tagStatBaseGB), formula.gib(256)).
 		staticFallback(formula.gib(tagStatBaseGB))
 
 	tagStat := exec.builder().

@@ -42,6 +42,8 @@ self.body(func(inputs) {
 	qc := exec.builder().
 		software(qcReportSw).
 		cpu(1).mem("2GiB").
+		// polars sizes its pool to all host cores by default; cap it to the granted CPU.
+		envWithVar("POLARS_MAX_THREADS", "{system.cpu}").
 		addFile("tagstat.tsv", tagstatTsv).
 		addFile("parse_report.json", parseReport).
 		addFile("refine_report.json", refineReport).
@@ -60,12 +62,12 @@ self.body(func(inputs) {
 	// axis from the iteration key, so we pass a constant and the CSV's sampleId column is ignored by the
 	// import. The distinct-UMI polars read scales with input volume, so size RAM from the tagstat.tsv blob
 	// (tag "tagstat") on a floor instead of a fixed request.
-	metricsBaseGB := 8
+	metricsBaseGB := 16
 	// workflow-tengo 6.7.0 fluent formula API fed via .resources({ onCPU }) (see fb-parse for the note).
 	formula := exec.formula
 	metricsMemFormula := formula.gib(metricsBaseGB).
 		plus(formula.size("tagstat").times(8)).
-		between(formula.gib(metricsBaseGB), formula.gib(128)).
+		between(formula.gib(metricsBaseGB), formula.gib(256)).
 		staticFallback(formula.gib(metricsBaseGB))
 
 	hasControl := !is_undefined(control) && control != ""
@@ -74,6 +76,8 @@ self.body(func(inputs) {
 		saveStdoutStream().
 		software(metricsSw).
 		resources({ onCPU: { cpu: 2, ram: metricsMemFormula } }).
+		// polars sizes its pool to all host cores by default; cap it to the granted CPU.
+		envWithVar("POLARS_MAX_THREADS", "{system.cpu}").
 		addFile("tagstat.tsv", tagstatTsv, { tag: "tagstat" }).
 		addFile("tags.csv", tagsCsv).
 		arg("tagstat.tsv").arg("tags.csv").
