@@ -6,7 +6,7 @@ import QcSummaryPage from "./pages/QcSummaryPage.vue";
 import ResultsPage from "./pages/ResultsPage.vue";
 
 export const sdkPlugin = defineAppV3(platforma, (app) => {
-  // Block-label pattern: mirror the model's suggestedBlockLabel ("<dataset> · <barcode> → <feature>")
+  // Block-label pattern: mirror the model's suggestedBlockLabel ("<dataset> / <barcode> → <feature>")
   // into data.defaultBlockLabel, which the sidebar subtitle reads. The subtitle render context has no
   // result pool, so the dataset label is resolved in the output and copied here. Guarded so it only
   // writes on change (multi-client safe).

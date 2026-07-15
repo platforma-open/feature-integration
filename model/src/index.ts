@@ -386,7 +386,7 @@ export const platforma = BlockModelV3.create(dataModel)
       );
     }),
   )
-  // Suggested block label for the sidebar subtitle: "<dataset> · <barcode> - <feature>", derived from
+  // Suggested block label for the sidebar subtitle: "<dataset> / <barcode> - <feature>", derived from
   // the current inputs. Computed here (not in .subtitle) because the subtitle context has no result
   // pool; a UI watchEffect copies this into data.defaultBlockLabel. Each part is dropped until set.
   .output("suggestedBlockLabel", (ctx): string | undefined => {
@@ -411,10 +411,10 @@ export const platforma = BlockModelV3.create(dataModel)
     }
     if (parts.length === 0) return undefined;
     // Stan's request (S1): the default subtitle must never render with dots. Periods come from a dotted
-    // dataset/file label; the " · " and " - " separators are a middot and hyphen, not periods, so
+    // dataset/file label; the " / " and " - " separators are a slash and hyphen, not periods, so
     // stripping "." leaves them intact. Replace periods with spaces and collapse the doubles they create.
     // A subtitle the user types in the sidebar is not routed through this output, so overrides are safe.
-    return parts.join(" · ").replace(/\./g, " ").replace(/ {2,}/g, " ").trim();
+    return parts.join(" / ").replace(/\./g, " ").replace(/ {2,}/g, " ").trim();
   })
   // Negative-control dropdown options: the distinct values of the chosen feature-name
   // column, from the prerun's emit-csv-meta valuesByColumn map. No rerun on column change — the map
@@ -618,8 +618,8 @@ export const platforma = BlockModelV3.create(dataModel)
   .output("sampleLabels", (ctx): Record<string, string> | undefined => resolveSampleLabels(ctx))
   // The block's single "Analysis logs" (lines shown in the UI's wide slide-over), built from the
   // per-sample QC JSON (qcJson), which settles incrementally as each sample's qc step finishes:
-  //   • while the run is in progress → a live count of samples finished so far ("Processing… N …");
-  //   • when every sample is done   → a run-level summary (aggregate reads/panel-assigned/cells +
+  //   - while the run is in progress → a live count of samples finished so far ("Processing… N …");
+  //   - when every sample is done   → a run-level summary (aggregate reads/panel-assigned/cells +
   //     any samples flagged for a panel-assigned fraction below PANEL_ASSIGNED_FLOOR, by name).
   // One area regardless of sample count; detailed per-sample stats live on the QC page (qcSummaryTable).
   .output("analysisLog", (ctx): string[] | undefined => {
@@ -674,9 +674,7 @@ export const platforma = BlockModelV3.create(dataModel)
     lines.push(`Processed ${done} sample${done === 1 ? "" : "s"}.`);
     lines.push(
       `Reads parsed: ${nf(readsTotal)} total` +
-        (medMatched !== undefined
-          ? ` · ${pct(medMatched)} matched the read pattern (median)`
-          : "") +
+        (medMatched !== undefined ? `, ${pct(medMatched)} matched the read pattern (median)` : "") +
         ".",
     );
     if (medAssigned !== undefined && assigned.length > 0) {
@@ -684,7 +682,7 @@ export const platforma = BlockModelV3.create(dataModel)
         `Panel-assigned: ${pct(medAssigned)} of reads (median; range ${pct(Math.min(...assigned))}–${pct(Math.max(...assigned))}).`,
       );
     }
-    lines.push(`Cells detected: ${nf(cellsTotal)} · ${features} features.`);
+    lines.push(`Cells detected: ${nf(cellsTotal)} across ${features} features.`);
     lines.push("");
     if (flagged.length > 0) {
       const names = flagged.map((e) => labels?.[String(e.key[0])] ?? String(e.key[0]));
@@ -741,7 +739,7 @@ export const platforma = BlockModelV3.create(dataModel)
   )
   .title(() => "Feature Barcode Profiling")
   // Standard block-label subtitle. The subtitle render context is args-only (no result pool / outputs
-  // — touching them renders "Invalid subtitle"), so the dynamic "<dataset> · <barcode> - <feature>"
+  // — touching them renders "Invalid subtitle"), so the dynamic "<dataset> / <barcode> - <feature>"
   // string is derived in the `suggestedBlockLabel` OUTPUT (which HAS the pool) and copied into
   // `defaultBlockLabel` by a UI watchEffect (the sanctioned block-label pattern). The subtitle only
   // reads `ctx.data`. Guard `ctx.data` — it can be undefined before block storage is parsed.

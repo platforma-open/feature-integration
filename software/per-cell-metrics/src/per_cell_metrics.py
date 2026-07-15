@@ -241,9 +241,8 @@ def per_cell_summary(per_cell: pl.DataFrame) -> pl.DataFrame:
         pl.col("fraction").max().alias("maxFraction"),
         pl.col("_entry")
         .sort_by(["fraction", "feature"], descending=[True, False])
-        # bullet with non-breaking padding — a plain " | " reads as too thin/crowded in the table cell,
-        # and normal spaces collapse in HTML, so the U+00A0 padding is what makes the separation stick.
-        .str.join("  •  ")
+        # comma-separated, dominant feature first.
+        .str.join(", ")
         .alias("featureSummary"),
     ]
     out_cols = ["sampleId", "cellId", "maxUmiCount", "maxFraction"]

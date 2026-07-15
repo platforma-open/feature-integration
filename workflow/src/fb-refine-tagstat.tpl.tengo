@@ -2,8 +2,8 @@
 //
 // Branches on the parse gate's decision (parse_gate.py -> decision.json, read here via .getData() — file
 // content can only be inspected inside a template that receives the file, hence this sub-template).
-//   • matched > 0  -> the normal chain: refine-tags (fb-refine) then tag-stat (fb-tagstat).
-//   • matched == 0 -> mitool wrote no parsed.mic (fb-parse pre-wrote an empty placeholder), so refine /
+//   - matched > 0  -> the normal chain: refine-tags (fb-refine) then tag-stat (fb-tagstat).
+//   - matched == 0 -> mitool wrote no parsed.mic (fb-parse pre-wrote an empty placeholder), so refine /
 //                     tag-stat would crash on it. Skip both and return the header-only tag-stat TSV +
 //                     empty refine report the gate already synthesized. The downstream Python is
 //                     empty-safe (a header-only tag-stat yields empty results), so the sample completes
