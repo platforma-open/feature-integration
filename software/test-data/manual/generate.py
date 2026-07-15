@@ -35,7 +35,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from lib import antigen, gex, panelswap, validate, vdj  # noqa: E402
+from lib import antigen, beam_exact, gex, panelswap, validate, vdj  # noqa: E402
 from lib import panel as panel_mod  # noqa: E402
 from lib.antigen import AntigenConfig  # noqa: E402
 
@@ -147,11 +147,24 @@ def main():
         action="store_true",
         help="run the offline validator against an existing run and exit (no regeneration)",
     )
+    ap.add_argument(
+        "--beam",
+        action="store_true",
+        help="build the BEAM-exact fixture (offset-10 R2 + sample-aware panel) into runs/beam-exact/",
+    )
     ap.add_argument("--samples", type=int, help="override donor count")
     ap.add_argument("--cells-per-sample", type=int, help="override cells per donor")
     ap.add_argument("--panel-size", type=int, help="override antigen count (excl. control)")
     ap.add_argument("--out", help="override the output directory")
     args = ap.parse_args()
+
+    if args.beam:
+        run_dir = args.out or os.path.join(RUNS_DIR, "beam-exact")
+        cells = args.cells_per_sample or 150
+        panel_size = args.panel_size or 12
+        print(f"=== beam-exact (2 samples x {cells} cells x {panel_size} antigens, offset-10) -> {run_dir} ===")
+        beam_exact.build(run_dir, cells_per_sample=cells, panel_size=panel_size)
+        return
 
     if args.validate_only:
         run_dir = args.out or os.path.join(RUNS_DIR, args.preset)

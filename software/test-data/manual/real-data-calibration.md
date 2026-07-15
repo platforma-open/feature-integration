@@ -1,9 +1,10 @@
 # Real-data calibration — synthetic BEAM vs a real 5k BEAM-T reference
 
-Provenance + empirical basis for the `realistic` generator profile. Gitignored (lives with the data).
+Provenance + empirical basis for the `realistic` generator profile. The raw reference data is not in the
+repo (10x public download); only this write-up is tracked.
 
 ## Source
-- `/Users/paulnewling/Desktop/Data/5k_BEAM-T_Human_A0201_B0702_PBMC_5pv2_Multiplex_fastqs.tar` (12 GB, 10x public).
+- 10x Genomics public dataset `5k_BEAM-T_Human_A0201_B0702_PBMC_5pv2_Multiplex` (~12 GB FASTQ tar, freely downloadable from 10x).
 - **BEAM-T** (pMHC-multimer / TCR) — our synthetic is **BEAM-Ab** (BCR). Only *technical shapes* are
   borrowed (read geometry, barcode error, UMI depth/duplication, panel separation); the biology
   (cell types, antigen semantics, clone structure) is not.
