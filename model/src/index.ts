@@ -361,9 +361,11 @@ export const platforma = BlockModelV3.create(dataModel)
   })
   // Staging depends only on the CSV: emit-csv-meta emits every column's values in one exec, so the
   // negative-control dropdown no longer needs a rerun when the feature column changes (the model indexes
-  // the already-emitted map). featureNameColumn is deliberately NOT a prerun arg.
+  // the already-emitted map). featureNameColumn is deliberately NOT a prerun arg — and neither is
+  // fbFastqRef: the CSV metadata is independent of the FASTQ, so keying staging on it would re-run the
+  // emit-csv-meta step and blank the column dropdowns (csvColumnsLoading → tagMappingDisabled) every time
+  // the FASTQ changes or a PlRef re-resolves on reload. Key on the CSV alone.
   .prerunArgs((data) => ({
-    fbFastqRef: data.fbFastqRef,
     tagFeatureCsvHandle: data.tagFeatureCsvHandle,
   }))
   // NOTE on enrichments (.enriches): intentionally NOT declared. `.enriches(args => PlRef[])` is for a
