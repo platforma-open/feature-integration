@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.feature-integration.workflow
 
+## 2.1.2
+
+### Patch Changes
+
+- 55d84ba: SDK Update
+
 ## 2.1.1
 
 ### Patch Changes
