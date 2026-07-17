@@ -1,5 +1,13 @@
 # @platforma-open/milaboratories.feature-integration.workflow
 
+## 2.1.3
+
+### Patch Changes
+
+- 4739519: Release software
+- Updated dependencies [4739519]
+  - @platforma-open/milaboratories.feature-integration.per-cell-metrics@2.1.1
+
 ## 2.1.2
 
 ### Patch Changes

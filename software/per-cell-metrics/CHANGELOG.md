@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.feature-integration.per-cell-metrics
 
+## 2.1.1
+
+### Patch Changes
+
+- 4739519: Release software
+
 ## 2.1.0
 
 ### Minor Changes
