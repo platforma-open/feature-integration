@@ -63,9 +63,9 @@ def sample_names(n):
     return [f"donor{i + 1:02d}" for i in range(n)]
 
 
-def build_full_run(run_dir, samples, cells, panel_size, barcode_source, arm, do_validate):
+def build_full_run(run_dir, samples, cells, panel_size, barcode_source, arm, do_validate, offtarget_count=0):
     """Build the requested arm(s) of a colocated multiomic run under run_dir."""
-    pnl = panel_mod.build_panel(panel_size)
+    pnl = panel_mod.build_panel(panel_size, offtarget_count=offtarget_count)
     tags_csv = os.path.join(run_dir, "tags.csv")
     consensus_tsv = os.path.join(run_dir, "truth", "expected-consensus.tsv")
 
@@ -100,7 +100,7 @@ def build_full_run(run_dir, samples, cells, panel_size, barcode_source, arm, do_
             sys.exit(1)
 
 
-def build_scenario(name, out_dir, samples, cells, panel_size, barcode_source):
+def build_scenario(name, out_dir, samples, cells, panel_size, barcode_source, offtarget_count=0):
     """Build one antigen-only scenario bed into out_dir (self-contained: FASTQs + tags.csv + truth)."""
     if name == "panel-swap":
         panelswap.build_panel_swap(out_dir)
@@ -114,7 +114,7 @@ def build_scenario(name, out_dir, samples, cells, panel_size, barcode_source):
     if name == "libraseq":
         antigen.build_libraseq(cfg, out_dir)
         return
-    pnl = panel_mod.build_panel(panel_size)
+    pnl = panel_mod.build_panel(panel_size, offtarget_count=offtarget_count)
     if name == "degraded":
         antigen.build_degraded(cfg, pnl, out_dir)
     else:
@@ -155,6 +155,13 @@ def main():
     ap.add_argument("--samples", type=int, help="override donor count")
     ap.add_argument("--cells-per-sample", type=int, help="override cells per donor")
     ap.add_argument("--panel-size", type=int, help="override antigen count (excl. control)")
+    ap.add_argument(
+        "--offtarget-count",
+        type=int,
+        default=0,
+        help="mark the first N non-control antigens as Off-Target in the panel Type column "
+        "(rest -> Target, control -> Decoy)",
+    )
     ap.add_argument("--out", help="override the output directory")
     args = ap.parse_args()
 
@@ -163,7 +170,7 @@ def main():
         cells = args.cells_per_sample or 150
         panel_size = args.panel_size or 12
         print(f"=== beam-exact (2 samples x {cells} cells x {panel_size} antigens, offset-10) -> {run_dir} ===")
-        beam_exact.build(run_dir, cells_per_sample=cells, panel_size=panel_size)
+        beam_exact.build(run_dir, cells_per_sample=cells, panel_size=panel_size, offtarget_count=args.offtarget_count)
         return
 
     if args.validate_only:
@@ -177,7 +184,9 @@ def main():
         panel_size = args.panel_size or 4
         out_dir = args.out or os.path.join(RUNS_DIR, "scenarios", args.scenario)
         print(f"=== scenario: {args.scenario} -> {out_dir} ===")
-        build_scenario(args.scenario, out_dir, samples, cells, panel_size, "random")
+        build_scenario(
+            args.scenario, out_dir, samples, cells, panel_size, "random", offtarget_count=args.offtarget_count
+        )
         return
 
     p = PRESETS[args.preset]
@@ -188,7 +197,16 @@ def main():
     print(
         f"=== preset: {args.preset} ({samples} donors x {cells} cells x {panel_size} antigens+control) -> {run_dir} ==="
     )
-    build_full_run(run_dir, samples, cells, panel_size, p["barcode_source"], args.arm, do_validate=not args.no_validate)
+    build_full_run(
+        run_dir,
+        samples,
+        cells,
+        panel_size,
+        p["barcode_source"],
+        args.arm,
+        do_validate=not args.no_validate,
+        offtarget_count=args.offtarget_count,
+    )
     print(
         f"\npanel: {panel_size} antigens + 1 control | samples: {samples} | cells/sample: {cells} "
         f"| preset: {args.preset}"

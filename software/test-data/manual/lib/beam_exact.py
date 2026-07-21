@@ -37,6 +37,7 @@ from .common import (
     rand_seq,
     write_fastq_gz,
 )
+from .panel import classify_antigens
 
 BEAM_SEED = 20260714
 R2_TAIL = "TTAATTAATT"  # neutral remainder after the feature barcode (captured by R2:* and ignored)
@@ -93,29 +94,49 @@ def assign_features(rng, antigens, control_name):
     return per_feature, ("ambiguous" if ambiguous else dominant)
 
 
-def build(run_dir, cells_per_sample=150, panel_size=12, n_shared_collisions=2, do_vdj=True):
+def build(run_dir, cells_per_sample=150, panel_size=12, n_shared_collisions=2, do_vdj=True, offtarget_count=0):
     """Generate the BEAM-exact run under run_dir: antigen FASTQs (offset-10 R2), a sample-aware tag CSV,
-    the coherent AIRR VDJ arm, and truth tables."""
+    the coherent AIRR VDJ arm, and truth tables.
+
+    The tag CSV also carries the real customer panel's Type/Species columns: the control -> Decoy; the
+    first `offtarget_count` antigens of each sample's panel -> Off-Target; the rest -> Target; species
+    alternate Human/Cyno."""
+    rng = new_rng(BEAM_SEED)
+    panels, _control_bc = build_sample_panels(rng, panel_size, n_shared_collisions)
+    samples = ["donor01", "donor02"]
+
+    # Per-antigen Type/Species from the shared classifier — which also VALIDATES offtarget_count, so the
+    # --beam path rejects out-of-range counts exactly like the full-run path. Computed up front, before
+    # any output dir is created, so a bad count errors cleanly. Class is intentionally OMITTED from the
+    # beam-exact panel CSV: these antigens are all synthetic (uniform class), and the task only requires
+    # Type/Species here.
+    meta_by_sample = {}
+    for sample in samples:
+        non_control = [name for name, _ in panels[sample] if name != CONTROL_NAME]
+        types, species, _classes = classify_antigens(non_control, offtarget_count)
+        meta_by_sample[sample] = (types, species)
+
     antigen_dir = os.path.join(run_dir, "antigen")
     vdj_dir = os.path.join(run_dir, "vdj")
     truth_dir = os.path.join(run_dir, "truth")
     for d in (antigen_dir, truth_dir):
         os.makedirs(d, exist_ok=True)
 
-    rng = new_rng(BEAM_SEED)
-    panels, _control_bc = build_sample_panels(rng, panel_size, n_shared_collisions)
-    samples = ["donor01", "donor02"]
-
     all_cells = gen_cells(rng, len(samples) * cells_per_sample)
     cells_by_sample = {s: all_cells[i * cells_per_sample : (i + 1) * cells_per_sample] for i, s in enumerate(samples)}
 
     consensus_rows = []  # (sample, cellId, planted_consensus) — drives the VDJ arm's clonotype coherence
-    csv_rows = []  # (Sample, Sequence, Protein) — the sample-aware tag CSV the block uploads
+    csv_rows = []  # (Sample, Sequence, Protein, Type, Species) — the sample-aware tag CSV the block uploads
     for sample in samples:
         panel = panels[sample]  # [(protein, barcode), ...] incl. control
         by_protein = {name: bc for name, bc in panel}
+        types, species = meta_by_sample[sample]
         for name, bc in panel:
-            csv_rows.append((sample, bc, name))
+            if name == CONTROL_NAME:
+                typ, sp = "Decoy", ""
+            else:
+                typ, sp = types[name], species[name]
+            csv_rows.append((sample, bc, name, typ, sp))
         antigen_names = [name for name, _ in panel if name != CONTROL_NAME]
 
         reads = []
@@ -144,7 +165,9 @@ def build(run_dir, cells_per_sample=150, panel_size=12, n_shared_collisions=2, d
     tags_csv = os.path.join(run_dir, "tags.csv")
     with open(tags_csv, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["Sample", "Sequence", "Protein"])
+        # Type/Species mirror the real customer panel; Class is intentionally omitted here (beam-exact
+        # antigens are all synthetic -> uniform class), so the full-run tags.csv is the Class exemplar.
+        w.writerow(["Sample", "Sequence", "Protein", "Type", "Species"])
         w.writerows(csv_rows)
 
     # Consensus truth (also the VDJ arm's input).
@@ -160,7 +183,7 @@ def build(run_dir, cells_per_sample=150, panel_size=12, n_shared_collisions=2, d
     with open(vdj_tags, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["tag", "feature"])
-        for _sample, seq, protein in csv_rows:
+        for _sample, seq, protein, _typ, _sp in csv_rows:
             w.writerow([seq, protein])
 
     if do_vdj:
@@ -171,5 +194,5 @@ def build(run_dir, cells_per_sample=150, panel_size=12, n_shared_collisions=2, d
         f"[beam-exact] {len(samples)} samples x {cells_per_sample} cells x {panel_size} antigens "
         f"(+control), {n_collide} cross-sample barcode collisions -> {run_dir}"
     )
-    print(f"  tag CSV: {tags_csv} (Sample,Sequence,Protein — sample-aware)")
+    print(f"  tag CSV: {tags_csv} (Sample,Sequence,Protein,Type,Species — sample-aware)")
     print("  R2 geometry: OFFSET(10) + FEATURE(15) + tail  (pattern ^N{10}(FEATURE:N{15})(R2:*))")

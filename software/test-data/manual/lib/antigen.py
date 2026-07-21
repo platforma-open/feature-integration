@@ -258,9 +258,11 @@ def write_fastqs(outdir, sample, reads, multilane):
 def write_metadata(shared_dir, panel, samples):
     with open(os.path.join(shared_dir, "tags.csv"), "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["tag", "feature"])
+        # tag,feature stay first (backward-compatible role mapping); Type/Species/Class mirror the real
+        # customer panel so downstream off-target-call and species-grouping have synthetic inputs.
+        w.writerow(["tag", "feature", "Type", "Species", "Class"])
         for name, bc in panel.features.items():
-            w.writerow([bc, name])
+            w.writerow([bc, name, panel.types.get(name, ""), panel.species.get(name, ""), panel.classes.get(name, "")])
     with open(os.path.join(shared_dir, "feature_reference.csv"), "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["id", "name", "read", "pattern", "sequence", "feature_type"])
