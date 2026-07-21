@@ -26,6 +26,11 @@ export type BlockArgs = {
   // the user can sanity-check settings before the full run. Omitted -> full run (all reads). Mirrors
   // mixcr-clonotyping / demultiplex-fastq "Preview" mode.
   limitInput?: number;
+  // Optional multi-barcode antigen combine mode. combineColumn names a tag-CSV column giving each
+  // feature's mode ("sum" = OR, the default; "all" = AND, feature called only when every member barcode
+  // fires). minUmi is the AND per-barcode "fired" floor (integer >= 1; workflow default 1).
+  combineColumn?: string;
+  minUmi?: number;
   // Optional off-target designation (F2). offtargetProperty names an imported per-feature property column
   // (e.g. antigen_class); offtargetValues are that column's values marking a feature as off-target. Such
   // features are excluded from the dominant call (like the control) and enable the "cross-reactive" label.
