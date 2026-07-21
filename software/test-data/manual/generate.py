@@ -35,7 +35,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from lib import antigen, beam_exact, gex, panelswap, validate, vdj  # noqa: E402
+from lib import annotations, antigen, beam_exact, gex, panelswap, validate, vdj  # noqa: E402
 from lib import panel as panel_mod  # noqa: E402
 from lib.antigen import AntigenConfig  # noqa: E402
 
@@ -75,6 +75,7 @@ def build_full_run(
     crossreactive_frac=0.0,
     multibarcode=False,
     heavy_only=False,
+    with_annotations=False,
 ):
     """Build the requested arm(s) of a colocated multiomic run under run_dir."""
     pnl = panel_mod.build_panel(panel_size, offtarget_count=offtarget_count, multibarcode=multibarcode)
@@ -95,6 +96,9 @@ def build_full_run(
             crossreactive_frac=crossreactive_frac,
             multibarcode=multibarcode,
         )
+        # After the antigen arm so its cell ids exist. Off by default (no annotations/ dir).
+        if with_annotations:
+            annotations.write_annotations(run_dir)
     if arm in ("all", "vdj"):
         vdj.build(
             tags_csv,
@@ -213,6 +217,14 @@ def main():
         "antibody — so the heavy-only end-to-end path is reproducible; applies to the vdj and all "
         "arms. Each cell keeps its shared bare-16nt cell_id. Off by default (paired IGH+IGK)",
     )
+    ap.add_argument(
+        "--with-annotations",
+        action="store_true",
+        help="also emit a per-cell categorical annotation (annotations/donorNN.tsv: cell_id, cell_type, "
+        "cluster) keyed by the shared bare-16nt cell barcode, biased by the planted antigen class. This "
+        "feeds vdj-multiomic-integration's annotation-integration path (an alternative to GEX -> "
+        "cell-type-annotation). Off by default (no annotations/ dir, byte-identical to prior runs)",
+    )
     ap.add_argument("--out", help="override the output directory")
     args = ap.parse_args()
 
@@ -273,6 +285,7 @@ def main():
         crossreactive_frac=args.crossreactive_frac,
         multibarcode=args.multibarcode,
         heavy_only=args.heavy_only,
+        with_annotations=args.with_annotations,
     )
     print(
         f"\npanel: {panel_size} antigens + 1 control | samples: {samples} | cells/sample: {cells} "

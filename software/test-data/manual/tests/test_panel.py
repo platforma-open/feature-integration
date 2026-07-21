@@ -95,6 +95,24 @@ def test_heavy_only_airr(tmp_path):
     assert loci == {"IGH"}
 
 
+def test_annotation_emitter(tmp_path):
+    _run("tiny", "--with-annotations", out=tmp_path)
+    tsvs = list((tmp_path / "annotations").glob("*.tsv"))
+    assert tsvs
+    with tsvs[0].open() as fh:
+        reader = csv.DictReader(fh, delimiter="\t")
+        header = reader.fieldnames
+        rows = list(reader)
+    assert {"cell_id", "cell_type", "cluster"} <= set(header)
+    with (tmp_path / "truth" / "expected-consensus.tsv").open() as fh:
+        cons = list(csv.DictReader(fh, delimiter="\t"))
+    ann_ids = {r["cell_id"] for r in rows}
+    # expected-consensus.tsv keys the barcode as `cellId` (antigen arm); annotations use `cell_id`.
+    # Accept either so the join-compatibility check is meaningful against the real truth schema.
+    cons_ids = {r.get("cell_id") or r.get("cellId") for r in cons}
+    assert ann_ids & cons_ids
+
+
 def test_offtarget_count_out_of_range_errors(tmp_path):
     # The full-run AND the --beam paths must both reject an offtarget count above the panel size.
     for i, extra in enumerate((["tiny"], ["--beam", "--panel-size", "4", "--cells-per-sample", "10"])):
