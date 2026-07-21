@@ -95,23 +95,26 @@ def offtarget_features(
     column (e.g. ``antigen_class``) and the set of its values that mark a feature as off-target (e.g.
     {"Off-Target", "Decoy"}). This reads the tag->feature CSV — which carries those property columns —
     and returns the resolved set of off-target FEATURE names, so the dominant call can exclude them.
-    Values are matched exactly as given (stripped); the block does not normalise or interpret them.
+
+    Values are matched case- AND whitespace-insensitively (``strip().casefold()`` on BOTH sides): real
+    panels (e.g. B043) carry mixed casing of the same designation — ``Off-Target`` and ``Off-target`` in
+    one ``Type`` column — so a user who selects one canonical value catches every casing. Only the
+    comparison is normalised; the returned FEATURE names are verbatim from the CSV.
     """
     mapping = pl.read_csv(tag_feature_csv)
     if offtarget_col not in mapping.columns:
         raise SystemExit(
             f"--offtarget-col={offtarget_col!r} is not a column of the tag->feature CSV ({mapping.columns})"
         )
-    wanted = {v.strip() for v in offtarget_values}
-    resolved = (
-        mapping.select(
-            pl.col(csv_feature_col).cast(pl.Utf8).str.strip_chars().alias("_feat"),
-            pl.col(offtarget_col).cast(pl.Utf8).str.strip_chars().alias("_val"),
-        )
-        .filter(pl.col("_val").is_in(list(wanted)))["_feat"]
-        .unique()
-        .to_list()
-    )
+    wanted_norm = {v.strip().casefold() for v in offtarget_values}
+    resolved = {
+        (feat or "").strip()
+        for feat, val in mapping.select(
+            pl.col(csv_feature_col).cast(pl.Utf8),
+            pl.col(offtarget_col).cast(pl.Utf8),
+        ).iter_rows()
+        if val is not None and val.strip().casefold() in wanted_norm
+    }
     return frozenset(resolved)
 
 
