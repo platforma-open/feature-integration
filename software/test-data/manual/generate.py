@@ -63,7 +63,9 @@ def sample_names(n):
     return [f"donor{i + 1:02d}" for i in range(n)]
 
 
-def build_full_run(run_dir, samples, cells, panel_size, barcode_source, arm, do_validate, offtarget_count=0):
+def build_full_run(
+    run_dir, samples, cells, panel_size, barcode_source, arm, do_validate, offtarget_count=0, crossreactive_frac=0.0
+):
     """Build the requested arm(s) of a colocated multiomic run under run_dir."""
     pnl = panel_mod.build_panel(panel_size, offtarget_count=offtarget_count)
     tags_csv = os.path.join(run_dir, "tags.csv")
@@ -80,6 +82,7 @@ def build_full_run(run_dir, samples, cells, panel_size, barcode_source, arm, do_
             fastq_dir=os.path.join(run_dir, "antigen"),
             shared_dir=run_dir,
             truth_dir=os.path.join(run_dir, "truth"),
+            crossreactive_frac=crossreactive_frac,
         )
     if arm in ("all", "vdj"):
         vdj.build(
@@ -100,7 +103,9 @@ def build_full_run(run_dir, samples, cells, panel_size, barcode_source, arm, do_
             sys.exit(1)
 
 
-def build_scenario(name, out_dir, samples, cells, panel_size, barcode_source, offtarget_count=0):
+def build_scenario(
+    name, out_dir, samples, cells, panel_size, barcode_source, offtarget_count=0, crossreactive_frac=0.0
+):
     """Build one antigen-only scenario bed into out_dir (self-contained: FASTQs + tags.csv + truth)."""
     if name == "panel-swap":
         panelswap.build_panel_swap(out_dir)
@@ -118,7 +123,15 @@ def build_scenario(name, out_dir, samples, cells, panel_size, barcode_source, of
     if name == "degraded":
         antigen.build_degraded(cfg, pnl, out_dir)
     else:
-        antigen.build(cfg, pnl, name, fastq_dir=out_dir, shared_dir=out_dir, truth_dir=out_dir)
+        antigen.build(
+            cfg,
+            pnl,
+            name,
+            fastq_dir=out_dir,
+            shared_dir=out_dir,
+            truth_dir=out_dir,
+            crossreactive_frac=crossreactive_frac,
+        )
 
 
 def main():
@@ -162,6 +175,14 @@ def main():
         help="mark the first N non-control antigens as Off-Target in the panel Type column "
         "(rest -> Target, control -> Decoy)",
     )
+    ap.add_argument(
+        "--crossreactive-frac",
+        type=float,
+        default=0.0,
+        help="fraction of binder cells planted to bind TWO on-target antigens co-dominantly (~equal "
+        "UMIs); these are labeled 'crossreactive' in the truth so the block's cross-reactive call is "
+        "testable (default 0.0 -> none, byte-identical to prior runs)",
+    )
     ap.add_argument("--out", help="override the output directory")
     args = ap.parse_args()
 
@@ -185,7 +206,14 @@ def main():
         out_dir = args.out or os.path.join(RUNS_DIR, "scenarios", args.scenario)
         print(f"=== scenario: {args.scenario} -> {out_dir} ===")
         build_scenario(
-            args.scenario, out_dir, samples, cells, panel_size, "random", offtarget_count=args.offtarget_count
+            args.scenario,
+            out_dir,
+            samples,
+            cells,
+            panel_size,
+            "random",
+            offtarget_count=args.offtarget_count,
+            crossreactive_frac=args.crossreactive_frac,
         )
         return
 
@@ -206,6 +234,7 @@ def main():
         args.arm,
         do_validate=not args.no_validate,
         offtarget_count=args.offtarget_count,
+        crossreactive_frac=args.crossreactive_frac,
     )
     print(
         f"\npanel: {panel_size} antigens + 1 control | samples: {samples} | cells/sample: {cells} "

@@ -88,14 +88,16 @@ def add_ambient(rng, panel, reads, frac=0.15):
     return reads
 
 
-def assign_features(rng, panel, nonbinder=False):
+def assign_features(rng, panel, nonbinder=False, crossreactive=False):
     """Plant the per-feature distinct-UMI counts for one cell. Returns (per_feature, consensus_label).
 
     One dominant antigen (high), optional ambiguous second, 0-2 ambient antigens (low), control
     background. `nonbinder=True` (the control scenario) plants a TRUE non-binder: every antigen at
-    ~control level. Magnitudes are calibrated to the real 5k BEAM-T library: dominant ~600 UMIs
-    (right-skewed, low-signal tail), near-mono dominance (median ~1.0, p10 ~0.79), tight background
-    (~3 UMIs/cell)."""
+    ~control level. `crossreactive=True` plants a co-dominant pair of two ON-TARGET antigens at
+    ~equal UMIs (second at 0.85-1.0x the first): neither passes the dominance threshold alone but their
+    on-target sum does, so the block calls the cell "cross-reactive" (not "ambiguous"). Magnitudes are
+    calibrated to the real 5k BEAM-T library: dominant ~600 UMIs (right-skewed, low-signal tail),
+    near-mono dominance (median ~1.0, p10 ~0.79), tight background (~3 UMIs/cell)."""
     antigen_names = panel.names
     control = panel.control_name
     per_feature = {}
@@ -106,6 +108,27 @@ def assign_features(rng, panel, nonbinder=False):
                 per_feature[a] = rng.randint(1, bg_hi)
         per_feature[control] = rng.randint(1, bg_hi)
         return per_feature, "ambiguous"
+    if crossreactive:
+        # Co-dominant on-TARGET pair: both must be Type=Target (not the control, not an Off-Target), so
+        # the block's dominant call excludes neither and — with two on-targets sharing the signal near
+        # 50/50 — lands on "cross-reactive" rather than a single dominant antigen or "ambiguous".
+        on_target = [a for a in antigen_names if panel.types.get(a) == "Target"]
+        if len(on_target) >= 2:
+            first, second = rng.sample(on_target, 2)
+            dom_umis = rng.randint(10, 60) if rng.random() < 0.1 else rng.randint(300, 1100)
+            per_feature[first] = dom_umis
+            # near-equal second keeps both above threshold-share of the on-target sum while denying
+            # either a unique-dominant call (each ~50% of the total, below the 0.6 threshold)
+            per_feature[second] = max(1, int(dom_umis * rng.uniform(0.85, 1.0)))
+            others = [a for a in antigen_names if a not in per_feature]
+            rng.shuffle(others)
+            bg_hi = 3
+            for a in others[: rng.randint(0, 2)]:
+                per_feature[a] = rng.randint(1, bg_hi)
+            if rng.random() < 0.7:
+                per_feature[control] = rng.randint(1, 3)
+            return per_feature, "crossreactive"
+        # <2 on-target antigens: can't plant a cross-reactive pair — fall through to a normal binder.
     dominant = rng.choice(antigen_names)
     # median ~600, p10 ~20 / p90 ~1500; ~10% of cells are low-signal (real p10 total UMIs ~18)
     dom_umis = rng.randint(10, 60) if rng.random() < 0.1 else rng.randint(300, 1100)
@@ -130,10 +153,11 @@ def assign_features(rng, panel, nonbinder=False):
     return per_feature, ("ambiguous" if ambiguous else dominant)
 
 
-def build_sample(rng, panel, sample, cells, nonbinder_frac=0.0):
+def build_sample(rng, panel, sample, cells, nonbinder_frac=0.0, crossreactive_frac=0.0):
     """Clean per-sample reads (no scenario perturbation). Returns (reads, truth_ab, truth_con,
-    truth_class). reads = list of [name, r1, r2, lane(=1)]. The `nonbinder_frac > 0 and ...`
-    short-circuit means frac=0 consumes NO extra RNG, so the baselines stay reproducible."""
+    truth_class). reads = list of [name, r1, r2, lane(=1)]. The `frac > 0 and ...` short-circuits mean
+    both fracs at 0 consume NO extra RNG, so the baselines stay reproducible. A cell is at most one of
+    nonbinder / crossreactive (nonbinder wins the roll)."""
     features = panel.features
     reads = []
     truth_ab = []
@@ -142,9 +166,17 @@ def build_sample(rng, panel, sample, cells, nonbinder_frac=0.0):
     read_no = 0
     for cell in cells:
         is_nb = nonbinder_frac > 0 and rng.random() < nonbinder_frac
-        per_feature, con = assign_features(rng, panel, nonbinder=is_nb)
-        cls = "nonbinder" if is_nb else ("ambiguous" if con == "ambiguous" else "binder")
-        truth_class.append((sample, cell, cls, "" if con == "ambiguous" else con))
+        is_cr = (not is_nb) and crossreactive_frac > 0 and rng.random() < crossreactive_frac
+        per_feature, con = assign_features(rng, panel, nonbinder=is_nb, crossreactive=is_cr)
+        if is_nb:
+            cls = "nonbinder"
+        elif con == "crossreactive":
+            cls = "crossreactive"
+        elif con == "ambiguous":
+            cls = "ambiguous"
+        else:
+            cls = "binder"
+        truth_class.append((sample, cell, cls, "" if con in ("ambiguous", "crossreactive") else con))
         for feat, k in per_feature.items():
             truth_ab.append((sample, cell, feat, k))
         truth_con.append((sample, cell, con))
@@ -300,7 +332,7 @@ def write_specificity(truth_dir, truth_class):
         w.writerows(truth_class)
 
 
-def build(cfg, panel, scenario, fastq_dir, shared_dir, truth_dir):
+def build(cfg, panel, scenario, fastq_dir, shared_dir, truth_dir, crossreactive_frac=0.0):
     """Generate one antigen scenario into the given dirs.
 
     fastq_dir  - R1/R2 FASTQs (+ offpanel-barcodes.txt for the offpanel scenario)
@@ -338,7 +370,7 @@ def build(cfg, panel, scenario, fastq_dir, shared_dir, truth_dir):
     total_reads = 0
     for sample in samples:
         cells = cells_by_sample[sample]
-        reads, ab, con, cls = build_sample(rng, panel, sample, cells, nonbinder_frac)
+        reads, ab, con, cls = build_sample(rng, panel, sample, cells, nonbinder_frac, crossreactive_frac)
         all_ab += ab
         all_con += con
         all_cls += cls

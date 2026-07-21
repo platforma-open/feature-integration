@@ -4,6 +4,7 @@ Type / Species / Class columns (alongside the backward-compatible tag,feature ro
 counts must be rejected on BOTH the full-run and the --beam paths."""
 
 import csv
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -43,6 +44,29 @@ def test_beam_panel_has_type_species(tmp_path):
     assert {"Type", "Species"} <= set(header)
     assert len([r for r in rows if r["Type"] == "Off-Target"]) == 4  # 2 samples x 2 off-target
     assert "Target" in {r["Type"] for r in rows}
+
+
+def _load_consensus():
+    p = HERE.parent.parent / "per-cell-metrics" / "src" / "per_cell_metrics.py"
+    spec = importlib.util.spec_from_file_location("pcm", p)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_crossreactive_two_even_antigens():
+    pcm = _load_consensus()
+    counts = {"AgA": 50.0, "AgB": 48.0, "ctrl": 3.0}
+    result = pcm.consensus_category(
+        counts, threshold=0.6, control="ctrl", offtargets=frozenset(), label_crossreactive=True
+    )
+    assert result == "cross-reactive"
+
+
+def test_generator_plants_crossreactive(tmp_path):
+    _run("tiny", "--offtarget-count", "1", "--crossreactive-frac", "0.1", out=tmp_path)
+    consensus = list(csv.DictReader((tmp_path / "truth" / "expected-consensus.tsv").open(), delimiter="\t"))
+    assert any(r.get("planted_consensus") == "crossreactive" for r in consensus)
 
 
 def test_offtarget_count_out_of_range_errors(tmp_path):
