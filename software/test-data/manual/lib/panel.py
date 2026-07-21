@@ -92,7 +92,22 @@ class Panel:
         return [bc for bcs in self.features.values() for bc in bcs]
 
 
-def build_panel(panel_size, seed=common.ANTIGEN_SEED, offtarget_count=0, multibarcode=False):
+def _double_space_name(name):
+    """Return `name` with a stray INTERNAL double space, reproducing the real customer panel's
+    `Human OT1  Biotin`. Replaces the first separator ("_" / "-" / " ") with two spaces; if the name has
+    none, injects "  " near the middle. Injected at the panel SOURCE (so the name is used consistently
+    across tags.csv, feature_reference.csv, the truth tables and the VDJ/GEX name joins) — a messy
+    *label*, not broken data: nothing in generation is left mismatched, and the block's
+    whitespace-normalization collapses it back."""
+    for sep in ("_", "-", " "):
+        i = name.find(sep)
+        if i != -1:
+            return name[:i] + "  " + name[i + 1 :]
+    mid = max(1, len(name) // 2)
+    return name[:mid] + "  " + name[mid:]
+
+
+def build_panel(panel_size, seed=common.ANTIGEN_SEED, offtarget_count=0, multibarcode=False, messy=False):
     """Build a Panel of `panel_size` antigens + 1 control. The first min(panel_size, 4) antigens are
     the real 10x anchors; the rest are synthetic 15-mers (Hamming >= 3 from each other and the anchors
     + control). Uses an independent RNG so the panel is identical regardless of sample/cell scale.
@@ -106,7 +121,11 @@ def build_panel(panel_size, seed=common.ANTIGEN_SEED, offtarget_count=0, multiba
     per-barcode UMIs add up); every other antigen stays single-barcode "sum". This is the shared-path
     analogue of the libraseq fixture, so the FI multi-barcode combine logic is exercisable inside a
     full multiomic run. The extra barcodes come from the panel RNG and are ONLY drawn in this branch,
-    so a default (single-barcode) panel is byte-identical to before."""
+    so a default (single-barcode) panel is byte-identical to before.
+
+    With `messy=True` (from --messy-metadata) the first antigen NAME gets a stray double space, so the
+    emitted metadata reproduces the customer panel's whitespace inconsistency for the normalization
+    tasks. Off by default (byte-identical)."""
     if panel_size < 1:
         raise SystemExit("panel size must be >= 1")
     prng = new_rng(seed + 7)
@@ -117,6 +136,14 @@ def build_panel(panel_size, seed=common.ANTIGEN_SEED, offtarget_count=0, multiba
         extra = gen_distinct(prng, panel_size - n_real, FEAT_LEN, min_dist=3, avoid=existing)
         for i, bc in enumerate(extra):
             antigens.append((f"antigen_{n_real + i + 1:03d}", bc))
+    if messy:
+        # --messy-metadata: give the FIRST antigen NAME a stray double space (see _double_space_name).
+        # Applied at the source so every consumer (tags.csv, feature_reference.csv, truth, the VDJ/GEX
+        # name joins) uses the same messy name and generation stays coherent. Off by default -> a clean
+        # panel is byte-identical to before. (A double-spaced real anchor no longer matches ANCHOR_CLASS,
+        # so its Class falls back to "synthetic" — fine for messy test data; Class is not asserted.)
+        n0, bc0 = antigens[0]
+        antigens[0] = (_double_space_name(n0), bc0)
     names = [n for n, _ in antigens]
     feats = {n: [bc] for n, bc in antigens}
     feats[CONTROL_NAME] = [CONTROL_BC]

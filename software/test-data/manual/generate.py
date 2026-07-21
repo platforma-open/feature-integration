@@ -76,9 +76,10 @@ def build_full_run(
     multibarcode=False,
     heavy_only=False,
     with_annotations=False,
+    messy=False,
 ):
     """Build the requested arm(s) of a colocated multiomic run under run_dir."""
-    pnl = panel_mod.build_panel(panel_size, offtarget_count=offtarget_count, multibarcode=multibarcode)
+    pnl = panel_mod.build_panel(panel_size, offtarget_count=offtarget_count, multibarcode=multibarcode, messy=messy)
     tags_csv = os.path.join(run_dir, "tags.csv")
     consensus_tsv = os.path.join(run_dir, "truth", "expected-consensus.tsv")
 
@@ -95,6 +96,7 @@ def build_full_run(
             truth_dir=os.path.join(run_dir, "truth"),
             crossreactive_frac=crossreactive_frac,
             multibarcode=multibarcode,
+            messy=messy,
         )
         # After the antigen arm so its cell ids exist. Off by default (no annotations/ dir).
         if with_annotations:
@@ -225,6 +227,16 @@ def main():
         "feeds vdj-multiomic-integration's annotation-integration path (an alternative to GEX -> "
         "cell-type-annotation). Off by default (no annotations/ dir, byte-identical to prior runs)",
     )
+    ap.add_argument(
+        "--messy-metadata",
+        action="store_true",
+        help="inject the real customer panel's inconsistent casing/whitespace into the EMITTED panel "
+        "metadata: the Type column carries a mixed-case off-target set (both 'Off-Target' and "
+        "'Off-target') and one antigen name gains a stray double space. Reproduces the B043 problem so "
+        "the block's normalization (case-insensitive off-target matching) has synthetic data to work "
+        "against. Messy LABELS only — the barcode joins and truth tables stay coherent. Applies to the "
+        "full-run panel; off by default (byte-identical to prior runs)",
+    )
     ap.add_argument("--out", help="override the output directory")
     args = ap.parse_args()
 
@@ -286,6 +298,7 @@ def main():
         multibarcode=args.multibarcode,
         heavy_only=args.heavy_only,
         with_annotations=args.with_annotations,
+        messy=args.messy_metadata,
     )
     print(
         f"\npanel: {panel_size} antigens + 1 control | samples: {samples} | cells/sample: {cells} "

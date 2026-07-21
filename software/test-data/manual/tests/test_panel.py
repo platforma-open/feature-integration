@@ -51,6 +51,15 @@ def test_multibarcode_combine_column(tmp_path):
     assert {"all", "sum"} <= {r["combine"] for r in rows}
 
 
+def test_messy_metadata_variants(tmp_path):
+    _run("tiny", "--offtarget-count", "3", "--messy-metadata", out=tmp_path)
+    with (tmp_path / "tags.csv").open() as fh:
+        rows = list(csv.DictReader(fh))
+    types = {r["Type"] for r in rows}
+    assert "Off-Target" in types and "Off-target" in types
+    assert any("  " in r["feature"] for r in rows)  # stray double space
+
+
 def test_beam_panel_has_type_species(tmp_path):
     # beam-exact: 2 samples x panel_size antigens; --offtarget-count applies per sample.
     _run("--beam", "--offtarget-count", "2", "--cells-per-sample", "10", out=tmp_path)
