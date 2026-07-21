@@ -64,10 +64,19 @@ def sample_names(n):
 
 
 def build_full_run(
-    run_dir, samples, cells, panel_size, barcode_source, arm, do_validate, offtarget_count=0, crossreactive_frac=0.0
+    run_dir,
+    samples,
+    cells,
+    panel_size,
+    barcode_source,
+    arm,
+    do_validate,
+    offtarget_count=0,
+    crossreactive_frac=0.0,
+    multibarcode=False,
 ):
     """Build the requested arm(s) of a colocated multiomic run under run_dir."""
-    pnl = panel_mod.build_panel(panel_size, offtarget_count=offtarget_count)
+    pnl = panel_mod.build_panel(panel_size, offtarget_count=offtarget_count, multibarcode=multibarcode)
     tags_csv = os.path.join(run_dir, "tags.csv")
     consensus_tsv = os.path.join(run_dir, "truth", "expected-consensus.tsv")
 
@@ -83,6 +92,7 @@ def build_full_run(
             shared_dir=run_dir,
             truth_dir=os.path.join(run_dir, "truth"),
             crossreactive_frac=crossreactive_frac,
+            multibarcode=multibarcode,
         )
     if arm in ("all", "vdj"):
         vdj.build(
@@ -183,6 +193,14 @@ def main():
         "UMIs); these are labeled 'crossreactive' in the truth so the block's cross-reactive call is "
         "testable (default 0.0 -> none, byte-identical to prior runs)",
     )
+    ap.add_argument(
+        "--multibarcode",
+        action="store_true",
+        help="map some antigens to MULTIPLE feature barcodes with a per-antigen combine mode "
+        "(first antigen -> combine=all, second -> combine=sum, rest single-barcode sum); tags.csv "
+        "gains a `combine` column and feature_reference.csv per-member ids (<feat>_1/<feat>_2) so the "
+        "FI multi-barcode combine logic is testable in a full run. Off by default (byte-identical)",
+    )
     ap.add_argument("--out", help="override the output directory")
     args = ap.parse_args()
 
@@ -191,7 +209,13 @@ def main():
         cells = args.cells_per_sample or 150
         panel_size = args.panel_size or 12
         print(f"=== beam-exact (2 samples x {cells} cells x {panel_size} antigens, offset-10) -> {run_dir} ===")
-        beam_exact.build(run_dir, cells_per_sample=cells, panel_size=panel_size, offtarget_count=args.offtarget_count)
+        beam_exact.build(
+            run_dir,
+            cells_per_sample=cells,
+            panel_size=panel_size,
+            offtarget_count=args.offtarget_count,
+            multibarcode=args.multibarcode,
+        )
         return
 
     if args.validate_only:
@@ -235,6 +259,7 @@ def main():
         do_validate=not args.no_validate,
         offtarget_count=args.offtarget_count,
         crossreactive_frac=args.crossreactive_frac,
+        multibarcode=args.multibarcode,
     )
     print(
         f"\npanel: {panel_size} antigens + 1 control | samples: {samples} | cells/sample: {cells} "

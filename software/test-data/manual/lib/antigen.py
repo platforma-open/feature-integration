@@ -181,18 +181,43 @@ def build_sample(rng, panel, sample, cells, nonbinder_frac=0.0, crossreactive_fr
             truth_ab.append((sample, cell, feat, k))
         truth_con.append((sample, cell, con))
         for feat, k in per_feature.items():
-            fbc = features[feat]
-            umis = set()
-            while len(umis) < k:
-                umis.add(rand_seq(rng, UMI_LEN))
-            # sorted(): set iteration order of strings varies per process (PYTHONHASHSEED), which
-            # would make the emitted read order non-reproducible. Sorting keeps the output byte-stable.
-            for umi in sorted(umis):
-                # real PCR dup: median ~1.3 reads/UMI, p90 ~2
-                dups = 1 if rng.random() < 0.75 else (2 if rng.random() < 0.8 else 3)
-                for _ in range(dups):
-                    read_no += 1
-                    reads.append([f"{sample}_read{read_no}", cell + umi, fbc + R2_FILLER, 1])
+            fbcs = features[feat]
+            if len(fbcs) == 1:
+                fbc = fbcs[0]
+                umis = set()
+                while len(umis) < k:
+                    umis.add(rand_seq(rng, UMI_LEN))
+                # sorted(): set iteration order of strings varies per process (PYTHONHASHSEED), which
+                # would make the emitted read order non-reproducible. Sorting keeps the output byte-stable.
+                for umi in sorted(umis):
+                    # real PCR dup: median ~1.3 reads/UMI, p90 ~2
+                    dups = 1 if rng.random() < 0.75 else (2 if rng.random() < 0.8 else 3)
+                    for _ in range(dups):
+                        read_no += 1
+                        reads.append([f"{sample}_read{read_no}", cell + umi, fbc + R2_FILLER, 1])
+            else:
+                # Multi-barcode antigen (only present in a --multibarcode panel; single-barcode runs
+                # never take this branch, so they stay byte-identical). combine="all" fires EVERY
+                # member barcode at ~k UMIs (AND / dual-probe); combine="sum" splits the k UMIs across
+                # the members so the per-feature sum stays ~k. Same UMI/dup shape as the single path.
+                mode = panel.combine.get(feat, "sum")
+                if mode == "all":
+                    shares = [k] * len(fbcs)
+                else:
+                    base = k // len(fbcs)
+                    shares = [base] * len(fbcs)
+                    shares[0] += k - base * len(fbcs)
+                for fbc, share in zip(fbcs, shares):
+                    if share <= 0:
+                        continue
+                    umis = set()
+                    while len(umis) < share:
+                        umis.add(rand_seq(rng, UMI_LEN))
+                    for umi in sorted(umis):
+                        dups = 1 if rng.random() < 0.75 else (2 if rng.random() < 0.8 else 3)
+                        for _ in range(dups):
+                            read_no += 1
+                            reads.append([f"{sample}_read{read_no}", cell + umi, fbc + R2_FILLER, 1])
     return reads, truth_ab, truth_con, truth_class
 
 
@@ -287,19 +312,42 @@ def write_fastqs(outdir, sample, reads, multilane):
             write_fastq_gz(os.path.join(outdir, f"{sample}_{tag}_R2.fastq.gz"), lane_reads, 2)
 
 
-def write_metadata(shared_dir, panel, samples):
+def write_metadata(shared_dir, panel, samples, multibarcode=False):
     with open(os.path.join(shared_dir, "tags.csv"), "w", newline="") as f:
         w = csv.writer(f)
         # tag,feature stay first (backward-compatible role mapping); Type/Species/Class mirror the real
-        # customer panel so downstream off-target-call and species-grouping have synthetic inputs.
-        w.writerow(["tag", "feature", "Type", "Species", "Class"])
-        for name, bc in panel.features.items():
-            w.writerow([bc, name, panel.types.get(name, ""), panel.species.get(name, ""), panel.classes.get(name, "")])
+        # customer panel so downstream off-target-call and species-grouping have synthetic inputs. A
+        # --multibarcode panel adds `combine` (between feature and Type) and emits one row PER member
+        # barcode; single-barcode runs keep the exact prior header + one row per feature (byte-stable).
+        if multibarcode:
+            w.writerow(["tag", "feature", "combine", "Type", "Species", "Class"])
+            for name, bcs in panel.features.items():
+                for bc in bcs:
+                    w.writerow(
+                        [
+                            bc,
+                            name,
+                            panel.combine.get(name, "sum"),
+                            panel.types.get(name, ""),
+                            panel.species.get(name, ""),
+                            panel.classes.get(name, ""),
+                        ]
+                    )
+        else:
+            w.writerow(["tag", "feature", "Type", "Species", "Class"])
+            for name, bcs in panel.features.items():
+                w.writerow(
+                    [bcs[0], name, panel.types.get(name, ""), panel.species.get(name, ""), panel.classes.get(name, "")]
+                )
     with open(os.path.join(shared_dir, "feature_reference.csv"), "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["id", "name", "read", "pattern", "sequence", "feature_type"])
-        for name, bc in panel.features.items():
-            w.writerow([name, name, "R2", "^(BC)", bc, "Antigen Capture"])
+        for name, bcs in panel.features.items():
+            for j, bc in enumerate(bcs):
+                # per-member id `<feat>_<n>` when a feature has >1 barcode; bare feature name otherwise
+                # (so single-barcode feature_reference.csv is byte-identical to before).
+                bc_id = f"{name}_{j + 1}" if len(bcs) > 1 else name
+                w.writerow([bc_id, name, "R2", "^(BC)", bc, "Antigen Capture"])
     with open(os.path.join(shared_dir, "samples-metadata.tsv"), "w", newline="") as f:
         w = csv.writer(f, delimiter="\t")
         w.writerow(["Sample", "Donor", "Condition"])
@@ -332,7 +380,7 @@ def write_specificity(truth_dir, truth_class):
         w.writerows(truth_class)
 
 
-def build(cfg, panel, scenario, fastq_dir, shared_dir, truth_dir, crossreactive_frac=0.0):
+def build(cfg, panel, scenario, fastq_dir, shared_dir, truth_dir, crossreactive_frac=0.0, multibarcode=False):
     """Generate one antigen scenario into the given dirs.
 
     fastq_dir  - R1/R2 FASTQs (+ offpanel-barcodes.txt for the offpanel scenario)
@@ -389,7 +437,7 @@ def build(cfg, panel, scenario, fastq_dir, shared_dir, truth_dir, crossreactive_
         total_reads += len(reads)
         print(f"  {sample}: {len(cells)} cells, {len(reads)} reads")
 
-    write_metadata(shared_dir, panel, samples)
+    write_metadata(shared_dir, panel, samples, multibarcode=multibarcode)
     write_truth(truth_dir, all_ab, all_con)
     if scenario == "control":
         write_specificity(truth_dir, all_cls)

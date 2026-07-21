@@ -37,6 +37,20 @@ def test_panel_has_type_species_class(tmp_path):
     assert {"Human", "Cyno"} <= {r["Species"] for r in rows}
 
 
+def test_multibarcode_combine_column(tmp_path):
+    _run("tiny", "--multibarcode", out=tmp_path)
+    with (tmp_path / "tags.csv").open() as fh:
+        reader = csv.DictReader(fh)
+        header = reader.fieldnames
+        rows = list(reader)
+    assert "combine" in header
+    from collections import Counter
+
+    feat_counts = Counter(r["feature"] for r in rows)
+    assert any(c >= 2 for c in feat_counts.values())  # one antigen on 2+ barcodes
+    assert {"all", "sum"} <= {r["combine"] for r in rows}
+
+
 def test_beam_panel_has_type_species(tmp_path):
     # beam-exact: 2 samples x panel_size antigens; --offtarget-count applies per sample.
     _run("--beam", "--offtarget-count", "2", "--cells-per-sample", "10", out=tmp_path)

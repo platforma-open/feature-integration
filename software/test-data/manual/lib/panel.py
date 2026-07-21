@@ -64,11 +64,19 @@ class Panel:
     Carries the real customer panel's per-antigen metadata — `types` (Target/Off-Target/Decoy),
     `species` (Human/Cyno/""), `classes` (viral/enzyme/synthetic/control) — each a dict keyed by
     feature name and INCLUDING the control. They default to sensible values so `Panel(names, feats)`
-    stays valid for any legacy construction."""
+    stays valid for any legacy construction.
 
-    def __init__(self, names, features, control_name=CONTROL_NAME, types=None, species=None, classes=None):
+    A feature may map to a LIST of barcodes (multi-barcode antigens); a bare `str` is coerced to a
+    1-element list so single-barcode construction stays backward-compatible. `combine` (feature ->
+    "sum" | "all") says how the block reads the members: "sum" adds the per-barcode UMIs, "all" (AND)
+    requires every member barcode to fire. Defaults to "sum" for every feature."""
+
+    def __init__(
+        self, names, features, control_name=CONTROL_NAME, types=None, species=None, classes=None, combine=None
+    ):
         self.names = names  # antigen names, excluding the control
-        self.features = features  # {name: barcode}, INCLUDING the control
+        # {name: [barcode, ...]}, INCLUDING the control. A bare str coerces to a 1-element list.
+        self.features = {n: ([v] if isinstance(v, str) else list(v)) for n, v in features.items()}
         self.control_name = control_name
         self.types = types if types is not None else {n: ("Decoy" if n == control_name else "Target") for n in features}
         self.species = species if species is not None else {n: "" for n in features}
@@ -77,20 +85,28 @@ class Panel:
             if classes is not None
             else {n: ("control" if n == control_name else ANCHOR_CLASS.get(n, "synthetic")) for n in features}
         )
+        self.combine = combine if combine is not None else {n: "sum" for n in features}
 
     @property
     def barcodes(self):
-        return list(self.features.values())
+        return [bc for bcs in self.features.values() for bc in bcs]
 
 
-def build_panel(panel_size, seed=common.ANTIGEN_SEED, offtarget_count=0):
+def build_panel(panel_size, seed=common.ANTIGEN_SEED, offtarget_count=0, multibarcode=False):
     """Build a Panel of `panel_size` antigens + 1 control. The first min(panel_size, 4) antigens are
     the real 10x anchors; the rest are synthetic 15-mers (Hamming >= 3 from each other and the anchors
     + control). Uses an independent RNG so the panel is identical regardless of sample/cell scale.
 
     Per-antigen Type/Species/Class match the real customer panel shape: the control -> Decoy/control;
     the first `offtarget_count` antigens -> Off-Target; the rest -> Target; species alternate
-    Human/Cyno; class from ANCHOR_CLASS (real anchors) else "synthetic"."""
+    Human/Cyno; class from ANCHOR_CLASS (real anchors) else "synthetic".
+
+    With `multibarcode=True` the first antigen gets a SECOND barcode read out under combine="all"
+    (AND — both members must fire) and the second antigen a second barcode under combine="sum" (the
+    per-barcode UMIs add up); every other antigen stays single-barcode "sum". This is the shared-path
+    analogue of the libraseq fixture, so the FI multi-barcode combine logic is exercisable inside a
+    full multiomic run. The extra barcodes come from the panel RNG and are ONLY drawn in this branch,
+    so a default (single-barcode) panel is byte-identical to before."""
     if panel_size < 1:
         raise SystemExit("panel size must be >= 1")
     prng = new_rng(seed + 7)
@@ -102,16 +118,27 @@ def build_panel(panel_size, seed=common.ANTIGEN_SEED, offtarget_count=0):
         for i, bc in enumerate(extra):
             antigens.append((f"antigen_{n_real + i + 1:03d}", bc))
     names = [n for n, _ in antigens]
-    feats = {n: bc for n, bc in antigens}
-    feats[CONTROL_NAME] = CONTROL_BC
-    assert all(len(bc) == FEAT_LEN for bc in feats.values()), "feature barcodes must be 15 bp"
+    feats = {n: [bc] for n, bc in antigens}
+    feats[CONTROL_NAME] = [CONTROL_BC]
+    assert all(len(bc) == FEAT_LEN for bcs in feats.values() for bc in bcs), "feature barcodes must be 15 bp"
 
     types, species, classes = classify_antigens(names, offtarget_count)
     types[CONTROL_NAME] = "Decoy"
     species[CONTROL_NAME] = ""
     classes[CONTROL_NAME] = "control"
 
-    return Panel(names, feats, types=types, species=species, classes=classes)
+    combine = None
+    if multibarcode:
+        if len(names) < 2:
+            raise SystemExit(f"--multibarcode needs a panel of >= 2 antigens; got {len(names)}")
+        avoid = [bc for bcs in feats.values() for bc in bcs]
+        extra_bc = gen_distinct(prng, 2, FEAT_LEN, min_dist=3, avoid=avoid)
+        feats[names[0]].append(extra_bc[0])  # first antigen -> 2 barcodes, AND
+        feats[names[1]].append(extra_bc[1])  # second antigen -> 2 barcodes, summed
+        combine = {n: "sum" for n in feats}
+        combine[names[0]] = "all"
+
+    return Panel(names, feats, types=types, species=species, classes=classes, combine=combine)
 
 
 def load_clear_antigens(tags_csv):
