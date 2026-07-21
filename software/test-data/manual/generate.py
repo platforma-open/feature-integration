@@ -74,6 +74,7 @@ def build_full_run(
     offtarget_count=0,
     crossreactive_frac=0.0,
     multibarcode=False,
+    heavy_only=False,
 ):
     """Build the requested arm(s) of a colocated multiomic run under run_dir."""
     pnl = panel_mod.build_panel(panel_size, offtarget_count=offtarget_count, multibarcode=multibarcode)
@@ -96,7 +97,11 @@ def build_full_run(
         )
     if arm in ("all", "vdj"):
         vdj.build(
-            tags_csv, consensus_tsv, out_dir=os.path.join(run_dir, "vdj"), truth_dir=os.path.join(run_dir, "truth")
+            tags_csv,
+            consensus_tsv,
+            out_dir=os.path.join(run_dir, "vdj"),
+            truth_dir=os.path.join(run_dir, "truth"),
+            heavy_only=heavy_only,
         )
     if arm in ("all", "gex"):
         gex.build(
@@ -201,6 +206,13 @@ def main():
         "gains a `combine` column and feature_reference.csv per-member ids (<feat>_1/<feat>_2) so the "
         "FI multi-barcode combine logic is testable in a full run. Off by default (byte-identical)",
     )
+    ap.add_argument(
+        "--heavy-only",
+        action="store_true",
+        help="emit a HEAVY-CHAIN-ONLY (IGH, no IGK) VDJ arm — the customer's VHH single-domain "
+        "antibody — so the heavy-only end-to-end path is reproducible; applies to the vdj and all "
+        "arms. Each cell keeps its shared bare-16nt cell_id. Off by default (paired IGH+IGK)",
+    )
     ap.add_argument("--out", help="override the output directory")
     args = ap.parse_args()
 
@@ -260,6 +272,7 @@ def main():
         offtarget_count=args.offtarget_count,
         crossreactive_frac=args.crossreactive_frac,
         multibarcode=args.multibarcode,
+        heavy_only=args.heavy_only,
     )
     print(
         f"\npanel: {panel_size} antigens + 1 control | samples: {samples} | cells/sample: {cells} "

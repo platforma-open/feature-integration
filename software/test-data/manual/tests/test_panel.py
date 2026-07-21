@@ -83,6 +83,18 @@ def test_generator_plants_crossreactive(tmp_path):
     assert any(r.get("planted_consensus") == "crossreactive" for r in consensus)
 
 
+def test_heavy_only_airr(tmp_path):
+    _run("tiny", "--heavy-only", out=tmp_path)
+    tsvs = list((tmp_path / "vdj").glob("*.tsv"))
+    assert tsvs
+    loci = set()
+    for t in tsvs:
+        with t.open() as fh:
+            for r in csv.DictReader(fh, delimiter="\t"):
+                loci.add(r["locus"])
+    assert loci == {"IGH"}
+
+
 def test_offtarget_count_out_of_range_errors(tmp_path):
     # The full-run AND the --beam paths must both reject an offtarget count above the panel size.
     for i, extra in enumerate((["tiny"], ["--beam", "--panel-size", "4", "--cells-per-sample", "10"])):

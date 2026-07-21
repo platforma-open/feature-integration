@@ -66,21 +66,24 @@ def make_junction(rng, n_codons):
     return nt, aa
 
 
-def make_bcr(rng):
-    """One paired heavy+light rearrangement (a clonotype's sequences)."""
-    return {
+def make_bcr(rng, heavy_only=False):
+    """One rearrangement's sequences: paired heavy+light by default, heavy-only (IGH, no light chain
+    — the customer's VHH single-domain antibody) when heavy_only is set."""
+    bcr = {
         "IGH": {
             "v": rng.choice(HEAVY_V), "j": rng.choice(HEAVY_J), "c": rng.choice(HEAVY_C),
             **dict(zip(("junction", "junction_aa"), make_junction(rng, rng.randint(12, 16)))),
         },
-        "IGK": {
+    }
+    if not heavy_only:
+        bcr["IGK"] = {
             "v": rng.choice(KAPPA_V), "j": rng.choice(KAPPA_J), "c": rng.choice(KAPPA_C),
             **dict(zip(("junction", "junction_aa"), make_junction(rng, rng.randint(9, 12)))),
-        },
-    }
+        }
+    return bcr
 
 
-def build_clones(rng, cells, clear_antigens):
+def build_clones(rng, cells, clear_antigens, heavy_only=False):
     """Group a donor's cells into clonotypes. Clear-antigen cells -> one lead clone (~60%) + singletons,
     all binding that antigen (coherent). Ambiguous cells -> singleton clones (no clear target)."""
     by_antigen = {}
@@ -96,7 +99,7 @@ def build_clones(rng, cells, clear_antigens):
             n_lead = max(1, round(DOMINANT_FRACTION * len(members)))
             lead, rest = members[:n_lead], members[n_lead:]
             clones.append({"id": f"clone{cidx}", "target": antigen, "kind": "lead",
-                           "cells": lead, "bcr": make_bcr(rng)})
+                           "cells": lead, "bcr": make_bcr(rng, heavy_only)})
             cidx += 1
             # remaining clear-antigen cells: small clones of 1-3, still binding the same antigen
             i = 0
@@ -104,26 +107,27 @@ def build_clones(rng, cells, clear_antigens):
                 take = rng.randint(1, 3)
                 grp = rest[i:i + take]
                 clones.append({"id": f"clone{cidx}", "target": antigen, "kind": "minor",
-                               "cells": grp, "bcr": make_bcr(rng)})
+                               "cells": grp, "bcr": make_bcr(rng, heavy_only)})
                 cidx += 1
                 i += take
         else:
             # ambiguous / control-dominant: each cell its own clone, no clear target
             for cell_id in members:
                 clones.append({"id": f"clone{cidx}", "target": antigen, "kind": "background",
-                               "cells": [cell_id], "bcr": make_bcr(rng)})
+                               "cells": [cell_id], "bcr": make_bcr(rng, heavy_only)})
                 cidx += 1
     return clones
 
 
-def write_airr(path, clones, rng):
+def write_airr(path, clones, rng, heavy_only=False):
+    loci = ("IGH",) if heavy_only else ("IGH", "IGK")
     n_rows = 0
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh, delimiter="\t")
         w.writerow(AIRR_HEADER)
         for clone in clones:
             for cell_id in clone["cells"]:
-                for locus in ("IGH", "IGK"):
+                for locus in loci:
                     chain = clone["bcr"][locus]
                     w.writerow([
                         cell_id, locus, chain["v"], chain["j"], chain["c"],
@@ -133,23 +137,32 @@ def write_airr(path, clones, rng):
     return n_rows
 
 
-def write_truth(path, all_clones):
+def write_truth(path, all_clones, heavy_only=False):
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["donor", "cloneId", "kind", "targetAntigen", "nCells",
                     "heavyV", "heavyJ", "heavyC", "lightV", "lightJ", "cdr3H_aa", "cdr3L_aa"])
         for donor, clones in all_clones.items():
             for c in clones:
-                h, k = c["bcr"]["IGH"], c["bcr"]["IGK"]
-                w.writerow([donor, c["id"], c["kind"], c["target"], len(c["cells"]),
-                            h["v"], h["j"], h["c"], k["v"], k["j"], h["junction_aa"], k["junction_aa"]])
+                h = c["bcr"]["IGH"]
+                k = c["bcr"].get("IGK") if heavy_only else c["bcr"]["IGK"]
+                if k is None:
+                    w.writerow([donor, c["id"], c["kind"], c["target"], len(c["cells"]),
+                                h["v"], h["j"], h["c"], "", "", h["junction_aa"], ""])
+                else:
+                    w.writerow([donor, c["id"], c["kind"], c["target"], len(c["cells"]),
+                                h["v"], h["j"], h["c"], k["v"], k["j"], h["junction_aa"], k["junction_aa"]])
 
 
-def build(tags_csv, consensus_tsv, out_dir, truth_dir, seed=VDJ_SEED):
+def build(tags_csv, consensus_tsv, out_dir, truth_dir, seed=VDJ_SEED, heavy_only=False):
     """Build the VDJ arm from the antigen arm's ground truth. Writes out_dir/<donor>.tsv (AIRR-sc) +
     truth_dir/truth_clonotypes.csv. The filename stem is the bare donor id so Samples & Data mints ONE
     shared sampleId across all three arms — a per-library suffix would fork the donor into separate
-    samples and the convergence [sampleId,cellId] join would then match nothing."""
+    samples and the convergence [sampleId,cellId] join would then match nothing.
+
+    heavy_only=True emits HEAVY-CHAIN-ONLY (IGH, no IGK) rearrangements — the customer's VHH
+    single-domain antibody — so the heavy-only end-to-end path is reproducible synthetically. Each cell
+    keeps the SAME bare-16nt cell_id it carries in the antigen arm (the convergence join key)."""
     os.makedirs(out_dir, exist_ok=True)
     os.makedirs(truth_dir, exist_ok=True)
     rng = new_rng(seed)
@@ -158,14 +171,14 @@ def build(tags_csv, consensus_tsv, out_dir, truth_dir, seed=VDJ_SEED):
 
     all_clones = {}
     print(f"[vdj] airr-sc arm on the antigen ground truth "
-          f"({len(by_donor)} donors, {len(clear)} clear antigens):")
+          f"({len(by_donor)} donors, {len(clear)} clear antigens{', heavy-only' if heavy_only else ''}):")
     for donor in sorted(by_donor):
-        clones = build_clones(rng, by_donor[donor], clear)
+        clones = build_clones(rng, by_donor[donor], clear, heavy_only)
         all_clones[donor] = clones
-        n_rows = write_airr(os.path.join(out_dir, f"{donor}.tsv"), clones, rng)
+        n_rows = write_airr(os.path.join(out_dir, f"{donor}.tsv"), clones, rng, heavy_only)
         n_cells = sum(len(c["cells"]) for c in clones)
         n_lead = sum(1 for c in clones if c["kind"] == "lead")
         print(f"  {donor}: {n_cells} cells, {len(clones)} clonotypes "
               f"({n_lead} lead) -> {n_rows} contig rows (vdj/{donor}.tsv)")
-    write_truth(os.path.join(truth_dir, "truth_clonotypes.csv"), all_clones)
+    write_truth(os.path.join(truth_dir, "truth_clonotypes.csv"), all_clones, heavy_only)
     print("  truth -> truth/truth_clonotypes.csv")
