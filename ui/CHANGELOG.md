@@ -1,5 +1,13 @@
 # @platforma-open/milaboratories.feature-integration.ui
 
+## 2.1.2
+
+### Patch Changes
+
+- 55d84ba: SDK Update
+- Updated dependencies [55d84ba]
+  - @platforma-open/milaboratories.feature-integration.model@2.1.2
+
 ## 2.1.1
 
 ### Patch Changes

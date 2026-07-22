@@ -1,5 +1,17 @@
 # @platforma-open/milaboratories.feature-integration
 
+## 2.1.3
+
+### Patch Changes
+
+- 4739519: Release software
+
+## 2.1.2
+
+### Patch Changes
+
+- 55d84ba: SDK Update
+
 ## 2.1.1
 
 ### Patch Changes
