@@ -201,12 +201,16 @@ function clearSampleAwareOnInputChange() {
 }
 
 // CSV swap invalidates every CSV-derived selection: the barcode / feature-name columns (the new file's
-// headers differ), the negative control, and the sample-aware selection (columns/values change). Clear
-// them all so the user re-picks against the new CSV.
+// headers differ), the negative control, the off-target designation, and the sample-aware selection
+// (columns/values change). Clear them all so the user re-picks against the new CSV.
 function clearOnCsvChange() {
   app.model.data.barcodeSeqColumn = undefined;
   app.model.data.featureNameColumn = undefined;
   app.model.data.combineColumn = undefined;
+  // Off-target property/values name columns + values of the OLD CSV; a new CSV may not have them, and
+  // args() projects them unconditionally once set (no column-existence guard), so clear them here.
+  app.model.data.offtargetProperty = undefined;
+  app.model.data.offtargetValues = undefined;
   clearControlOnInputChange();
   clearSampleAwareOnInputChange();
 }

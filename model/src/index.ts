@@ -323,9 +323,11 @@ export const platforma = BlockModelV3.create(dataModel)
       // Optional multi-barcode antigen combine mode. combineColumn names a tag-CSV column giving each
       // feature's mode (sum = OR, the default; all = AND, feature called only when every member barcode
       // fires). Projected only when set so the workflow default (every feature OR) is untouched otherwise.
-      // minUmi is the AND per-barcode "fired" floor (integer >= 1; default 1 in the workflow/Python).
+      // minUmi is the AND per-barcode "fired" floor (integer >= 1; default 1 in the workflow/Python),
+      // projected only alongside combineColumn — the workflow passes --min-umi only with --combine-col,
+      // so without a combine mode it would only stale the block with no computational effect.
       ...(data.combineColumn ? { combineColumn: data.combineColumn } : {}),
-      ...(typeof data.minUmi === "number" && data.minUmi >= 1
+      ...(data.combineColumn && typeof data.minUmi === "number" && data.minUmi >= 1
         ? { minUmi: Math.round(data.minUmi) }
         : {}),
       // Optional off-target designation (F2). offtargetProperty names an imported per-feature property
@@ -334,7 +336,12 @@ export const platforma = BlockModelV3.create(dataModel)
       // cross-reactive label. Projected only when both are set, so the dominant call is unchanged
       // otherwise (empty column / values → workflow leaves the rule untouched).
       ...(data.offtargetProperty && data.offtargetValues && data.offtargetValues.length > 0
-        ? { offtargetProperty: data.offtargetProperty, offtargetValues: data.offtargetValues }
+        ? {
+            offtargetProperty: data.offtargetProperty,
+            // Sort + dedup: the Python treats these as a set, so canonicalize here so re-selecting the
+            // same values in a different order yields the same args hash (no needless stale / re-run).
+            offtargetValues: [...new Set(data.offtargetValues)].sort(),
+          }
         : {}),
       // Preview: cap reads only in dry mode; a full run omits it (all reads). Projected only when dry, so
       // toggling back to full changes the args hash and re-runs on the complete input.

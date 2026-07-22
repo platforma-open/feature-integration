@@ -29,12 +29,14 @@ const logHandle = computed(() => {
   // The Python metrics step is surfaced flat (metricsLog, keyed [sampleId]); the three mitool steps
   // live in the [sampleId, step] stepLogs map.
   if (currentStep.value === "4-metrics") {
-    return app.model.outputs.metricsLog?.data.find((p) => p.key[0] === sampleId.value)?.value;
+    return app.model.outputs.metricsLog?.data.find((p) => String(p.key[0]) === sampleId.value)
+      ?.value;
   }
   const logs = app.model.outputs.stepLogs;
   if (!logs) return undefined;
-  return logs.data.find((p) => p.key[0] === sampleId.value && p.key[1] === currentStep.value)
-    ?.value;
+  return logs.data.find(
+    (p) => String(p.key[0]) === sampleId.value && p.key[1] === currentStep.value,
+  )?.value;
 });
 </script>
 

@@ -123,8 +123,9 @@ self.body(func(inputs) {
 		qcJson: qc.getFileContent("result_qc.json"), // inline content (saveFileContent) so the model can read it
 		// per-cell-metrics (Python) stdout — the "4-metrics" step log. Surfaced separately (not in the
 		// mitool stepLogs map, which fb-refine-tagstat builds before this step runs). Capturing it here is
-		// CID-safe by the same peptide precedent as the final tag-stat step: the metrics File outputs above
-		// are Xsv-imported downstream, not resolved as raw Files through this streaming exec.
+		// CID-safe via the content-hash persist of these metrics intermediates in main.tpl.tengo: the File
+		// outputs above ARE resolved downstream, so that persist loop (not any avoidance of resolution) is
+		// what keeps re-capturing this stdout stream from re-triggering CIDConflictError.
 		metricsLogStream: metrics.getStdoutStream()
 	}
 })
