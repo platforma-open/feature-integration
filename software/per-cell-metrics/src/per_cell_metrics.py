@@ -163,7 +163,11 @@ def combine_barcode_counts(
     for feat, bc_umis in present.items():
         if feature_modes.get(feat, "sum") == "all":
             members = feature_barcodes[feat]
-            if all(bc_umis.get(bc, 0.0) >= min_umi for bc in members):
+            # Every member must be PRESENT in this cell and clear min_umi. Testing presence explicitly
+            # (rather than bc_umis.get(bc, 0.0) >= min_umi) keeps AND correct at min_umi == 0, where a
+            # 0.0 default would otherwise let an absent barcode "fire" — matching the vectorized _load
+            # path, which never sees absent barcodes because they drop out of the inner join.
+            if all(bc in bc_umis and bc_umis[bc] >= min_umi for bc in members):
                 out[feat] = sum(bc_umis.values())
             # else: not every member fired -> feature not called in this cell (omitted)
         else:  # "sum" / OR
