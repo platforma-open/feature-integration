@@ -174,19 +174,27 @@ def test_offtarget_features_bad_column_exits(tmp_path):
         offtarget_features(str(csv), "feature", "nope", frozenset({"Off-Target"}))
 
 
-def test_offtarget_features_matching_is_case_insensitive(tmp_path):
-    # Real B043 panel: the Type column carries BOTH casings of the off-target designation ("Off-Target"
-    # AND "Off-target"). A user who selects one canonical value must catch every casing -> matching is
-    # case- AND whitespace-insensitive on both sides. Returned FEATURE names stay verbatim from the CSV.
+def test_offtarget_features_matching_is_case_sensitive(tmp_path):
+    # Matching is whitespace-trimmed but CASE-SENSITIVE: selecting "Off-Target" catches only that exact
+    # value (surrounding whitespace tolerated), NOT "Off-target". Real B043 panels carry both casings in
+    # one Type column; the user selects every casing they mean (each is offered separately in the
+    # dropdown). The block never silently broadens a selection to unselected casings. Names stay verbatim.
     csv = tmp_path / "tags.csv"
     csv.write_text(
         "tag,feature,Type\n"
-        "b1,AgOffLower,Off-target\n"  # lower 't' — the B043 duplicate casing
-        "b2,AgOffSpaced, OFF-TARGET \n"  # different case + surrounding whitespace
-        "b3,AgOn,Target\n"
+        "b1,AgExact,Off-Target\n"  # exact match
+        "b2,AgSpaced, Off-Target \n"  # surrounding whitespace -> trimmed, still matches
+        "b3,AgLower,Off-target\n"  # lower 't' — a DIFFERENT value, not selected
+        "b4,AgOn,Target\n"
     )
-    got = offtarget_features(str(csv), "feature", "Type", frozenset({"Off-Target"}))
-    assert got == frozenset({"AgOffLower", "AgOffSpaced"})
+    # Selecting only "Off-Target": the exact and whitespace-padded rows match; the lowercase one does not.
+    assert offtarget_features(str(csv), "feature", "Type", frozenset({"Off-Target"})) == frozenset(
+        {"AgExact", "AgSpaced"}
+    )
+    # Selecting BOTH casings explicitly catches the lowercase feature too — the user opts in.
+    assert offtarget_features(
+        str(csv), "feature", "Type", frozenset({"Off-Target", "Off-target"})
+    ) == frozenset({"AgExact", "AgSpaced", "AgLower"})
 
 
 # --- specificity score (spec A-0014, Cell Ranger betaCDF) ---

@@ -232,10 +232,11 @@ def main():
         action="store_true",
         help="inject the real customer panel's inconsistent casing/whitespace into the EMITTED panel "
         "metadata: the Type column carries a mixed-case off-target set (both 'Off-Target' and "
-        "'Off-target') and one antigen name gains a stray double space. Reproduces the B043 problem so "
-        "the block's normalization (case-insensitive off-target matching) has synthetic data to work "
-        "against. Messy LABELS only — the barcode joins and truth tables stay coherent. Applies to the "
-        "full-run panel; off by default (byte-identical to prior runs)",
+        "'Off-target') and one antigen name gains a stray double space. Reproduces the B043 problem so a "
+        "mixed-case panel is available to exercise the block's case-sensitive off-target matching — the "
+        "user must select each casing present (whitespace is trimmed, casing is not folded). Messy LABELS "
+        "only — the barcode joins and truth tables stay coherent. Applies to the full-run panel; off by "
+        "default (byte-identical to prior runs)",
     )
     ap.add_argument("--out", help="override the output directory")
     args = ap.parse_args()
