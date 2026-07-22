@@ -1,6 +1,6 @@
 {
   "name": "@platforma-open/milaboratories.feature-integration.per-cell-metrics",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "files": [
     "./dist/**/*"
   ],
