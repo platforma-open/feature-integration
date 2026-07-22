@@ -422,7 +422,7 @@ const gridOptions = {
       </PlDropdown>
       <PlBtnGroup v-model="app.model.data.runMode" :options="runModeOptions" label="Run mode">
         <template #tooltip>
-          Preview — runs on only the first N reads per sample. Use it to check that settings (read
+          Preview — processes only the first N reads per sample. Use it to check that settings (read
           geometry, tag CSV, negative control) are correct and results look reasonable before
           launching a full run, which may take much longer.
         </template>
@@ -456,9 +456,9 @@ const gridOptions = {
           :style="{ flex: 1 }"
         >
           <template #tooltip>
-            <b>Optional</b> — a feature designated as a non-binding background control. When set, a
-            per-antigen specificity score is computed that separates genuine binders from background
-            signal.
+            <b>Optional</b> — a feature designated as a non-binding background control. When set,
+            the block computes a per-antigen specificity score that separates genuine binders from
+            background signal.
           </template>
         </PlDropdown>
 
@@ -557,7 +557,7 @@ const gridOptions = {
           label="Min UMIs per barcode (AND combine)"
         >
           <template #tooltip>
-            Minimum distinct-UMI count for a barcode to count as "fired" under the <b>all</b> (AND)
+            Minimum distinct UMIs for a barcode to count as "fired" under the <b>all</b> (AND)
             combine mode. Only applies to features set to "all" in the Combine-mode column. Leave
             empty for the default (1).
           </template>

@@ -412,7 +412,7 @@ export const platforma = BlockModelV3.create(dataModel)
       parts.push(`${ctx.data.barcodeSeqColumn} - ${ctx.data.featureNameColumn}`);
     }
     if (parts.length === 0) return undefined;
-    // Stan's request (S1): the default subtitle must never render with dots. Periods come from a dotted
+    // The default subtitle must never render with dots (Stan's request, S1). Periods come from a dotted
     // dataset/file label; the " / " and " - " separators are a slash and hyphen, not periods, so
     // stripping "." leaves them intact. Replace periods with spaces and collapse the doubles they create.
     // A subtitle the user types in the sidebar is not routed through this output, so overrides are safe.
