@@ -1,9 +1,12 @@
 // mitool parse sub-template (render.create boundary).
 //
-// Runs mitool parse and returns parsed.mic + parse_report.json. No stdout stream is captured:
-// saveStdoutStream writes the rate-dependent stdout into the exec's content-hashed files map, which
-// drifts every getFile off it and throws CIDConflictError on a stale re-render. Per-step progress is
-// instead derived deterministically from which stage reports have settled (see the model's sampleStep).
+// Runs mitool parse and returns parsed.mic + parse_report.json + a live stdout stream (parseLogStream).
+// Capturing stdout (saveStdoutStream) injects the rate-dependent stdout into the exec's content-hashed
+// files map, drifting every getFile off it — which used to throw CIDConflictError on a stale re-render.
+// It is safe now because main.tpl persists parsedMic/parseReport (and the refine/tag-stat intermediates)
+// by content hash, pinning their CIDs so getFile resolutions stay stable across re-renders (see main.tpl
+// + fb-pipeline). MI_PROGRESS_PREFIX makes mitool prefix its progress lines with [==PROGRESS==], which
+// the model scrapes for a live 0–100% parse bar (getProgressLogWithInfo). Mirrors blocks/peptide-extraction.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
@@ -12,11 +15,15 @@ maps := import("@platforma-sdk/workflow-tengo:maps")
 
 json := import("json")
 
-self.defineOutputs("parsedMic", "parseReport")
+self.defineOutputs("parsedMic", "parseReport", "parseLogStream")
 
 // :memory-from-limits sizes the JVM heap from the granted limits — avoids end-of-parse OOM when many
 // tag writers flush (see demultiplex-fastq).
 mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
+
+// mitool prefixes its progress lines with this marker (MI_PROGRESS_PREFIX) so the model can scrape a
+// live per-sample parse %. Same value peptide-extraction uses.
+progressPrefix := "[==PROGRESS==]"
 
 self.body(func(inputs) {
 	pattern := inputs.pattern
@@ -28,17 +35,22 @@ self.body(func(inputs) {
 	// >0 = a hard fixed request. parse OOMs at end-of-parse as tag writers flush, which scales with input
 	// volume (mixcr-clonotyping / demultiplex-fastq). size("reads") reads only blob metadata.
 	memOverrideGB := inputs.mitoolMemOverrideGB
+	// Preview read cap: 0 = full run; >0 = mitool parse reads only the first N reads (--limit).
+	limitInput := is_undefined(inputs.limitInput) ? 0 : inputs.limitInput
 
-	// RAM = base + reads*4, capped at 128 GiB; static fallback = base for backends that can't evaluate
-	// resource formulas at run time.
+	// RAM = base + reads*4, capped at 256 GiB (mirrors mixcr-analyze); static fallback = base for
+	// backends that can't evaluate resource formulas at run time.
 	formula := exec.formula
 	memFormula := formula.gib(memBaseGB).
 		plus(formula.size("reads").times(4)).
-		between(formula.gib(memBaseGB), formula.gib(128)).
+		between(formula.gib(memBaseGB), formula.gib(256)).
 		staticFallback(formula.gib(memBaseGB))
 
 	parse := exec.builder().
 		writeFile("parsed.mic", bytes(0), { writable: true }).
+		printErrStreamToStdout().
+		saveStdoutStream().
+		env("MI_PROGRESS_PREFIX", progressPrefix).
 		software(mitoolSw)
 	if memOverrideGB > 0 {
 		parse = parse.cpu(mitoolCPUs).mem(string(memOverrideGB) + "GiB")
@@ -49,6 +61,10 @@ self.body(func(inputs) {
 		arg("parse").
 		arg("--pattern").arg(pattern).
 		arg("--threads").argWithVar("{system.cpu}")
+	// Preview (dry-run): cap parse to the first N reads per file so the user can check settings fast.
+	if limitInput > 0 {
+		parse = parse.arg("--limit").arg(string(limitInput))
+	}
 
 	// inputFiles is a ResourceMap keyed by JSON-encoded [filename] arrays — decode to recover the
 	// mitool-expected filename (e.g. "input_R1.fastq.gz"). Tag "reads" feeds the size formula above.
@@ -65,6 +81,7 @@ self.body(func(inputs) {
 
 	return {
 		parsedMic: parse.getFile("parsed.mic"),
-		parseReport: parse.getFile("parse_report.json")
+		parseReport: parse.getFile("parse_report.json"),
+		parseLogStream: parse.getStdoutStream()
 	}
 })

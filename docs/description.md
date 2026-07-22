@@ -6,4 +6,4 @@ The block takes as input feature-barcode FASTQ files and a CSV mapping each barc
 
 The per-cell output can then be used in downstream blocks such as VDJ Multiomic Integration, which aggregates it onto V(D)J clonotypes to link each cell's antibody or TCR sequence to the antigen(s) it recognizes — the basis for selecting antigen-specific leads.
 
-This block uses mitool, which is developed by MiLaboratories Inc. For more information, please see the [mitool reference](https://docs.platforma.bio/mixcr/reference/mitool-parse).
+This block uses mitool, which is developed by MiLaboratories Inc. For more information, please see the [mitool reference](https://mixcr.com/mixcr/reference/mitool-parse).

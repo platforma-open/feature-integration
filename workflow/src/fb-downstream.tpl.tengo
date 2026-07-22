@@ -10,7 +10,7 @@ self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 
-self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "qc", "qcJson")
+self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "qc", "qcJson", "metricsLogStream")
 
 metricsSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:main")
 qcReportSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:qc-report")
@@ -25,12 +25,25 @@ self.body(func(inputs) {
 	dominanceThreshold := inputs.dominanceThreshold
 	barcodeSeqColumn := inputs.barcodeSeqColumn
 	featureNameColumn := inputs.featureNameColumn
+	// Optional multi-barcode antigen combine mode. "" = off (per_cell_metrics defaults every feature to
+	// OR/sum). When set, it names the tag-CSV column giving each feature's mode (sum | all); minUmi is the
+	// AND per-barcode "fired" floor.
+	combineColumn := is_undefined(inputs.combineColumn) ? "" : inputs.combineColumn
+	minUmi := is_undefined(inputs.minUmi) ? 1 : inputs.minUmi
+	// Optional off-target designation (F2). offtargetColumn names an imported per-feature property column
+	// (e.g. antigen_class); offtargetValues is the comma-separated set of its values marking a feature as
+	// off-target. Both empty = off (unchanged dominant call). Features so marked are excluded from the
+	// dominant call (like the control) and turn on the cross-reactive label.
+	offtargetColumn := is_undefined(inputs.offtargetColumn) ? "" : inputs.offtargetColumn
+	offtargetValues := is_undefined(inputs.offtargetValues) ? "" : inputs.offtargetValues
 
 	// Per-sample QC summary: reads parsed/matched (parse JSON report) + cell/feature/UMI metrics
 	// (tag-stat) + best-effort panel-assigned fraction (refine JSON report).
 	qc := exec.builder().
 		software(qcReportSw).
 		cpu(1).mem("2GiB").
+		// polars sizes its pool to all host cores by default; cap it to the granted CPU.
+		envWithVar("POLARS_MAX_THREADS", "{system.cpu}").
 		addFile("tagstat.tsv", tagstatTsv).
 		addFile("parse_report.json", parseReport).
 		addFile("refine_report.json", refineReport).
@@ -49,18 +62,22 @@ self.body(func(inputs) {
 	// axis from the iteration key, so we pass a constant and the CSV's sampleId column is ignored by the
 	// import. The distinct-UMI polars read scales with input volume, so size RAM from the tagstat.tsv blob
 	// (tag "tagstat") on a floor instead of a fixed request.
-	metricsBaseGB := 8
+	metricsBaseGB := 16
 	// workflow-tengo 6.7.0 fluent formula API fed via .resources({ onCPU }) (see fb-parse for the note).
 	formula := exec.formula
 	metricsMemFormula := formula.gib(metricsBaseGB).
 		plus(formula.size("tagstat").times(8)).
-		between(formula.gib(metricsBaseGB), formula.gib(128)).
+		between(formula.gib(metricsBaseGB), formula.gib(256)).
 		staticFallback(formula.gib(metricsBaseGB))
 
 	hasControl := !is_undefined(control) && control != ""
 	metrics := exec.builder().
+		printErrStreamToStdout().
+		saveStdoutStream().
 		software(metricsSw).
 		resources({ onCPU: { cpu: 2, ram: metricsMemFormula } }).
+		// polars sizes its pool to all host cores by default; cap it to the granted CPU.
+		envWithVar("POLARS_MAX_THREADS", "{system.cpu}").
 		addFile("tagstat.tsv", tagstatTsv, { tag: "tagstat" }).
 		addFile("tags.csv", tagsCsv).
 		arg("tagstat.tsv").arg("tags.csv").
@@ -80,6 +97,17 @@ self.body(func(inputs) {
 	if hasControl {
 		metrics = metrics.arg("--control").arg(control)
 	}
+	// Multi-barcode antigen combine mode (optional). Only pass --combine-col when a column is configured;
+	// otherwise per_cell_metrics defaults every feature to OR/sum (unchanged behaviour). --min-umi is the
+	// AND per-barcode "fired" floor and is harmless when no combine column is set.
+	if combineColumn != "" {
+		metrics = metrics.arg("--combine-col").arg(combineColumn).arg("--min-umi").arg(string(minUmi))
+	}
+	// Off-target designation (optional, F2). Only pass both flags when a column AND values are configured;
+	// per_cell_metrics requires them together and leaves the dominant call unchanged when absent.
+	if offtargetColumn != "" && offtargetValues != "" {
+		metrics = metrics.arg("--offtarget-col").arg(offtargetColumn).arg("--offtarget-values").arg(offtargetValues)
+	}
 	metrics = metrics.run()
 
 	// specificity is meaningful only with a control feature, so the Python always writes
@@ -92,6 +120,12 @@ self.body(func(inputs) {
 		specificity: metrics.getFile("result_specificity.csv"),
 		perCellSummary: metrics.getFile("result_per_cell_summary.csv"),
 		qc: qc.getFile("result_qc.csv"),
-		qcJson: qc.getFileContent("result_qc.json") // inline content (saveFileContent) so the model can read it
+		qcJson: qc.getFileContent("result_qc.json"), // inline content (saveFileContent) so the model can read it
+		// per-cell-metrics (Python) stdout — the "4-metrics" step log. Surfaced separately (not in the
+		// mitool stepLogs map, which fb-refine-tagstat builds before this step runs). Capturing it here is
+		// CID-safe via the content-hash persist of these metrics intermediates in main.tpl.tengo: the File
+		// outputs above ARE resolved downstream, so that persist loop (not any avoidance of resolution) is
+		// what keeps re-capturing this stdout stream from re-triggering CIDConflictError.
+		metricsLogStream: metrics.getStdoutStream()
 	}
 })

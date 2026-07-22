@@ -29,6 +29,13 @@ const STEP_AFTER: Record<string, SampleStep> = {
 };
 const STEP_ORDER = ["1-parse", "2-refine", "3-tagstat"];
 
+// mitool prefixes its progress lines with this marker (set via MI_PROGRESS_PREFIX in the workflow
+// step templates); the model scrapes matching lines for a live per-sample 0–100% bar. ProgressPattern
+// pulls the stage name + percent + ETA out of a marked line. Same values as blocks/peptide-extraction.
+export const ProgressPrefix = "[==PROGRESS==]";
+export const ProgressPattern =
+  /(?<stage>[^:]*):(?: *(?<progress>[0-9.]+)%)?(?: *ETA: *(?<eta>.+))?/;
+
 // Per-sample QC metrics as emitted by qc_report.py (result_qc.json), read by the analysisLog output
 // and (per sample) by the Main grid's Quality + Read recovery columns (derived in ui/src/results.ts).
 export type QcRow = {
@@ -49,7 +56,15 @@ const PANEL_ASSIGNED_FLOOR = 0.5;
 // column headers (-> the barcode/feature column dropdowns) and each column's distinct values (-> the
 // negative-control dropdown, indexed by the chosen feature column). One upload-triggered exec feeds all
 // three CSV-derived dropdowns; picking the feature column is then a pure model recompute (no rerun).
-type CsvMeta = { columns: string[]; valuesByColumn: Record<string, string[]> };
+// rowCount (total data rows) is emitted by emit-csv-meta so the model can detect a feature barcode that
+// appears on more than one row (distinct barcode values < rowCount) — the sample-specific-mapping case
+// per_cell_metrics.py guards at the end of the run. Optional so a prerun output predating rowCount still
+// parses (the duplicate check then simply skips).
+type CsvMeta = {
+  columns: string[];
+  valuesByColumn: Record<string, string[]>;
+  rowCount?: number;
+};
 
 // mitool tag-stat emits these columns (the CELL/FEATURE/UMI tags — see pattern.ts — plus tag-stat's
 // count/totalWeight/unique_<UMI> outputs). A user-mapped CSV barcode/feature column that names one of
@@ -142,6 +157,48 @@ function readCsvMeta(ctx: BlockRenderCtx<BlockArgs, BlockData>): CsvMeta | undef
     ?.getDataAsJsonOrUndefined<CsvMeta>();
 }
 
+// The tag CSV column that looks like it names the dataset's samples, or undefined. A CSV is sample-aware
+// when the same barcode maps to different features per sample; the tell is a column whose distinct values
+// cover the dataset's sample names. Return the column whose distinct values are a SUPERSET of the dataset
+// sample names (preferring exact set-equality, then fewest extra values), excluding the columns already
+// bound to the barcode / feature roles. Shared by the suggestedSampleColumn output (UI suggestion) and
+// barcodeMappingIssue (names the fix in the duplicate-barcode message) — kept a module helper because a
+// block output cannot read another output. undefined until both the CSV meta and sample labels resolve.
+function suggestSampleColumn(ctx: BlockRenderCtx<BlockArgs, BlockData>): string | undefined {
+  const meta = readCsvMeta(ctx);
+  const labels = resolveSampleLabels(ctx);
+  if (!meta || !labels) return undefined;
+  const datasetNames = new Set(Object.values(labels));
+  if (datasetNames.size === 0) return undefined;
+  const excluded = new Set(
+    [ctx.data.barcodeSeqColumn, ctx.data.featureNameColumn].filter(
+      (c): c is string => c !== undefined,
+    ),
+  );
+  let best: { col: string; exact: boolean; extra: number } | undefined;
+  for (const col of meta.columns) {
+    if (excluded.has(col)) continue;
+    const values = new Set(meta.valuesByColumn?.[col] ?? []);
+    let isSuperset = true;
+    for (const n of datasetNames)
+      if (!values.has(n)) {
+        isSuperset = false;
+        break;
+      }
+    if (!isSuperset) continue;
+    const exact = values.size === datasetNames.size;
+    const extra = values.size - datasetNames.size;
+    // Prefer exact set-equality; among equals, prefer the fewest extra values.
+    if (
+      best === undefined ||
+      (exact && !best.exact) ||
+      (exact === best.exact && extra < best.extra)
+    )
+      best = { col, exact, extra };
+  }
+  return best?.col;
+}
+
 // v1 (pre-preset) data shape: read geometry was three explicit length fields. v2 replaces them with a
 // preset selector + a mitool tag-pattern string (see model/src/pattern.ts, model/src/presets).
 type BlockDataV1 = Omit<BlockData, "presetId" | "pattern"> & {
@@ -172,6 +229,7 @@ const dataModel = new DataModelBuilder()
   })
   .init(() => ({
     dominanceThreshold: 0.6,
+    runMode: "full" as const, // full run by default; "dry" = read-limited Preview
     // Default preset = the geometry the block shipped with: 10x 5' v2 BEAM (16 / 10 / 15).
     presetId: "tenx-beam",
     cellWhitelist: "", // de-novo CELL correction by default
@@ -202,6 +260,28 @@ export const platforma = BlockModelV3.create(dataModel)
           `${role} column "${col}" collides with a reserved tag-stat column; pick another`,
         );
     }
+    // Optional combine-mode column: its values are per-feature modes ("sum"/"all"), so it must be its
+    // OWN CSV column — distinct from the barcode-sequence and feature-name roles, and not a reserved
+    // tag-stat column. Python guards this too, but only after the mitool chain runs; reject up front so a
+    // mis-picked column (e.g. the barcode column, whose values are DNA sequences) disables Run with a
+    // clear message instead of failing the pipeline at the end.
+    if (data.combineColumn) {
+      if (
+        data.combineColumn === data.barcodeSeqColumn ||
+        data.combineColumn === data.featureNameColumn
+      )
+        throw new Error(
+          "Combine-mode column must be a separate CSV column from the barcode-sequence and feature-name columns",
+        );
+      if (RESERVED_TAGSTAT_COLUMNS.has(data.combineColumn))
+        throw new Error(
+          `Combine-mode column "${data.combineColumn}" collides with a reserved tag-stat column; pick another`,
+        );
+    }
+    // Preview (dry-run) needs a read limit. Same up-front gate as mixcr-clonotyping: disable Run with a
+    // clear message rather than start a run with no reads to cap.
+    if (data.runMode === "dry" && (data.limitInput == null || data.limitInput < 1))
+      throw new Error("Enter a read limit (≥ 1) for Preview mode, or switch to a full run");
     // Read geometry: resolve the selected preset to its effective pattern (fixed preset owns it; the
     // generic preset carries it in data.pattern), validate it loosely (the required CELL/UMI/FEATURE
     // tags + R2 capture must be present — the workflow's refine-tags/tag-stat reference them by name;
@@ -240,20 +320,59 @@ export const platforma = BlockModelV3.create(dataModel)
       controlFeature: data.controlFeature,
       // canonicalize + clamp to the 0.5 floor
       dominanceThreshold: Math.max(DOMINANCE_FLOOR, data.dominanceThreshold ?? 0.6),
+      // Optional multi-barcode antigen combine mode. combineColumn names a tag-CSV column giving each
+      // feature's mode (sum = OR, the default; all = AND, feature called only when every member barcode
+      // fires). Projected only when set so the workflow default (every feature OR) is untouched otherwise.
+      // minUmi is the AND per-barcode "fired" floor (integer >= 1; default 1 in the workflow/Python),
+      // projected only alongside combineColumn — the workflow passes --min-umi only with --combine-col,
+      // so without a combine mode it would only stale the block with no computational effect.
+      ...(data.combineColumn ? { combineColumn: data.combineColumn } : {}),
+      ...(data.combineColumn && typeof data.minUmi === "number" && data.minUmi >= 1
+        ? { minUmi: Math.round(data.minUmi) }
+        : {}),
+      // Optional off-target designation (F2). offtargetProperty names an imported per-feature property
+      // column (e.g. antigen_class); offtargetValues are that column's values marking a feature as
+      // off-target. Such features are excluded from the dominant call (like the control) and turn on the
+      // cross-reactive label. Projected only when both are set, so the dominant call is unchanged
+      // otherwise (empty column / values → workflow leaves the rule untouched).
+      ...(data.offtargetProperty && data.offtargetValues && data.offtargetValues.length > 0
+        ? {
+            offtargetProperty: data.offtargetProperty,
+            // Sort + dedup: the Python treats these as a set, so canonicalize here so re-selecting the
+            // same values in a different order yields the same args hash (no needless stale / re-run).
+            offtargetValues: [...new Set(data.offtargetValues)].sort(),
+          }
+        : {}),
+      // Preview: cap reads only in dry mode; a full run omits it (all reads). Projected only when dry, so
+      // toggling back to full changes the args hash and re-runs on the complete input.
+      ...(data.runMode === "dry" && data.limitInput
+        ? { limitInput: Math.round(data.limitInput) }
+        : {}),
       pattern,
       tags: { cell: CELL_TAG, umi: UMI_TAG, feature: FEATURE_TAG },
       ...(sampleAware
         ? { sampleColumn: data.sampleColumn, sampleLabels: data.sampleLabelSnapshot }
         : {}),
-      // CELL whitelist: "" = de-novo (default). See docs/dormant-features/cell-whitelist-correction-plan.md.
+      // CELL whitelist: "" = de-novo CELL correction (default; no external whitelist).
       cellWhitelist: data.cellWhitelist ?? "",
+      // Optional mitool resource overrides (Advanced Settings). Project only positive integers so a blank
+      // or zero field falls through to the workflow defaults (4 CPUs; formula-sized RAM) instead of
+      // sending a meaningless request or staling the block on an empty edit.
+      ...(typeof data.perProcessCPUs === "number" && data.perProcessCPUs >= 1
+        ? { perProcessCPUs: Math.round(data.perProcessCPUs) }
+        : {}),
+      ...(typeof data.perProcessMemGB === "number" && data.perProcessMemGB >= 1
+        ? { perProcessMemGB: Math.round(data.perProcessMemGB) }
+        : {}),
     };
   })
   // Staging depends only on the CSV: emit-csv-meta emits every column's values in one exec, so the
   // negative-control dropdown no longer needs a rerun when the feature column changes (the model indexes
-  // the already-emitted map). featureNameColumn is deliberately NOT a prerun arg.
+  // the already-emitted map). featureNameColumn is deliberately NOT a prerun arg — and neither is
+  // fbFastqRef: the CSV metadata is independent of the FASTQ, so keying staging on it would re-run the
+  // emit-csv-meta step and blank the column dropdowns (csvColumnsLoading → tagMappingDisabled) every time
+  // the FASTQ changes or a PlRef re-resolves on reload. Key on the CSV alone.
   .prerunArgs((data) => ({
-    fbFastqRef: data.fbFastqRef,
     tagFeatureCsvHandle: data.tagFeatureCsvHandle,
   }))
   // NOTE on enrichments (.enriches): intentionally NOT declared. `.enriches(args => PlRef[])` is for a
@@ -276,7 +395,7 @@ export const platforma = BlockModelV3.create(dataModel)
       );
     }),
   )
-  // Suggested block label for the sidebar subtitle: "<dataset> · <barcode> - <feature>", derived from
+  // Suggested block label for the sidebar subtitle: "<dataset> / <barcode> - <feature>", derived from
   // the current inputs. Computed here (not in .subtitle) because the subtitle context has no result
   // pool; a UI watchEffect copies this into data.defaultBlockLabel. Each part is dropped until set.
   .output("suggestedBlockLabel", (ctx): string | undefined => {
@@ -299,7 +418,12 @@ export const platforma = BlockModelV3.create(dataModel)
     if (ctx.data?.barcodeSeqColumn && ctx.data?.featureNameColumn) {
       parts.push(`${ctx.data.barcodeSeqColumn} - ${ctx.data.featureNameColumn}`);
     }
-    return parts.length > 0 ? parts.join(" · ") : undefined;
+    if (parts.length === 0) return undefined;
+    // The default subtitle must never render with dots (Stan's request, S1). Periods come from a dotted
+    // dataset/file label; the " / " and " - " separators are a slash and hyphen, not periods, so
+    // stripping "." leaves them intact. Replace periods with spaces and collapse the doubles they create.
+    // A subtitle the user types in the sidebar is not routed through this output, so overrides are safe.
+    return parts.join(" / ").replace(/\./g, " ").replace(/ {2,}/g, " ").trim();
   })
   // Negative-control dropdown options: the distinct values of the chosen feature-name
   // column, from the prerun's emit-csv-meta valuesByColumn map. No rerun on column change — the map
@@ -347,6 +471,33 @@ export const platforma = BlockModelV3.create(dataModel)
         `${extra.length} CSV sample value(s) match no dataset sample (ignored): ${fmt(extra)}.`,
       );
     return lines.length > 0 ? lines : undefined;
+  })
+  // The tag CSV column that looks like it names the dataset's samples (or undefined). The UI offers it as
+  // a one-click "use sample-aware mapping" suggestion. Purely advisory — the user must still pick it (a
+  // gesture that snapshots the sample map into data); this output never writes data. Excludes the columns
+  // already bound to the barcode / feature roles. See suggestSampleColumn for the superset/equality rule.
+  .retentiveOutput("suggestedSampleColumn", (ctx): string | undefined => suggestSampleColumn(ctx))
+  // Duplicate-barcode detection at config time (UI warning only; the Python guards it authoritatively at
+  // the end of the run). Fires when a CSV is uploaded, the barcode column is chosen, no sample column is
+  // set, and that barcode column has fewer distinct values than the CSV has data rows — i.e. some barcode
+  // maps on more than one row, which would fan the per-cell join and double molecule counts. Names the
+  // fix (set the Sample column, suggesting the likely one; else remove the duplicate rows). Skipped when
+  // rowCount is absent (prerun predates it) — then the check can't run and we defer to the Python guard.
+  .retentiveOutput("barcodeMappingIssue", (ctx): string | undefined => {
+    if (!ctx.data.tagFeatureCsvHandle) return undefined;
+    const barcodeCol = ctx.data.barcodeSeqColumn;
+    if (!barcodeCol) return undefined;
+    if (ctx.data.sampleColumn) return undefined; // already sample-aware — the per-sample filter fixes it
+    const meta = readCsvMeta(ctx);
+    if (!meta || meta.rowCount === undefined) return undefined;
+    const distinct = meta.valuesByColumn?.[barcodeCol]?.length ?? 0;
+    if (distinct >= meta.rowCount) return undefined; // no duplicate barcodes
+    const suggested = suggestSampleColumn(ctx);
+    return (
+      "Some feature barcodes appear on multiple rows, so a single mapping is ambiguous. " +
+      `If this CSV is sample-specific, set the Sample column${suggested ? ` (looks like "${suggested}")` : ""}; ` +
+      "otherwise remove the duplicate rows."
+    );
   })
   // True while the uploaded CSV is still being parsed by staging (handle set, but emit-csv-meta hasn't
   // produced csvMeta yet) — lets the UI show a "reading columns…" state instead of silent empty
@@ -410,6 +561,51 @@ export const platforma = BlockModelV3.create(dataModel)
     for (const [sampleId, step] of Object.entries(furthest)) out[sampleId] = STEP_AFTER[step];
     return out;
   })
+  // Per-[sampleId, step] live log handles (parse / refine / tag-stat stdout streams), bound by the
+  // per-sample Logs tab (PlLogView) so the user can read each mitool step's output as it runs. A no-match
+  // sample carries only its 1-parse entry (the map key set is variable — see fb-refine-tagstat).
+  .output("stepLogs", (ctx) =>
+    ctx.outputs !== undefined
+      ? parseResourceMap(ctx.outputs.resolve("stepLogs"), (acc) => acc.getLogHandle(), false)
+      : undefined,
+  )
+  // Per-[sampleId] log handle for the Python per-cell-metrics step (the "4-metrics" step). Surfaced
+  // separately from stepLogs because it's produced after the mitool stepLogs map is built; the UI's
+  // per-step Logs panel reads it when the "4-metrics" step is selected.
+  .output("metricsLog", (ctx) =>
+    ctx.outputs !== undefined
+      ? parseResourceMap(
+          ctx.outputs.resolve("metricsLogStream"),
+          (acc) => acc.getLogHandle(),
+          false,
+        )
+      : undefined,
+  )
+  // Live per-sample parse progress (0–100%) — reads the flat parseLogStream Log, registered the moment
+  // the per-sample body runs (before parse finishes). Kept mainly as an EARLY roster signal (it appears
+  // before the stepLogs map fills); the per-step bar detail comes from stepProgress below.
+  .output("parseProgress", (ctx) =>
+    ctx.outputs !== undefined
+      ? parseResourceMap(
+          ctx.outputs.resolve("parseLogStream"),
+          (acc) => acc.getProgressLogWithInfo(ProgressPrefix),
+          false,
+        )
+      : undefined,
+  )
+  // Per-[sampleId, step] live progress line (parse / refine / tag-stat), scraped from each step's stdout
+  // stream. Drives the rich per-step text in the grid Progress cell (which tag is being corrected, sort
+  // vs write phase, live %). ui/src/progress.ts composes these into a MONOTONIC cumulative bar (each step
+  // owns a quarter of the bar) so it never resets to zero between steps. Same source as stepLogs.
+  .output("stepProgress", (ctx) =>
+    ctx.outputs !== undefined
+      ? parseResourceMap(
+          ctx.outputs.resolve("stepLogs"),
+          (acc) => acc.getProgressLogWithInfo(ProgressPrefix),
+          false,
+        )
+      : undefined,
+  )
   // sampleIds whose per-sample pipeline has finished. qcJson is the LAST per-sample step and is inline
   // JSON content, so getDataAsJsonOrUndefined reads it synchronously — the done-set drives the grid's
   // "Done" state (a sample not in this set is still Processing).
@@ -431,8 +627,8 @@ export const platforma = BlockModelV3.create(dataModel)
   .output("sampleLabels", (ctx): Record<string, string> | undefined => resolveSampleLabels(ctx))
   // The block's single "Analysis logs" (lines shown in the UI's wide slide-over), built from the
   // per-sample QC JSON (qcJson), which settles incrementally as each sample's qc step finishes:
-  //   • while the run is in progress → a live count of samples finished so far ("Processing… N …");
-  //   • when every sample is done   → a run-level summary (aggregate reads/panel-assigned/cells +
+  //   - while the run is in progress → a live count of samples finished so far ("Processing… N …");
+  //   - when every sample is done   → a run-level summary (aggregate reads/panel-assigned/cells +
   //     any samples flagged for a panel-assigned fraction below PANEL_ASSIGNED_FLOOR, by name).
   // One area regardless of sample count; detailed per-sample stats live on the QC page (qcSummaryTable).
   .output("analysisLog", (ctx): string[] | undefined => {
@@ -483,13 +679,11 @@ export const platforma = BlockModelV3.create(dataModel)
 
     const medMatched = median(matched);
     const medAssigned = median(assigned);
-    const lines: string[] = ["Feature Integration — analysis log", ""];
+    const lines: string[] = ["Feature Barcode Profiling — analysis log", ""];
     lines.push(`Processed ${done} sample${done === 1 ? "" : "s"}.`);
     lines.push(
       `Reads parsed: ${nf(readsTotal)} total` +
-        (medMatched !== undefined
-          ? ` · ${pct(medMatched)} matched the read pattern (median)`
-          : "") +
+        (medMatched !== undefined ? `, ${pct(medMatched)} matched the read pattern (median)` : "") +
         ".",
     );
     if (medAssigned !== undefined && assigned.length > 0) {
@@ -497,7 +691,7 @@ export const platforma = BlockModelV3.create(dataModel)
         `Panel-assigned: ${pct(medAssigned)} of reads (median; range ${pct(Math.min(...assigned))}–${pct(Math.max(...assigned))}).`,
       );
     }
-    lines.push(`Cells detected: ${nf(cellsTotal)} · ${features} features.`);
+    lines.push(`Cells detected: ${nf(cellsTotal)} across ${features} features.`);
     lines.push("");
     if (flagged.length > 0) {
       const names = flagged.map((e) => labels?.[String(e.key[0])] ?? String(e.key[0]));
@@ -552,9 +746,9 @@ export const platforma = BlockModelV3.create(dataModel)
     },
     { retentive: true, withStatus: true },
   )
-  .title(() => "Feature Integration")
+  .title(() => "Feature Barcode Profiling")
   // Standard block-label subtitle. The subtitle render context is args-only (no result pool / outputs
-  // — touching them renders "Invalid subtitle"), so the dynamic "<dataset> · <barcode> - <feature>"
+  // — touching them renders "Invalid subtitle"), so the dynamic "<dataset> / <barcode> - <feature>"
   // string is derived in the `suggestedBlockLabel` OUTPUT (which HAS the pool) and copied into
   // `defaultBlockLabel` by a UI watchEffect (the sanctioned block-label pattern). The subtitle only
   // reads `ctx.data`. Guard `ctx.data` — it can be undefined before block storage is parsed.

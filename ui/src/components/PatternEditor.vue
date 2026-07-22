@@ -137,7 +137,12 @@ watch(editorMode, (mode) => {
     :required="true"
     :error="!selectedPreset ? 'Select a preset' : undefined"
     @update:model-value="setPresetId"
-  />
+  >
+    <template #tooltip>
+      Feature-barcode chemistry preset. Sets the tag pattern — cell barcode + UMI on Read 1, feature
+      barcode on Read 2. Pick the configurable preset to edit the read layout by hand.
+    </template>
+  </PlDropdown>
 
   <!-- User-configurable preset: unlock the Add/Build editor (same shape as blocks/peptide-extraction). -->
   <template v-if="isUserConfigurable">
@@ -176,10 +181,16 @@ watch(editorMode, (mode) => {
 
       <template v-if="readTab === 'r1'">
         <PlNumberField v-model="r1.cellLen" :min-value="1" :step="1" label="Cell barcode length">
-          <template #tooltip>Cell barcode length on Read 1.</template>
+          <template #tooltip>
+            Cell barcode length on Read 1. Fixed by your single-cell chemistry (16 nt for 10x);
+            change only if your kit uses a different barcode length.
+          </template>
         </PlNumberField>
         <PlNumberField v-model="r1.umiLen" :min-value="1" :step="1" label="UMI length">
-          <template #tooltip>UMI length on Read 1.</template>
+          <template #tooltip>
+            UMI length on Read 1. Fixed by your chemistry (10 nt for 10x 5' v2); change only if your
+            kit uses a different UMI length.
+          </template>
         </PlNumberField>
         <PlCheckbox v-model="r1.hasTrailingWildcard">
           Trailing wildcard
@@ -210,7 +221,10 @@ watch(editorMode, (mode) => {
           :step="1"
           label="Feature barcode length"
         >
-          <template #tooltip>Feature (antigen) barcode length on Read 2.</template>
+          <template #tooltip>
+            Feature (antigen) barcode length on Read 2. Set by your feature-barcode panel (15 nt for
+            10x BEAM / TotalSeq).
+          </template>
         </PlNumberField>
       </template>
     </template>

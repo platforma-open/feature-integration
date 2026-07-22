@@ -40,10 +40,10 @@ from .common import (
 
 @dataclass
 class AntigenConfig:
-    samples: list          # donor sample names
+    samples: list  # donor sample names
     cells_per_sample: int
-    barcode_source: str = "random"   # "random" or "whitelist737k"
-    assets_dir: str = None           # holds 737K-august-2016.txt / whitelist_cells.txt
+    barcode_source: str = "random"  # "random" or "whitelist737k"
+    assets_dir: str = None  # holds 737K-august-2016.txt / whitelist_cells.txt
     seed: int = ANTIGEN_SEED
 
 
@@ -60,13 +60,15 @@ def load_whitelist_cells(rng, count, assets_dir):
             "no cell whitelist found. Fetch the full 10x 737K-august-2016 inclusion list into "
             f"{assets_dir}:\n"
             "  curl -sSL -o 737K-august-2016.txt https://raw.githubusercontent.com/10XGenomics/"
-            "supernova/master/tenkit/lib/python/tenkit/barcodes/737K-august-2016.txt")
+            "supernova/master/tenkit/lib/python/tenkit/barcodes/737K-august-2016.txt"
+        )
     with open(path) as f:
         pool = [ln.strip() for ln in f if ln.strip() and not ln.startswith("#")]
     if len(pool) < count:
         raise SystemExit(
             f"{os.path.basename(path)} has {len(pool)} barcodes; need {count}. Fetch the full "
-            "737K-august-2016 list (see load_whitelist_cells) or reduce the sample/cell scale.")
+            "737K-august-2016 list (see load_whitelist_cells) or reduce the sample/cell scale."
+        )
     return rng.sample(pool, count)
 
 
@@ -86,14 +88,16 @@ def add_ambient(rng, panel, reads, frac=0.15):
     return reads
 
 
-def assign_features(rng, panel, nonbinder=False):
+def assign_features(rng, panel, nonbinder=False, crossreactive=False):
     """Plant the per-feature distinct-UMI counts for one cell. Returns (per_feature, consensus_label).
 
     One dominant antigen (high), optional ambiguous second, 0-2 ambient antigens (low), control
     background. `nonbinder=True` (the control scenario) plants a TRUE non-binder: every antigen at
-    ~control level. Magnitudes are calibrated to the real 5k BEAM-T library: dominant ~600 UMIs
-    (right-skewed, low-signal tail), near-mono dominance (median ~1.0, p10 ~0.79), tight background
-    (~3 UMIs/cell)."""
+    ~control level. `crossreactive=True` plants a co-dominant pair of two ON-TARGET antigens at
+    ~equal UMIs (second at 0.85-1.0x the first): neither passes the dominance threshold alone but their
+    on-target sum does, so the block calls the cell "cross-reactive" (not "ambiguous"). Magnitudes are
+    calibrated to the real 5k BEAM-T library: dominant ~600 UMIs (right-skewed, low-signal tail),
+    near-mono dominance (median ~1.0, p10 ~0.79), tight background (~3 UMIs/cell)."""
     antigen_names = panel.names
     control = panel.control_name
     per_feature = {}
@@ -104,6 +108,27 @@ def assign_features(rng, panel, nonbinder=False):
                 per_feature[a] = rng.randint(1, bg_hi)
         per_feature[control] = rng.randint(1, bg_hi)
         return per_feature, "ambiguous"
+    if crossreactive:
+        # Co-dominant on-TARGET pair: both must be Type=Target (not the control, not an Off-Target), so
+        # the block's dominant call excludes neither and — with two on-targets sharing the signal near
+        # 50/50 — lands on "cross-reactive" rather than a single dominant antigen or "ambiguous".
+        on_target = [a for a in antigen_names if panel.types.get(a) == "Target"]
+        if len(on_target) >= 2:
+            first, second = rng.sample(on_target, 2)
+            dom_umis = rng.randint(10, 60) if rng.random() < 0.1 else rng.randint(300, 1100)
+            per_feature[first] = dom_umis
+            # near-equal second keeps both above threshold-share of the on-target sum while denying
+            # either a unique-dominant call (each ~50% of the total, below the 0.6 threshold)
+            per_feature[second] = max(1, int(dom_umis * rng.uniform(0.85, 1.0)))
+            others = [a for a in antigen_names if a not in per_feature]
+            rng.shuffle(others)
+            bg_hi = 3
+            for a in others[: rng.randint(0, 2)]:
+                per_feature[a] = rng.randint(1, bg_hi)
+            if rng.random() < 0.7:
+                per_feature[control] = rng.randint(1, 3)
+            return per_feature, "crossreactive"
+        # <2 on-target antigens: can't plant a cross-reactive pair — fall through to a normal binder.
     dominant = rng.choice(antigen_names)
     # median ~600, p10 ~20 / p90 ~1500; ~10% of cells are low-signal (real p10 total UMIs ~18)
     dom_umis = rng.randint(10, 60) if rng.random() < 0.1 else rng.randint(300, 1100)
@@ -119,7 +144,7 @@ def assign_features(rng, panel, nonbinder=False):
     others = [a for a in antigen_names if a not in per_feature]
     rng.shuffle(others)
     bg_hi = 3  # real background: median ~3, p90 ~9 UMIs/cell total
-    for a in others[:rng.randint(0, 2)]:
+    for a in others[: rng.randint(0, 2)]:
         per_feature[a] = rng.randint(1, bg_hi)
 
     if rng.random() < 0.7:
@@ -128,10 +153,11 @@ def assign_features(rng, panel, nonbinder=False):
     return per_feature, ("ambiguous" if ambiguous else dominant)
 
 
-def build_sample(rng, panel, sample, cells, nonbinder_frac=0.0):
+def build_sample(rng, panel, sample, cells, nonbinder_frac=0.0, crossreactive_frac=0.0):
     """Clean per-sample reads (no scenario perturbation). Returns (reads, truth_ab, truth_con,
-    truth_class). reads = list of [name, r1, r2, lane(=1)]. The `nonbinder_frac > 0 and ...`
-    short-circuit means frac=0 consumes NO extra RNG, so the baselines stay reproducible."""
+    truth_class). reads = list of [name, r1, r2, lane(=1)]. The `frac > 0 and ...` short-circuits mean
+    both fracs at 0 consume NO extra RNG, so the baselines stay reproducible. A cell is at most one of
+    nonbinder / crossreactive (nonbinder wins the roll)."""
     features = panel.features
     reads = []
     truth_ab = []
@@ -140,25 +166,58 @@ def build_sample(rng, panel, sample, cells, nonbinder_frac=0.0):
     read_no = 0
     for cell in cells:
         is_nb = nonbinder_frac > 0 and rng.random() < nonbinder_frac
-        per_feature, con = assign_features(rng, panel, nonbinder=is_nb)
-        cls = "nonbinder" if is_nb else ("ambiguous" if con == "ambiguous" else "binder")
-        truth_class.append((sample, cell, cls, "" if con == "ambiguous" else con))
+        is_cr = (not is_nb) and crossreactive_frac > 0 and rng.random() < crossreactive_frac
+        per_feature, con = assign_features(rng, panel, nonbinder=is_nb, crossreactive=is_cr)
+        if is_nb:
+            cls = "nonbinder"
+        elif con == "crossreactive":
+            cls = "crossreactive"
+        elif con == "ambiguous":
+            cls = "ambiguous"
+        else:
+            cls = "binder"
+        truth_class.append((sample, cell, cls, "" if con in ("ambiguous", "crossreactive") else con))
         for feat, k in per_feature.items():
             truth_ab.append((sample, cell, feat, k))
         truth_con.append((sample, cell, con))
         for feat, k in per_feature.items():
-            fbc = features[feat]
-            umis = set()
-            while len(umis) < k:
-                umis.add(rand_seq(rng, UMI_LEN))
-            # sorted(): set iteration order of strings varies per process (PYTHONHASHSEED), which
-            # would make the emitted read order non-reproducible. Sorting keeps the output byte-stable.
-            for umi in sorted(umis):
-                # real PCR dup: median ~1.3 reads/UMI, p90 ~2
-                dups = 1 if rng.random() < 0.75 else (2 if rng.random() < 0.8 else 3)
-                for _ in range(dups):
-                    read_no += 1
-                    reads.append([f"{sample}_read{read_no}", cell + umi, fbc + R2_FILLER, 1])
+            fbcs = features[feat]
+            if len(fbcs) == 1:
+                fbc = fbcs[0]
+                umis = set()
+                while len(umis) < k:
+                    umis.add(rand_seq(rng, UMI_LEN))
+                # sorted(): set iteration order of strings varies per process (PYTHONHASHSEED), which
+                # would make the emitted read order non-reproducible. Sorting keeps the output byte-stable.
+                for umi in sorted(umis):
+                    # real PCR dup: median ~1.3 reads/UMI, p90 ~2
+                    dups = 1 if rng.random() < 0.75 else (2 if rng.random() < 0.8 else 3)
+                    for _ in range(dups):
+                        read_no += 1
+                        reads.append([f"{sample}_read{read_no}", cell + umi, fbc + R2_FILLER, 1])
+            else:
+                # Multi-barcode antigen (only present in a --multibarcode panel; single-barcode runs
+                # never take this branch, so they stay byte-identical). combine="all" fires EVERY
+                # member barcode at ~k UMIs (AND / dual-probe); combine="sum" splits the k UMIs across
+                # the members so the per-feature sum stays ~k. Same UMI/dup shape as the single path.
+                mode = panel.combine.get(feat, "sum")
+                if mode == "all":
+                    shares = [k] * len(fbcs)
+                else:
+                    base = k // len(fbcs)
+                    shares = [base] * len(fbcs)
+                    shares[0] += k - base * len(fbcs)
+                for fbc, share in zip(fbcs, shares):
+                    if share <= 0:
+                        continue
+                    umis = set()
+                    while len(umis) < share:
+                        umis.add(rand_seq(rng, UMI_LEN))
+                    for umi in sorted(umis):
+                        dups = 1 if rng.random() < 0.75 else (2 if rng.random() < 0.8 else 3)
+                        for _ in range(dups):
+                            read_no += 1
+                            reads.append([f"{sample}_read{read_no}", cell + umi, fbc + R2_FILLER, 1])
     return reads, truth_ab, truth_con, truth_class
 
 
@@ -167,8 +226,8 @@ def build_sample(rng, panel, sample, cells, nonbinder_frac=0.0):
 # matched < 80% or panel-assigned < 50% -> WARN; panel-assigned < 25% -> ALERT (ui/src/results.ts).
 DEGRADED_PROFILE = [
     ("donor01_clean", 1.00, 1.00, "OK"),
-    ("donor02_lowmatch", 0.65, 1.00, "WARN"),   # 35% of reads fail parse -> matched 65%
-    ("donor03_offpanel", 0.95, 0.40, "WARN"),   # 60% of matched reads off-panel -> panel-assigned 40%
+    ("donor02_lowmatch", 0.65, 1.00, "WARN"),  # 35% of reads fail parse -> matched 65%
+    ("donor03_offpanel", 0.95, 0.40, "WARN"),  # 60% of matched reads off-panel -> panel-assigned 40%
     ("donor04_badpanel", 0.90, 0.15, "ALERT"),  # 85% off-panel -> panel-assigned 15%
 ]
 
@@ -253,17 +312,81 @@ def write_fastqs(outdir, sample, reads, multilane):
             write_fastq_gz(os.path.join(outdir, f"{sample}_{tag}_R2.fastq.gz"), lane_reads, 2)
 
 
-def write_metadata(shared_dir, panel, samples):
+def _messify(value, rng):
+    """Return a casing/whitespace variant of a panel LABEL, mimicking the real customer panel's B043
+    inconsistency (e.g. "Off-Target" -> "Off-target"). Used ONLY for emitted CSV label columns under
+    --messy-metadata; it never touches the barcode join keys or the truth tables, so generation stays
+    coherent while the block-facing labels carry the mess the normalization tasks must resolve."""
+    if rng.random() < 0.5:
+        # case variant: lower-case the segment after the last hyphen ("Off-Target" -> "Off-target")
+        head, sep, tail = value.rpartition("-")
+        return head + sep + tail.lower() if sep else value.lower()
+    # whitespace variant: double the first existing space (a label with no space is left unchanged)
+    i = value.find(" ")
+    return value[:i] + "  " + value[i + 1 :] if i != -1 else value
+
+
+def _messy_types(panel, rng):
+    """Per-antigen Type overrides that GUARANTEE a mixed-case off-target set (the B043 `Off-Target` vs
+    `Off-target` bug): the first off-target stays canonical `Off-Target`, the second is forced to
+    `Off-target`, any further off-targets get a seeded `_messify` variant. Targets and the control keep
+    their canonical Type. Returns {name: type} for the off-targets only (callers fall back to
+    panel.types for everything else)."""
+    offtargets = [n for n in panel.names if panel.types.get(n) == "Off-Target"]
+    override = {}
+    for idx, n in enumerate(offtargets):
+        if idx == 0:
+            override[n] = "Off-Target"  # canonical anchor of the mix
+        elif idx == 1:
+            override[n] = "Off-target"  # forced lower-case -> the mix is present whenever >= 2 off-targets
+        else:
+            override[n] = _messify(panel.types[n], rng)
+    return override
+
+
+def write_metadata(shared_dir, panel, samples, multibarcode=False, messy=False):
+    # --messy-metadata: inject the real customer panel's inconsistent Type casing into the EMITTED tags.csv
+    # values only (the feature-name double space is injected upstream in build_panel). A dedicated
+    # constant-seed RNG keeps the mess deterministic without perturbing the read/truth streams (which are
+    # already generated by the time write_metadata runs). Off by default -> byte-identical to before.
+    type_override = _messy_types(panel, new_rng(ANTIGEN_SEED + 7777)) if messy else {}
+
+    def type_of(name):
+        return type_override.get(name, panel.types.get(name, ""))
+
     with open(os.path.join(shared_dir, "tags.csv"), "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["tag", "feature"])
-        for name, bc in panel.features.items():
-            w.writerow([bc, name])
+        # tag,feature stay first (backward-compatible role mapping); Type/Species/Class mirror the real
+        # customer panel so downstream off-target-call and species-grouping have synthetic inputs. A
+        # --multibarcode panel adds `combine` (between feature and Type) and emits one row PER member
+        # barcode; single-barcode runs keep the exact prior header + one row per feature (byte-stable).
+        if multibarcode:
+            w.writerow(["tag", "feature", "combine", "Type", "Species", "Class"])
+            for name, bcs in panel.features.items():
+                for bc in bcs:
+                    w.writerow(
+                        [
+                            bc,
+                            name,
+                            panel.combine.get(name, "sum"),
+                            type_of(name),
+                            panel.species.get(name, ""),
+                            panel.classes.get(name, ""),
+                        ]
+                    )
+        else:
+            w.writerow(["tag", "feature", "Type", "Species", "Class"])
+            for name, bcs in panel.features.items():
+                w.writerow([bcs[0], name, type_of(name), panel.species.get(name, ""), panel.classes.get(name, "")])
     with open(os.path.join(shared_dir, "feature_reference.csv"), "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["id", "name", "read", "pattern", "sequence", "feature_type"])
-        for name, bc in panel.features.items():
-            w.writerow([name, name, "R2", "^(BC)", bc, "Antigen Capture"])
+        for name, bcs in panel.features.items():
+            for j, bc in enumerate(bcs):
+                # per-member id `<feat>_<n>` when a feature has >1 barcode; bare feature name otherwise
+                # (so single-barcode feature_reference.csv is byte-identical to before).
+                bc_id = f"{name}_{j + 1}" if len(bcs) > 1 else name
+                w.writerow([bc_id, name, "R2", "^(BC)", bc, "Antigen Capture"])
     with open(os.path.join(shared_dir, "samples-metadata.tsv"), "w", newline="") as f:
         w = csv.writer(f, delimiter="\t")
         w.writerow(["Sample", "Donor", "Condition"])
@@ -296,7 +419,9 @@ def write_specificity(truth_dir, truth_class):
         w.writerows(truth_class)
 
 
-def build(cfg, panel, scenario, fastq_dir, shared_dir, truth_dir):
+def build(
+    cfg, panel, scenario, fastq_dir, shared_dir, truth_dir, crossreactive_frac=0.0, multibarcode=False, messy=False
+):
     """Generate one antigen scenario into the given dirs.
 
     fastq_dir  - R1/R2 FASTQs (+ offpanel-barcodes.txt for the offpanel scenario)
@@ -318,14 +443,15 @@ def build(cfg, panel, scenario, fastq_dir, shared_dir, truth_dir):
     else:
         all_cells = gen_cells(rng, n_total)
     cells_by_sample = {
-        s: all_cells[i * cfg.cells_per_sample:(i + 1) * cfg.cells_per_sample] for i, s in enumerate(samples)
+        s: all_cells[i * cfg.cells_per_sample : (i + 1) * cfg.cells_per_sample] for i, s in enumerate(samples)
     }
 
     # Off-panel barcodes: one shared set across samples, from an independent RNG so it doesn't perturb
     # the per-sample build stream.
     off_bcs = (
         gen_distinct(new_rng(cfg.seed + 99), 3, FEAT_LEN, min_dist=5, avoid=panel.barcodes)
-        if scenario == "offpanel" else []
+        if scenario == "offpanel"
+        else []
     )
 
     nonbinder_frac = 0.3 if scenario == "control" else 0.0
@@ -333,7 +459,7 @@ def build(cfg, panel, scenario, fastq_dir, shared_dir, truth_dir):
     total_reads = 0
     for sample in samples:
         cells = cells_by_sample[sample]
-        reads, ab, con, cls = build_sample(rng, panel, sample, cells, nonbinder_frac)
+        reads, ab, con, cls = build_sample(rng, panel, sample, cells, nonbinder_frac, crossreactive_frac)
         all_ab += ab
         all_con += con
         all_cls += cls
@@ -352,7 +478,7 @@ def build(cfg, panel, scenario, fastq_dir, shared_dir, truth_dir):
         total_reads += len(reads)
         print(f"  {sample}: {len(cells)} cells, {len(reads)} reads")
 
-    write_metadata(shared_dir, panel, samples)
+    write_metadata(shared_dir, panel, samples, multibarcode=multibarcode, messy=messy)
     write_truth(truth_dir, all_ab, all_con)
     if scenario == "control":
         write_specificity(truth_dir, all_cls)
@@ -363,6 +489,106 @@ def build(cfg, panel, scenario, fastq_dir, shared_dir, truth_dir):
             f.write("# feature barcodes injected into R2 that are NOT in tags.csv — the block must drop them\n")
             f.write("\n".join(off_bcs) + "\n")
     print(f"[antigen:{scenario}] {len(samples)} samples, {n_total} cells, {total_reads} reads -> {fastq_dir}")
+
+
+def build_libraseq(cfg, out_dir):
+    """LIBRA-seq / dual-probe fixture: one antigen (BG505) read out by TWO feature barcodes that must
+    BOTH fire, alongside a single-barcode antigen (gp120) and a negative control. Exercises Feature
+    Barcode Analysis's multi-barcode combine mode 'all' (AND): cells where only one BG505 probe barcode
+    fires must NOT be called BG505.
+
+    Antigen-only (no VDJ/GEX arm) — FI is antigen-only, so this alone drives the per-cell antigen call.
+    Writes tags.csv WITH a `combine` column (BG505=all, gp120/control=sum). Read geometry is the BEAM
+    default (R1 = 16 bp cell + 10 bp UMI; R2 = 15 bp feature at position 0), so the block's default
+    preset + de-novo cell whitelist parse it directly.
+    """
+    rng = new_rng(cfg.seed)
+    os.makedirs(out_dir, exist_ok=True)
+
+    # BG505 = dual probe (two barcodes), gp120 = single, negative_control = single. Distinct 15-mers.
+    bg505_a, bg505_b, gp120_bc, ctrl_bc = gen_distinct(new_rng(cfg.seed + 7), 4, FEAT_LEN, min_dist=3, avoid=[])
+    feature_barcodes = {"BG505": [bg505_a, bg505_b], "gp120": [gp120_bc], "negative_control": [ctrl_bc]}
+    combine_mode = {"BG505": "all", "gp120": "sum", "negative_control": "sum"}
+
+    samples = cfg.samples
+    n_total = len(samples) * cfg.cells_per_sample
+    all_cells = gen_cells(rng, n_total)
+    cells_by_sample = {
+        s: all_cells[i * cfg.cells_per_sample : (i + 1) * cfg.cells_per_sample] for i, s in enumerate(samples)
+    }
+
+    read_no = [0]
+
+    def emit(reads, sample, cell, barcode, k):
+        """Emit k distinct-UMI reads (with light PCR dup) carrying `barcode` on R2 for `cell`."""
+        umis = set()
+        while len(umis) < k:
+            umis.add(rand_seq(rng, UMI_LEN))
+        for umi in sorted(umis):
+            for _ in range(1 if rng.random() < 0.75 else 2):
+                read_no[0] += 1
+                reads.append([f"{sample}_read{read_no[0]}", cell + umi, barcode + R2_FILLER, 1])
+
+    all_con = []
+    total_reads = 0
+    for sample in samples:
+        reads = []
+        for cell in cells_by_sample[sample]:
+            roll = rng.random()
+            dom = rng.randint(300, 900)
+            if roll < 0.50:
+                # BG505: BOTH probes fire -> called under AND
+                emit(reads, sample, cell, bg505_a, dom)
+                emit(reads, sample, cell, bg505_b, max(1, int(dom * rng.uniform(0.8, 1.1))))
+                con = "BG505"
+            elif roll < 0.68:
+                # BG505: only ONE probe fires -> must be DROPPED under AND (the demonstration case)
+                emit(reads, sample, cell, rng.choice([bg505_a, bg505_b]), dom)
+                con = "BG505_singleprobe"
+            elif roll < 0.93:
+                emit(reads, sample, cell, gp120_bc, dom)
+                con = "gp120"
+            else:
+                emit(reads, sample, cell, ctrl_bc, rng.randint(2, 5))
+                con = "ambiguous"
+            if rng.random() < 0.5:  # light control background on ~half the cells
+                emit(reads, sample, cell, ctrl_bc, rng.randint(1, 3))
+            all_con.append((sample, cell, con))
+        rng.shuffle(reads)
+        write_fastq_gz(os.path.join(out_dir, f"{sample}_R1.fastq.gz"), reads, 1)
+        write_fastq_gz(os.path.join(out_dir, f"{sample}_R2.fastq.gz"), reads, 2)
+        total_reads += len(reads)
+        print(f"  {sample}: {len(cells_by_sample[sample])} cells, {len(reads)} reads")
+
+    # tags.csv WITH a combine column (BG505=all, others=sum) — the block uploads this.
+    with open(os.path.join(out_dir, "tags.csv"), "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["tag", "feature", "combine"])
+        for feat, member_bcs in feature_barcodes.items():
+            for bc in member_bcs:
+                w.writerow([bc, feat, combine_mode[feat]])
+    with open(os.path.join(out_dir, "feature_reference.csv"), "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["id", "name", "read", "pattern", "sequence", "feature_type"])
+        for feat, member_bcs in feature_barcodes.items():
+            for j, bc in enumerate(member_bcs):
+                bc_id = f"{feat}_{j + 1}" if len(member_bcs) > 1 else feat
+                w.writerow([bc_id, feat, "R2", "^(BC)", bc, "Antigen Capture"])
+    with open(os.path.join(out_dir, "samples-metadata.tsv"), "w", newline="") as f:
+        w = csv.writer(f, delimiter="\t")
+        w.writerow(["Sample", "Donor", "Condition"])
+        for i, s in enumerate(samples):
+            w.writerow([s, f"Donor {i + 1}", "baseline" if i % 2 == 0 else "stimulated"])
+    all_con.sort()
+    with open(os.path.join(out_dir, "expected-consensus.tsv"), "w", newline="") as f:
+        w = csv.writer(f, delimiter="\t")
+        w.writerow(["sample", "cellId", "planted_consensus"])
+        w.writerows(all_con)
+
+    n_single = sum(1 for c in all_con if c[2] == "BG505_singleprobe")
+    print(f"[antigen:libraseq] {len(samples)} samples, {n_total} cells, {total_reads} reads -> {out_dir}")
+    print(f"  BG505 dual-probe barcodes: {bg505_a} + {bg505_b} (combine=all); gp120 single; control")
+    print(f"  {n_single} cells fire only ONE BG505 probe -> must be dropped from BG505 under 'all' mode")
 
 
 def build_degraded(cfg, panel, out_dir):
@@ -377,7 +603,7 @@ def build_degraded(cfg, panel, out_dir):
     off_bcs = gen_distinct(new_rng(cfg.seed + 99), 3, FEAT_LEN, min_dist=5, avoid=panel.barcodes)
 
     for i, (sample, m, p, tag) in enumerate(DEGRADED_PROFILE):
-        cells = all_cells[i * cells_per:(i + 1) * cells_per]
+        cells = all_cells[i * cells_per : (i + 1) * cells_per]
         reads, _, _, _ = build_sample(rng, panel, sample, cells)
         reads = convert_offpanel(rng, reads, off_bcs, off_frac=1 - p)
         reads = add_malformed(rng, reads, matched_frac=m)

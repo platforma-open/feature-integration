@@ -106,12 +106,38 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
   const qcBySample = app.model.outputs.sampleQc ?? {};
   const sampleStep = app.model.outputs.sampleStep;
 
-  // Roster: dataset labels ∪ completed ∪ QC'd ∪ any sample with a step signal.
+  // Early roster signal: the flat parseLogStream registers per sample the moment parse starts — before
+  // any step report settles — so a sample appears in the grid immediately. (The bar detail comes from
+  // stepProgress below; this is just "does this sample exist yet".)
+  const parseProgress = app.model.outputs.parseProgress;
+  const earlyRosterIds = parseProgress ? parseProgress.data.map((p) => String(p.key[0])) : [];
+
+  // Per-[sampleId, step] live progress lines (parse / refine / tag-stat). Index by sampleId → step →
+  // progressLine so deriveProgress can pull the line for whichever step the sample is currently on.
+  const stepProgress = app.model.outputs.stepProgress;
+  const lineBySampleStep = new Map<string, string | undefined>();
+  if (stepProgress) {
+    for (const p of stepProgress.data) {
+      const v = p.value as { progressLine?: string; live: boolean } | undefined;
+      lineBySampleStep.set(`${String(p.key[0])} ${String(p.key[1])}`, v?.progressLine);
+    }
+  }
+  // All streaming steps' live lines for a sample, so deriveProgress can pick the furthest one actually
+  // streaming (rather than the report-derived step, which advances a beat early and flashed the next
+  // step's label during the gap).
+  const liveLinesFor = (sampleId: string): Record<string, string | undefined> => ({
+    "1-parse": lineBySampleStep.get(`${sampleId} 1-parse`),
+    "2-refine": lineBySampleStep.get(`${sampleId} 2-refine`),
+    "3-tagstat": lineBySampleStep.get(`${sampleId} 3-tagstat`),
+  });
+
+  // Roster: dataset labels ∪ completed ∪ QC'd ∪ any sample with a step signal ∪ early parse signal.
   const sampleIds = new Set<string>([
     ...Object.keys(labels),
     ...completed,
     ...Object.keys(qcBySample),
     ...Object.keys(sampleStep ?? {}),
+    ...earlyRosterIds,
   ]);
   // Roster not enumerated yet → keep the grid's loading overlay rather than flashing an empty table.
   if (sampleIds.size === 0) return undefined;
@@ -122,7 +148,7 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
       // Per-sample QC settles when the sample finishes, so Quality + Read recovery fill in at completion.
       const qc = qcBySample[sampleId];
       const qcFields = qc ? { quality: qualityStatus(qc), recovery: recoveryBar(qc) } : {};
-      const progressCell = deriveProgress(sampleId, completed, sampleStep);
+      const progressCell = deriveProgress(sampleId, completed, sampleStep, liveLinesFor(sampleId));
       return { sampleId, label, progress: progressCell, ...qcFields };
     })
     .sort((a, b) => a.label.localeCompare(b.label));

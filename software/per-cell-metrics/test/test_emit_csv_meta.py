@@ -29,6 +29,27 @@ def test_values_by_column_deduped_and_sorted(tmp_path):
     assert meta["valuesByColumn"]["barcode"] == ["AAAA", "CCCC", "GGGG"]
 
 
+def test_row_count_counts_data_rows(tmp_path):
+    # rowCount is the number of data rows (header excluded) — the model compares it against a column's
+    # distinct-value count to detect a barcode mapped on more than one row.
+    meta = _run(tmp_path, "barcode,antigen\nAAAA,AgX\nCCCC,AgY\nGGGG,AgZ\n")
+    assert meta["rowCount"] == 3
+    # No duplicate barcodes: distinct barcode count equals rowCount.
+    assert len(meta["valuesByColumn"]["barcode"]) == meta["rowCount"]
+
+
+def test_row_count_ignores_trailing_blank_rows(tmp_path):
+    meta = _run(tmp_path, "barcode,antigen\nAAAA,AgX\n\n,\n")
+    assert meta["rowCount"] == 1
+
+
+def test_row_count_exceeds_distinct_when_barcode_duplicated(tmp_path):
+    # Same barcode on two rows (sample-specific mapping): distinct barcode count < rowCount.
+    meta = _run(tmp_path, "barcode,antigen\nAAAA,AgX\nAAAA,AgY\n")
+    assert meta["rowCount"] == 2
+    assert len(meta["valuesByColumn"]["barcode"]) < meta["rowCount"]
+
+
 def test_blank_cells_ignored(tmp_path):
     meta = _run(tmp_path, "barcode,antigen\nAAAA,AgX\nCCCC,\n")
     assert meta["valuesByColumn"]["antigen"] == ["AgX"]  # the empty cell is not a value

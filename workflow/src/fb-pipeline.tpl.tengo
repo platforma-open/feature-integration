@@ -31,7 +31,7 @@ fbParseTpl := assets.importTemplate(":fb-parse")
 fbRefineTagstatTpl := assets.importTemplate(":fb-refine-tagstat")
 fbDownstreamTpl := assets.importTemplate(":fb-downstream")
 
-self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "qc", "qcJson", "stepReports")
+self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "qc", "qcJson", "stepReports", "stepLogs", "parseLogStream", "metricsLogStream", "parsedMic", "parseReport", "refineReport", "tagstatTsv")
 
 self.body(func(inputs) {
 	inputData := inputs[pConstants.VALUE_FIELD_NAME]
@@ -46,6 +46,11 @@ self.body(func(inputs) {
 	mitoolCPUs := inputs.mitoolCPUs
 	barcodeSeqColumn := inputs.barcodeSeqColumn
 	featureNameColumn := inputs.featureNameColumn
+	combineColumn := is_undefined(inputs.combineColumn) ? "" : inputs.combineColumn
+	minUmi := is_undefined(inputs.minUmi) ? 1 : inputs.minUmi
+	// Off-target designation (optional, F2) — property column + comma-separated off-target values.
+	offtargetColumn := is_undefined(inputs.offtargetColumn) ? "" : inputs.offtargetColumn
+	offtargetValues := is_undefined(inputs.offtargetValues) ? "" : inputs.offtargetValues
 	cellWhitelist := inputs.cellWhitelist // "" = de-novo CELL correction (default); else a 10x built-in
 	memBaseGB := inputs.mitoolBaseMemGB
 
@@ -54,6 +59,8 @@ self.body(func(inputs) {
 	// render.create input a plain number (the model only sets metaExtra.mitoolMemOverrideGB when the user
 	// configures one, so inputs.mitoolMemOverrideGB is otherwise undefined).
 	memOverrideGB := is_undefined(inputs.mitoolMemOverrideGB) ? 0 : inputs.mitoolMemOverrideGB
+	// Preview read cap: 0 = full run (no --limit); >0 = mitool parse processes only the first N reads.
+	limitInput := is_undefined(inputs.limitInput) ? 0 : inputs.limitInput
 
 	ll.assert(!is_undefined(pattern) && pattern != "", "tag pattern is required")
 
@@ -133,10 +140,14 @@ self.body(func(inputs) {
 		inputFiles: inputFilesBuilder.build(),
 		mitoolCPUs: mitoolCPUs,
 		mitoolBaseMemGB: memBaseGB,
-		mitoolMemOverrideGB: memOverrideGB
+		mitoolMemOverrideGB: memOverrideGB,
+		limitInput: limitInput
 	})
 	parsedMic := parseRun.output("parsedMic")
 	parseReport := parseRun.output("parseReport")
+	// Live parse stdout stream — threaded into fb-refine-tagstat's stepLogs map (as the 1-parse entry) and
+	// also surfaced flat below to drive the model's live parse % + early sample roster (peptide pattern).
+	parseLogStream := parseRun.output("parseLogStream")
 
 	// Step 2: parse gate. mitool parse writes NO parsed.mic when zero reads match the pattern (fb-parse
 	// pre-wrote an empty placeholder). Read the parse report's matched count into a decision the branch
@@ -163,6 +174,7 @@ self.body(func(inputs) {
 		decision: gate.getFileContent("decision.json"),
 		parsedMic: parsedMic,
 		parseReport: parseReport,
+		parseLogStream: parseLogStream,
 		emptyTagstat: gate.getFile("tagstat_empty.tsv"),
 		emptyRefineReport: gate.getFile("refine_report_empty.json"),
 		tags: tags,
@@ -176,6 +188,7 @@ self.body(func(inputs) {
 	tagstatTsv := refineTagstatRun.output("tagstatTsv")
 	refineReport := refineTagstatRun.output("refineReport")
 	stepReports := refineTagstatRun.output("stepReports")
+	stepLogs := refineTagstatRun.output("stepLogs")
 
 	// Step 4: QC report + per-cell metrics (fb-downstream boundary). These consume the drifting mitool
 	// files (tagstat.tsv + parse/refine reports), so they run inside a render boundary and their per-sample
@@ -189,7 +202,11 @@ self.body(func(inputs) {
 		control: control, // undefined -> render.create skips it -> no specificity
 		dominanceThreshold: dominanceThreshold,
 		barcodeSeqColumn: barcodeSeqColumn,
-		featureNameColumn: featureNameColumn
+		featureNameColumn: featureNameColumn,
+		combineColumn: combineColumn,
+		minUmi: minUmi,
+		offtargetColumn: offtargetColumn,
+		offtargetValues: offtargetValues
 	})
 
 	// The body must return exactly the defineOutputs set and no output may be undefined.
@@ -201,8 +218,27 @@ self.body(func(inputs) {
 		perCellSummary: downstreamRun.output("perCellSummary"),
 		qc: downstreamRun.output("qc"),
 		qcJson: downstreamRun.output("qcJson"),
+		// per-cell-metrics (Python) stdout stream -> the 4-metrics step log (surfaced flat; the model keys
+		// it [sampleId] and the UI's per-step Logs panel reads it under the "4-metrics" step).
+		metricsLogStream: downstreamRun.output("metricsLogStream"),
 		// Per-sample step-report map (parse / refine / tag-stat output files) — the model reads which are
-		// present to derive the sample's current step (deterministic, no stdout streams).
-		stepReports: stepReports
+		// present to derive the sample's current step (deterministic).
+		stepReports: stepReports,
+		// Per-sample [step] map of live stdout streams (parse / refine / tag-stat) -> model per-step log
+		// handles + live parse %. Variable key set on a no-match sample (parse only).
+		stepLogs: stepLogs,
+		// Flat parse stdout stream (also the 1-parse entry of stepLogs) -> model live parse % + early roster.
+		parseLogStream: parseLogStream,
+		// mitool intermediates surfaced so main.tpl can persist them by content hash (see there). These are
+		// the deterministic parse/refine/tag-stat outputs the downstream consumers resolve through
+		// (parseReport/refineReport -> qc; parsedMic/tagstatTsv -> the metrics chain). Once
+		// content-hash-persisted, their CIDs stop drifting across re-renders, which keeps getFile-off-a-
+		// streaming-exec resolutions stable and prevents the CIDConflictError (the reason stdout capture was
+		// removed). This also lets downstream reuse them instead of re-running the whole block on a settings
+		// change. No model/UI consumer — the persistence itself is the point. Mirrors blocks/peptide-extraction.
+		parsedMic: parsedMic,
+		parseReport: parseReport,
+		refineReport: refineReport,
+		tagstatTsv: tagstatTsv
 	}
 })

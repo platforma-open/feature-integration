@@ -32,13 +32,25 @@ def main() -> None:
         columns = [h.strip() for h in header if h.strip()]
         col_index = {h.strip(): i for i, h in enumerate(header) if h.strip()}
         values: dict[str, set[str]] = {c: set() for c in columns}
+        # Total data rows (header excluded). The model compares a column's DISTINCT-value count against
+        # this to detect a barcode that appears on more than one row — the case per_cell_metrics.py guards
+        # (a duplicated barcode fans the join). Fully-blank rows (e.g. a trailing newline) are not counted,
+        # so they never look like a duplicate.
+        row_count = 0
         for row in reader:
+            if not any(cell.strip() for cell in row):
+                continue
+            row_count += 1
             for c in columns:
                 i = col_index[c]
                 if i < len(row) and row[i].strip():
                     values[c].add(row[i].strip())
 
-    meta = {"columns": columns, "valuesByColumn": {c: sorted(values[c]) for c in columns}}
+    meta = {
+        "columns": columns,
+        "valuesByColumn": {c: sorted(values[c]) for c in columns},
+        "rowCount": row_count,
+    }
     with open(args.output, "w") as out:
         json.dump(meta, out)
 

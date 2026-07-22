@@ -31,7 +31,16 @@ _SPECIFICITY_SCHEMA = {
 }
 
 
-def consensus_category(counts: dict[str, float], threshold: float, control: str | None = None) -> str | None:
+CROSS_REACTIVE = "cross-reactive"
+
+
+def consensus_category(
+    counts: dict[str, float],
+    threshold: float,
+    control: str | None = None,
+    offtargets: frozenset[str] = frozenset(),
+    label_crossreactive: bool = False,
+) -> str | None:
     """Dominant-category rule.
 
     Returns the single dominant category when it is the unique maximum AND its share of the total is
@@ -39,25 +48,78 @@ def consensus_category(counts: dict[str, float], threshold: float, control: str 
     or an exact split at the 0.5 floor); None when there is no signal at all. ``threshold`` is clamped
     up to the 0.5 floor.
 
-    The negative ``control`` is a reference, not a callable antigen: it is excluded from
-    the winner candidates, so a control-dominated cell is "ambiguous", never the control. Its UMIs are
-    still counted in ``total`` (the denominator), so control signal SUPPRESSES antigen dominance rather
-    than being renormalised away — a cell swamped by control correctly fails the threshold instead of
-    having its top antigen inflated to 100%.
+    The negative ``control`` and the ``offtargets`` set are references, not callable antigens: they are
+    excluded from the winner candidates, so a cell dominated by control/off-target signal is "ambiguous",
+    never the control or an off-target. Their UMIs are still counted in ``total`` (the denominator), so
+    control/off-target signal SUPPRESSES antigen dominance rather than being renormalised away — a cell
+    swamped by them correctly fails the threshold instead of having its top on-target inflated to 100%.
+
+    ``offtargets`` designate features whose property (e.g. Type = Off-Target / Decoy) marks them as
+    binders the user does not want to call. When they are supplied and ``label_crossreactive`` is set,
+    the overloaded "ambiguous" bucket is split: a cell whose on-target (non-excluded) signal collectively
+    passes the threshold but is spread across >= 2 on-target features is called "cross-reactive" (a
+    genuine multi-/cross-reactive binder — e.g. the same target's human + cyno variants) rather than
+    lumped with true noise. A cell whose on-target signal fails the threshold (off-target/control-swamped,
+    or a flat spread) stays "ambiguous". With no off-targets designated the rule is unchanged.
     """
     threshold = max(threshold, DOMINANCE_FLOOR)
+    excluded = set(offtargets)
+    if control is not None:
+        excluded.add(control)
     positive = {k: v for k, v in counts.items() if v > 0}
     total = sum(positive.values())
     if total <= 0:
         return None
-    candidates = {k: v for k, v in positive.items() if k != control}
+    candidates = {k: v for k, v in positive.items() if k not in excluded}
     if not candidates:
-        return "ambiguous"  # only control (or no) signal — no antigen to call
+        return "ambiguous"  # only control/off-target (or no) signal — no on-target to call
     max_val = max(candidates.values())
     winners = [k for k, v in candidates.items() if v == max_val]
     if len(winners) == 1 and (max_val / total) >= threshold:
         return winners[0]
+    # cross-reactive: on-target signal collectively dominates but is split across >= 2 on-targets.
+    if label_crossreactive and len(candidates) >= 2 and (sum(candidates.values()) / total) >= threshold:
+        return CROSS_REACTIVE
     return "ambiguous"
+
+
+def offtarget_features(
+    tag_feature_csv: str,
+    csv_feature_col: str,
+    offtarget_col: str,
+    offtarget_values: frozenset[str],
+) -> frozenset[str]:
+    """Feature names whose designated property (``offtarget_col``) value is in ``offtarget_values``.
+
+    The off-target designation is property-driven: the user picks one imported per-feature property
+    column (e.g. ``antigen_class``) and the set of its values that mark a feature as off-target (e.g.
+    {"Off-Target", "Decoy"}). This reads the tag->feature CSV — which carries those property columns —
+    and returns the resolved set of off-target FEATURE names, so the dominant call can exclude them.
+
+    Values are matched exactly, whitespace-trimmed but CASE-SENSITIVE (``strip()`` on both sides, no
+    case folding): a feature is off-target only if its ``offtarget_col`` value is byte-identical (after
+    trimming) to one the user selected. Real panels (e.g. B043) may carry mixed casing of one designation
+    — ``Off-Target`` and ``Off-target`` in a single column — so the user selects every casing they mean;
+    each distinct value is offered separately in the block's dropdown. Whitespace is trimmed because
+    leading/trailing spaces are invisible in the picker; casing is left intact because it is visible and
+    the user's to choose (the block never silently broadens a selection to unselected values). The
+    returned FEATURE names are verbatim (trimmed) from the CSV.
+    """
+    mapping = pl.read_csv(tag_feature_csv)
+    if offtarget_col not in mapping.columns:
+        raise SystemExit(
+            f"--offtarget-col={offtarget_col!r} is not a column of the tag->feature CSV ({mapping.columns})"
+        )
+    wanted_trimmed = {v.strip() for v in offtarget_values}
+    resolved = {
+        (feat or "").strip()
+        for feat, val in mapping.select(
+            pl.col(csv_feature_col).cast(pl.Utf8),
+            pl.col(offtarget_col).cast(pl.Utf8),
+        ).iter_rows()
+        if val is not None and val.strip() in wanted_trimmed
+    }
+    return frozenset(resolved)
 
 
 def specificity_score(antigen_umi, control_umi):
@@ -68,6 +130,53 @@ def specificity_score(antigen_umi, control_umi):
     (the array path avoids a per-row Python loop); returns a numpy float or float array accordingly.
     """
     return (1.0 - beta.cdf(0.925, antigen_umi + 1, control_umi + 3)) * 100.0
+
+
+def combine_barcode_counts(
+    barcode_umi: dict[str, float],
+    barcode_to_feature: dict[str, str],
+    feature_barcodes: dict[str, set[str]],
+    feature_modes: dict[str, str],
+    min_umi: float = 1.0,
+) -> dict[str, float]:
+    """Collapse ONE cell's per-barcode UMI counts into per-feature counts, honouring each feature's
+    combine mode. This is the pure rule the vectorized ``_load`` path mirrors (an oracle test pins them).
+
+    An antigen may be read out by more than one feature barcode (e.g. a dual-labeled probe). Two modes:
+
+    - ``"sum"`` (OR, the default): the feature's UMI is the sum of its member barcodes present in the
+      cell; the feature is called whenever at least one member barcode has signal. This is the historical
+      behaviour (barcodes sharing a feature name are summed).
+    - ``"all"`` (AND): the feature is called ONLY when EVERY member barcode fired — each is present with
+      ``umi >= min_umi`` in this cell — and its UMI is then the sum of the members. If any member is
+      missing or below ``min_umi`` the feature is absent for this cell (omitted, not zero), so it does not
+      compete for dominance, take a fraction, or get a specificity score. This expresses the LIBRA-seq /
+      dual-probe design where a cell is antigen-specific only when both probe barcodes fire.
+
+    ``barcode_umi`` holds only the barcodes with signal in this cell (mitool tag-stat emits count>0 rows).
+    Off-panel barcodes (absent from ``barcode_to_feature``) are ignored, mirroring the inner join.
+    Returns ``{feature: umi}`` for the features called present in this cell.
+    """
+    present: dict[str, dict[str, float]] = {}
+    for bc, umi in barcode_umi.items():
+        feat = barcode_to_feature.get(bc)
+        if feat is None:
+            continue  # off-panel barcode — ignored, mirrors the tag->feature inner join
+        present.setdefault(feat, {})[bc] = umi
+    out: dict[str, float] = {}
+    for feat, bc_umis in present.items():
+        if feature_modes.get(feat, "sum") == "all":
+            members = feature_barcodes[feat]
+            # Every member must be PRESENT in this cell and clear min_umi. Testing presence explicitly
+            # (rather than bc_umis.get(bc, 0.0) >= min_umi) keeps AND correct at min_umi == 0, where a
+            # 0.0 default would otherwise let an absent barcode "fire" — matching the vectorized _load
+            # path, which never sees absent barcodes because they drop out of the inner join.
+            if all(bc in bc_umis and bc_umis[bc] >= min_umi for bc in members):
+                out[feat] = sum(bc_umis.values())
+            # else: not every member fired -> feature not called in this cell (omitted)
+        else:  # "sum" / OR
+            out[feat] = sum(bc_umis.values())
+    return out
 
 
 def with_fraction(counts: pl.DataFrame) -> pl.DataFrame:
@@ -143,9 +252,8 @@ def per_cell_summary(per_cell: pl.DataFrame) -> pl.DataFrame:
         pl.col("fraction").max().alias("maxFraction"),
         pl.col("_entry")
         .sort_by(["fraction", "feature"], descending=[True, False])
-        # bullet with non-breaking padding — a plain " | " reads as too thin/crowded in the table cell,
-        # and normal spaces collapse in HTML, so the U+00A0 padding is what makes the separation stick.
-        .str.join("  •  ")
+        # comma-separated, dominant feature first.
+        .str.join(", ")
         .alias("featureSummary"),
     ]
     out_cols = ["sampleId", "cellId", "maxUmiCount", "maxFraction"]
@@ -164,6 +272,8 @@ def _load(
     umi_count_col: str,
     csv_barcode_col: str = "tag",
     csv_feature_col: str = "feature",
+    combine_col: str | None = None,
+    min_umi: float = 1.0,
 ) -> pl.DataFrame:
     """Aggregated mitool ``tag-stat -u`` rows -> (cellId, feature, umiCount) long frame.
 
@@ -172,9 +282,11 @@ def _load(
     (molecule) count for the group -- mitool does the deduplication, so we take that column directly
     rather than counting raw UMI rows ourselves. The tag->feature CSV maps the feature barcode to its
     feature/antigen name; ``csv_barcode_col``/``csv_feature_col`` let the user
-    map arbitrary CSV header names to that barcode/feature role. We sum the distinct-UMI counts
-    across barcodes that map to the same feature. The output column is always named ``feature``
-    regardless of the source CSV's header, since downstream Xsv import depends on that name.
+    map arbitrary CSV header names to that barcode/feature role. Barcodes that map to the same feature
+    are collapsed per that feature's combine mode (``combine_col``): ``"sum"``/absent sums the
+    distinct-UMI counts (OR — the default), ``"all"`` emits the feature only in cells where every member
+    barcode fired (>= ``min_umi``; AND — see ``combine_barcode_counts``). The output column is always
+    named ``feature`` regardless of the source CSV's header, since downstream Xsv import depends on it.
     """
     stat = pl.read_csv(tag_stat_tsv, separator="\t")
     # A header-only tag-stat (a sample whose reads were all dropped -- e.g. every read off-panel) has no
@@ -208,6 +320,31 @@ def _load(
             f"(column {csv_barcode_col!r}); each feature barcode must map to exactly one feature. "
             f"Remove the duplicate rows: {dup_barcodes[:8]}"
         )
+    # Per-feature combine mode + member-barcode set, parsed once from the (small) mapping. Default is
+    # "sum" (OR). A combine column lets a feature request "all" (AND) — see combine_barcode_counts. A
+    # blank cell means unset (defaults to "sum"); the non-blank rows of one feature must agree.
+    feature_barcodes: dict[str, set[str]] = {}
+    feature_modes_raw: dict[str, set[str]] = {}
+    map_cols = [csv_barcode_col, csv_feature_col] + ([combine_col] if combine_col else [])
+    for row in mapping.select(map_cols).iter_rows(named=True):
+        feat = row[csv_feature_col]
+        feature_barcodes.setdefault(feat, set()).add(row[csv_barcode_col])
+        if combine_col:
+            raw = row[combine_col]
+            mode = ("" if raw is None else str(raw)).strip().lower()
+            if mode:
+                if mode not in ("sum", "all"):
+                    raise SystemExit(f"invalid {combine_col!r} value {mode!r} for feature {feat!r}; allowed: sum, all")
+                feature_modes_raw.setdefault(feat, set()).add(mode)
+    feature_modes: dict[str, str] = {}
+    for feat, vals in feature_modes_raw.items():
+        if len(vals) > 1:
+            raise SystemExit(
+                f"feature {feat!r} has conflicting {combine_col!r} values {sorted(vals)}; "
+                f"every row of a feature must request the same combine mode"
+            )
+        feature_modes[feat] = next(iter(vals))
+
     joined = stat.join(mapping, left_on=feature_tag_col, right_on=csv_barcode_col, how="inner")
     print(
         f"[per-cell-metrics] inner-join {feature_tag_col}={csv_barcode_col} -> {joined.height} rows",
@@ -223,8 +360,32 @@ def _load(
     rename = {cell_col: "cellId"}
     if csv_feature_col != "feature":
         rename[csv_feature_col] = "feature"
+
+    # Per-feature mode + expected member-barcode count, as a frame to join onto the aggregate. n_expected
+    # is how many DISTINCT barcodes map to the feature; the AND gate keeps a (cell, feature) group only
+    # when that many member barcodes fired in the cell. With no combine column every feature is "sum",
+    # so the filter is a no-op and the result is identical to the historical sum-only behaviour.
+    mode_df = pl.DataFrame(
+        {
+            csv_feature_col: list(feature_barcodes.keys()),
+            "_mode": [feature_modes.get(f, "sum") for f in feature_barcodes],
+            "_nExpected": [len(feature_barcodes[f]) for f in feature_barcodes],
+        },
+        schema={csv_feature_col: pl.Utf8, "_mode": pl.Utf8, "_nExpected": pl.UInt32},
+    )
     counts = (
-        joined.group_by([cell_col, csv_feature_col]).agg(pl.col(umi_count_col).sum().alias("umiCount")).rename(rename)
+        joined.with_columns((pl.col(umi_count_col) >= min_umi).alias("_fired"))
+        .group_by([cell_col, csv_feature_col])
+        .agg(
+            pl.col(umi_count_col).sum().alias("umiCount"),
+            # distinct member barcodes that fired in this cell (each tag-stat row is one barcode)
+            pl.col("_fired").sum().cast(pl.UInt32).alias("_nFired"),
+        )
+        .join(mode_df, on=csv_feature_col, how="left")
+        # sum-mode features always survive; "all"-mode only when every member barcode fired
+        .filter((pl.col("_mode") != "all") | (pl.col("_nFired") == pl.col("_nExpected")))
+        .select([cell_col, csv_feature_col, "umiCount"])
+        .rename(rename)
     )
     print(
         f"[per-cell-metrics] counts (cell x feature): {counts.height} rows",
@@ -255,10 +416,47 @@ def main() -> None:
         default="feature",
         help="CSV column holding the feature/antigen name",
     )
+    p.add_argument(
+        "--combine-col",
+        default=None,
+        help="optional CSV column giving each feature's combine mode when it is read out by more than "
+        "one barcode: 'sum' (OR — sum member barcodes; the default when absent/blank) or 'all' (AND — "
+        "call the feature only in cells where every member barcode fired)",
+    )
+    p.add_argument(
+        "--min-umi",
+        type=float,
+        default=1.0,
+        help="minimum per-barcode distinct-UMI count for a barcode to count as 'fired' under the 'all' "
+        "(AND) combine mode (default 1)",
+    )
     p.add_argument("--dominance-threshold", type=float, default=0.6)
     p.add_argument("--control", default=None, help="negative-control feature name")
+    p.add_argument(
+        "--offtarget-col",
+        default=None,
+        help="CSV property column (e.g. antigen_class) designating on/off-target; features whose value "
+        "is in --offtarget-values are excluded from the dominant call (like the control) and enable the "
+        "cross-reactive label",
+    )
+    p.add_argument(
+        "--offtarget-values",
+        default=None,
+        help="comma-separated values of --offtarget-col that mark a feature as off-target (e.g. 'Off-Target,Decoy')",
+    )
     p.add_argument("--output-prefix", default="result")
     args = p.parse_args()
+
+    # Resolve the off-target feature set from the designated property column + values. Both flags must be
+    # given together; features carrying an off-target value are excluded from the dominant call (as the
+    # control is) and turn on the cross-reactive label. Absent -> unchanged behaviour (empty set).
+    offtargets: frozenset[str] = frozenset()
+    if (args.offtarget_col is None) != (args.offtarget_values is None):
+        raise SystemExit("--offtarget-col and --offtarget-values must be given together")
+    if args.offtarget_col is not None:
+        wanted = frozenset(v.strip() for v in args.offtarget_values.split(",") if v.strip())
+        offtargets = offtarget_features(args.tag_feature_csv, args.csv_feature_col, args.offtarget_col, wanted)
+    label_crossreactive = len(offtargets) > 0
 
     # Guard the user-mapped CSV column names: the two roles must be distinct, and neither may
     # collide with a tag-stat column. On the inner join, every tag-stat column is carried into the
@@ -272,10 +470,17 @@ def main() -> None:
         reserved = set(next(csv.reader(fh, delimiter="\t"), []))
     if args.csv_barcode_col == args.csv_feature_col:
         raise SystemExit("--csv-barcode-col and --csv-feature-col must differ")
-    for name, val in (
+    if args.combine_col is not None and args.combine_col in (args.csv_barcode_col, args.csv_feature_col):
+        raise SystemExit("--combine-col must differ from --csv-barcode-col and --csv-feature-col")
+    if args.min_umi < 0:
+        raise SystemExit("--min-umi must be >= 0")
+    cols_to_check = [
         ("--csv-barcode-col", args.csv_barcode_col),
         ("--csv-feature-col", args.csv_feature_col),
-    ):
+    ]
+    if args.combine_col is not None:
+        cols_to_check.append(("--combine-col", args.combine_col))
+    for name, val in cols_to_check:
         if val in reserved:
             raise SystemExit(
                 f"{name}={val!r} collides with a tag-stat column ({sorted(reserved)}); choose a different CSV column"
@@ -289,6 +494,8 @@ def main() -> None:
         args.umi_count_col,
         args.csv_barcode_col,
         args.csv_feature_col,
+        args.combine_col,
+        args.min_umi,
     )
     counts = counts.with_columns(pl.lit(args.sample_id).alias("sampleId"))
 
@@ -312,28 +519,41 @@ def main() -> None:
     # counts are all > 0), so None is never produced. Mirrors consensus_category, which the tests pin
     # (and an oracle test cross-checks this vectorized path against it).
     threshold = max(args.dominance_threshold, DOMINANCE_FLOOR)
-    # The negative control is a reference, not a callable antigen: exclude it from the
-    # winner candidates so a control-dominated cell is "ambiguous", never the control. Its UMIs stay in
-    # `_total` (the denominator, computed from the full `counts`), so control signal suppresses dominance
-    # rather than being renormalised away. Mirrors consensus_category(control=...), which the oracle test
-    # pins the vectorized path against.
-    antigens = counts if args.control is None else counts.filter(pl.col("feature") != args.control)
+    # The negative control and the off-target features are references, not callable antigens: exclude
+    # them from the winner candidates so a control/off-target-dominated cell is "ambiguous", never the
+    # control or an off-target. Their UMIs stay in `_total` (the denominator, computed from the full
+    # `counts`), so their signal suppresses dominance rather than being renormalised away. When off-
+    # targets are designated, a cell whose on-target signal collectively passes the threshold but is
+    # spread across >= 2 on-targets is "cross-reactive". Mirrors consensus_category(control=..., off
+    # targets=..., label_crossreactive=...), which the oracle test pins the vectorized path against.
+    excluded = list(offtargets) + ([args.control] if args.control is not None else [])
+    antigens = counts if not excluded else counts.filter(~pl.col("feature").is_in(excluded))
     totals = counts.group_by(["sampleId", "cellId"]).agg(pl.col("umiCount").sum().alias("_total"))
     tops = antigens.group_by(["sampleId", "cellId"]).agg(
         pl.col("umiCount").max().alias("_max"),
         (pl.col("umiCount") == pl.col("umiCount").max()).sum().alias("_nAtMax"),
         pl.col("feature").sort_by("umiCount", descending=True).first().alias("_top"),
+        # on-target signal: sum + distinct on-target features present (for the cross-reactive branch)
+        pl.col("umiCount").sum().alias("_onTotal"),
+        pl.col("feature").n_unique().alias("_nOn"),
     )
     (
         totals.join(tops, on=["sampleId", "cellId"], how="left")
         .with_columns(
-            # _top is null for a cell whose only signal is the control -> ambiguous.
+            # _top is null for a cell whose only signal is control/off-target -> ambiguous.
             pl.when(
                 pl.col("_top").is_not_null()
                 & (pl.col("_nAtMax") == 1)
                 & (pl.col("_max") / pl.col("_total") >= threshold)
             )
             .then(pl.col("_top"))
+            .when(
+                # cross-reactive: on-target signal collectively dominates but is split across >= 2 on-targets
+                pl.lit(label_crossreactive)
+                & (pl.col("_nOn") >= 2)
+                & (pl.col("_onTotal") / pl.col("_total") >= threshold)
+            )
+            .then(pl.lit(CROSS_REACTIVE))
             .otherwise(pl.lit("ambiguous"))
             .alias("consensusFeature")
         )

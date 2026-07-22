@@ -1,9 +1,9 @@
 // refine-tags sub-template (render.create boundary): emit the feature panel, then refine-tags.
 //
-// Returns refined.mic + refine_report.json to the caller. Progress capture (saveStdoutStream) is
-// deliberately NOT used — see fb-parse.tpl.tengo for why (it injects a drifting stdout file into the
-// exec's files map and caused the CIDConflictError). Mirrors blocks/peptide-extraction
-// umi-consensus.tpl.tengo (minus the log stream).
+// Returns refined.mic + refine_report.json + a live stdout stream (refineLogStream) to the caller.
+// Capturing stdout is safe now that main.tpl content-hash-persists the mitool intermediates (see
+// fb-parse.tpl.tengo header) — it used to cause the CIDConflictError. Mirrors blocks/peptide-extraction
+// umi-consensus.tpl.tengo. Only the refine-tags exec streams; the deterministic panel-emit exec does not.
 //
 // refine-tags error-corrects cell, feature, and UMI barcodes. FEATURE snaps to the panel whitelist
 // (#file:panel.txt): within-Hamming-1 reads snap to a panel barcode, off-panel reads are dropped. CELL
@@ -14,10 +14,13 @@ self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 
-self.defineOutputs("refinedMic", "refineReport")
+self.defineOutputs("refinedMic", "refineReport", "refineLogStream")
 
 mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
 emitPanelSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:emit-panel")
+
+// mitool progress-line marker (see fb-parse.tpl.tengo) — drives the model's per-step live log/progress.
+progressPrefix := "[==PROGRESS==]"
 
 self.body(func(inputs) {
 	parsedMic := inputs.parsedMic
@@ -43,12 +46,12 @@ self.body(func(inputs) {
 		saveFile("panel.txt").
 		run()
 
-	// RAM = base + reads*4, capped at 128 GiB; static fallback = base. workflow-tengo 6.7.0 fluent
-	// formula API fed via .resources({ onCPU }) (see fb-parse for the migration note).
+	// RAM = base + reads*4, capped at 256 GiB (mirrors mixcr-analyze); static fallback = base.
+	// workflow-tengo 6.7.0 fluent formula API fed via .resources({ onCPU }) (see fb-parse note).
 	formula := exec.formula
 	memFormula := formula.gib(memBaseGB).
 		plus(formula.size("reads").times(4)).
-		between(formula.gib(memBaseGB), formula.gib(128)).
+		between(formula.gib(memBaseGB), formula.gib(256)).
 		staticFallback(formula.gib(memBaseGB))
 
 	cellTag := tags.cell
@@ -57,6 +60,9 @@ self.body(func(inputs) {
 	}
 
 	refine := exec.builder().
+		printErrStreamToStdout().
+		saveStdoutStream().
+		env("MI_PROGRESS_PREFIX", progressPrefix).
 		software(mitoolSw)
 	if memOverrideGB > 0 {
 		refine = refine.cpu(mitoolCPUs).mem(string(memOverrideGB) + "GiB")
@@ -76,6 +82,7 @@ self.body(func(inputs) {
 
 	return {
 		refinedMic: refine.getFile("refined.mic"),
-		refineReport: refine.getFile("refine_report.json")
+		refineReport: refine.getFile("refine_report.json"),
+		refineLogStream: refine.getStdoutStream()
 	}
 })

@@ -15,6 +15,7 @@ assets := import("@platforma-sdk/workflow-tengo:assets")
 render := import("@platforma-sdk/workflow-tengo:render")
 pframes := import("@platforma-sdk/workflow-tengo:pframes")
 pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
+exec := import("@platforma-sdk/workflow-tengo:exec")
 ll := import("@platforma-sdk/workflow-tengo:ll")
 file := import("@platforma-sdk/workflow-tengo:file")
 columnSpecs := import(":column-specs")
@@ -22,9 +23,15 @@ columnSpecs := import(":column-specs")
 fbPipelineTpl := assets.importTemplate(":fb-pipeline")
 prerunTpl := assets.importTemplate(":prerun")
 qcSummaryTpl := assets.importTemplate(":qc-summary")
+featurePropsTpl := assets.importTemplate(":fb-feature-properties")
 
-defaultMitoolMemGB := 16
-defaultMitoolCPUs := 4
+featurePropsSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:feature-properties")
+
+// Resource defaults mirror the MiXCR blocks (mixcr-analyze): 16 CPUs and a 64 GiB base per mitool
+// process. FI's parse/refine are as compute- and RAM-heavy as mixcr alignment, so err large by
+// default; users can still override via perProcessCPUs / perProcessMemGB (Advanced Settings).
+defaultMitoolMemGB := 64
+defaultMitoolCPUs := 16
 
 // Staging imports + exports the CSV to drive its upload before production needs it, and emits the
 // feature-name list for the control dropdown (see prerun.tpl).
@@ -61,6 +68,17 @@ wf.body(func(args) {
 	// string so the extra-input field below resolves and never stalls the body.
 	cellWhitelist := is_undefined(args.cellWhitelist) ? "" : args.cellWhitelist
 
+	// Off-target designation (optional, F2). The model gives offtargetProperty (an imported per-feature
+	// property column, e.g. antigen_class) and offtargetValues (the multi-selected values of that column
+	// marking a feature as off-target). Join the value list into the comma-separated string the Python
+	// --offtarget-values expects; "" for either = feature off (unchanged dominant call).
+	offtargetProperty := is_undefined(args.offtargetProperty) ? "" : args.offtargetProperty
+	offtargetValueList := is_undefined(args.offtargetValues) ? [] : args.offtargetValues
+	offtargetValues := ""
+	for i, v in offtargetValueList {
+		offtargetValues = i == 0 ? v : offtargetValues + "," + v
+	}
+
 	// Per-sample body inputs. processColumn binds EVERY extra key as a body input field and waits for
 	// each to be set before firing the body (pframes/index.lib.tengo: `renderInputs["__extra_"+k]=v`),
 	// so a key whose value is `undefined` creates a field that never resolves and stalls the body.
@@ -77,10 +95,22 @@ wf.body(func(args) {
 		fileExtension: fileExtension,
 		barcodeSeqColumn: args.barcodeSeqColumn,
 		featureNameColumn: args.featureNameColumn,
+		// Optional per-feature combine-mode column (multi-barcode antigens). "" = off (every feature sums
+		// its barcodes = OR). minUmi is the AND-mode per-barcode "fired" floor; always defined (default 1).
+		combineColumn: is_undefined(args.combineColumn) ? "" : args.combineColumn,
+		minUmi: is_undefined(args.minUmi) ? 1 : args.minUmi,
+		// Off-target designation (F2) — property column + comma-joined off-target values ("" = off).
+		offtargetColumn: offtargetProperty,
+		offtargetValues: offtargetValues,
 		cellWhitelist: cellWhitelist
 	}
 	if hasControl {
 		extraInputs.control = control
+	}
+	// Preview (dry-run) read cap. Only add the field when set (an undefined extra-input field would stall
+	// the per-sample body, like `control`); absent -> full run (fb-parse applies no --limit).
+	if !is_undefined(args.limitInput) {
+		extraInputs.limitInput = args.limitInput
 	}
 
 	// processColumn outputs: the per-cell contract value columns + the per-sample QC CSV collected as a
@@ -114,6 +144,86 @@ wf.body(func(args) {
 		},
 		name: "stepReports"
 	})
+	// Per-sample x per-step LIVE stdout-stream map (parse / refine / tag-stat), keyed [step]. The model
+	// exposes these as per-step log handles (PlLogView) and scrapes them for live per-step progress.
+	// Same generic pl7.app/log column peptide-extraction uses, distinguished from the flat parse stream
+	// below by having the step axis rather than a fixed step domain.
+	outputs = append(outputs, {
+		type: "ResourceMap",
+		spec: {
+			kind: "PColumn",
+			name: "pl7.app/log",
+			domain: { "pl7.app/blockId": blockId },
+			valueType: "Log",
+			axesSpec: [{ name: "pl7.app/feature/step", type: "String" }]
+		},
+		name: "stepLogs"
+	})
+	// Flat parse stdout stream (the 1-parse stream, surfaced without the step axis). Registers the moment
+	// the body runs — before any sample finishes — so it drives the live parse % + the early sample roster
+	// (peptide pattern). Same pl7.app/log column, pinned to step 1-parse via domain.
+	outputs = append(outputs, {
+		type: "Resource",
+		spec: {
+			kind: "PColumn",
+			name: "pl7.app/log",
+			domain: { "pl7.app/blockId": blockId, "pl7.app/feature/step": "1-parse" },
+			valueType: "Log"
+		},
+		name: "parseLogStream"
+	})
+	// per-cell-metrics (Python) stdout — the "4-metrics" step log, surfaced flat (keyed [sampleId] by
+	// processColumn). Kept out of the stepLogs map because that map is built upstream (fb-refine-tagstat)
+	// before the metrics step runs; the model keys this at step "4-metrics" and the UI reads it there.
+	outputs = append(outputs, {
+		type: "Resource",
+		spec: {
+			kind: "PColumn",
+			name: "pl7.app/log",
+			domain: { "pl7.app/blockId": blockId, "pl7.app/feature/step": "4-metrics" },
+			valueType: "Log"
+		},
+		name: "metricsLogStream"
+	})
+	// mitool intermediates persisted by content hash (dedup / CID stability). parse/refine/tag-stat are
+	// deterministic, but a downstream consumer resolving through their outputs (parse/refine reports -> qc;
+	// parsed.mic/tagstat.tsv -> the metrics chain) walks into the streaming execs' files map, whose CID
+	// drifts run-to-run -> CIDConflictError (the reason stdout capture was removed from the mitool steps).
+	// Surfacing them as content-hashed File outputs pins their CIDs so those resolutions stay stable across
+	// re-renders, and downstream reuses them instead of re-running the whole block on a settings change. No
+	// model/UI consumer — the persistence itself is the point. Mirrors blocks/peptide-extraction. Each is a
+	// per-sample Resource -> processColumn yields a [sampleId] map.
+	for pn in ["parsedMic", "parseReport", "refineReport", "tagstatTsv"] {
+		outputs = append(outputs, {
+			type: "Resource",
+			spec: {
+				kind: "PColumn",
+				name: "pl7.app/feature/" + pn,
+				domain: { "pl7.app/blockId": blockId },
+				valueType: "File"
+			},
+			name: pn
+		})
+	}
+	// Same content-hash persistence for the per-cell-metrics (Python) exec's file outputs. Required because
+	// fb-downstream now also captures that exec's stdout (the 4-metrics log): the stream makes the exec's
+	// files map rate-dependent, so resolving abundance/fractions/... through it drifts the CID and throws
+	// CIDConflictError (poisoning the whole per-sample body). Pinning these files by content hash keeps
+	// those resolutions stable — the metrics analogue of the mitool loop above. A `path` maps each pin to
+	// the existing body output without colliding with the Xsv/File output of the same name.
+	for pn in ["abundance", "fractions", "consensus", "specificity", "perCellSummary"] {
+		outputs = append(outputs, {
+			type: "Resource",
+			spec: {
+				kind: "PColumn",
+				name: "pl7.app/feature/persist/" + pn,
+				domain: { "pl7.app/blockId": blockId },
+				valueType: "File"
+			},
+			name: pn + "Persist",
+			path: [pn]
+		})
+	}
 
 	// mitool resource meta (mixcr semantics): pass the base memory floor always; add the override key
 	// only when the user set one (Advanced Settings) so fb-pipeline treats it as a hard fixed request.
@@ -147,7 +257,7 @@ wf.body(func(args) {
 		type: "milaboratories.feature-integration",
 		id: blockId,
 		importance: 30,
-		label: "Feature Integration"
+		label: "Feature Barcode Profiling"
 	})
 
 	addXsvTo := func(fb, outputName) {
@@ -190,6 +300,34 @@ wf.body(func(args) {
 		sampleAxisSpec: sampleAxis
 	})
 
+	// --- per-feature properties (A-0026) ---
+	// Import every EXTRA tag-CSV column (beyond the mapped barcode-sequence + feature-name roles) as a
+	// per-feature property and surface it on the shared feature axis, so downstream can group / filter the
+	// binding profile by property (A-0015). Panel-global (one value per feature, same for every sample), so
+	// this runs ONCE on the shared CSV blob OUTSIDE the per-sample processColumn fan-out — not per sample.
+	// emit_feature_properties.py writes the wide per-feature CSV + a meta JSON (property names + distinct
+	// values); fb-feature-properties.tpl reads the meta and builds one p-column per property keyed on the
+	// feature axis. The sample column, when set, is a role too (not a property) and is excluded.
+	featurePropsSampleColumn := is_undefined(args.sampleColumn) ? "" : args.sampleColumn
+	featurePropsRun := exec.builder().
+		software(featurePropsSw).
+		cpu(1).mem("1GiB").
+		addFile("tags.csv", csvFile).
+		arg("tags.csv").
+		arg("--csv-barcode-col").arg(args.barcodeSeqColumn).
+		arg("--csv-feature-col").arg(args.featureNameColumn).
+		arg("--sample-col").arg(featurePropsSampleColumn).
+		arg("--output-prefix").arg("result").
+		saveFile("result_feature_properties.csv").
+		saveFileContent("result_feature_property_meta.json").
+		run()
+	featurePropsResult := render.create(featurePropsTpl, {
+		propertiesFile: featurePropsRun.getFile("result_feature_properties.csv"),
+		propertyMeta: featurePropsRun.getFileContent("result_feature_property_meta.json"),
+		blockId: blockId,
+		traceSeedSpec: inputSpec
+	})
+
 	return {
 		outputs: {
 			// Collapsed per-cell results table (one row per [sampleId, cellId]).
@@ -200,8 +338,27 @@ wf.body(func(args) {
 			// (completed-sample heartbeat + run-level summary) from it.
 			qcJson: perSampleResults.outputData("qcJson"),
 			// Per-sample x per-step report-file map -> model derives each sample's current step from
-			// which reports are present (deterministic per-step progress, no stdout streams).
+			// which reports are present (deterministic per-step progress).
 			stepReports: perSampleResults.outputData("stepReports"),
+			// Per-sample x per-step LIVE stdout-stream map -> model per-step log handles + live progress.
+			stepLogs: perSampleResults.outputData("stepLogs"),
+			// Flat parse stdout stream -> model live parse % + early sample roster (registers first).
+			parseLogStream: perSampleResults.outputData("parseLogStream"),
+			// per-cell-metrics (Python) stdout -> model 4-metrics step log.
+			metricsLogStream: perSampleResults.outputData("metricsLogStream"),
+			// mitool intermediates kept reachable so they're persisted by content hash (dedup / CID
+			// stability — see the output-spec note above). No model/UI consumer; the persistence is the point.
+			parsedMic: perSampleResults.outputData("parsedMic"),
+			parseReport: perSampleResults.outputData("parseReport"),
+			refineReport: perSampleResults.outputData("refineReport"),
+			tagstatTsv: perSampleResults.outputData("tagstatTsv"),
+			// metrics-exec file outputs kept reachable so they're content-hash-persisted (see the persist
+			// loop above) — this is what makes capturing the metrics stdout CID-safe. No model consumer.
+			abundancePersist: perSampleResults.outputData("abundancePersist"),
+			fractionsPersist: perSampleResults.outputData("fractionsPersist"),
+			consensusPersist: perSampleResults.outputData("consensusPersist"),
+			specificityPersist: perSampleResults.outputData("specificityPersist"),
+			perCellSummaryPersist: perSampleResults.outputData("perCellSummaryPersist"),
 			// Expose the tag->feature CSV import HANDLE so the model can watch it via getImportProgress()
 			// (model/src/index.ts). That model output is the actual upload driver: it registers the import
 			// with the middle-layer so the CSV bytes are pushed. Without it the CSV blob never materialises
@@ -210,7 +367,13 @@ wf.body(func(args) {
 			tagFeatureCsvImportHandle: csvImport.handle
 		},
 		exports: {
-			perCellFeatures: finalPf
+			perCellFeatures: finalPf,
+			// Per-feature properties (A-0026), keyed on the shared feature axis (pl7.app/feature/featureId).
+			// A separate frame keeps the per-cell contract above unchanged; the result pool is flat, so
+			// these are discoverable/joinable by the feature axis downstream (VDJ Multiomic Integration
+			// reuses this exact feature axis for its per-feature outputs). Empty when the CSV has no extra
+			// columns.
+			featureProperties: featurePropsResult.output("featureProperties")
 		}
 	}
 })

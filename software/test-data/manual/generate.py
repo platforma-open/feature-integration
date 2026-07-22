@@ -35,7 +35,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from lib import antigen, gex, panelswap, validate, vdj  # noqa: E402
+from lib import annotations, antigen, beam_exact, gex, panelswap, validate, vdj  # noqa: E402
 from lib import panel as panel_mod  # noqa: E402
 from lib.antigen import AntigenConfig  # noqa: E402
 
@@ -45,15 +45,15 @@ RUNS_DIR = os.path.join(HERE, "runs")
 
 # preset -> default scale/calibration/barcode-source (all overridable on the CLI).
 PRESETS = {
-    "tiny":          dict(samples=2, cells=80, panel_size=4, barcode_source="random"),
-    "realistic":     dict(samples=24, cells=2000, panel_size=15, barcode_source="random"),
+    "tiny": dict(samples=2, cells=80, panel_size=4, barcode_source="random"),
+    "realistic": dict(samples=24, cells=2000, panel_size=15, barcode_source="random"),
     "whitelist737k": dict(samples=24, cells=2000, panel_size=15, barcode_source="whitelist737k"),
 }
 
 # Antigen-only scenarios. errors/offpanel/multilane/control run through antigen.build; the rest have
 # their own generators. Default scenario scale = small (tiny), overridable with --samples/etc.
 ANTIGEN_SCENARIOS = ["errors", "offpanel", "multilane", "control"]
-SPECIAL_SCENARIOS = ["degraded", "panel-swap", "multisample"]
+SPECIAL_SCENARIOS = ["degraded", "panel-swap", "multisample", "libraseq"]
 ALL_SCENARIOS = ANTIGEN_SCENARIOS + SPECIAL_SCENARIOS
 
 
@@ -63,28 +63,60 @@ def sample_names(n):
     return [f"donor{i + 1:02d}" for i in range(n)]
 
 
-def build_full_run(run_dir, samples, cells, panel_size, barcode_source, arm, do_validate):
+def build_full_run(
+    run_dir,
+    samples,
+    cells,
+    panel_size,
+    barcode_source,
+    arm,
+    do_validate,
+    offtarget_count=0,
+    crossreactive_frac=0.0,
+    multibarcode=False,
+    heavy_only=False,
+    with_annotations=False,
+    messy=False,
+):
     """Build the requested arm(s) of a colocated multiomic run under run_dir."""
-    pnl = panel_mod.build_panel(panel_size)
+    pnl = panel_mod.build_panel(panel_size, offtarget_count=offtarget_count, multibarcode=multibarcode, messy=messy)
     tags_csv = os.path.join(run_dir, "tags.csv")
     consensus_tsv = os.path.join(run_dir, "truth", "expected-consensus.tsv")
 
     if arm in ("all", "antigen"):
-        cfg = AntigenConfig(samples=sample_names(samples), cells_per_sample=cells,
-                            barcode_source=barcode_source, assets_dir=ASSETS_DIR)
-        antigen.build(cfg, pnl, "baseline",
-                      fastq_dir=os.path.join(run_dir, "antigen"),
-                      shared_dir=run_dir,
-                      truth_dir=os.path.join(run_dir, "truth"))
+        cfg = AntigenConfig(
+            samples=sample_names(samples), cells_per_sample=cells, barcode_source=barcode_source, assets_dir=ASSETS_DIR
+        )
+        antigen.build(
+            cfg,
+            pnl,
+            "baseline",
+            fastq_dir=os.path.join(run_dir, "antigen"),
+            shared_dir=run_dir,
+            truth_dir=os.path.join(run_dir, "truth"),
+            crossreactive_frac=crossreactive_frac,
+            multibarcode=multibarcode,
+            messy=messy,
+        )
+        # After the antigen arm so its cell ids exist. Off by default (no annotations/ dir).
+        if with_annotations:
+            annotations.write_annotations(run_dir)
     if arm in ("all", "vdj"):
-        vdj.build(tags_csv, consensus_tsv,
-                  out_dir=os.path.join(run_dir, "vdj"),
-                  truth_dir=os.path.join(run_dir, "truth"))
+        vdj.build(
+            tags_csv,
+            consensus_tsv,
+            out_dir=os.path.join(run_dir, "vdj"),
+            truth_dir=os.path.join(run_dir, "truth"),
+            heavy_only=heavy_only,
+        )
     if arm in ("all", "gex"):
-        gex.build(tags_csv, consensus_tsv,
-                  out_dir=os.path.join(run_dir, "gex"),
-                  truth_dir=os.path.join(run_dir, "truth"),
-                  annot_csv=ANNOT_CSV)
+        gex.build(
+            tags_csv,
+            consensus_tsv,
+            out_dir=os.path.join(run_dir, "gex"),
+            truth_dir=os.path.join(run_dir, "truth"),
+            annot_csv=ANNOT_CSV,
+        )
 
     if do_validate and arm == "all":
         print()
@@ -92,7 +124,9 @@ def build_full_run(run_dir, samples, cells, panel_size, barcode_source, arm, do_
             sys.exit(1)
 
 
-def build_scenario(name, out_dir, samples, cells, panel_size, barcode_source):
+def build_scenario(
+    name, out_dir, samples, cells, panel_size, barcode_source, offtarget_count=0, crossreactive_frac=0.0
+):
     """Build one antigen-only scenario bed into out_dir (self-contained: FASTQs + tags.csv + truth)."""
     if name == "panel-swap":
         panelswap.build_panel_swap(out_dir)
@@ -100,34 +134,126 @@ def build_scenario(name, out_dir, samples, cells, panel_size, barcode_source):
     if name == "multisample":
         panelswap.build_multisample(out_dir)
         return
-    pnl = panel_mod.build_panel(panel_size)
-    cfg = AntigenConfig(samples=sample_names(samples), cells_per_sample=cells,
-                        barcode_source=barcode_source, assets_dir=ASSETS_DIR)
+    cfg = AntigenConfig(
+        samples=sample_names(samples), cells_per_sample=cells, barcode_source=barcode_source, assets_dir=ASSETS_DIR
+    )
+    if name == "libraseq":
+        antigen.build_libraseq(cfg, out_dir)
+        return
+    pnl = panel_mod.build_panel(panel_size, offtarget_count=offtarget_count)
     if name == "degraded":
         antigen.build_degraded(cfg, pnl, out_dir)
     else:
-        antigen.build(cfg, pnl, name, fastq_dir=out_dir, shared_dir=out_dir, truth_dir=out_dir)
+        antigen.build(
+            cfg,
+            pnl,
+            name,
+            fastq_dir=out_dir,
+            shared_dir=out_dir,
+            truth_dir=out_dir,
+            crossreactive_frac=crossreactive_frac,
+        )
 
 
 def main():
-    ap = argparse.ArgumentParser(
-        formatter_class=argparse.RawDescriptionHelpFormatter, description=__doc__)
-    ap.add_argument("preset", nargs="?", default="realistic", choices=list(PRESETS),
-                    help="which full-run preset to build (default: realistic)")
-    ap.add_argument("--arm", default="all", choices=["all", "antigen", "vdj", "gex"],
-                    help="build only one arm of the run (default: all)")
-    ap.add_argument("--scenario", choices=ALL_SCENARIOS,
-                    help="build an antigen-only scenario into runs/scenarios/<name>/ instead of a "
-                         "full run")
-    ap.add_argument("--no-validate", action="store_true",
-                    help="skip the offline validator after a full run")
-    ap.add_argument("--validate-only", action="store_true",
-                    help="run the offline validator against an existing run and exit (no regeneration)")
+    ap = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter, description=__doc__)
+    ap.add_argument(
+        "preset",
+        nargs="?",
+        default="realistic",
+        choices=list(PRESETS),
+        help="which full-run preset to build (default: realistic)",
+    )
+    ap.add_argument(
+        "--arm",
+        default="all",
+        choices=["all", "antigen", "vdj", "gex"],
+        help="build only one arm of the run (default: all)",
+    )
+    ap.add_argument(
+        "--scenario",
+        choices=ALL_SCENARIOS,
+        help="build an antigen-only scenario into runs/scenarios/<name>/ instead of a full run",
+    )
+    ap.add_argument("--no-validate", action="store_true", help="skip the offline validator after a full run")
+    ap.add_argument(
+        "--validate-only",
+        action="store_true",
+        help="run the offline validator against an existing run and exit (no regeneration)",
+    )
+    ap.add_argument(
+        "--beam",
+        action="store_true",
+        help="build the BEAM-exact fixture (offset-10 R2 + sample-aware panel) into runs/beam-exact/",
+    )
     ap.add_argument("--samples", type=int, help="override donor count")
     ap.add_argument("--cells-per-sample", type=int, help="override cells per donor")
     ap.add_argument("--panel-size", type=int, help="override antigen count (excl. control)")
+    ap.add_argument(
+        "--offtarget-count",
+        type=int,
+        default=0,
+        help="mark the first N non-control antigens as Off-Target in the panel Type column "
+        "(rest -> Target, control -> Decoy)",
+    )
+    ap.add_argument(
+        "--crossreactive-frac",
+        type=float,
+        default=0.0,
+        help="fraction of binder cells planted to bind TWO on-target antigens co-dominantly (~equal "
+        "UMIs); these are labeled 'crossreactive' in the truth so the block's cross-reactive call is "
+        "testable (default 0.0 -> none, byte-identical to prior runs)",
+    )
+    ap.add_argument(
+        "--multibarcode",
+        action="store_true",
+        help="map some antigens to MULTIPLE feature barcodes with a per-antigen combine mode "
+        "(first antigen -> combine=all, second -> combine=sum, rest single-barcode sum); tags.csv "
+        "gains a `combine` column and feature_reference.csv per-member ids (<feat>_1/<feat>_2) so the "
+        "FI multi-barcode combine logic is testable in a full run. Off by default (byte-identical)",
+    )
+    ap.add_argument(
+        "--heavy-only",
+        action="store_true",
+        help="emit a HEAVY-CHAIN-ONLY (IGH, no IGK) VDJ arm — the customer's VHH single-domain "
+        "antibody — so the heavy-only end-to-end path is reproducible; applies to the vdj and all "
+        "arms. Each cell keeps its shared bare-16nt cell_id. Off by default (paired IGH+IGK)",
+    )
+    ap.add_argument(
+        "--with-annotations",
+        action="store_true",
+        help="also emit a per-cell categorical annotation (annotations/donorNN.tsv: cell_id, cell_type, "
+        "cluster) keyed by the shared bare-16nt cell barcode, biased by the planted antigen class. This "
+        "feeds vdj-multiomic-integration's annotation-integration path (an alternative to GEX -> "
+        "cell-type-annotation). Off by default (no annotations/ dir, byte-identical to prior runs)",
+    )
+    ap.add_argument(
+        "--messy-metadata",
+        action="store_true",
+        help="inject the real customer panel's inconsistent casing/whitespace into the EMITTED panel "
+        "metadata: the Type column carries a mixed-case off-target set (both 'Off-Target' and "
+        "'Off-target') and one antigen name gains a stray double space. Reproduces the B043 problem so a "
+        "mixed-case panel is available to exercise the block's case-sensitive off-target matching — the "
+        "user must select each casing present (whitespace is trimmed, casing is not folded). Messy LABELS "
+        "only — the barcode joins and truth tables stay coherent. Applies to the full-run panel; off by "
+        "default (byte-identical to prior runs)",
+    )
     ap.add_argument("--out", help="override the output directory")
     args = ap.parse_args()
+
+    if args.beam:
+        run_dir = args.out or os.path.join(RUNS_DIR, "beam-exact")
+        cells = args.cells_per_sample or 150
+        panel_size = args.panel_size or 12
+        print(f"=== beam-exact (2 samples x {cells} cells x {panel_size} antigens, offset-10) -> {run_dir} ===")
+        beam_exact.build(
+            run_dir,
+            cells_per_sample=cells,
+            panel_size=panel_size,
+            offtarget_count=args.offtarget_count,
+            multibarcode=args.multibarcode,
+        )
+        return
 
     if args.validate_only:
         run_dir = args.out or os.path.join(RUNS_DIR, args.preset)
@@ -140,7 +266,16 @@ def main():
         panel_size = args.panel_size or 4
         out_dir = args.out or os.path.join(RUNS_DIR, "scenarios", args.scenario)
         print(f"=== scenario: {args.scenario} -> {out_dir} ===")
-        build_scenario(args.scenario, out_dir, samples, cells, panel_size, "random")
+        build_scenario(
+            args.scenario,
+            out_dir,
+            samples,
+            cells,
+            panel_size,
+            "random",
+            offtarget_count=args.offtarget_count,
+            crossreactive_frac=args.crossreactive_frac,
+        )
         return
 
     p = PRESETS[args.preset]
@@ -148,12 +283,28 @@ def main():
     cells = args.cells_per_sample or p["cells"]
     panel_size = args.panel_size or p["panel_size"]
     run_dir = args.out or os.path.join(RUNS_DIR, args.preset)
-    print(f"=== preset: {args.preset} ({samples} donors x {cells} cells x {panel_size} antigens+control) "
-          f"-> {run_dir} ===")
-    build_full_run(run_dir, samples, cells, panel_size, p["barcode_source"], args.arm,
-                   do_validate=not args.no_validate)
-    print(f"\npanel: {panel_size} antigens + 1 control | samples: {samples} | cells/sample: {cells} "
-          f"| preset: {args.preset}")
+    print(
+        f"=== preset: {args.preset} ({samples} donors x {cells} cells x {panel_size} antigens+control) -> {run_dir} ==="
+    )
+    build_full_run(
+        run_dir,
+        samples,
+        cells,
+        panel_size,
+        p["barcode_source"],
+        args.arm,
+        do_validate=not args.no_validate,
+        offtarget_count=args.offtarget_count,
+        crossreactive_frac=args.crossreactive_frac,
+        multibarcode=args.multibarcode,
+        heavy_only=args.heavy_only,
+        with_annotations=args.with_annotations,
+        messy=args.messy_metadata,
+    )
+    print(
+        f"\npanel: {panel_size} antigens + 1 control | samples: {samples} | cells/sample: {cells} "
+        f"| preset: {args.preset}"
+    )
 
 
 if __name__ == "__main__":

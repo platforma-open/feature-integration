@@ -23,12 +23,13 @@ runs/<preset>/                 a full multiomic run
   antigen/  donorNN_R{1,2}.fastq.gz          (Feature Integration input)
   vdj/      donorNN.tsv                       (Import V(D)J input, AIRR single-cell)
   gex/      donorNN.csv                       (Import scRNA-seq input, genes-in-rows)
+  annotations/ donorNN.tsv                    (per-cell cell-type/cluster; only with --with-annotations)
   tags.csv  feature_reference.csv  samples-metadata.tsv   (block uploads)
   truth/    expected-abundance.tsv  expected-consensus.tsv
             truth_clonotypes.csv  truth_cells_gex.csv
 runs/scenarios/<name>/         antigen-only behavioural beds (self-contained)
 assets/                        fetched/harvested inputs (see Assets); gitignored except whitelist_cells.txt
-lib/                           the arm generators (antigen, vdj, gex, panel, panelswap, validate)
+lib/                           the arm generators (antigen, vdj, gex, annotations, panel, panelswap, validate)
 ```
 
 `fixtures/per-cell-metrics/` (a sibling of `manual/`, under `test-data/`) is separate: a tiny **committed**
@@ -151,6 +152,33 @@ Supporting files (uploaded inside a block, not as a Samples & Data dataset):
 - **Tag → feature panel CSV** (Feature Integration upload): `runs/<preset>/tags.csv`.
 - **Sample metadata (optional)**: `runs/<preset>/samples-metadata.tsv` (`Sample / Donor / Condition`) —
   only if you want grouping labels downstream; the pipeline and the join do not need it.
+
+## Per-Cell Annotation (Optional; `--with-annotations`)
+
+`python3 generate.py <preset> --with-annotations` also writes `runs/<preset>/annotations/donorNN.tsv`
+(one file per donor/sample) — a synthetic **per-cell categorical annotation** independent of the GEX
+arm. Columns:
+
+| Column | Meaning |
+|---|---|
+| `cell_id` | the arm-shared **bare 16 nt** cell barcode (copied verbatim from the antigen truth, so it joins) |
+| `cell_type` | one of a small fixed vocabulary: `plasma`, `naive_b`, `memory_b` |
+| `cluster` | integer cluster label `0-4`, coherent with `cell_type` |
+
+Cell types are biased by the planted antigen class (binder / cross-reactive → `plasma`; ambiguous /
+non-binder → `naive_b`; a fixed share → `memory_b`), so clusters are coherent with the antigen signal.
+Everything is deterministic under a fixed seed (`ANNOTATION_SEED` in `lib/common.py`).
+
+**Import route.** Upload each `annotations/donorNN.tsv` as a Table / Xsv dataset, keyed on the cell
+barcode, so it imports as a per-cell **String** column on axes `[pl7.app/sampleId, pl7.app/sc/cellId]`.
+The generator's canonical axis order is **`[sampleId, cellId]`** (sample outer, cell inner).
+
+**Why it exists.** It feeds vdj-multiomic-integration's **annotation-integration** path — a deterministic
+alternative to deriving cell types from the GEX arm via `cell-type-annotation` (CellTypist). Because the
+`cell_id` values are the same bare 16-mers as the antigen / VDJ / GEX arms, the annotation joins the
+convergence spine on `[sampleId, cellId]` with no barcode drift (see "The One Rule" above).
+
+Off by default: without the flag no `annotations/` dir is written and every other output is byte-identical.
 
 ## Per-Block Settings (Run Each Block In Order; Press Run Before Adding The Next)
 
