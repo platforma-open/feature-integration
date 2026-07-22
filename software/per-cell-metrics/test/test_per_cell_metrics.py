@@ -192,9 +192,9 @@ def test_offtarget_features_matching_is_case_sensitive(tmp_path):
         {"AgExact", "AgSpaced"}
     )
     # Selecting BOTH casings explicitly catches the lowercase feature too — the user opts in.
-    assert offtarget_features(
-        str(csv), "feature", "Type", frozenset({"Off-Target", "Off-target"})
-    ) == frozenset({"AgExact", "AgSpaced", "AgLower"})
+    assert offtarget_features(str(csv), "feature", "Type", frozenset({"Off-Target", "Off-target"})) == frozenset(
+        {"AgExact", "AgSpaced", "AgLower"}
+    )
 
 
 # --- specificity score (spec A-0014, Cell Ranger betaCDF) ---
