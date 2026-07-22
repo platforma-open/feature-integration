@@ -1,7 +1,7 @@
 ---
-"@platforma-open/milaboratories.feature-integration": patch
-"@platforma-open/milaboratories.feature-integration.model": patch
-"@platforma-open/milaboratories.feature-integration.ui": patch
+"@platforma-open/milaboratories.feature-integration": minor
+"@platforma-open/milaboratories.feature-integration.model": minor
+"@platforma-open/milaboratories.feature-integration.ui": minor
 "@platforma-open/milaboratories.feature-integration.workflow": patch
 "@platforma-open/milaboratories.feature-integration.per-cell-metrics": patch
 ---
@@ -13,7 +13,7 @@ Analysis / functionality:
 - Preview (dry-run) mode with a per-file read cap for fast settings checks.
 - Multi-barcode antigens: `sum` (OR, default) and `all` (AND — called only where every probe barcode fires) combine modes, declared via an optional tag-CSV combine column plus a Min-UMI advanced field (covers the LIBRA-seq dual-probe design).
 - Import per-feature properties from the tag-to-feature CSV's extra columns (A-0026): every column beyond the mapped barcode-sequence and feature-name columns becomes a `pl7.app/feature/property` p-column on the shared feature axis, published as a `featureProperties` export so properties (antigen type, species, pool, ...) ride into VDJ Multiomic Integration and Lead Selection. Generic, no hardcoded schema.
-- Off-target-aware consensus plus a "cross-reactive" label, behind a future-release flag and hidden this pilot: with no designation set, the dominant call is byte-identical to before and the label never appears.
+- Off-target-aware consensus plus a "cross-reactive" label, off by default: the controls are exposed, but with no off-target designation set the dominant call is byte-identical to before and the label never appears.
 
 Resource allocation:
 
