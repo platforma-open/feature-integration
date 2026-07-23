@@ -493,10 +493,10 @@ const gridOptions = {
         @update:model-value="setOfftargetProperty"
       >
         <template #tooltip>
-          <b>For panels that tag antigens target/off-target/decoy</b> — leave blank otherwise. Pick
-          the per-feature property column holding those tags, then choose the off-target values
-          below. Off-target features are dropped from the dominant call (like the negative control),
-          and cells binding two or more real targets are labelled <b>cross-reactive</b> instead of
+          <b>For panels that tag antigens target/off-target</b> — leave blank otherwise. Pick the
+          per-feature property column holding those tags, then choose the off-target values below.
+          Off-target features are dropped from the dominant call (like the negative control), and
+          cells binding two or more real targets are labelled <b>cross-reactive</b> instead of
           "ambiguous".
         </template>
       </PlDropdown>
@@ -510,8 +510,8 @@ const gridOptions = {
       >
         <template #tooltip>
           Which values of the chosen property mean off-target (e.g. <b>Off-Target</b>,
-          <b>Decoy</b>). Any feature with one of these is dropped from the dominant call. Matching
-          ignores case and spacing.
+          <b>Off-target</b>). Any feature with one of these is dropped from the dominant call.
+          Matching trims surrounding spaces but is case-sensitive.
         </template>
       </PlDropdownMulti>
       <PlDropdown
