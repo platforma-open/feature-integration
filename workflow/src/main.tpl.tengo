@@ -323,13 +323,19 @@ wf.body(func(args) {
 		arg("--csv-barcode-col").arg(args.barcodeSeqColumn).
 		arg("--csv-feature-col").arg(args.featureNameColumn).
 		arg("--sample-col").arg(featurePropsSampleColumn).
+		// Negative-control marker (control-aware metrics): pass the chosen control feature so the step emits
+		// a dedicated per-feature marker CSV; "" when no control is designated (marker header-only).
+		arg("--control-feature").arg(hasControl ? control : "").
 		arg("--output-prefix").arg("result").
 		saveFile("result_feature_properties.csv").
 		saveFileContent("result_feature_property_meta.json").
+		saveFile("result_negative_control.csv").
 		run()
 	featurePropsResult := render.create(featurePropsTpl, {
 		propertiesFile: featurePropsRun.getFile("result_feature_properties.csv"),
 		propertyMeta: featurePropsRun.getFileContent("result_feature_property_meta.json"),
+		negativeControlFile: featurePropsRun.getFile("result_negative_control.csv"),
+		hasControl: hasControl,
 		blockId: blockId,
 		traceSeedSpec: inputSpec
 	})

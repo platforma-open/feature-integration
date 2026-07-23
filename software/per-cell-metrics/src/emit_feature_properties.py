@@ -103,6 +103,12 @@ def main() -> None:
         default="",
         help="optional sample column for sample-aware mapping (a role column, excluded from properties)",
     )
+    p.add_argument(
+        "--control-feature",
+        default="",
+        help="the negative-control feature name (from the block's control-feature dropdown). Emitted as a "
+        "dedicated per-feature marker so downstream can remove the control from its antigen metrics.",
+    )
     p.add_argument("--output-prefix", default="result")
     args = p.parse_args()
 
@@ -144,6 +150,19 @@ def main() -> None:
     meta = {"columns": property_cols, "valuesByColumn": {c: sorted(values[c]) for c in property_cols}}
     with open(f"{args.output_prefix}_feature_property_meta.json", "w") as out:
         json.dump(meta, out)
+
+    # Negative-control marker (control-aware metrics). Emit the block's chosen control feature as a
+    # dedicated per-feature (feature,value) CSV with value "true", so the workflow surfaces it as a
+    # pl7.app/feature/negativeControl column keyed on the feature axis and VDJ Multiomic Integration
+    # removes the control ENTIRELY from its antigen metrics (restriction index, breadth, per-antigen
+    # fractions, dominant call) -- unlike an off-target, which stays in the metrics. Header-only when no
+    # control is designated. The name is emitted verbatim (trimmed); it is one of the panel's features.
+    control = args.control_feature.strip()
+    with open(f"{args.output_prefix}_negative_control.csv", "w", newline="") as out:
+        w = csv.writer(out)
+        w.writerow(["feature", "value"])
+        if control:
+            w.writerow([control, "true"])
 
 
 if __name__ == "__main__":

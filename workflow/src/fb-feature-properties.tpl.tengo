@@ -34,12 +34,15 @@ self.body(func(inputs) {
 	meta := json.decode(string(inputs.propertyMeta.getData()))
 	propertyColumns := is_undefined(meta.columns) ? [] : meta.columns
 	valuesByColumn := is_undefined(meta.valuesByColumn) ? {} : meta.valuesByColumn
+	// Negative-control marker (control-aware metrics): emit a dedicated hidden per-feature column marking
+	// the control feature, only when a control is designated (main.tpl gates this).
+	hasControl := !is_undefined(inputs.hasControl) && inputs.hasControl
 
 	fb := pframes.pFrameBuilder()
 
-	// No extra columns -> no properties to import; publish an empty frame. Skipping the xsv import here is
-	// required (an empty `columns` list fails the import spec validation) and correct (nothing to key).
-	if len(propertyColumns) > 0 {
+	// Nothing to emit unless there are extra property columns (A-0026) and/or a negative-control marker.
+	// Publish an empty frame otherwise (an empty xsv `columns` list fails the import spec validation).
+	if len(propertyColumns) > 0 || hasControl {
 		// Same trace step as the per-cell contract columns (deterministic; seeded from the input FASTQ
 		// spec + blockId), so the properties carry consistent provenance / labels.
 		trace := pSpec.makeTrace(inputs.traceSeedSpec, {
@@ -50,16 +53,32 @@ self.body(func(inputs) {
 		})
 
 		featureAxis := columnSpecs.featureAxis(blockId)
-		importColumns := columnSpecs.featurePropertyImportColumns(propertyColumns, valuesByColumn)
 
-		rawPf := xsv.importFile(inputs.propertiesFile, "csv", {
-			axes: [{ column: "feature", spec: featureAxis }],
-			columns: importColumns,
-			storageFormat: "Parquet",
-			partitionKeyLength: 0
-		}, { splitDataAndSpec: true })
-		for k, v in rawPf {
-			fb.add(k, trace.inject(v.spec), v.data)
+		if len(propertyColumns) > 0 {
+			importColumns := columnSpecs.featurePropertyImportColumns(propertyColumns, valuesByColumn)
+			rawPf := xsv.importFile(inputs.propertiesFile, "csv", {
+				axes: [{ column: "feature", spec: featureAxis }],
+				columns: importColumns,
+				storageFormat: "Parquet",
+				partitionKeyLength: 0
+			}, { splitDataAndSpec: true })
+			for k, v in rawPf {
+				fb.add(k, trace.inject(v.spec), v.data)
+			}
+		}
+
+		// Dedicated negative-control marker column (hidden, not a filter). Rides pl7.app/feature/featureId
+		// into VDJ Multiomic Integration, which removes the control from its antigen metrics.
+		if hasControl {
+			ctrlPf := xsv.importFile(inputs.negativeControlFile, "csv", {
+				axes: [{ column: "feature", spec: featureAxis }],
+				columns: [columnSpecs.negativeControlColumn()],
+				storageFormat: "Parquet",
+				partitionKeyLength: 0
+			}, { splitDataAndSpec: true })
+			for k, v in ctrlPf {
+				fb.add(k, trace.inject(v.spec), v.data)
+			}
 		}
 	}
 

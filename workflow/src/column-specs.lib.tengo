@@ -354,6 +354,28 @@ qcSummaryColumnsSpec := func(sampleAxisSpec) {
 	}
 }
 
+// negativeControlColumn: the xsv.importFile `columns` entry for the dedicated negative-control marker CSV
+// (emit_feature_properties.py `<prefix>_negative_control.csv`, a feature/value CSV with value "true" for
+// the control). One String p-column (pl7.app/feature/negativeControl) keyed on the shared feature axis
+// (the caller supplies `axes` = [featureAxis]). Hidden and NOT a discrete filter: it is not a user-facing
+// property — it exists only so the control rides pl7.app/feature/featureId into VDJ Multiomic Integration,
+// which removes the control from its antigen metrics (control-aware restriction index / breadth / fraction
+// columns / dominant call). Distinct from the generic pl7.app/feature/property import (A-0026).
+negativeControlColumn := func() {
+	return {
+		column: "value",
+		id: "negativeControl",
+		spec: {
+			name: "pl7.app/feature/negativeControl",
+			valueType: "String",
+			annotations: {
+				"pl7.app/label": "Negative control",
+				"pl7.app/table/visibility": "hidden"
+			}
+		}
+	}
+}
+
 export {
 	cellAxis: cellAxis,
 	featureAxis: featureAxis,
@@ -361,5 +383,6 @@ export {
 	perCellSummaryOutput: perCellSummaryOutput,
 	qcFileMapOutput: qcFileMapOutput,
 	qcSummaryColumnsSpec: qcSummaryColumnsSpec,
-	featurePropertyImportColumns: featurePropertyImportColumns
+	featurePropertyImportColumns: featurePropertyImportColumns,
+	negativeControlColumn: negativeControlColumn
 }

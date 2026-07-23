@@ -104,6 +104,24 @@ def test_missing_role_column_errors(tmp_path):
     assert r.returncode != 0
 
 
+def _control_rows(tmp_path):
+    with open(tmp_path / "r_negative_control.csv", newline="") as fh:
+        return list(csv.reader(fh))
+
+
+def test_control_feature_marker_emitted(tmp_path):
+    # --control-feature marks that feature "true" in the dedicated negative-control marker CSV, so the
+    # workflow surfaces it on the feature axis for VDJ Multiomic Integration to exclude from its metrics.
+    _run(tmp_path, "tag,feature\nAAAA,AGX\nGGGG,CTRL\n", "--control-feature", "CTRL")
+    assert _control_rows(tmp_path) == [["feature", "value"], ["CTRL", "true"]]
+
+
+def test_no_control_feature_marker_header_only(tmp_path):
+    # No control designated -> marker CSV is header-only (no feature marked as the control).
+    _run(tmp_path, "tag,feature\nAAAA,AGX\nGGGG,BGX\n")
+    assert _control_rows(tmp_path) == [["feature", "value"]]
+
+
 def _rows(text):
     reader = csv.reader(io.StringIO(text))
     header = next(reader)
