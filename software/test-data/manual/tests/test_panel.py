@@ -83,7 +83,7 @@ def test_crossreactive_two_even_antigens():
     result = pcm.consensus_category(
         counts, threshold=0.6, control="ctrl", offtargets=frozenset(), label_crossreactive=True
     )
-    assert result == "cross-reactive"
+    assert result == "Target cross-reactive"
 
 
 def test_generator_plants_crossreactive(tmp_path):

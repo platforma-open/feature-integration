@@ -31,7 +31,7 @@ _SPECIFICITY_SCHEMA = {
 }
 
 
-CROSS_REACTIVE = "cross-reactive"
+CROSS_REACTIVE = "Target cross-reactive"
 
 
 def consensus_category(
@@ -54,7 +54,7 @@ def consensus_category(
     control/off-target signal SUPPRESSES antigen dominance rather than being renormalised away — a cell
     swamped by them correctly fails the threshold instead of having its top on-target inflated to 100%.
 
-    ``offtargets`` designate features whose property (e.g. Type = Off-Target / Decoy) marks them as
+    ``offtargets`` designate features whose property (e.g. Type = Off-Target) marks them as
     binders the user does not want to call. When they are supplied and ``label_crossreactive`` is set,
     the overloaded "ambiguous" bucket is split: a cell whose on-target (non-excluded) signal collectively
     passes the threshold but is spread across >= 2 on-target features is called "cross-reactive" (a
@@ -93,7 +93,7 @@ def offtarget_features(
 
     The off-target designation is property-driven: the user picks one imported per-feature property
     column (e.g. ``antigen_class``) and the set of its values that mark a feature as off-target (e.g.
-    {"Off-Target", "Decoy"}). This reads the tag->feature CSV — which carries those property columns —
+    {"Off-Target", "Off-target"}). This reads the tag->feature CSV — which carries those property columns —
     and returns the resolved set of off-target FEATURE names, so the dominant call can exclude them.
 
     Values are matched exactly, whitespace-trimmed but CASE-SENSITIVE (``strip()`` on both sides, no
@@ -442,7 +442,7 @@ def main() -> None:
     p.add_argument(
         "--offtarget-values",
         default=None,
-        help="comma-separated values of --offtarget-col that mark a feature as off-target (e.g. 'Off-Target,Decoy')",
+        help="comma-separated values of --offtarget-col that mark a feature as off-target (e.g. 'Off-Target,Off-target')",
     )
     p.add_argument("--output-prefix", default="result")
     args = p.parse_args()

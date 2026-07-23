@@ -496,8 +496,8 @@ const gridOptions = {
           <b>For panels that tag antigens target/off-target</b> — leave blank otherwise. Pick the
           per-feature property column holding those tags, then choose the off-target values below.
           Off-target features are dropped from the dominant call (like the negative control), and
-          cells binding two or more real targets are labelled <b>cross-reactive</b> instead of
-          "ambiguous".
+          cells binding two or more real targets are labelled <b>Target cross-reactive</b> instead
+          of "ambiguous".
         </template>
       </PlDropdown>
       <PlDropdownMulti
