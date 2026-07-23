@@ -27,11 +27,17 @@ featurePropsTpl := assets.importTemplate(":fb-feature-properties")
 
 featurePropsSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:feature-properties")
 
-// Resource defaults mirror the MiXCR blocks (mixcr-analyze): 16 CPUs and a 64 GiB base per mitool
-// process. FI's parse/refine are as compute- and RAM-heavy as mixcr alignment, so err large by
-// default; users can still override via perProcessCPUs / perProcessMemGB (Advanced Settings).
-defaultMitoolMemGB := 64
-defaultMitoolCPUs := 16
+// Per-sample mitool resource defaults. The parse/refine formulas (fb-parse / fb-refine) add
+// size("reads")*4 on top of this base and cap at 256 GiB, so the base only sets the floor for small
+// inputs while large runs still scale up on their own. Feature-barcode parse/refine are far lighter
+// than the full VDJ alignment the mixcr-analyze formula was tuned for, so the floor is 16 GiB (cf.
+// peptide-extraction's 32 GiB fixed mitool default). A 64 GiB floor made mitool's memory-from-limits
+// launcher pick a ~32 GiB JVM -Xms even on tiny datasets, which swaps on typical desktop RAM and
+// stalls "parsing reads". CPUs default to 8 (matching peptide-extraction's mitool steps); 16 exceeded
+// the core count on typical desktop machines. Users can still override both via perProcessCPUs /
+// perProcessMemGB (Advanced Settings).
+defaultMitoolMemGB := 16
+defaultMitoolCPUs := 8
 
 // Staging imports + exports the CSV to drive its upload before production needs it, and emits the
 // feature-name list for the control dropdown (see prerun.tpl).
