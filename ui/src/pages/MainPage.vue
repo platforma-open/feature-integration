@@ -460,9 +460,9 @@ const gridOptions = {
           :style="{ flex: 1 }"
         >
           <template #tooltip>
-            <b>Optional</b> — a feature designated as a non-binding background control. When set,
-            the block computes a per-antigen specificity score that separates genuine binders from
-            background signal.
+            <b>If your panel includes a non-binding background control</b>, pick it here. The block
+            then computes a per-antigen specificity score (binding vs background) and keeps
+            background-swamped cells from being miscalled. Leave blank if you have no control.
           </template>
         </PlDropdown>
 
@@ -476,28 +476,13 @@ const gridOptions = {
           @update:model-value="setSampleColumn"
         >
           <template #tooltip>
-            <b>Optional</b> — the Tag-feature CSV column naming each row's sample (its values must
-            match the dataset's sample names). When set, the workflow builds a separate
-            barcode-to-feature mapping per sample instead of one shared mapping — needed when the
-            same feature barcode means a different feature in different samples. Auto-selected when
-            a matching column is detected; clear it to use one mapping across all samples.
+            <b>When the same barcode means different antigens in different samples</b> — leave blank
+            otherwise. Names the Tag-feature CSV column giving each row's sample (values must match
+            the dataset's sample names); the block then builds a separate barcode→antigen mapping
+            per sample. Auto-selected when a matching column is detected.
           </template>
         </PlDropdown>
       </PlRow>
-      <PlDropdown
-        v-model="app.model.data.combineColumn"
-        :options="combineColumnOptions"
-        label="Combine-mode column"
-        :disabled="tagMappingDisabled"
-        clearable
-      >
-        <template #tooltip>
-          <b>Optional</b> — for antigens read out by more than one barcode (e.g. a dual-labeled
-          probe). Pick a Tag-feature CSV column whose value per feature is <b>sum</b> (add the
-          barcodes — the default) or <b>all</b> (call the antigen only in cells where
-          <i>every</i> one of its barcodes fired). Leave empty to sum all co-barcodes.
-        </template>
-      </PlDropdown>
       <!-- Type-aware off-target call + "cross-reactive" label (F2). See MILAB-6496. -->
       <PlDropdown
         :model-value="app.model.data.offtargetProperty"
@@ -508,11 +493,11 @@ const gridOptions = {
         @update:model-value="setOfftargetProperty"
       >
         <template #tooltip>
-          <b>Optional</b> — pick an imported per-feature property column (e.g. antigen type) that
-          marks features as on- or off-target, then choose which of its values mean off-target
-          below. Off-target features are excluded from the dominant call (like the negative
-          control), and a cell/clonotype whose on-target signal is spread across two or more targets
-          is labelled <b>cross-reactive</b> instead of "ambiguous".
+          <b>For panels that tag antigens target/off-target/decoy</b> — leave blank otherwise. Pick
+          the per-feature property column holding those tags, then choose the off-target values
+          below. Off-target features are dropped from the dominant call (like the negative control),
+          and cells binding two or more real targets are labelled <b>cross-reactive</b> instead of
+          "ambiguous".
         </template>
       </PlDropdown>
       <PlDropdownMulti
@@ -524,10 +509,25 @@ const gridOptions = {
         @update:model-value="(v) => (app.model.data.offtargetValues = v)"
       >
         <template #tooltip>
-          Values of the chosen property that designate a feature as off-target (e.g. "Off-Target",
-          "Decoy"). Features with any of these values are excluded from the dominant call.
+          Which values of the chosen property mean off-target (e.g. <b>Off-Target</b>,
+          <b>Decoy</b>). Any feature with one of these is dropped from the dominant call. Matching
+          ignores case and spacing.
         </template>
       </PlDropdownMulti>
+      <PlDropdown
+        v-model="app.model.data.combineColumn"
+        :options="combineColumnOptions"
+        label="Combine-mode column"
+        :disabled="tagMappingDisabled"
+        clearable
+      >
+        <template #tooltip>
+          <b>For dual-probe designs</b> — only matters when one antigen is tagged by 2+ barcodes;
+          leave blank otherwise. Names the Tag-feature CSV column that sets each antigen's mode:
+          <b>sum</b> = add its barcodes, call it if any fires (default); <b>all</b> = call it only
+          in cells where <i>every</i> one of its barcodes fired.
+        </template>
+      </PlDropdown>
       <PlAlert v-if="combineColumnError" type="warn">
         {{ combineColumnError }}
       </PlAlert>
@@ -547,10 +547,9 @@ const gridOptions = {
           label="Dominance threshold"
         >
           <template #tooltip>
-            Share of a cell's total feature signal the top feature must reach to be called that
-            cell's antigen; below it the cell is <b>ambiguous</b>. Raise it (e.g. 0.8) for stricter,
-            cleaner single-antigen calls; lower it toward the 0.5 floor to still call cells with
-            more mixed signal.
+            <b>Advanced tuning</b> — the default suits most panels. Share of a cell's total signal
+            the top antigen must reach to be called (else <b>ambiguous</b>). Raise toward 0.8 for
+            stricter single-antigen calls; lower toward 0.5 to still call mixed-signal cells.
           </template>
         </PlNumberField>
         <PlNumberField
@@ -561,9 +560,10 @@ const gridOptions = {
           label="Min UMIs per barcode (AND combine)"
         >
           <template #tooltip>
-            Minimum distinct UMIs for a barcode to count as "fired" under the <b>all</b> (AND)
-            combine mode. Only applies to features set to "all" in the Combine-mode column. Leave
-            empty for the default (1).
+            <b>For "all"-combine antigens only</b> — ignore unless you set some antigens to
+            <b>all</b> above. Minimum distinct UMIs a barcode needs to count as "fired" (present) in
+            a cell; below it, that barcode doesn't count toward the AND. Leave empty for the default
+            (1).
           </template>
         </PlNumberField>
         <PlNumberField
@@ -574,8 +574,9 @@ const gridOptions = {
           label="mitool CPUs per sample"
         >
           <template #tooltip>
-            CPUs allocated to each per-sample mitool step (parse / refine / tag-stat). Raising this
-            can speed up large samples. Leave empty to use the default (4).
+            <b>Performance tuning</b> — leave empty unless a large sample is slow. CPUs given to
+            each per-sample mitool step (parse / refine / tag-stat); raising it can speed up big
+            samples. Default 8.
           </template>
         </PlNumberField>
         <PlNumberField
@@ -586,8 +587,8 @@ const gridOptions = {
           label="mitool memory per sample (GiB)"
         >
           <template #tooltip>
-            Fixed RAM (GiB) for each per-sample mitool step. Leave empty to size memory
-            automatically from the input read volume; raise it only if a sample runs out of memory.
+            <b>Performance tuning</b> — leave empty to size RAM automatically from read volume. Set
+            a fixed GiB per per-sample mitool step only if a sample runs out of memory.
           </template>
         </PlNumberField>
       </PlAccordionSection>
