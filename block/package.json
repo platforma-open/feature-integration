@@ -48,7 +48,7 @@
       "support": "mailto:support@milaboratories.com",
       "description": "Assign antigens to single cells from BEAM / LIBRA-seq style feature-barcode reads",
       "longDescription": "file:../docs/description.md",
-      "changelog": "file:../CHANGELOG.md",
+      "changelog": "file:./CHANGELOG.md",
       "tags": [
         "single-cell",
         "vdj",
