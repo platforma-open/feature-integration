@@ -514,23 +514,28 @@ const gridOptions = {
           Matching trims surrounding spaces but is case-sensitive.
         </template>
       </PlDropdownMulti>
-      <PlDropdown
-        v-model="app.model.data.combineColumn"
-        :options="combineColumnOptions"
-        label="Combine-mode column"
-        :disabled="tagMappingDisabled"
-        clearable
-      >
-        <template #tooltip>
-          <b>For dual-probe designs</b> — only matters when one antigen is tagged by 2+ barcodes;
-          leave blank otherwise. Names the Tag-feature CSV column that sets each antigen's mode:
-          <b>sum</b> = add its barcodes, call it if any fires (default); <b>all</b> = call it only
-          in cells where <i>every</i> one of its barcodes fired.
-        </template>
-      </PlDropdown>
-      <PlAlert v-if="combineColumnError" type="warn">
-        {{ combineColumnError }}
-      </PlAlert>
+      <!-- Combine-mode column selector is intentionally hidden from users for now (MILAB-6496). The
+           control + its validation and the workflow's combine-mode logic are kept for later re-enable;
+           with it hidden, combineColumn stays unset and every antigen uses the default "sum" mode. -->
+      <template v-if="false">
+        <PlDropdown
+          v-model="app.model.data.combineColumn"
+          :options="combineColumnOptions"
+          label="Combine-mode column"
+          :disabled="tagMappingDisabled"
+          clearable
+        >
+          <template #tooltip>
+            <b>For dual-probe designs</b> — only matters when one antigen is tagged by 2+ barcodes;
+            leave blank otherwise. Names the Tag-feature CSV column that sets each antigen's mode:
+            <b>sum</b> = add its barcodes, call it if any fires (default); <b>all</b> = call it only
+            in cells where <i>every</i> one of its barcodes fired.
+          </template>
+        </PlDropdown>
+        <PlAlert v-if="combineColumnError" type="warn">
+          {{ combineColumnError }}
+        </PlAlert>
+      </template>
       <PlAlert v-if="controlInfoVisible" type="info">
         Specificity scores will not be computed without a negative control feature
       </PlAlert>
