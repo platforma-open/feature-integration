@@ -29,6 +29,9 @@ software/test-data/manual/**
 !software/test-data/manual/**/
 !software/test-data/manual/**/*.py
 !software/test-data/manual/**/*.md
+# ...except these dev design/calibration notes — kept on disk, not version-controlled.
+software/test-data/manual/design-and-schemas.md
+software/test-data/manual/real-data-calibration.md
 !software/test-data/manual/assets/whitelist_cells.txt
 
 # Local working docs / scratch — not version-controlled
