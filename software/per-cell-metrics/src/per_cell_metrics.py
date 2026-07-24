@@ -442,7 +442,8 @@ def main() -> None:
     p.add_argument(
         "--offtarget-values",
         default=None,
-        help="comma-separated values of --offtarget-col that mark a feature as off-target (e.g. 'Off-Target,Off-target')",
+        help="comma-separated values of --offtarget-col that mark a feature as off-target "
+        "(e.g. 'Off-Target,Off-target')",
     )
     p.add_argument("--output-prefix", default="result")
     args = p.parse_args()
