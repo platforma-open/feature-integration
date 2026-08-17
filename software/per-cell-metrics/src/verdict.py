@@ -44,20 +44,32 @@ def apply_floor(counts: pl.DataFrame, floor: int, reference_tags: set[str]) -> t
     every denominator and shifts the whole run toward *bound*.
 
     Scope limit: `reference_tags` is global, so a tag is a comparator in every
-    sample or in none. The panel is keyed (tag, sample) and can in principle
-    declare a barcode a control in one sample and a real antigen in another;
-    that case is NOT handled here, and Task 1's consistent_properties() would
-    already have dropped such a divergent role rather than honouring it per
-    sample. Revisit when the reference is resolved (Tasks 5 and 13), not here.
+    sample or in none. The panel is keyed (tag, sample) and could in principle
+    declare a barcode a control in one sample and a real antigen in another.
+    That case is not handled here — and the panel reader's consistent_properties()
+    drops any property whose value disagrees across a tag's rows, so a
+    per-sample control designation would already have been discarded rather
+    than honoured. Handling it belongs where the reference is selected and
+    where the CLI resolves it, not in the floor.
 
     Returns the floored counts and {"readingsFloored", "cellsEmptied"}, the two
     quantities the quality measurement set asks of this step.
+
+    Both counters assume the sparse frame this step receives, where every row
+    is an observed reading and so a count is at least 1. Densification, which
+    manufactures genuine zeros, happens after this step: run it before, and
+    every manufactured row inflates readingsFloored while every unbound cell
+    counts as emptied though the floor removed nothing.
     """
     # Not an optimisation: falling through would count a cell whose only
     # reading is already zero as "emptied", when the floor removed nothing.
     if floor <= 0:
         return counts, {"readingsFloored": 0, "cellsEmptied": 0}
 
+    # is_in yields null for a null tag, so a null-tag row would escape both the
+    # floor and the emptied populations here while flooring normally when no
+    # reference is declared. The panel reader never emits one; this is a note
+    # for anyone who feeds this an unvalidated frame.
     is_ref = pl.col("tag").is_in(list(reference_tags)) if reference_tags else pl.lit(False)
     below = (pl.col("umiCount") < floor) & ~is_ref
 
