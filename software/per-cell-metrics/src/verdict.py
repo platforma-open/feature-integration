@@ -1,17 +1,21 @@
 """Turning a cell's counts into states.
 
-Five steps, in this order, and the order is load-bearing:
+Four steps in production, in this order, and the order is load-bearing:
 
   1. the floor, on the raw count, per cell and per tag;
-  2. densify — every cell against every identity its sample offered, so a cell
-     asked and silent is a real zero rather than a missing row;
-  3. tags combine into an identity by the highest of their counts;
-  4. the identity's count is read against that cell's own reference reading;
-  5. the comparison becomes one of the four states.
+  2. tags combine into an identity by the highest of their counts;
+  3. the identity's count is read against that cell's own reference reading;
+  4. the comparison becomes one of the four states.
 
-Step 2 exists because tag-stat emits only observed pairs. Without it an antigen
-every cell failed to bind produces no rows at all, and the absence is
-indistinguishable from a reagent nobody offered.
+tag-stat emits only observed pairs, so a cell asked about an identity and
+silent — no positive tag reading for it — produces no row at all, and that
+absence is not evidence of nothing: an antigen every cell failed to bind must
+still read *not bound*, not disappear as though nobody offered it. Rather than
+materialize a row for every such silent position, production counts them
+analytically, in `silent_tally`. `densify` — every cell against every
+identity its sample offered, zeros filled in — builds that row-per-position
+grid and survives only as the test oracle `silent_tally`'s counts are checked
+against; it never runs in the block.
 
 The cell key is (sampleId, cellId) throughout: cell barcodes are bare 16-mers
 shared across samples.
@@ -23,7 +27,7 @@ at the threshold. The difference is the whole point of the floor — a floored
 reading is still a reading, and it answers "not bound"; an omitted one leaves
 nothing to answer with.
 
-After step 3 this module holds two frame shapes: the sparse per-tag frame the
+After step 2 this module holds two frame shapes: the sparse per-tag frame the
 floor works on, and the per-identity frame combining produces from it — both
 keyed by CELL_KEY, which is the column vocabulary spanning both.
 """
@@ -325,18 +329,18 @@ def densify(identities: pl.DataFrame, cells: pl.DataFrame, offered_by_sample: di
     up as the oracle `silent_tally` is checked against, never to run in the
     block itself.
     """
+    # Guard on the assembled blocks, not on offered_by_sample: a map whose every
+    # value is empty — a sample stained with nothing — is non-empty itself but
+    # contributes no block, and concat of an empty list raises. That shape is
+    # exactly what a property test probing a stained-with-nothing sample builds.
+    blocks = [
+        cells.filter(pl.col("sampleId") == sample).join(pl.DataFrame({"identity": sorted(offered)}), how="cross")
+        for sample, offered in sorted(offered_by_sample.items())
+        if offered
+    ]
     grid = (
-        pl.concat(
-            [
-                cells.filter(pl.col("sampleId") == sample).join(
-                    pl.DataFrame({"identity": sorted(offered)}), how="cross"
-                )
-                for sample, offered in sorted(offered_by_sample.items())
-                if offered
-            ],
-            how="vertical",
-        )
-        if offered_by_sample
+        pl.concat(blocks, how="vertical")
+        if blocks
         else cells.head(0).with_columns(pl.lit(None, pl.String).alias("identity"))
     )
 
@@ -397,7 +401,9 @@ def read_states(
     almost nothing, which is the absence of a comparison rather than a poor one;
     or an admissibility gate set the cell aside. Gated cells stay in the frame —
     dropping them made a set whose every cell was set aside read *never asked*
-    instead of *unreliable*.
+    instead of *unreliable*. The gate is checked first: a cell the gate set
+    aside was not measured at all, so how thin its comparator is does not
+    matter and must not be the reason reported.
 
     Emits umiCount and referenceCount, never the score. Re-derivation under a
     new grouping needs the counts, and no binding level may leave the block.
@@ -438,9 +444,10 @@ def silent_tally(
 ) -> pl.DataFrame:
     """Per (sample, identity): how many asked cells were never observed, and how they resolve.
 
-    The production path A1 describes. `densify` followed by `read_states` is
-    the reference this must agree with, kept only for tests: on a realistic
-    panel the dense grid is 11-20x the sparse input and does not fit at all.
+    The sparse path: silent positions are counted, never materialized.
+    `densify` followed by `read_states` is the reference this must agree
+    with, kept only for tests: on a realistic panel the dense grid is
+    11-20x the sparse input and does not fit at all.
 
     A silently admissible cell's count is 0, and specificity_score(0, r) is
     0.042 at r = 0 and smaller for every larger r — below every cutoff this

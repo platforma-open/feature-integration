@@ -372,9 +372,9 @@ def test_cutoff_is_seventy_five():
 
 def test_high_count_against_a_quiet_reference_is_bound():
     # thin_line=0 here, not the default 2: a reference reading of 0 is itself
-    # below the default thin line (Task 5's own precedent -- a median that
-    # truncates to 1 already reads unreliable at that default), so pinning the
-    # score computation in isolation needs the thin-line rule turned off.
+    # below the default thin line (a panel median that truncates to 1 already
+    # reads unreliable at that default), so pinning the score computation in
+    # isolation needs the thin-line rule turned off.
     out = read_states(_ident([("S1", "c1", "A", 200)]), {("S1", "c1"): 0}, 75.0, 0, set())
     assert out["state"].to_list() == [State.BOUND.value]
 
@@ -399,6 +399,30 @@ def test_gated_cell_is_unreliable_and_stays_in_the_frame():
     out = read_states(_ident([("S1", "c1", "A", 500)]), {("S1", "c1"): 900}, 75.0, 2, gated={("S1", "c1")})
     assert out.height == 1
     assert out["state"].to_list() == [State.UNRELIABLE.value]
+
+
+def test_a_gated_cell_reports_the_gate_even_when_its_reference_is_thin():
+    # Both conditions hold at once: the gate set this cell aside AND its
+    # comparator is below the thin line. Reachable whenever the gate threshold
+    # sits at or below the thin line, and both are user-set. The state is
+    # unreliable either way, but the reason is an exported column that a later
+    # step reads to tell a panel problem from a re-run problem, so which
+    # condition wins is a fact someone acts on. The gate wins: a cell it set
+    # aside was not measured at all, so its comparator's thickness is moot.
+    out = read_states(_ident([("S1", "c1", "A", 500)]), {("S1", "c1"): 1}, 75.0, thin_line=2, gated={("S1", "c1")})
+    assert out["state"].to_list() == [State.UNRELIABLE.value]
+    reason = out["unreliableReason"].to_list()[0]
+    assert "gate" in reason
+    assert "compare" not in reason  # not the thin-comparator reason
+
+
+def test_densify_handles_a_sample_stained_with_nothing():
+    # A non-empty offered map whose every value is empty contributes no block.
+    # Guarding on the map rather than the assembled blocks raised here.
+    out = densify(_ident([]), _cells([("S1", "c1")]), offered_by_sample={"S1": set()})
+    assert out.height == 0
+    assert out.schema["identity"] == pl.String
+    assert out.schema["umiCount"] == pl.Int64
 
 
 def test_never_asked_is_not_produced_here():
