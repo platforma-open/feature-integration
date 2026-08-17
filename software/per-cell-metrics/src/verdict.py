@@ -30,8 +30,11 @@ nothing to answer with.
 After step 2 this module holds three frame shapes: the sparse per-tag frame
 the floor works on and the per-identity frame combining produces from it,
 both keyed by CELL_KEY, which is the column vocabulary spanning both; and the
-per-(sampleId, identity) frame `silent_tally` returns, keyed one level
-coarser than CELL_KEY, not by it.
+per-(group, identity) frame `silent_tally` returns, keyed one level coarser
+than CELL_KEY, not by it. The group defaults to sampleId -- a sample offers
+the same identities to every one of its cells -- but callers reducing cells
+to a coarser unit than a sample (a clonotype set spanning several samples,
+say) pass their own per-cell grouping instead.
 """
 
 from __future__ import annotations
@@ -481,8 +484,10 @@ def silent_tally(
     cells: pl.DataFrame,
     offered_by_sample: dict[str, set[str]],
     admissibility: Admissibility,
+    group_by_cell: dict[tuple[str, str], str] | None = None,
+    group_column: str = "sampleId",
 ) -> pl.DataFrame:
-    """Per (sample, identity): how many asked cells were never observed, and how they resolve.
+    """Per (group, identity): how many asked cells were never observed, and how they resolve.
 
     The sparse path: silent positions are counted, never materialized.
     `densify` followed by `read_states` is the reference this must agree
@@ -500,15 +505,38 @@ def silent_tally(
     cutoff is the CLI's job, not this function's. Above the bound, three
     cheap terms replace a materialized row per silent cell:
 
-        asked              = cells of the sample, for every identity it offered
+        asked              = cells of the group, for every identity offered to one of its members
         observed           = the (cell, identity) rows read_states already produced
-        silentUnreliable   = inadmissible cells of the sample − inadmissible cells among the observed
+        silentUnreliable   = inadmissible cells the group counts toward that identity −
+                              inadmissible cells among the observed
         silentNotBound     = asked − observed − silentUnreliable
 
     `observed` is `read_states`' output on the sparse frame — one row per
     (cell, identity) pair `combine_tags_to_identities` actually produced, state
     already resolved. Nothing here inspects an identity's silent reading; the
     admissibility check that decides silentUnreliable never takes an identity.
+
+    `group_by_cell` maps a cell key to the unit the tally reports per. It
+    defaults to None, which groups by the cell's own sampleId — the original
+    behaviour, and the only grouping under which every member of a group is
+    guaranteed to share one offered set. That guarantee is what lets `asked`
+    and `total_inadmissible` be computed once per group below rather than
+    once per (group, identity): a sample offers the same identities to every
+    one of its cells. A group that can span samples with different offered
+    sets — a clonotype set spanning several samples, say — does not have
+    that guarantee: whether a member counts toward `identity` depends on
+    whether THAT MEMBER'S OWN SAMPLE offered `identity`, which can differ
+    member to member, so this function computes both terms inside the
+    identity loop for that case instead of hoisting them above it.
+    `offered_by_sample` itself is never regrouped: what a panel offered is a
+    property of the staining, done per sample, so it stays keyed by sample
+    regardless of what `group_by_cell` reports. Every cell key present in
+    `cells` must have an entry in `group_by_cell` when one is given.
+
+    `group_column` names the key column in the returned frame — "sampleId"
+    by default, matching the default grouping; a caller passing a custom
+    `group_by_cell` should also pass a `group_column` that names what the
+    values in it actually are.
 
     Precondition, unchecked by types: `cells` must be unique on the cell key,
     and `observed` unique on (cell, identity). A duplicated `cells` row is
@@ -529,71 +557,112 @@ def silent_tally(
     inadmissible = {k for k in keys if _cell_admissibility_reason(k, admissibility) is not None}
     cell_keys = set(keys)
 
-    # Single accumulating pass, not one loop per sample: the previous version
-    # scanned all of `keys` once per sample in offered_by_sample, which is
-    # O(groups x cells) and harmless at 24 samples but quadratic once a wider
-    # key groups thousands of sets. `k[0]` is the sample directly — no need
-    # for a cell->sample dict when every key already carries it.
-    asked_count: dict[str, int] = {}
-    inadmissible_count: dict[str, int] = {}
-    for k in keys:
-        sample = k[0]
-        asked_count[sample] = asked_count.get(sample, 0) + 1
-        if k in inadmissible:
-            inadmissible_count[sample] = inadmissible_count.get(sample, 0) + 1
-
     obs_keys = list(zip(observed["sampleId"].to_list(), observed["cellId"].to_list(), strict=True))
     obs_identity = observed["identity"].to_list()
-    observed_count: dict[tuple[str, str], int] = {}
-    observed_inadmissible_count: dict[tuple[str, str], int] = {}
-    for k, ident in zip(obs_keys, obs_identity, strict=True):
-        if k not in cell_keys:
-            # In `identities` but absent from `cells`: read_states emitted a
-            # row for it, and it is dropped here rather than counted against
-            # a cell universe that never named it.
-            continue
-        pair = (k[0], ident)
-        observed_count[pair] = observed_count.get(pair, 0) + 1
-        if k in inadmissible:
-            observed_inadmissible_count[pair] = observed_inadmissible_count.get(pair, 0) + 1
 
-    rows = []
-    for sample, offered in sorted(offered_by_sample.items()):
-        # asked and total_inadmissible are hoisted out of the identity loop
-        # below because a sample offers the same identities to every one of
-        # its cells, so neither term depends on which identity is being
-        # tallied. That precondition is what makes the hoist valid, not an
-        # incidental property of this key: a regrouping that does not nest
-        # inside a sample — a group spanning two panels, say — breaks it,
-        # because then both terms DO depend on which identity was silent.
-        # Generalising the key means moving both terms back inside this loop,
-        # not renaming a column and leaving them where they are.
-        #
-        # `offered_by_sample` itself does not generalise with the key: what
-        # was offered is a property of the staining, which is done per
-        # sample, so it stays keyed by sample no matter what the output key
-        # becomes. Generalising the key is two inputs changing, not one
-        # renamed one.
-        asked = asked_count.get(sample, 0)
-        total_inadmissible = inadmissible_count.get(sample, 0)
-        for identity in sorted(offered):
-            pair = (sample, identity)
-            observed_n = observed_count.get(pair, 0)
-            observed_inadmissible_n = observed_inadmissible_count.get(pair, 0)
-            silent_unreliable = total_inadmissible - observed_inadmissible_n
-            silent_not_bound = asked - observed_n - silent_unreliable
-            assert asked >= 0 and silent_unreliable >= 0 and silent_not_bound >= 0, (
-                f"negative silent term for {sample!r}/{identity!r} "
-                f"(asked={asked}, silentUnreliable={silent_unreliable}, silentNotBound={silent_not_bound}): "
-                "cells or observed violated the uniqueness precondition documented above"
-            )
-            rows.append((sample, identity, asked, observed_n, silent_unreliable, silent_not_bound))
+    rows: list[tuple[str, str, int, int, int, int]] = []
+
+    if group_by_cell is None:
+        # Sample-keyed path: unchanged from before generalisation. Single
+        # accumulating pass, not one loop per sample: scanning all of `keys`
+        # once per sample in offered_by_sample is O(groups x cells) and
+        # harmless at 24 samples but quadratic once a wider key groups
+        # thousands of sets. `k[0]` is the sample directly — no need for a
+        # cell->sample dict when every key already carries it.
+        asked_count: dict[str, int] = {}
+        inadmissible_count: dict[str, int] = {}
+        for k in keys:
+            sample = k[0]
+            asked_count[sample] = asked_count.get(sample, 0) + 1
+            if k in inadmissible:
+                inadmissible_count[sample] = inadmissible_count.get(sample, 0) + 1
+
+        observed_count: dict[tuple[str, str], int] = {}
+        observed_inadmissible_count: dict[tuple[str, str], int] = {}
+        for k, ident in zip(obs_keys, obs_identity, strict=True):
+            if k not in cell_keys:
+                # In `identities` but absent from `cells`: read_states emitted
+                # a row for it, and it is dropped here rather than counted
+                # against a cell universe that never named it.
+                continue
+            pair = (k[0], ident)
+            observed_count[pair] = observed_count.get(pair, 0) + 1
+            if k in inadmissible:
+                observed_inadmissible_count[pair] = observed_inadmissible_count.get(pair, 0) + 1
+
+        for sample, offered in sorted(offered_by_sample.items()):
+            # asked and total_inadmissible are hoisted out of the identity
+            # loop below because a sample offers the same identities to every
+            # one of its cells, so neither term depends on which identity is
+            # being tallied. That precondition is what makes the hoist valid.
+            asked = asked_count.get(sample, 0)
+            total_inadmissible = inadmissible_count.get(sample, 0)
+            for identity in sorted(offered):
+                pair = (sample, identity)
+                observed_n = observed_count.get(pair, 0)
+                observed_inadmissible_n = observed_inadmissible_count.get(pair, 0)
+                silent_unreliable = total_inadmissible - observed_inadmissible_n
+                silent_not_bound = asked - observed_n - silent_unreliable
+                assert asked >= 0 and silent_unreliable >= 0 and silent_not_bound >= 0, (
+                    f"negative silent term for {sample!r}/{identity!r} "
+                    f"(asked={asked}, silentUnreliable={silent_unreliable}, silentNotBound={silent_not_bound}): "
+                    "cells or observed violated the uniqueness precondition documented above"
+                )
+                rows.append((sample, identity, asked, observed_n, silent_unreliable, silent_not_bound))
+    else:
+        # Group-keyed path: a group can mix members from samples with
+        # different offered sets, so neither term can be hoisted above the
+        # identity loop the way the sample-keyed path hoists them. Instead,
+        # each group is walked once, member by member, checking that
+        # member's OWN sample's offered set and accumulating a per-identity
+        # count as it goes — one pass per group, producing every identity's
+        # `asked`/`total_inadmissible` together, rather than one count
+        # computed before the identity loop that would silently apply to an
+        # identity some members' samples never offered.
+        keys_by_group: dict[str, list[tuple[str, str]]] = {}
+        for k in keys:
+            keys_by_group.setdefault(group_by_cell[k], []).append(k)
+
+        observed_count = {}
+        observed_inadmissible_count = {}
+        for k, ident in zip(obs_keys, obs_identity, strict=True):
+            if k not in cell_keys:
+                continue
+            pair = (group_by_cell[k], ident)
+            observed_count[pair] = observed_count.get(pair, 0) + 1
+            if k in inadmissible:
+                observed_inadmissible_count[pair] = observed_inadmissible_count.get(pair, 0) + 1
+
+        for group in sorted(keys_by_group):
+            asked_by_identity: dict[str, int] = {}
+            inadmissible_by_identity: dict[str, int] = {}
+            for k in keys_by_group[group]:
+                member_is_inadmissible = k in inadmissible
+                for identity in offered_by_sample.get(k[0], set()):
+                    asked_by_identity[identity] = asked_by_identity.get(identity, 0) + 1
+                    if member_is_inadmissible:
+                        inadmissible_by_identity[identity] = inadmissible_by_identity.get(identity, 0) + 1
+
+            for identity in sorted(asked_by_identity):
+                asked = asked_by_identity[identity]
+                total_inadmissible = inadmissible_by_identity.get(identity, 0)
+                pair = (group, identity)
+                observed_n = observed_count.get(pair, 0)
+                observed_inadmissible_n = observed_inadmissible_count.get(pair, 0)
+                silent_unreliable = total_inadmissible - observed_inadmissible_n
+                silent_not_bound = asked - observed_n - silent_unreliable
+                assert asked >= 0 and silent_unreliable >= 0 and silent_not_bound >= 0, (
+                    f"negative silent term for {group!r}/{identity!r} "
+                    f"(asked={asked}, silentUnreliable={silent_unreliable}, silentNotBound={silent_not_bound}): "
+                    "cells or observed violated the uniqueness precondition documented above"
+                )
+                rows.append((group, identity, asked, observed_n, silent_unreliable, silent_not_bound))
 
     return pl.DataFrame(
         rows,
         orient="row",
         schema={
-            "sampleId": pl.String,
+            group_column: pl.String,
             "identity": pl.String,
             "asked": pl.Int64,
             "observed": pl.Int64,

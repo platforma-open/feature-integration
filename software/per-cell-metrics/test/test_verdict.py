@@ -505,12 +505,10 @@ def test_duplicated_observed_rows_are_rejected_not_silently_wrong():
         silent_tally(observed, cells, {"S1": {"A"}}, admissibility)
 
 
-def _check_silent_tally_matches_oracle(seed, cutoff=BOUND_CUTOFF, force_empty_sample=None):
-    # Shared by every arm below: build a small, varied population by
+def _build_silent_tally_population(seed, force_empty_sample=None):
+    # Shared by every check below: build a small, varied population by
     # construction -- several samples, cells, identities, some cells gated,
-    # some below the thin line, some with a normal reference -- and check
-    # silent_tally's three cheap terms against the dense grid built by
-    # densify and read through read_states, which never skips a row.
+    # some below the thin line, some with a normal reference.
     rng = random.Random(seed)
     samples = ["S1", "S2", "S3"]
     identities = ["A", "B", "C"]
@@ -546,6 +544,17 @@ def _check_silent_tally_matches_oracle(seed, cutoff=BOUND_CUTOFF, force_empty_sa
             for identity in offered_by_sample[sample]:
                 if rng.random() < 0.5:
                     tag_rows.append((sample, cell, identity, rng.randint(0, 30)))
+
+    return samples, identities, thin_line, gated, reference, cell_rows, tag_rows, offered_by_sample
+
+
+def _check_silent_tally_matches_oracle(seed, cutoff=BOUND_CUTOFF, force_empty_sample=None):
+    # Checks silent_tally's three cheap terms, sample-keyed (the default),
+    # against the dense grid built by densify and read through read_states,
+    # which never skips a row.
+    samples, identities, thin_line, gated, reference, cell_rows, tag_rows, offered_by_sample = (
+        _build_silent_tally_population(seed, force_empty_sample)
+    )
 
     cells = _cells(cell_rows)
     sparse_identities = _ident(tag_rows)
@@ -622,3 +631,128 @@ def test_silent_tally_agrees_with_the_oracle_at_a_low_valid_cutoff():
     # the boundary itself rather than assuming BOUND_CUTOFF=75.0 is
     # representative of every cutoff the equivalence must hold for.
     _check_silent_tally_matches_oracle(seed=20260817, cutoff=0.5)
+
+
+def _check_silent_tally_matches_oracle_grouped(seed, cutoff=BOUND_CUTOFF, force_empty_sample=None):
+    # Same population and same dense oracle as the sample-keyed check above,
+    # but the cells are regrouped into sets that mix samples with different
+    # offered identities, and silent_tally is called with that grouping. A
+    # set's cell index (0..5) becomes its group, independent of sample, so
+    # every group is guaranteed to contain a member from all three samples
+    # -- exactly the shape a hoisted asked/total_inadmissible would get
+    # wrong, since S1, S2, S3 are built with independently random offered
+    # sets and need not agree on what a given group's identity was offered.
+    samples, identities, thin_line, gated, reference, cell_rows, tag_rows, offered_by_sample = (
+        _build_silent_tally_population(seed, force_empty_sample)
+    )
+
+    cells = _cells(cell_rows)
+    sparse_identities = _ident(tag_rows)
+    admissibility = Admissibility(reference, thin_line, gated)
+    observed = read_states(sparse_identities, admissibility, cutoff)
+    dense = densify(sparse_identities, cells, offered_by_sample)
+    oracle = read_states(dense, admissibility, cutoff)
+
+    group_by_cell = {(sample, cell): cell for sample, cell in cell_rows}
+    groups = sorted({cell for _, cell in cell_rows})
+
+    tally = silent_tally(
+        observed, cells, offered_by_sample, admissibility, group_by_cell=group_by_cell, group_column="setId"
+    )
+
+    for group in groups:
+        members = {k for k, g in group_by_cell.items() if g == group}
+        offered_here = set().union(*(offered_by_sample[k[0]] for k in members))
+        for identity in identities:
+            group_filter = pl.col("setId") == group
+            if identity not in offered_here:
+                # None of this group's members' own samples offered it: no
+                # row at all, not a zero row.
+                assert tally.filter(group_filter & (pl.col("identity") == identity)).height == 0
+                continue
+
+            def _states_for(frame):
+                # A plain Python filter, not a polars struct comparison: this
+                # only needs to run over a handful of rows in a test, and it
+                # sidesteps any doubt about how polars compares struct columns.
+                return [
+                    state
+                    for sample_id, cell_id, ident, state in zip(
+                        frame["sampleId"].to_list(),
+                        frame["cellId"].to_list(),
+                        frame["identity"].to_list(),
+                        frame["state"].to_list(),
+                        strict=True,
+                    )
+                    if (sample_id, cell_id) in members and ident == identity
+                ]
+
+            oracle_states = _states_for(oracle)
+            observed_states = _states_for(observed)
+
+            tally_row = tally.filter(group_filter & (pl.col("identity") == identity)).row(0, named=True)
+
+            expected_silent_unreliable = oracle_states.count(State.UNRELIABLE.value) - observed_states.count(
+                State.UNRELIABLE.value
+            )
+            expected_silent_not_bound = oracle_states.count(State.NOT_BOUND.value) - observed_states.count(
+                State.NOT_BOUND.value
+            )
+
+            assert tally_row["asked"] == len(oracle_states)
+            assert tally_row["observed"] == len(observed_states)
+            assert tally_row["silentUnreliable"] == expected_silent_unreliable
+            assert tally_row["silentNotBound"] == expected_silent_not_bound
+
+
+@pytest.mark.parametrize(
+    "seed, force_empty_sample",
+    [
+        (20260817, None),
+        (1, None),
+        (2, None),
+        (7, "S2"),
+    ],
+)
+def test_silent_tally_agrees_with_the_oracle_when_groups_span_differing_panels(seed, force_empty_sample):
+    _check_silent_tally_matches_oracle_grouped(seed, force_empty_sample=force_empty_sample)
+
+
+def test_silent_tally_group_column_is_named_by_the_caller():
+    cells = _cells([("S1", "c1"), ("S2", "c1")])
+    observed = _ident([])
+    admissibility = Admissibility({("S1", "c1"): 5, ("S2", "c1"): 5}, 2, set())
+    tally = silent_tally(
+        observed,
+        cells,
+        {"S1": {"A"}, "S2": {"A"}},
+        admissibility,
+        group_by_cell={("S1", "c1"): "G1", ("S2", "c1"): "G1"},
+        group_column="setId",
+    )
+    assert tally.columns[0] == "setId"
+    row = tally.row(0, named=True)
+    assert row["setId"] == "G1" and row["asked"] == 2  # both samples' c1 land in one group
+
+
+def test_a_group_spanning_two_panels_does_not_inflate_silent_unreliable():
+    # THE hoist bug, pinned directly: S1 offers A, S2 does not. A group holds
+    # one cell from each, and S2's cell is gated. A hoisted total_inadmissible
+    # would count S2's gated cell against identity A too, even though S2
+    # never offered A -- inflating silentUnreliable for an identity that
+    # cell was never asked about.
+    cells = _cells([("S1", "c1"), ("S2", "c2")])
+    observed = _ident([])  # both cells silent
+    admissibility = Admissibility({("S1", "c1"): 5}, 2, {("S2", "c2")})
+    tally = silent_tally(
+        observed,
+        cells,
+        offered_by_sample={"S1": {"A"}, "S2": {"B"}},
+        admissibility=admissibility,
+        group_by_cell={("S1", "c1"): "G1", ("S2", "c2"): "G1"},
+        group_column="setId",
+    )
+    row_a = tally.filter(pl.col("identity") == "A").row(0, named=True)
+    assert row_a["asked"] == 1  # only S1's cell, not S2's
+    assert row_a["silentUnreliable"] == 0  # S2's gated cell must not count against A
+    assert row_a["silentNotBound"] == 1  # S1's silent, admissible cell votes not bound
