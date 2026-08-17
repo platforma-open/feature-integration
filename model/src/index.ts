@@ -448,7 +448,10 @@ export const platforma = BlockModelV3.create(dataModel)
     // without the role values. Asking for it anyway would degrade to no comparator inside the run, where
     // the choice is recorded but the user never sees they lost it.
     if (data.referenceSource === "declared" && !data.referenceValues?.length)
-      throw new Error("Choose which role values mark the reference, or pick another source");
+      throw new Error(
+        'Under "Values marking the reference", choose at least one value, or choose a ' +
+          'different option for "What counts are read against".',
+      );
     // A role column or a grouping column the panel does not carry ends the whole run at the exec
     // (emit_verdicts.py exits rather than degrading), and the user meets that as a dead run with no hint
     // of which setting caused it. The check is against the headers snapshotted when the column was picked
@@ -462,7 +465,7 @@ export const platforma = BlockModelV3.create(dataModel)
       ] as const) {
         if (column && !panelColumns.includes(column))
           throw new Error(
-            `${role} column "${column}" is not a column of the uploaded panel file; re-select it`,
+            `The ${role} column "${column}" is not in the uploaded panel file. Select a column from the new panel.`,
           );
       }
     }
@@ -1081,7 +1084,8 @@ export const platforma = BlockModelV3.create(dataModel)
     else
       unavailable.push(
         `The panel's own readings — the panel declares ${panelSize} tag(s) and this source needs at ` +
-          `least ${minMembers}. Lower the panel minimum in Advanced Settings, or use a declared reference tag.`,
+          `least ${minMembers}. Lower "Panel minimum for self-comparison" under "Advanced verdict settings", ` +
+          `or declare a reference tag.`,
       );
     options.push({
       value: "none",

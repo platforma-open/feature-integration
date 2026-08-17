@@ -54,7 +54,7 @@ ratio, so the useful values are not where intuition puts them — against a comp
 | `500` | The *bound* reading while the comparator is 6 (score 100) — and a *not bound* reading against 60 (score 0.1). That difference is what the two-comparator panel measures. |
 | `5000` | Bound against either comparator, so one binding survives on the two-comparator panel and the bed does not degenerate into all *not bound*. |
 | `2` (one reading only) | Below the floor of 4, so it is zeroed and counted in `readingsFloored`. |
-| `6` (`Ctrl1`) | Above the thin line of 2 so cells can be compared, and far below 500 so a real binding clears the cutoff. |
+| `6` (`Ctrl1`) | At or above the thin line of 2 so cells can be compared, and far below 500 so a real binding clears the cutoff. The test is `reference < thin_line`, so a comparator reading exactly 2 is still comparable — calibrate a new fixture against that, not against "above 2". |
 | `60` (`Ctrl2`) | Above `Ctrl1` so the highest-member rule is observable, and below the high-reference line of 100 so that measurement stays quiet. |
 | `1` (`Ctrl1` in one cell) | Below the thin line of 2. This is the bed's only source of *unreliable*: raise it and the fourth state disappears. |
 
