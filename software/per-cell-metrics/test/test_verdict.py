@@ -1,14 +1,25 @@
+import math
+import random
+
 import polars as pl
+from scipy.stats import beta
 from verdict import (
+    BOUND_CUTOFF,
     DEFAULT_FLOOR,
     DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE,
     DEFAULT_PANEL_MIN_MEMBERS,
     DEFAULT_REFERENCE_THIN_LINE,
     ReferenceChoice,
+    State,
     apply_floor,
+    combine_tags_to_identities,
+    densify,
     gate_cells,
+    read_states,
     reference_by_cell,
     resolve_default_source,
+    silent_tally,
+    specificity_score,
 )
 
 
@@ -306,3 +317,225 @@ def test_the_panel_source_also_respects_the_given_cell_list():
     )
     assert choice is ReferenceChoice.PANEL
     assert ref == {("S1", "c1"): 9}
+
+
+def _ident(rows):
+    return pl.DataFrame(
+        rows,
+        orient="row",
+        schema={"sampleId": pl.String, "cellId": pl.String, "identity": pl.String, "umiCount": pl.Int64},
+    )
+
+
+def _cells(pairs):
+    return pl.DataFrame(pairs, orient="row", schema={"sampleId": pl.String, "cellId": pl.String})
+
+
+def test_state_has_exactly_four_members():
+    assert {s.value for s in State} == {"bound", "not bound", "never asked", "unreliable"}
+
+
+def test_densify_gives_a_silent_cell_a_real_zero():
+    counts = _ident([("S1", "c1", "A", 7)])
+    cells = _cells([("S1", "c1")])
+    out = densify(counts, cells, offered_by_sample={"S1": {"A", "B"}}).sort("identity")
+    assert out["identity"].to_list() == ["A", "B"]
+    assert out["umiCount"].to_list() == [7, 0]  # B was asked and silent
+
+
+def test_densify_does_not_invent_unoffered_identities():
+    counts = _ident([("S1", "c1", "A", 7)])
+    cells = _cells([("S1", "c1")])
+    out = densify(counts, cells, offered_by_sample={"S1": {"A"}})
+    assert out["identity"].to_list() == ["A"]
+
+
+def test_identity_reading_is_the_highest_not_the_sum():
+    df = _counts([("S1", "c1", "AAAA", 10), ("S1", "c1", "CCCC", 7)])
+    out = combine_tags_to_identities(df, {"AAAA": "A", "CCCC": "A"})
+    assert out["umiCount"].to_list() == [10]
+
+
+def test_combine_keeps_sample_id():
+    df = _counts([("S1", "c1", "AAAA", 5), ("S2", "c1", "AAAA", 9)])
+    out = combine_tags_to_identities(df, {"AAAA": "A"})
+    assert out.height == 2 and set(out["sampleId"].to_list()) == {"S1", "S2"}
+
+
+def test_specificity_score_matches_the_published_formula():
+    assert math.isclose(specificity_score(10, 2), (1.0 - beta.cdf(0.925, 11, 5)) * 100.0, rel_tol=1e-12)
+
+
+def test_cutoff_is_seventy_five():
+    assert BOUND_CUTOFF == 75.0
+
+
+def test_high_count_against_a_quiet_reference_is_bound():
+    # thin_line=0 here, not the default 2: a reference reading of 0 is itself
+    # below the default thin line (Task 5's own precedent -- a median that
+    # truncates to 1 already reads unreliable at that default), so pinning the
+    # score computation in isolation needs the thin-line rule turned off.
+    out = read_states(_ident([("S1", "c1", "A", 200)]), {("S1", "c1"): 0}, 75.0, 0, set())
+    assert out["state"].to_list() == [State.BOUND.value]
+
+
+def test_zero_reads_not_bound_never_unreliable():
+    out = read_states(_ident([("S1", "c1", "A", 0)]), {("S1", "c1"): 5}, 75.0, 2, set())
+    assert out["state"].to_list() == [State.NOT_BOUND.value]
+
+
+def test_no_reference_reading_is_unreliable():
+    out = read_states(_ident([("S1", "c9", "A", 50)]), {}, 75.0, 2, set())
+    assert out["state"].to_list() == [State.UNRELIABLE.value]
+
+
+def test_reference_below_the_thin_line_is_unreliable_not_scored():
+    # A comparison against almost nothing is not a comparison.
+    out = read_states(_ident([("S1", "c1", "A", 50)]), {("S1", "c1"): 1}, 75.0, thin_line=2, gated=set())
+    assert out["state"].to_list() == [State.UNRELIABLE.value]
+
+
+def test_gated_cell_is_unreliable_and_stays_in_the_frame():
+    out = read_states(_ident([("S1", "c1", "A", 500)]), {("S1", "c1"): 900}, 75.0, 2, gated={("S1", "c1")})
+    assert out.height == 1
+    assert out["state"].to_list() == [State.UNRELIABLE.value]
+
+
+def test_never_asked_is_not_produced_here():
+    out = read_states(_ident([("S1", "c1", "A", 0)]), {("S1", "c1"): 5}, 75.0, 2, set())
+    assert State.NEVER_ASKED.value not in out["state"].to_list()
+
+
+def test_no_score_column_leaves_the_reading():
+    out = read_states(_ident([("S1", "c1", "A", 50)]), {("S1", "c1"): 5}, 75.0, 2, set())
+    assert "score" not in out.columns
+    assert {"umiCount", "referenceCount"} <= set(out.columns)
+
+
+def test_score_bounded():
+    for a, r in [(0, 0), (5, 5), (1000, 3)]:
+        assert 0.0 <= specificity_score(a, r) <= 100.0
+
+
+def test_a_score_exactly_at_the_cutoff_is_bound():
+    # The named value satisfies the condition it names, as everywhere else here.
+    # Integer counts have no rational preimage of a fixed cutoff like 75.0 under
+    # the beta CDF, so the exact boundary is built the other way round: compute
+    # a reading's own score, then feed that exact value back in as the cutoff.
+    # The comparison then lands on the line with no floating-point drift, and
+    # ">=" must call it bound.
+    exact = specificity_score(10, 2)
+    out = read_states(_ident([("S1", "c1", "A", 10)]), {("S1", "c1"): 2}, cutoff=exact, thin_line=2, gated=set())
+    assert out["state"].to_list() == [State.BOUND.value]
+
+
+def test_a_reference_exactly_at_the_thin_line_is_scored_not_unreliable():
+    # Below the line the comparison does not exist; AT the line it does. This
+    # is the pair that makes the thin line a floor rather than a gap.
+    at_line = read_states(_ident([("S1", "c1", "A", 0)]), {("S1", "c1"): 2}, 75.0, thin_line=2, gated=set())
+    below_line = read_states(_ident([("S1", "c2", "A", 0)]), {("S1", "c2"): 1}, 75.0, thin_line=2, gated=set())
+    assert at_line["unreliableReason"].to_list() == [None]
+    assert at_line["state"].to_list() == [State.NOT_BOUND.value]
+    assert below_line["state"].to_list() == [State.UNRELIABLE.value]
+
+
+def test_no_comparator_is_unreliable_but_a_comparator_reading_zero_is_scored():
+    # The two must not collapse. served=NONE (modelled here as an empty
+    # reference dict, per reference_by_cell's contract) means no comparison
+    # existed; a comparator present and reading 0 is a real comparison and
+    # scores normally -- a positive antigen count against a zero reference is
+    # the strongest evidence there is. thin_line=0 isolates that from the
+    # separate (and, at the default of 2, overlapping) thin-line rule.
+    no_comparator = read_states(_ident([("S1", "c1", "A", 200)]), {}, 75.0, 0, set())
+    zero_comparator = read_states(_ident([("S1", "c1", "A", 200)]), {("S1", "c1"): 0}, 75.0, 0, set())
+    assert no_comparator["state"].to_list() == [State.UNRELIABLE.value]
+    assert no_comparator["unreliableReason"].to_list() == ["no comparator for this cell"]
+    assert zero_comparator["state"].to_list() == [State.BOUND.value]
+    assert zero_comparator["unreliableReason"].to_list() == [None]
+
+
+def test_silent_admissible_cell_can_never_score_bound():
+    # The fact the analytic path rests on: specificity_score(0, r) is 0.042 at
+    # r = 0 and smaller for every larger r, below every cutoff this block
+    # offers above that. A silent admissible cell is therefore always
+    # *not bound*, which is what lets silent_tally skip materializing its row.
+    assert math.isclose(specificity_score(0, 0), 0.042, abs_tol=5e-4)
+    scores = [specificity_score(0, r) for r in range(0, 50)]
+    assert scores == sorted(scores, reverse=True)
+    assert all(s < 0.05 for s in scores)
+
+
+def test_silent_tally_agrees_with_the_densify_oracle_on_small_random_inputs():
+    # A property test: build a small, varied population by construction --
+    # several samples, cells, identities, some cells gated, some below the
+    # thin line, some with a normal reference -- and check silent_tally's
+    # three cheap terms against the dense grid built by densify and read
+    # through read_states, which never skips a row.
+    rng = random.Random(20260817)
+    samples = ["S1", "S2", "S3"]
+    identities = ["A", "B", "C"]
+    thin_line = 2
+    gated: set[tuple[str, str]] = set()
+    reference: dict[tuple[str, str], int] = {}
+    cell_rows = []
+    tag_rows = []
+    offered_by_sample: dict[str, set[str]] = {}
+
+    for sample in samples:
+        offered_by_sample[sample] = set(rng.sample(identities, k=rng.randint(1, len(identities))))
+        for i in range(6):
+            cell = f"c{i}"
+            cell_rows.append((sample, cell))
+            key = (sample, cell)
+            # Reference reading: sometimes missing (no comparator), sometimes
+            # thin, sometimes ordinary.
+            roll = rng.random()
+            if roll < 0.2:
+                pass  # no comparator for this cell
+            elif roll < 0.4:
+                reference[key] = 1  # below thin_line=2
+            else:
+                reference[key] = rng.randint(2, 20)
+            if rng.random() < 0.15:
+                gated.add(key)
+            # Sparse observed readings: only some (cell, identity) pairs the
+            # sample offered actually got a tag-stat row.
+            for identity in offered_by_sample[sample]:
+                if rng.random() < 0.5:
+                    tag_rows.append((sample, cell, identity, rng.randint(0, 30)))
+
+    cells = _cells(cell_rows)
+    sparse_identities = _ident(tag_rows)
+    observed = read_states(sparse_identities, reference, BOUND_CUTOFF, thin_line, gated)
+
+    dense = densify(sparse_identities, cells, offered_by_sample)
+    oracle = read_states(dense, reference, BOUND_CUTOFF, thin_line, gated)
+
+    tally = silent_tally(observed, cells, offered_by_sample, reference, thin_line, gated)
+
+    for sample in samples:
+        for identity in offered_by_sample[sample]:
+            oracle_group = oracle.filter((pl.col("sampleId") == sample) & (pl.col("identity") == identity))
+            observed_group = observed.filter((pl.col("sampleId") == sample) & (pl.col("identity") == identity))
+            tally_row = tally.filter((pl.col("sampleId") == sample) & (pl.col("identity") == identity)).row(
+                0, named=True
+            )
+
+            oracle_states = oracle_group["state"].to_list()
+            observed_states = observed_group["state"].to_list()
+
+            # A silent admissible cell can never be observed as bound, so the
+            # oracle and the sparse frame must agree exactly on bound counts.
+            assert oracle_states.count(State.BOUND.value) == observed_states.count(State.BOUND.value)
+
+            expected_silent_unreliable = oracle_states.count(State.UNRELIABLE.value) - observed_states.count(
+                State.UNRELIABLE.value
+            )
+            expected_silent_not_bound = oracle_states.count(State.NOT_BOUND.value) - observed_states.count(
+                State.NOT_BOUND.value
+            )
+
+            assert tally_row["asked"] == len(oracle_states)
+            assert tally_row["observed"] == len(observed_states)
+            assert tally_row["silentUnreliable"] == expected_silent_unreliable
+            assert tally_row["silentNotBound"] == expected_silent_not_bound

@@ -33,7 +33,9 @@ from __future__ import annotations
 from enum import Enum
 from typing import NamedTuple
 
+import numpy as np
 import polars as pl
+from scipy.stats import beta
 
 CELL_KEY = ("sampleId", "cellId")
 
@@ -269,3 +271,239 @@ def gate_cells(
     if threshold is None:
         return set(), high
     return {k for k, v in reference.items() if v >= threshold}, high
+
+
+# The cutoff and the three beta constants are the dominant tool's, inherited
+# rather than justified: nothing published argues any of the four over other
+# values. They ship as the default so a run's numbers reconcile with what a
+# scientist already has.
+BETA_X, BETA_A_OFFSET, BETA_B_OFFSET = 0.925, 1, 3
+BOUND_CUTOFF = 75.0
+
+
+class State(str, Enum):
+    """The four states a verdict takes. There is no fifth.
+
+    NEVER_ASKED means the experiment did not put the identity to those cells.
+    UNRELIABLE means it did and the data cannot settle it. Neither is a kind of
+    NOT_BOUND, and collapsing either into it makes a claim the data does not
+    support.
+    """
+
+    BOUND = "bound"
+    NOT_BOUND = "not bound"
+    NEVER_ASKED = "never asked"
+    UNRELIABLE = "unreliable"
+
+
+def combine_tags_to_identities(counts: pl.DataFrame, grouping: dict[str, str]) -> pl.DataFrame:
+    """An identity's reading in a cell is the highest of its tags' counts.
+
+    Counts are not added together and summing is not offered. Requiring every
+    tag to clear was measured and is the worst option available. Summing would
+    need the reference scaled to a summed identity, which assumes each tag picks
+    up background at the rate the reference does — and tags differ in how
+    readily they are taken up, by an amount nobody has measured.
+    """
+    mapped = counts.with_columns(pl.col("tag").replace_strict(grouping, default=None).alias("identity")).filter(
+        pl.col("identity").is_not_null()
+    )
+    return mapped.group_by([*CELL_KEY, "identity"]).agg(pl.col("umiCount").max().alias("umiCount"))
+
+
+def densify(identities: pl.DataFrame, cells: pl.DataFrame, offered_by_sample: dict[str, set[str]]) -> pl.DataFrame:
+    """Every cell against every identity its sample offered, zeros filled in.
+
+    tag-stat emits only observed pairs, so without this an antigen every cell
+    failed to bind produces no rows and its failure is indistinguishable from a
+    reagent nobody offered. The epitope-mapping case turns on exactly that
+    distinction: there, *not bound* is the finding.
+
+    This is the reference implementation. Production uses `silent_tally`
+    instead: on a realistic run this grid is 11-20x the sparse input and does
+    not fit a large panel at all. This function exists so a test can hold it
+    up as the oracle `silent_tally` is checked against, never to run in the
+    block itself.
+    """
+    grid = (
+        pl.concat(
+            [
+                cells.filter(pl.col("sampleId") == sample).join(
+                    pl.DataFrame({"identity": sorted(offered)}), how="cross"
+                )
+                for sample, offered in sorted(offered_by_sample.items())
+                if offered
+            ],
+            how="vertical",
+        )
+        if offered_by_sample
+        else cells.head(0).with_columns(pl.lit(None, pl.String).alias("identity"))
+    )
+
+    return grid.join(identities, on=[*CELL_KEY, "identity"], how="left").with_columns(
+        pl.col("umiCount").fill_null(0).cast(pl.Int64)
+    )
+
+
+def specificity_score(antigen_count, reference_count):
+    """How specifically the antigen count exceeds the reference: 0-100.
+
+    At antigen_count = 0 this is 0.042 at reference_count = 0 and falls for
+    every larger reference_count. It cannot clear any cutoff this block offers
+    above that, which is what lets a silent cell's state be known without a row
+    ever being written for it.
+    """
+    a = np.asarray(antigen_count, dtype=float) + BETA_A_OFFSET
+    b = np.asarray(reference_count, dtype=float) + BETA_B_OFFSET
+    return (1.0 - beta.cdf(BETA_X, a, b)) * 100.0
+
+
+def _cell_admissibility_reason(
+    key: tuple[str, str], reference: dict[tuple[str, str], int], thin_line: int, gated: set[tuple[str, str]]
+) -> str | None:
+    """Why this cell's comparison cannot be made, or None if it can be.
+
+    Identity-independent: a cell that cannot be compared cannot be compared
+    against any identity, so this takes no identity and answers the same way
+    for every one the cell was asked about. `read_states` and `silent_tally`
+    both call this rather than each carrying its own copy of the same three
+    checks.
+
+    `key not in reference` is deliberate, not `reference.get(key, 0)`: a
+    missing key means no comparator existed for this cell, and defaulting it
+    to 0 would read as "the comparator served and found nothing" — a settled
+    comparison rather than the absence of one.
+    """
+    if key in gated:
+        return "cell set aside by the admissibility gate"
+    if key not in reference:
+        return "no comparator for this cell"
+    if reference[key] < thin_line:
+        return "the comparator rests on too little to compare against"
+    return None
+
+
+def read_states(
+    identities: pl.DataFrame,
+    reference: dict[tuple[str, str], int],
+    cutoff: float,
+    thin_line: int,
+    gated: set[tuple[str, str]],
+) -> pl.DataFrame:
+    """Give every (cell, identity) row a state.
+
+    Three routes to UNRELIABLE and they mean different things, all recorded in
+    `unreliableReason`: the cell has no comparator; the comparator rests on
+    almost nothing, which is the absence of a comparison rather than a poor one;
+    or an admissibility gate set the cell aside. Gated cells stay in the frame —
+    dropping them made a set whose every cell was set aside read *never asked*
+    instead of *unreliable*.
+
+    Emits umiCount and referenceCount, never the score. Re-derivation under a
+    new grouping needs the counts, and no binding level may leave the block.
+    """
+    keys = list(zip(identities["sampleId"].to_list(), identities["cellId"].to_list(), strict=True))
+    reasons = [_cell_admissibility_reason(k, reference, thin_line, gated) for k in keys]
+    refs = [reference.get(k) for k in keys]
+
+    df = identities.with_columns(
+        pl.Series("referenceCount", refs, dtype=pl.Int64),
+        pl.Series("unreliableReason", reasons, dtype=pl.String),
+    )
+
+    scored = specificity_score(
+        df["umiCount"].to_numpy(),
+        np.nan_to_num(df["referenceCount"].cast(pl.Float64).to_numpy(), nan=0.0),
+    )
+
+    df = df.with_columns(pl.Series("_score", scored, dtype=pl.Float64)).with_columns(
+        pl.when(pl.col("unreliableReason").is_not_null())
+        .then(pl.lit(State.UNRELIABLE.value))
+        .when(pl.col("_score") >= cutoff)
+        .then(pl.lit(State.BOUND.value))
+        .otherwise(pl.lit(State.NOT_BOUND.value))
+        .alias("state")
+    )
+
+    return df.select([*CELL_KEY, "identity", "umiCount", "referenceCount", "state", "unreliableReason"])
+
+
+def silent_tally(
+    observed: pl.DataFrame,
+    cells: pl.DataFrame,
+    offered_by_sample: dict[str, set[str]],
+    reference: dict[tuple[str, str], int],
+    thin_line: int,
+    gated: set[tuple[str, str]],
+) -> pl.DataFrame:
+    """Per (sample, identity): how many asked cells were never observed, and how they resolve.
+
+    The production path A1 describes. `densify` followed by `read_states` is
+    the reference this must agree with, kept only for tests: on a realistic
+    panel the dense grid is 11-20x the sparse input and does not fit at all.
+
+    A silently admissible cell's count is 0, and specificity_score(0, r) is
+    0.042 at r = 0 and smaller for every larger r — below every cutoff this
+    block offers. So a silent cell resolves to NOT_BOUND unless the cell itself
+    cannot be compared (gated, no comparator, or below the thin line), which is
+    a per-cell fact independent of which identity was silent. That is what lets
+    this be three cheap terms instead of a materialized row per silent cell:
+
+        asked              = cells of the sample, for every identity it offered
+        observed           = the (cell, identity) rows read_states already produced
+        silentUnreliable   = inadmissible cells of the sample − inadmissible cells among the observed
+        silentNotBound     = asked − observed − silentUnreliable
+
+    `observed` is `read_states`' output on the sparse frame — one row per
+    (cell, identity) pair `combine_tags_to_identities` actually produced, state
+    already resolved. Nothing here inspects an identity's silent reading; the
+    admissibility check that decides silentUnreliable never takes an identity.
+    """
+    keys = list(zip(cells["sampleId"].to_list(), cells["cellId"].to_list(), strict=True))
+    inadmissible = {k for k in keys if _cell_admissibility_reason(k, reference, thin_line, gated) is not None}
+
+    sample_of = dict(zip(keys, cells["sampleId"].to_list(), strict=True))
+    asked_count = {}
+    for sample in offered_by_sample:
+        asked_count[sample] = sum(1 for k in keys if sample_of[k] == sample)
+    inadmissible_count = {}
+    for sample in offered_by_sample:
+        inadmissible_count[sample] = sum(1 for k in keys if sample_of[k] == sample and k in inadmissible)
+
+    obs_keys = list(zip(observed["sampleId"].to_list(), observed["cellId"].to_list(), strict=True))
+    obs_identity = observed["identity"].to_list()
+    observed_count: dict[tuple[str, str], int] = {}
+    observed_inadmissible_count: dict[tuple[str, str], int] = {}
+    for k, ident in zip(obs_keys, obs_identity, strict=True):
+        sample = sample_of.get(k)
+        if sample is None:
+            continue
+        pair = (sample, ident)
+        observed_count[pair] = observed_count.get(pair, 0) + 1
+        if k in inadmissible:
+            observed_inadmissible_count[pair] = observed_inadmissible_count.get(pair, 0) + 1
+
+    rows = []
+    for sample, offered in sorted(offered_by_sample.items()):
+        asked = asked_count.get(sample, 0)
+        total_inadmissible = inadmissible_count.get(sample, 0)
+        for identity in sorted(offered):
+            pair = (sample, identity)
+            observed_n = observed_count.get(pair, 0)
+            observed_inadmissible_n = observed_inadmissible_count.get(pair, 0)
+            silent_unreliable = total_inadmissible - observed_inadmissible_n
+            silent_not_bound = asked - observed_n - silent_unreliable
+            rows.append((sample, identity, asked, observed_n, silent_unreliable, silent_not_bound))
+
+    return pl.DataFrame(
+        rows,
+        orient="row",
+        schema={
+            "sampleId": pl.String,
+            "identity": pl.String,
+            "asked": pl.Int64,
+            "observed": pl.Int64,
+            "silentUnreliable": pl.Int64,
+            "silentNotBound": pl.Int64,
+        },
+    )
