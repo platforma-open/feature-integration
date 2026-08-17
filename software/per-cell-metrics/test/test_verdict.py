@@ -130,6 +130,9 @@ def test_default_source_never_upgrades_itself():
 
 
 def test_empty_droplets_is_not_offered():
+    # A tripwire, not a permanent ban: the day this block genuinely receives
+    # gene expression and an empty-droplet population, EMPTY_DROPLETS gets
+    # implemented and this test is deleted, not fixed.
     assert not hasattr(ReferenceChoice, "EMPTY_DROPLETS")
 
 
@@ -145,32 +148,17 @@ def test_cell_missing_the_reference_tag_reads_zero():
     assert ref[("S1", "c2")] == 0
 
 
-def test_panel_source_refuses_below_the_minimum():
-    counts = _counts([("S1", "c1", "AAAA", 9)])
-    ref, choice = reference_by_cell(counts, set(), ReferenceChoice.PANEL, panel_size=2, min_members=5)
-    assert choice is ReferenceChoice.NONE and ref == {}
-
-
-def test_panel_source_serves_when_big_enough():
-    counts = _counts([("S1", "c1", "AAAA", 9), ("S1", "c1", "CCCC", 1)])
-    _, choice = reference_by_cell(counts, set(), ReferenceChoice.PANEL, panel_size=8, min_members=5)
-    assert choice is ReferenceChoice.PANEL
-
-
 def test_source_none_yields_no_comparator():
     counts = _counts([("S1", "c1", "AAAA", 9)])
     ref, choice = reference_by_cell(counts, {"CTRL"}, ReferenceChoice.NONE)
     assert choice is ReferenceChoice.NONE and ref == {}
 
 
-def test_defaults_are_named_not_magic():
-    # Pins the actual shipped values, not just their sign. These are
-    # user-facing numbers that appear in a dropdown and change what the block
-    # produces, so an edit to any of them must be a deliberate, visible act —
-    # not a silent one that only this test would otherwise catch. The values
-    # themselves are not calibrated against real data.
-    assert DEFAULT_PANEL_MIN_MEMBERS > 0
-    assert DEFAULT_REFERENCE_THIN_LINE >= 0
+def test_shipped_defaults_are_pinned():
+    # These are user-facing numbers that appear in a dropdown and change what
+    # the block produces, so an edit to any of them must be a deliberate,
+    # visible act — not a silent one that only this test would otherwise
+    # catch. The values themselves are not calibrated against real data.
     assert DEFAULT_PANEL_MIN_MEMBERS == 8
     assert DEFAULT_REFERENCE_THIN_LINE == 2
     assert DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE == 100
@@ -199,7 +187,7 @@ def test_panel_source_serves_exactly_at_the_minimum():
 def test_panel_source_refuses_one_below_the_minimum():
     counts = _counts([("S1", "c1", "AAAA", 9)])
     ref, choice = reference_by_cell(counts, set(), ReferenceChoice.PANEL, panel_size=4, min_members=5)
-    assert choice is ReferenceChoice.NONE
+    assert choice is ReferenceChoice.NONE and ref == {}
 
 
 def test_the_gate_boundary_includes_the_line_itself():

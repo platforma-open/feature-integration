@@ -108,6 +108,9 @@ def apply_floor(counts: pl.DataFrame, floor: int, reference_tags: set[str]) -> F
 # because nothing published sets any of them and a hard-coded line would pretend
 # to a basis nobody has.
 DEFAULT_PANEL_MIN_MEMBERS = 8
+# A reference reading below this is too thin to compare against: the position
+# reads *unreliable*, not *not bound* — the comparison could not be made, not
+# that it was made and failed.
 DEFAULT_REFERENCE_THIN_LINE = 2
 DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE = 100
 
@@ -130,6 +133,30 @@ def resolve_default_source(reference_tags: set[str]) -> ReferenceChoice:
     return ReferenceChoice.DECLARED if reference_tags else ReferenceChoice.NONE
 
 
+def served_source(
+    source: ReferenceChoice,
+    reference_tags: set[str],
+    panel_size: int,
+    min_members: int,
+) -> ReferenceChoice:
+    """The source that can actually be served. Only ever the one asked for, or NONE.
+
+    A comparison that cannot be made is reported as absent rather than
+    approximated: a caller who asked for a comparator this run cannot produce
+    gets told plainly, never handed a different one it did not ask for.
+    """
+    if source is ReferenceChoice.DECLARED and not reference_tags:
+        return ReferenceChoice.NONE
+    if source is ReferenceChoice.PANEL and panel_size < min_members:
+        return ReferenceChoice.NONE
+    return source
+
+
+class Reference(NamedTuple):
+    by_cell: dict[tuple[str, str], int]
+    served: ReferenceChoice
+
+
 def reference_by_cell(
     counts: pl.DataFrame,
     reference_tags: set[str],
@@ -137,13 +164,19 @@ def reference_by_cell(
     cells: list[tuple[str, str]] | None = None,
     panel_size: int = 0,
     min_members: int = DEFAULT_PANEL_MIN_MEMBERS,
-) -> tuple[dict[tuple[str, str], int], ReferenceChoice]:
+) -> Reference:
     """The reference reading per cell, and which source actually served.
 
-    `source` is supplied, never inferred. The returned choice differs from the
-    requested one in exactly one direction — down to NONE where the requested
-    source cannot be served — because a comparison that cannot be made is
-    reported as absent rather than approximated.
+    `source` is supplied, never inferred; `served_source` decides whether it
+    can actually be served, and the result differs from the request in exactly
+    one direction — down to NONE.
+
+    `by_cell` is EMPTY when `served` is NONE — not a mapping of zeros. When a
+    comparator did serve, it holds a key for every analysed cell, zero where
+    that cell showed none of it. So a reader switches on `served`, never on key
+    presence: `by_cell.get(key, 0)` would read "no comparator was available" as
+    "the comparator read zero", which is the difference between a position that
+    could not be settled and one that was settled as not bound.
 
     `cells`, when given, is authoritative in both directions: the result holds
     exactly those cells, zero-filled where the comparator read nothing. Omit it
@@ -151,9 +184,28 @@ def reference_by_cell(
     only cells with an observed reading — pass it explicitly wherever the
     analysis has a cell list, or a cell that was asked and read nothing will be
     missing rather than zero.
+
+    Receives the floored, sparse per-tag frame — before densification. The
+    PANEL median is a median of observed readings; on a densified frame every
+    manufactured zero would drag it toward zero and change the comparator for
+    every cell, not just the ones that gained one.
+
+    `reference_tags` is not excluded from the PANEL median: the panel
+    comparator is the cell's own readings, and a declared comparator, where
+    also present, is one of those readings rather than something held out of
+    them.
     """
+    served = served_source(source, reference_tags, panel_size, min_members)
+    if served is ReferenceChoice.NONE:
+        return Reference({}, ReferenceChoice.NONE)
+
     all_cells = (
-        list(zip(counts["sampleId"].to_list(), counts["cellId"].to_list(), strict=True)) if cells is None else cells
+        # Deduplicated: a cell with several tag readings otherwise appears once
+        # per reading, and the zero-fill loop below would revisit it that many
+        # times for no effect but the extra work.
+        {(s, c) for s, c in zip(counts["sampleId"].to_list(), counts["cellId"].to_list(), strict=True)}
+        if cells is None
+        else cells
     )
     # A semi join on the cell list, applied before either branch aggregates, so
     # a cell outside the analysis is dropped before its rows are ever combined
@@ -168,12 +220,7 @@ def reference_by_cell(
         )
     )
 
-    if source is ReferenceChoice.NONE:
-        return {}, ReferenceChoice.NONE
-
-    if source is ReferenceChoice.DECLARED:
-        if not reference_tags:
-            return {}, ReferenceChoice.NONE
+    if served is ReferenceChoice.DECLARED:
         # Several reference tags combine as any identity's tags do: by the
         # highest. Taking an arbitrary one would make the comparator depend on
         # row order.
@@ -182,21 +229,24 @@ def reference_by_cell(
             .group_by(CELL_KEY)
             .agg(pl.col("umiCount").max().alias("ref"))
         )
-    elif source is ReferenceChoice.PANEL:
-        if panel_size < min_members:
-            # Comparing against two other antigens is not a background estimate.
-            # A scientist told plainly that a verdict could not be produced is
-            # better served than one handed a number resting on nothing.
-            return {}, ReferenceChoice.NONE
-        rows = scoped.group_by(CELL_KEY).agg(pl.col("umiCount").median().alias("ref"))
+    elif served is ReferenceChoice.PANEL:
+        # cast(Int64) truncates rather than rounds: a panel split between 1 and
+        # 2 medians to 1.5, cast to 1 — one below the default thin line of 2 —
+        # so that cell reads unreliable rather than being compared against a
+        # number resting on half a UMI.
+        rows = scoped.group_by(CELL_KEY).agg(pl.col("umiCount").median().cast(pl.Int64).alias("ref"))
     else:
-        raise SystemExit(f"reference source {source.value!r} is not available in this run")
+        # Reachable only if ReferenceChoice gains a member with no aggregation
+        # branch here — most plausibly EMPTY_DROPLETS. That is a missing
+        # implementation, not a fact about this run, so it must not be
+        # reported as "unavailable this time".
+        raise SystemExit(f"no comparator implementation for reference source {served.value!r}")
 
-    ref = {(s, c): int(v) for s, c, v in zip(rows["sampleId"], rows["cellId"], rows["ref"], strict=True)}
+    ref = {(s, c): v for s, c, v in zip(rows["sampleId"], rows["cellId"], rows["ref"], strict=True)}
     # The tag was offered; a cell showing none of it read zero, not nothing.
     for key in all_cells:
         ref.setdefault(key, 0)
-    return ref, source
+    return Reference(ref, served)
 
 
 def gate_cells(
