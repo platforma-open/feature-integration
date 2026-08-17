@@ -29,6 +29,25 @@ def read_panel(csv_path: str, roles: dict[str, str]) -> tuple[pl.DataFrame, list
     if sample_col and sample_col not in raw.columns:
         raise SystemExit(f"panel file has no sample column {sample_col!r}; columns are {raw.columns}")
 
+    # Two roles must not name the SAME column. This is reachable from the UI:
+    # the Sample-column dropdown in MainPage.vue offers every CSV column
+    # unfiltered, unlike its siblings for combine-mode and off-target, which
+    # exclude the barcode/feature roles. Picking the barcode column as the
+    # sample column returns "sample" as a copy of "tag" — per-sample keying
+    # gone, silently. The name-vs-role guard below does not catch it, because
+    # it is name-independent: it reproduces with any column name.
+    bound = [("barcode", barcode_col), ("feature", roles["feature"])]
+    if sample_col:
+        bound.append(("sample", sample_col))
+    seen: dict[str, str] = {}
+    for role, col in bound:
+        if col in seen:
+            raise SystemExit(
+                f"panel file roles {seen[col]!r} and {role!r} both name column {col!r}; "
+                "each role needs a column of its own."
+            )
+        seen[col] = role
+
     # A role column may be named after the column IT ITSELF produces, and after
     # nothing else. emit_panel.py in this package defaults --tag-col to "tag",
     # so a barcode column called "tag" must stay legal — alias() replaces the

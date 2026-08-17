@@ -23,7 +23,7 @@ def test_read_panel_one_row_per_tag_sample(tmp_path):
     )
     panel, dropped = read_panel(path, ROLES)
     assert panel.height == 3
-    assert set(panel.columns) >= {"tag", "sample", "Name", "Type"}
+    assert set(panel.columns) == {"tag", "sample", "Name", "Type"}
     assert dropped == []
 
 
@@ -155,3 +155,28 @@ def test_sample_role_named_tag_is_fatal(tmp_path):
     with pytest.raises(SystemExit) as e:
         read_panel(path, {"barcode": "Sequence", "feature": "Name", "sample": "tag"})
     assert "tag" in str(e.value)
+
+
+def test_two_blank_barcode_rows_are_not_a_duplicate(tmp_path):
+    # Both rows have tag "", so they would collide as a duplicate (tag, sample)
+    # pair if the blank-barcode filter ran after the dupe check.
+    path = _csv(
+        tmp_path,
+        [
+            ["S1", "AgA", "AAAA", "Target"],
+            ["S1", "AgB", "", "Target"],
+            ["S1", "AgC", "", "Target"],
+        ],
+        ["Samples", "Name", "Sequence", "Type"],
+    )
+    panel, dropped = read_panel(path, ROLES)
+    assert panel.height == 1
+    assert dropped == [3, 4]
+
+
+def test_two_roles_on_one_column_is_fatal(tmp_path):
+    # Reachable from the UI: the Sample-column dropdown is unfiltered.
+    path = _csv(tmp_path, [["S1", "AgA", "AAAA"]], ["Samples", "Name", "Sequence"])
+    with pytest.raises(SystemExit) as e:
+        read_panel(path, {"barcode": "Sequence", "feature": "Name", "sample": "Sequence"})
+    assert "Sequence" in str(e.value)
