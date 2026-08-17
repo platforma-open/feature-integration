@@ -8,6 +8,11 @@ declaration.
 
 A tag is the barcode sequence. The feature name is a declared property, not an
 identity: a name only travels where every row for that tag agrees on it.
+
+An identity is a group of tags asked as one question. The universe is every
+identity a verdict row exists at; offered is the subset a given set of cells
+was actually presented. The universe always contains offered — and that gap is
+where "never asked" lives.
 """
 
 from __future__ import annotations
@@ -181,28 +186,37 @@ def consistent_properties(
     return props, inconsistent
 
 
-def default_grouping(panel: pl.DataFrame, reference_tags: set[str]) -> dict[str, str]:
+# tag -> the identity that tag belongs to. Many tags may share one identity.
+# A tag absent from the mapping gets no verdict row, which is why every builder
+# must leave the reference tags out: the comparator has nothing to be compared
+# against. identity_universe() takes no reference_tags of its own, deliberately —
+# one place decides, so the two cannot drift.
+Grouping = dict[str, str]
+
+
+def default_grouping(panel: pl.DataFrame, reference_tags: set[str]) -> Grouping:
     """One identity per tag, over non-reference tags.
 
     The feature name cannot key an identity: the same barcode carries a
     different name in a different sample's panel, so name-keying splits one
     reagent and can merge two. The reference is a comparator and never an
-    identity.
+    identity — a verdict is a reading against the reference, so asking one of
+    the reference would compare it with itself.
     """
     return {t: t for t in panel["tag"].unique().to_list() if t not in reference_tags}
 
 
-def identity_universe(panel: pl.DataFrame, grouping: dict[str, str]) -> set[str]:
+def identity_universe(panel: pl.DataFrame, grouping: Grouping) -> set[str]:
     """Every identity a question is asked at — the row set for every set's verdicts.
 
     A verdict exists at every identity, including ones a given set was never
     offered: that is precisely where *never asked* lives. Using the offered set
     as the row set instead makes an unoffered identity vanish from the answer.
     """
-    return {grouping[t] for t in panel["tag"].to_list() if t in grouping}
+    return {grouping[t] for t in panel["tag"].unique().to_list() if t in grouping}
 
 
-def offered_identities(panel: pl.DataFrame, grouping: dict[str, str], samples: list[str]) -> set[str]:
+def offered_identities(panel: pl.DataFrame, grouping: Grouping, samples: list[str]) -> set[str]:
     """Which identities a set was offered, given the samples its cells came from.
 
     An identity was offered when any one of its tags was on any of those
@@ -214,6 +228,5 @@ def offered_identities(panel: pl.DataFrame, grouping: dict[str, str], samples: l
     a panel that does not cover the run, and the panel-versus-reads check is
     what makes the gap visible rather than leaving it to be inferred.
     """
-    wanted = set(samples)
-    rows = panel.filter((pl.col("sample") == ANY_SAMPLE) | pl.col("sample").is_in(list(wanted)))
-    return {grouping[t] for t in rows["tag"].to_list() if t in grouping}
+    rows = panel.filter((pl.col("sample") == ANY_SAMPLE) | pl.col("sample").is_in(samples))
+    return {grouping[t] for t in rows["tag"].unique().to_list() if t in grouping}
