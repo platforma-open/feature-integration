@@ -16,22 +16,36 @@ indistinguishable from a reagent nobody offered.
 The cell key is (sampleId, cellId) throughout: cell barcodes are bare 16-mers
 shared across samples.
 
-This module implements step 1 only.
+Compare `min_umi` in per_cell_metrics.py, which is also a UMI threshold on
+this data but resolves the other way: a barcode below it makes the feature
+absent for that cell, omitted rather than zeroed. Both keep a reading exactly
+at the threshold. The difference is the whole point of the floor — a floored
+reading is still a reading, and it answers "not bound"; an omitted one leaves
+nothing to answer with.
+
+After step 3 this module holds two frame shapes: the sparse per-tag frame the
+floor works on, and the per-identity frame combining produces from it — both
+keyed by CELL_KEY, which is the column vocabulary spanning both.
 """
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import polars as pl
 
-CELL_KEY = ["sampleId", "cellId"]
+CELL_KEY = ("sampleId", "cellId")
 
-# The value the antibody-side lineage uses and later work inherited. Not a
-# calibrated line, which is why it ships as a declared default the scientist
-# can move rather than as a constant.
+# Uncalibrated: a declared default the scientist can move, not a fitted line.
 DEFAULT_FLOOR = 4
 
 
-def apply_floor(counts: pl.DataFrame, floor: int, reference_tags: set[str]) -> tuple[pl.DataFrame, dict[str, int]]:
+class Floored(NamedTuple):
+    counts: pl.DataFrame
+    stats: dict[str, int]
+
+
+def apply_floor(counts: pl.DataFrame, floor: int, reference_tags: set[str]) -> Floored:
     """Zero every (cell, tag) count below `floor`, except the comparator's.
 
     A floored count contributes exactly as a count of zero does — the position
@@ -52,8 +66,8 @@ def apply_floor(counts: pl.DataFrame, floor: int, reference_tags: set[str]) -> t
     than honoured. Handling it belongs where the reference is selected and
     where the CLI resolves it, not in the floor.
 
-    Returns the floored counts and {"readingsFloored", "cellsEmptied"}, the two
-    quantities the quality measurement set asks of this step.
+    Returns the floored counts and {"readingsFloored", "cellsEmptied"}: the two
+    counters that land in this sample's row of the QC report.
 
     Both counters assume the sparse frame this step receives, where every row
     is an observed reading and so a count is at least 1. Densification, which
@@ -64,7 +78,7 @@ def apply_floor(counts: pl.DataFrame, floor: int, reference_tags: set[str]) -> t
     # Not an optimisation: falling through would count a cell whose only
     # reading is already zero as "emptied", when the floor removed nothing.
     if floor <= 0:
-        return counts, {"readingsFloored": 0, "cellsEmptied": 0}
+        return Floored(counts, {"readingsFloored": 0, "cellsEmptied": 0})
 
     # is_in yields null for a null tag, so a null-tag row would escape both the
     # floor and the emptied populations here while flooring normally when no
@@ -80,8 +94,10 @@ def apply_floor(counts: pl.DataFrame, floor: int, reference_tags: set[str]) -> t
 
     # "Emptied" is scoped to non-reference readings: a cell holding only the
     # comparator never had evidence of binding for the floor to remove.
-    before = counts.filter(~is_ref).group_by(CELL_KEY).agg(pl.len().alias("n"))
-    after = out.filter(~is_ref).filter(pl.col("umiCount") > 0).group_by(CELL_KEY).agg(pl.len().alias("n"))
-    cells_emptied = before.join(after, on=CELL_KEY, how="anti").height
+    # had_evidence deliberately does not filter on umiCount > 0 — that absence
+    # is the sparse-frame assumption above, not an oversight to "symmetrise".
+    had_evidence = counts.filter(~is_ref).select(CELL_KEY).unique()
+    kept_evidence = out.filter(~is_ref & (pl.col("umiCount") > 0)).select(CELL_KEY).unique()
+    cells_emptied = had_evidence.join(kept_evidence, on=CELL_KEY, how="anti").height
 
-    return out, {"readingsFloored": readings_floored, "cellsEmptied": cells_emptied}
+    return Floored(out, {"readingsFloored": readings_floored, "cellsEmptied": cells_emptied})

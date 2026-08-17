@@ -40,7 +40,7 @@ def test_cells_left_with_nothing_are_counted():
     assert stats["cellsEmptied"] == 1
 
 
-def test_same_barcode_in_two_samples_stays_two_cells():
+def test_the_floor_zeroes_readings_it_never_drops_rows():
     df = _counts([("S1", "c1", "AAAA", 9), ("S2", "c1", "AAAA", 9)])
     out, _ = apply_floor(df, floor=4, reference_tags=set())
     assert out.height == 2
@@ -49,7 +49,8 @@ def test_same_barcode_in_two_samples_stays_two_cells():
 def test_floor_of_zero_removes_nothing():
     df = _counts([("S1", "c1", "AAAA", 1)])
     out, stats = apply_floor(df, floor=0, reference_tags=set())
-    assert out["umiCount"].to_list() == [1] and stats["readingsFloored"] == 0
+    assert out["umiCount"].to_list() == [1]
+    assert stats["readingsFloored"] == 0
 
 
 def test_count_exactly_at_the_floor_survives():
@@ -88,4 +89,11 @@ def test_a_disabled_floor_is_a_no_op_even_for_a_zero_reading():
     df = _counts([("S1", "c1", "AAAA", 0)])
     out, stats = apply_floor(df, floor=0, reference_tags=set())
     assert out["umiCount"].to_list() == [0]
+    assert stats == {"readingsFloored": 0, "cellsEmptied": 0}
+
+
+def test_an_empty_frame_floors_to_nothing():
+    df = _counts([])
+    out, stats = apply_floor(df, floor=4, reference_tags=set())
+    assert out.height == 0
     assert stats == {"readingsFloored": 0, "cellsEmptied": 0}
