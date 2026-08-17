@@ -145,3 +145,13 @@ def test_role_column_may_be_named_tag(tmp_path):
     assert panel["tag"].to_list() == ["AAAA"]
     assert panel["sample"].to_list() == ["S1"]
     assert dropped == []
+
+
+def test_sample_role_named_tag_is_fatal(tmp_path):
+    # The barcode alias runs first and would overwrite this column, leaving
+    # "sample" a silent copy of the barcode — per-sample keying gone, and no
+    # duplicate raised because the pairs stay unique. Refused, not corrected.
+    path = _csv(tmp_path, [["S1", "AgA", "AAAA"]], ["tag", "Name", "Sequence"])
+    with pytest.raises(SystemExit) as e:
+        read_panel(path, {"barcode": "Sequence", "feature": "Name", "sample": "tag"})
+    assert "tag" in str(e.value)

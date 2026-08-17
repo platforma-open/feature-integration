@@ -29,15 +29,26 @@ def read_panel(csv_path: str, roles: dict[str, str]) -> tuple[pl.DataFrame, list
     if sample_col and sample_col not in raw.columns:
         raise SystemExit(f"panel file has no sample column {sample_col!r}; columns are {raw.columns}")
 
-    # "_row" joins "tag" and "sample" as names this function owns; colliding
-    # with one is a raw polars DuplicateError ten lines later otherwise. But a
-    # ROLE column may legitimately be called "tag" or "sample" — emit_panel.py
-    # in this same package defaults --tag-col to "tag" — and it cannot collide,
-    # because alias() replaces a same-named source column and the role columns
-    # are excluded from the carry-through below. "_row" stays unconditional: it
-    # is injected, so any source column of that name really does collide.
-    role_cols = {barcode_col, sample_col} - {""}
-    reserved = ({"tag", "sample"} & (set(raw.columns) - role_cols)) | ({"_row"} & set(raw.columns))
+    # A role column may be named after the column IT ITSELF produces, and after
+    # nothing else. emit_panel.py in this package defaults --tag-col to "tag",
+    # so a barcode column called "tag" must stay legal — alias() replaces the
+    # same-named source column rather than duplicating it.
+    #
+    # The exclusion cannot be widened to "bound to any role". A SAMPLE column
+    # named "tag" is fatal precisely because the barcode alias runs first and
+    # overwrites it, so the sample expression then reads barcodes and "sample"
+    # silently becomes a copy of "tag" — per-sample keying, the load-bearing
+    # property of this whole design, collapsing with no error and no duplicate
+    # to catch it. The mirror (a barcode column named "sample") happens to
+    # produce correct output today, but only because of the order of the two
+    # statements below; it is refused rather than left resting on that.
+    reserved = set()
+    if "tag" in raw.columns and barcode_col != "tag":
+        reserved.add("tag")
+    if "sample" in raw.columns and sample_col != "sample":
+        reserved.add("sample")
+    if "_row" in raw.columns:  # injected, so any source column of that name collides
+        reserved.add("_row")
     if reserved:
         raise SystemExit(
             f"panel file uses reserved column name(s) {sorted(reserved)}; rename them. "
