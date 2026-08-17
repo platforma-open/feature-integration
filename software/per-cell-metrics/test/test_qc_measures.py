@@ -429,6 +429,13 @@ def test_a_value_inside_its_peers_is_acceptable():
     assert outlier_status(0.02, [0.01, 0.02, 0.03, 0.02, 0.01]) is Status.ACCEPTABLE
 
 
+def test_the_shipped_fence_is_the_far_out_fence():
+    # Pinned like every other line. Without this, every fence assertion below
+    # derives its expected value from the constant, so the constant itself is
+    # free to move and no test notices.
+    assert DEFAULT_OUTLIER_FENCE == 3.0
+
+
 def test_the_fence_multiplier_is_a_parameter():
     # q1 0.02, q3 0.04, so the default fence sits at 0.10 and a fence of 0.5
     # at 0.05. 0.08 falls between them, which is the only way the parameter is
@@ -470,8 +477,20 @@ def test_coverage_never_enters_the_ordinal():
 
 
 def test_coverage_is_reported_beside_the_status():
-    r = roll_up([Status.ACCEPTABLE, Status.ALERTING, Status.UNJUDGED, Status.NOT_EVALUATED])
-    assert (r.judged, r.unjudged, r.not_evaluated) == (2, 1, 1)
+    # Two unjudged against one not-evaluated, deliberately unequal: with one of
+    # each, a counter that reported the other's total would read correctly and
+    # the two questions "was a line defensible" and "did anybody look" would be
+    # silently interchangeable.
+    r = roll_up(
+        [
+            Status.ACCEPTABLE,
+            Status.ALERTING,
+            Status.UNJUDGED,
+            Status.UNJUDGED,
+            Status.NOT_EVALUATED,
+        ]
+    )
+    assert (r.judged, r.unjudged, r.not_evaluated) == (2, 2, 1)
 
 
 def test_a_level_with_nothing_judgeable_is_not_evaluated():
