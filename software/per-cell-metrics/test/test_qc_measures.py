@@ -187,15 +187,19 @@ def test_a_computed_measurement_carries_no_status():
 
 
 def test_per_antigen_measures_reports_signal_above_and_median():
+    # The cell reading 5 and not binding is what separates the two counters.
+    # Without it both land on the same rows and each reads 2, so a version that
+    # counted bound cells for both would pass -- and "cells with signal" would
+    # silently become "cells above the line" wherever it is reported.
     states = pl.DataFrame(
         {
-            "tag": ["T1", "T1", "T1"],
-            "umiCount": [0, 10, 40],
-            "state": ["not bound", "bound", "bound"],
+            "tag": ["T1", "T1", "T1", "T1"],
+            "umiCount": [0, 5, 10, 40],
+            "state": ["not bound", "not bound", "bound", "bound"],
         }
     )
     out = per_antigen_measures(states).row(0, named=True)
-    assert out["cellsWithSignal"] == 2
+    assert out["cellsWithSignal"] == 3
     assert out["cellsAboveTheLine"] == 2
     assert out["medianAboveTheLine"] == 25.0
 
@@ -561,3 +565,19 @@ def test_a_dead_reagent_does_not_mark_every_sample_alerting():
     panel = roll_up_panel(tag_statuses=[Status.ALERTING], identity_statuses=[Status.ACCEPTABLE])
     assert samples == [Status.ACCEPTABLE] * 3
     assert roll_up_capture(sample_statuses=samples, panel_statuses=[panel.status]).status is Status.ALERTING
+
+
+def test_outlier_status_flags_only_high_values():
+    # "A disagreement rate below its peers is a tag behaving better than the
+    # panel, which is not a finding." A two-sided fence would alert on the
+    # best-behaved reagent in every panel, which is the opposite of the point.
+    peers = [0.4, 0.5, 0.6, 0.5]
+    assert outlier_status(0.0, peers) is Status.ACCEPTABLE
+    assert outlier_status(9.9, peers) is Status.ALERTING
+
+
+def test_the_minimum_peer_count_is_satisfied_at_the_named_value():
+    # The named value satisfies the condition it names: three peers is enough
+    # to compare against, two is not. Nothing else pins this boundary.
+    assert outlier_status(0.9, [0.01, 0.02, 0.03]) is not Status.UNJUDGED
+    assert outlier_status(0.9, [0.01, 0.02]) is Status.UNJUDGED

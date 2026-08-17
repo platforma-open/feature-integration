@@ -543,7 +543,14 @@ def _build_silent_tally_population(seed, force_empty_sample=None):
             # sample offered actually got a tag-stat row.
             for identity in offered_by_sample[sample]:
                 if rng.random() < 0.5:
-                    tag_rows.append((sample, cell, identity, rng.randint(0, 30)))
+                    # Some readings must actually clear the cutoff. Against
+                    # references of 2-20 the largest score a count of 30 can
+                    # reach is about 11.8, so a population drawn only from
+                    # 0-30 contains no bound cell at all -- and the oracle
+                    # comparison's bound assertion below then reads 0 == 0 in
+                    # every run, proving nothing about the claim it names.
+                    count = rng.randint(0, 30) if rng.random() < 0.7 else rng.randint(200, 900)
+                    tag_rows.append((sample, cell, identity, count))
 
     return samples, identities, thin_line, gated, reference, cell_rows, tag_rows, offered_by_sample
 

@@ -12,14 +12,18 @@ _full := {
 	roleColumn: "Type",
 	referenceValues: ["Control", "Isotype"],
 	referenceSource: "declared",
-	panelReferenceMinMembers: 8,
-	referenceThinLine: 2,
-	countFloor: 4,
-	boundCutoff: 75,
-	minVotingCells: 1,
+	// Every number here differs from the library's own default for it. With the
+	// defaults, a builder that ignored the block's value and emitted its fallback
+	// would produce an identical vector, and this whole file would pass while the
+	// parameter never reached the exec.
+	panelReferenceMinMembers: 12,
+	referenceThinLine: 3,
+	countFloor: 7,
+	boundCutoff: 90,
+	minVotingCells: 3,
 	minAgreement: 0.6,
 	gateThreshold: 40,
-	highReferenceLine: 100,
+	highReferenceLine: 250,
 	grouping: { by: "property", column: "family" },
 	contendingGroups: [["AgA", "AgB"]],
 	captureMap: { S1: "lane1" }
@@ -39,6 +43,27 @@ Test_every_flag_is_threaded := func() {
 	]
 	for _, flag in flags {
 		test.isTrue(va.has(args, flag), "argument list is missing " + flag)
+	}
+
+	// Presence is not threading. A flag can appear carrying the library's own
+	// fallback while the block's value is dropped on the floor, which is the
+	// same silence this file exists to break, one step further in.
+	expected := {
+		"--barcode-col": "Sequence",
+		"--feature-col": "Name",
+		"--sample-col": "Samples",
+		"--role-column": "Type",
+		"--panel-min-members": "12",
+		"--reference-thin-line": "3",
+		"--floor": "7",
+		"--cutoff": "90",
+		"--min-voters": "3",
+		"--min-agreement": "0.6",
+		"--gate-threshold": "40",
+		"--high-reference-line": "250"
+	}
+	for flag, want in expected {
+		test.isEqual(want, string(va.valueOf(args, flag)), "wrong value threaded for " + flag)
 	}
 }
 
