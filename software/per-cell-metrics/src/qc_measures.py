@@ -227,6 +227,8 @@ _ORDINAL = {Status.ACCEPTABLE: 0, Status.ALERTING: 1}
 
 _DEFERRED: frozenset[str] = frozenset(m.id for m in MEASUREMENTS if m.deferred_reason)
 
+_AGAINST_THE_RUN: frozenset[str] = frozenset(m.id for m in MEASUREMENTS if m.line == "against-the-run")
+
 
 def status_for(measurement: str, value: float | None, lines: dict[str, float]) -> Status:
     """How one measurement reads, given the lines in force.
@@ -234,7 +236,20 @@ def status_for(measurement: str, value: float | None, lines: dict[str, float]) -
     A deferred measurement is not evaluated whatever it is handed: nothing
     computes it, so a value reaching here is a caller's mistake and must not be
     laundered into a judgement about the run.
+
+    A measurement on the against-the-run route is refused outright rather than
+    answered. It does carry a status -- one this function cannot compute, since
+    the comparison is against the measurement's peers in the same panel and no
+    peers are passed here. Returning `unjudged` instead would be the worst
+    available answer: unjudged never enters a rollup, so an outlying reagent
+    would leave its panel reading clean, which is the exact failure the rollup
+    exists to invert. Call `outlier_status` for these.
     """
+    if measurement in _AGAINST_THE_RUN:
+        raise ValueError(
+            f"{measurement!r} is judged against the run itself, not against a line: "
+            "call outlier_status(value, peers) with the measurement's peers in the same panel"
+        )
     if measurement in _DEFERRED or value is None:
         return Status.NOT_EVALUATED
     if measurement not in lines:

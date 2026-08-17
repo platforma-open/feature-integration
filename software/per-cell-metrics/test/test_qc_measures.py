@@ -418,6 +418,27 @@ def test_a_missing_value_is_not_evaluated():
 # --- the against-the-run route ---------------------------------------------
 
 
+@pytest.mark.parametrize("measurement", ["identityDisagreement", "tagDisagreement"])
+def test_an_against_the_run_measurement_is_refused_not_called_unjudged(measurement):
+    # These two do carry a status; `status_for` just cannot compute it, having
+    # no peers. Answering `unjudged` would be worse than refusing: unjudged
+    # never enters a rollup, so an outlying reagent would leave its panel
+    # reading clean -- the failure the rollup exists to invert.
+    with pytest.raises(ValueError, match="outlier_status"):
+        status_for(measurement, 0.4, DEFAULT_LINES)
+
+
+def test_every_measurement_either_answers_or_refuses_but_never_lies():
+    # Walks the whole declared set so a route added later cannot quietly fall
+    # through to `unjudged`, which is the one wrong answer that hides.
+    for m in MEASUREMENTS:
+        if m.line == "against-the-run":
+            with pytest.raises(ValueError):
+                status_for(m.id, 0.4, DEFAULT_LINES)
+        else:
+            assert status_for(m.id, 0.4, DEFAULT_LINES) in set(Status)
+
+
 def test_a_lone_outlier_is_flagged_because_peers_exclude_the_value():
     # If `peers` included the value, one extreme reading would inflate q3 and
     # could never be flagged -- the measure would defeat itself, and no fixture
