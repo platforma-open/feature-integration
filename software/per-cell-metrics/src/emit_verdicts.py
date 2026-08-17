@@ -514,18 +514,37 @@ def main() -> None:
         cell_list = linker_cells
         cell_list_source = "clonotype linker"
     else:
-        cell_list = set(counts.select("sampleId", "cellId").unique().iter_rows())
-        cell_list_source = "observed barcodes"
+        # No list arrived, and one is NOT derived from the counts. Nothing in
+        # the antigen readings separates a cell from a droplet that held none,
+        # so the observed barcodes are not a cell list -- in droplet data they
+        # outnumber the cells by one to two orders of magnitude, because ambient
+        # antigen material lands on most barcodes. Standing them in would not
+        # merely be approximate: `readsPerCell` divides by this, so a healthy
+        # library would read undersequenced and alert.
+        #
+        # Every barcode is still analysed and every count still emitted. What is
+        # withheld is the claim that these barcodes are cells: `inCellList` is
+        # unknown rather than true, and the measurements that need a cell list
+        # read *not evaluated*, which is exactly the reading for "the run could
+        # not supply what this needed".
+        cell_list = None
+        cell_list_source = "none"
+
+    # `cell_list is None` means no list arrived, which is different from a list
+    # that arrived empty: the first cannot answer "is this barcode a cell", the
+    # second answers "no". `listed` collapses both for the set arithmetic below,
+    # where either way there are no barcodes to add.
+    listed = cell_list if cell_list is not None else set()
 
     observed_cells = set(counts.select("sampleId", "cellId").unique().iter_rows())
     # Barcodes outside the cell list stay in the frame, labelled: one dropped
     # here is indistinguishable afterwards from one that never existed, and
     # its antigen counts are real whatever the list says about it.
-    analysed_cells = sorted(cell_list | observed_cells | linker_cells)
+    analysed_cells = sorted(listed | observed_cells | linker_cells)
 
     panel_samples = {s for s in panel["sample"].to_list() if s != ANY_SAMPLE}
     samples = sorted(
-        {s for s, _ in observed_cells} | {s for s, _ in cell_list} | {s for s, _ in linker_cells} | panel_samples
+        {s for s, _ in observed_cells} | {s for s, _ in listed} | {s for s, _ in linker_cells} | panel_samples
     )
 
     # The floor is applied per sample so the counters it returns land in each
@@ -542,15 +561,20 @@ def main() -> None:
     readings_floored = sum(s["readingsFloored"] for s in floor_stats.values())
     cells_emptied = sum(s["cellsEmptied"] for s in floor_stats.values())
 
+    # One panel size, read once and passed to both. Deriving it separately for
+    # the default choice and for the resolution would let the two disagree about
+    # whether the panel is large enough to serve as its own comparator.
+    panel_size = int(panel["tag"].n_unique())
+
     source = ReferenceChoice[args.reference_source.upper()] if args.reference_source else None
     if source is None:
-        source = resolve_default_source(reference_tags)
+        source = resolve_default_source(reference_tags, panel_size, args.panel_min_members)
     reference = reference_by_cell(
         floored,
         reference_tags,
         source,
         cells=analysed_cells,
-        panel_size=int(panel["tag"].n_unique()),
+        panel_size=panel_size,
         min_members=args.panel_min_members,
     )
     gated, cells_high_reference = gate_cells(reference.by_cell, args.gate_threshold, args.high_reference_line)
@@ -599,8 +623,12 @@ def main() -> None:
     # fraction of the size a per-cell-per-identity table would take. A reader
     # regrouping the panel re-takes the highest member, re-scores against the
     # same reference, and re-votes, without a re-run.
+    # With no list, membership is unknown rather than false: a barcode nobody
+    # classified is not a barcode classified as "not a cell". "false" would be
+    # a claim the run cannot support.
+    unlisted_reads = "false" if cell_list is not None else "unknown"
     in_list = pl.DataFrame(
-        [(s, c, "true") for s, c in sorted(cell_list)],
+        [(s, c, "true") for s, c in sorted(listed)],
         orient="row",
         schema={"sampleId": pl.String, "cellId": pl.String, "inCellList": pl.String},
     )
@@ -612,14 +640,14 @@ def main() -> None:
     cell_counts = (
         non_reference.join(reference_frame, on=["sampleId", "cellId"], how="left")
         .join(in_list, on=["sampleId", "cellId"], how="left")
-        .with_columns(pl.col("inCellList").fill_null("false"))
+        .with_columns(pl.col("inCellList").fill_null(unlisted_reads))
         .select(["sampleId", "cellId", "tag", "umiCount", "referenceCount", "inCellList"])
     )
     _write_sorted(cell_counts, f"{prefix}_cell_counts.csv", ["sampleId", "cellId", "tag"])
 
     cell_scalars = (
         reference_frame.join(in_list, on=["sampleId", "cellId"], how="left")
-        .with_columns(pl.col("inCellList").fill_null("false"))
+        .with_columns(pl.col("inCellList").fill_null(unlisted_reads))
         .with_columns(
             pl.Series(
                 "admissibility",
@@ -737,7 +765,7 @@ def main() -> None:
     for sample in samples:
         first = len(rows)
         sample_counts = counts.filter(pl.col("sampleId") == sample)
-        listed_here = [key for key in sorted(cell_list) if key[0] == sample]
+        listed_here = [key for key in sorted(listed) if key[0] == sample] if cell_list is not None else None
         qc = read_qc.get(sample, {})
 
         reads_matched = _number(qc, "readsMatched")
@@ -749,8 +777,17 @@ def main() -> None:
         # happened to touch: the five-thousand recommendation is per called
         # cell, and in droplet data observed barcodes run one to two orders of
         # magnitude higher, so dividing by them would alert on a healthy run.
-        depth = reads_per_cell(int(reads_matched), len(listed_here)) if reads_matched is not None else None
-        _add(rows, "sample", sample, "readsPerCell", depth, f"cellsInList={len(listed_here)}")
+        # No cell list means no denominator, so depth is *not evaluated* --
+        # the run could not supply what the measurement needed. Substituting
+        # the observed barcodes would answer a different question and, being
+        # one to two orders of magnitude larger, would alert on a fine library.
+        depth = (
+            reads_per_cell(int(reads_matched), len(listed_here))
+            if reads_matched is not None and listed_here is not None
+            else None
+        )
+        detail = f"cellsInList={len(listed_here)}" if listed_here is not None else "no cell list supplied"
+        _add(rows, "sample", sample, "readsPerCell", depth, detail)
 
         deciles = antigen_count_deciles(sample_counts)
         decile_detail = "|".join(
@@ -870,11 +907,14 @@ def main() -> None:
     # block: adding an axis to a released column changes its identity, adding
     # a value does not. With no assignment the single row reads *not
     # evaluated*, which is what it is -- nobody looked -- and never an absence.
+    # With no assignment every sample belongs to one unnamed capture, rather
+    # than to a capture with no members. Emptying the membership would make the
+    # one level whose whole job is that nothing hides aggregate nothing: it
+    # would read *not evaluated* over a run whose samples and panels were
+    # measured perfectly well.
     captures: dict[str, list[str]] = {}
     for sample in samples:
         captures.setdefault(capture_of_sample.get(sample, "unassigned"), []).append(sample)
-    if not capture_of_sample:
-        captures = {"unassigned": []}
     for capture, its_samples in sorted(captures.items()):
         its_panels = sorted({panel_of_sample[s] for s in its_samples})
         from_samples = [sample_coverage[s] for s in its_samples]
@@ -889,7 +929,7 @@ def main() -> None:
         "referenceChoice": reference.served.value,
         "referenceSourceRequested": source.value,
         "cellListSource": cell_list_source,
-        "cellsInList": len(cell_list),
+        "cellsInList": len(cell_list) if cell_list is not None else None,
         "cellsAnalysed": len(analysed_cells),
         "floor": args.floor,
         "cutoff": args.cutoff,

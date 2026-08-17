@@ -141,9 +141,34 @@ class ReferenceChoice(str, Enum):
     NONE = "no comparator available"
 
 
-def resolve_default_source(reference_tags: set[str]) -> ReferenceChoice:
-    """The *default* source only. The scientist overrides it; this never does."""
-    return ReferenceChoice.DECLARED if reference_tags else ReferenceChoice.NONE
+def resolve_default_source(
+    reference_tags: set[str],
+    panel_size: int = 0,
+    min_members: int = DEFAULT_PANEL_MIN_MEMBERS,
+) -> ReferenceChoice:
+    """The *default* source only. The scientist overrides it; this never does.
+
+    Three rungs, in order: a declared reagent, else the panel's own readings
+    where the panel carries enough members, else nothing.
+
+    The middle rung is reached automatically, unlike the empty-droplet
+    comparator, which is offered only where a scientist asks for it. The
+    difference is what each one costs to be wrong about: an empty-droplet
+    population is a different experiment's data and switching to it silently
+    would change what a verdict means, while the panel's own readings are the
+    same cells already being read. A panel of twenty antigens with no declared
+    control is the configuration this ordering exists for -- falling straight
+    to *no comparator* there would make every identity unreliable in a run that
+    could be read perfectly well.
+
+    A panel too small to stand in as its own comparator still falls to NONE, so
+    the founding three-antigen case is unaffected.
+    """
+    if reference_tags:
+        return ReferenceChoice.DECLARED
+    if panel_size >= min_members:
+        return ReferenceChoice.PANEL
+    return ReferenceChoice.NONE
 
 
 def served_source(

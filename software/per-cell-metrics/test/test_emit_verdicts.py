@@ -5,6 +5,7 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from verdict import ReferenceChoice
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 
@@ -118,6 +119,94 @@ def test_reference_source_none_produces_unreliable_not_a_crash(bed):
     assert r.returncode == 0, r.stderr
     v = pl.read_csv(bed / "result_verdicts.csv")
     assert v.filter(pl.col("identity") == "AAAA").row(0, named=True)["state"] == "unreliable"
+
+
+def test_a_panel_with_no_declared_reference_falls_to_the_panel_not_to_nothing(bed):
+    # Three rungs in order: a declared reagent, else the panel's own readings
+    # where the panel carries enough members, else nothing. Skipping the middle
+    # rung makes every identity unreliable in a twenty-antigen run that could
+    # be read perfectly well -- which is the configuration the ordering exists
+    # for. Ten tags here, against a shipped minimum of eight.
+    tags = [f"T{i:02d}" for i in range(10)]
+    (bed / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type\n" + "".join(f"S1,Ag{i},{t},Target\n" for i, t in enumerate(tags))
+    )
+    # Background counts sit *above* the shipped floor of 4. At 3 they would be
+    # floored to zero, the panel median would be 0, every cell would fall below
+    # the thin line, and the run would read unreliable for a reason that has
+    # nothing to do with which comparator was chosen -- hiding the very thing
+    # this test exists to check.
+    rows = ["sampleId,cellId,tag,umiCount"]
+    for cell in ("c1", "c2", "c3"):
+        rows.append(f"S1,{cell},{tags[0]},900")
+        rows.extend(f"S1,{cell},{t},10" for t in tags[1:])
+    (bed / "counts.csv").write_text("\n".join(rows) + "\n")
+
+    r = _run(bed, *BASE)
+    assert r.returncode == 0, r.stderr
+    meta = json.loads((bed / "result_run_meta.json").read_text())
+    assert meta["referenceChoice"] == ReferenceChoice.PANEL.value
+
+    states = set(pl.read_csv(bed / "result_verdicts.csv", infer_schema_length=0)["state"].to_list())
+    assert states != {"unreliable"}, "the panel could serve as its own comparator and was not asked to"
+
+
+def test_a_panel_too_small_to_serve_still_falls_to_no_comparator(bed):
+    # The founding three-antigen case: too small to stand in as its own
+    # comparator, so the third rung is right there and must not be skipped.
+    (bed / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type\nS1,AgA,AAAA,Target\nS1,AgB,BBBB,Target\nS1,AgC,CCCC,Target\n"
+    )
+    r = _run(bed, *BASE)
+    assert r.returncode == 0, r.stderr
+    meta = json.loads((bed / "result_run_meta.json").read_text())
+    assert meta["referenceChoice"] == ReferenceChoice.NONE.value
+
+
+def test_no_cell_list_leaves_membership_unknown_and_depth_unevaluated(bed):
+    # Which barcodes held a cell is an input. Nothing in the antigen readings
+    # separates a cell from an empty droplet, so with neither list input the
+    # observed barcodes must NOT stand in: they outnumber cells by one to two
+    # orders of magnitude, and `readsPerCell` divides by this, so a healthy
+    # library would read undersequenced.
+    no_linker = [a for a in BASE if a not in ("--linker", "linker.csv")]
+    (bed / "qc.csv").write_text(
+        "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
+        "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction\n"
+        "S1,20000,18000,0.9,3,2,1200,300,0.82\n"
+    )
+    r = _run(bed, *no_linker, "--qc-summary", "qc.csv")
+    assert r.returncode == 0, r.stderr
+
+    meta = json.loads((bed / "result_run_meta.json").read_text())
+    assert meta["cellListSource"] == "none"
+    assert meta["cellsInList"] is None
+
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    depth = qc.filter(pl.col("measurement") == "readsPerCell").row(0, named=True)
+    assert depth["status"] == "not evaluated"
+
+    counts = pl.read_csv(bed / "result_cell_counts.csv", infer_schema_length=0)
+    assert set(counts["inCellList"].to_list()) == {"unknown"}, "unclassified is not the same as classified 'no'"
+
+
+def test_the_capture_rollup_gathers_every_sample_when_no_capture_map_is_given(bed):
+    # The capture level exists so that nothing hides. Rolling up an empty
+    # membership makes it report *not evaluated* over a run whose samples and
+    # panels were measured perfectly well, which is the opposite of its job.
+    _run(bed, *BASE)
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    rollups = qc.filter(pl.col("measurement") == "rollup")
+    capture = rollups.filter(pl.col("level") == "capture").row(0, named=True)
+
+    def _triple(level):
+        r = rollups.filter(pl.col("level") == level)
+        return [int(r[c].cast(pl.Int64).sum()) for c in ("judged", "unjudged", "notEvaluated")]
+
+    assert sum(_triple("sample")) > 0, "the bed must have something for the capture to gather"
+    assert [int(capture[c]) for c in ("judged", "unjudged", "notEvaluated")] == [
+        s + p for s, p in zip(_triple("sample"), _triple("panel"), strict=True)
+    ]
 
 
 def test_contending_groups_reach_the_note(bed):
