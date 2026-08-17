@@ -153,10 +153,27 @@ def test_exactly_min_agreement_settles_when_raised():
     assert r["state"] == B and r["agreement"] == 0.75
 
 
-def test_just_below_min_agreement_is_unreliable():
+def test_just_below_min_agreement_is_below_agreement_floor_not_tie():
+    # A real majority exists here (3 of 4) -- it is refused only because the
+    # operator raised min_agreement above it. That is a different reason
+    # than a tie, which has no majority to refuse.
     df = _states([("s1", "S1", f"b{i}", "A", B) for i in range(3)] + [("s1", "S1", "n0", "A", N)])
     cells_by_set = {"s1": [("S1", f"b{i}") for i in range(3)] + [("S1", "n0")]}
     r = _row(combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL, min_agreement=0.76), "A")
+    assert r["state"] == U
+    assert r["unreliableReason"] == SetUnreliableReason.BELOW_AGREEMENT_FLOOR.value
+
+
+def test_a_genuine_tie_still_reads_tie_even_when_min_agreement_would_also_fail_it():
+    # A fixture-coincidence trap: a tie's agreement is exactly 0.5, so any
+    # min_agreement above 0.5 would ALSO fail it, and a fixture where both
+    # conditions hold cannot tell which branch produced the answer. Raise
+    # min_agreement to 0.6 on the same 1-vs-1 tie from test_a_tie_cannot_be_settled
+    # and confirm the reason is still TIE, not BELOW_AGREEMENT_FLOOR -- the
+    # tie check must run and win regardless of where the floor sits.
+    df = _states([("s1", "S1", "c1", "A", B), ("s1", "S1", "c2", "A", N)])
+    cells_by_set = {"s1": [("S1", "c1"), ("S1", "c2")]}
+    r = _row(combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL, min_agreement=0.6), "A")
     assert r["state"] == U
     assert r["unreliableReason"] == SetUnreliableReason.TIE.value
 

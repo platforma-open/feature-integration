@@ -62,6 +62,16 @@ class SetUnreliableReason(str, Enum):
     comparator-failed cells is reported by whichever comparator failure is
     present, since an admissibility gate excluding only part of a set is not
     by itself why the rest failed to settle.
+
+    TIE and BELOW_AGREEMENT_FLOOR both leave the identity UNRELIABLE, and
+    look alike from the counts alone, but they call for different action and
+    so are kept apart. A TIE has no majority to trust: the settled cells
+    split evenly, which may be real heterogeneity in the clone, and no
+    parameter moves it. A BELOW_AGREEMENT_FLOOR set has one: a majority
+    formed, and it was refused only because `min_agreement` was raised above
+    it -- the fix is to lower that floor or gather more cells, not to
+    suspect the biology. Since `min_agreement` defaults to off, this reason
+    can only appear because someone raised it.
     """
 
     NEVER_OFFERED = "never-offered"
@@ -69,6 +79,7 @@ class SetUnreliableReason(str, Enum):
     THIN_COMPARATOR = "thin-comparator"
     ALL_CELLS_GATED = "all-cells-gated"
     TIE = "tie"
+    BELOW_AGREEMENT_FLOOR = "below-agreement-floor"
     TOO_FEW_VOTERS = "too-few-voters"
 
 
@@ -206,14 +217,13 @@ def combine_cells(
             top_state, top_count, tied = _majority(counts)
             agreement = top_count / answered
 
-            # A tie is not a thin majority but the absence of one: half (or a
-            # third, or a quarter) of the settled votes contradict the rest,
-            # and nothing in the reading says which side to believe. The
-            # reason vocabulary has no separate label for "settled, but below
-            # the agreement floor" -- that case is reported as TIE too, since
-            # both mean the same thing to a reader: the majority that formed
-            # was not decisive enough to stand.
-            if tied or (min_agreement is not None and agreement < min_agreement):
+            # A tie has no majority to trust: the settled cells split evenly,
+            # and nothing in the reading says which side to believe. A narrow
+            # majority below the agreement floor has one -- it was refused
+            # only because the operator raised that floor. The two states
+            # this identity could still not settle in call for different
+            # action, so they get different reasons.
+            if tied:
                 rows.append(
                     {
                         "setId": set_id,
@@ -223,6 +233,20 @@ def combine_cells(
                         "cellsAnswered": answered,
                         "agreement": agreement,
                         "unreliableReason": SetUnreliableReason.TIE.value,
+                    }
+                )
+                continue
+
+            if min_agreement is not None and agreement < min_agreement:
+                rows.append(
+                    {
+                        "setId": set_id,
+                        "identity": identity,
+                        "state": State.UNRELIABLE.value,
+                        "cellsCouldAnswer": could,
+                        "cellsAnswered": answered,
+                        "agreement": agreement,
+                        "unreliableReason": SetUnreliableReason.BELOW_AGREEMENT_FLOOR.value,
                     }
                 )
                 continue
