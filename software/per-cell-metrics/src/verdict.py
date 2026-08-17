@@ -27,9 +27,11 @@ at the threshold. The difference is the whole point of the floor — a floored
 reading is still a reading, and it answers "not bound"; an omitted one leaves
 nothing to answer with.
 
-After step 2 this module holds two frame shapes: the sparse per-tag frame the
-floor works on, and the per-identity frame combining produces from it — both
-keyed by CELL_KEY, which is the column vocabulary spanning both.
+After step 2 this module holds three frame shapes: the sparse per-tag frame
+the floor works on and the per-identity frame combining produces from it,
+both keyed by CELL_KEY, which is the column vocabulary spanning both; and the
+per-(sampleId, identity) frame `silent_tally` returns, keyed one level
+coarser than CELL_KEY, not by it.
 """
 
 from __future__ import annotations
@@ -77,10 +79,12 @@ def apply_floor(counts: pl.DataFrame, floor: int, reference_tags: set[str]) -> F
     counters that land in this sample's row of the QC report.
 
     Both counters assume the sparse frame this step receives, where every row
-    is an observed reading and so a count is at least 1. Densification, which
-    manufactures genuine zeros, happens after this step: run it before, and
-    every manufactured row inflates readingsFloored while every unbound cell
-    counts as emptied though the floor removed nothing.
+    is an observed reading and so a count is at least 1. If densification —
+    which manufactures genuine zeros — ever ran before this step, every
+    manufactured row would inflate readingsFloored while every unbound cell
+    would count as emptied though the floor removed nothing. In production it
+    never does: `densify` exists only as the test oracle `silent_tally` is
+    checked against, and never runs in the block.
     """
     # Not an optimisation: falling through would count a cell whose only
     # reading is already zero as "emptied", when the floor removed nothing.
@@ -300,6 +304,16 @@ class State(str, Enum):
     UNRELIABLE = "unreliable"
 
 
+class UnreliableReason(str, Enum):
+    """Why a cell's comparison could not be made. The value is the prose that
+    reaches a reader; the member is what code compares against, so the wording
+    can change without breaking a caller."""
+
+    GATED = "cell set aside by the admissibility gate"
+    NO_COMPARATOR = "no comparator for this cell"
+    THIN_COMPARATOR = "the comparator rests on too little to compare against"
+
+
 def combine_tags_to_identities(counts: pl.DataFrame, grouping: dict[str, str]) -> pl.DataFrame:
     """An identity's reading in a cell is the highest of its tags' counts.
 
@@ -352,19 +366,40 @@ def densify(identities: pl.DataFrame, cells: pl.DataFrame, offered_by_sample: di
 def specificity_score(antigen_count, reference_count):
     """How specifically the antigen count exceeds the reference: 0-100.
 
-    At antigen_count = 0 this is 0.042 at reference_count = 0 and falls for
-    every larger reference_count. It cannot clear any cutoff this block offers
-    above that, which is what lets a silent cell's state be known without a row
-    ever being written for it.
+    At antigen_count = 0 this is specificity_score(0, 0) ~= 0.0422 at
+    reference_count = 0 and falls for every larger reference_count. That is
+    the module's central claim: `silent_tally` relies on a silent admissible
+    cell never scoring BOUND, which is what lets its state be known without a
+    row ever being written for it. The claim holds only for `cutoff` strictly
+    above 0.0422 — a cutoff at or below that bound breaks the equivalence
+    between `silent_tally` and the `densify` oracle with no error raised
+    here. This module does not refuse such a cutoff; refusing one is the
+    CLI's job.
     """
     a = np.asarray(antigen_count, dtype=float) + BETA_A_OFFSET
     b = np.asarray(reference_count, dtype=float) + BETA_B_OFFSET
     return (1.0 - beta.cdf(BETA_X, a, b)) * 100.0
 
 
-def _cell_admissibility_reason(
-    key: tuple[str, str], reference: dict[tuple[str, str], int], thin_line: int, gated: set[tuple[str, str]]
-) -> str | None:
+class Admissibility(NamedTuple):
+    """The triple `read_states` and `silent_tally` must agree on to agree on
+    what "cannot be compared" means for a cell.
+
+    Sharing `_cell_admissibility_reason` makes both functions agree on the
+    *rule*; it does nothing to make them agree on the *arguments* the rule is
+    applied to, since each call site built its own triple. Bundling the
+    triple here and passing the same one to both makes disagreement — e.g.
+    `read_states` given a reference restricted to observed cells while
+    `silent_tally` gets the full one, which sends `silentUnreliable` wrong or
+    negative — impossible by construction rather than by discipline.
+    """
+
+    reference: dict[tuple[str, str], int]
+    thin_line: int
+    gated: set[tuple[str, str]]
+
+
+def _cell_admissibility_reason(key: tuple[str, str], admissibility: Admissibility) -> UnreliableReason | None:
     """Why this cell's comparison cannot be made, or None if it can be.
 
     Identity-independent: a cell that cannot be compared cannot be compared
@@ -373,27 +408,22 @@ def _cell_admissibility_reason(
     both call this rather than each carrying its own copy of the same three
     checks.
 
-    `key not in reference` is deliberate, not `reference.get(key, 0)`: a
-    missing key means no comparator existed for this cell, and defaulting it
-    to 0 would read as "the comparator served and found nothing" — a settled
-    comparison rather than the absence of one.
+    `key not in admissibility.reference` is deliberate, not
+    `reference.get(key, 0)`: a missing key means no comparator existed for
+    this cell, and defaulting it to 0 would read as "the comparator served
+    and found nothing" — a settled comparison rather than the absence of one.
     """
+    reference, thin_line, gated = admissibility
     if key in gated:
-        return "cell set aside by the admissibility gate"
+        return UnreliableReason.GATED
     if key not in reference:
-        return "no comparator for this cell"
+        return UnreliableReason.NO_COMPARATOR
     if reference[key] < thin_line:
-        return "the comparator rests on too little to compare against"
+        return UnreliableReason.THIN_COMPARATOR
     return None
 
 
-def read_states(
-    identities: pl.DataFrame,
-    reference: dict[tuple[str, str], int],
-    cutoff: float,
-    thin_line: int,
-    gated: set[tuple[str, str]],
-) -> pl.DataFrame:
+def read_states(identities: pl.DataFrame, admissibility: Admissibility, cutoff: float) -> pl.DataFrame:
     """Give every (cell, identity) row a state.
 
     Three routes to UNRELIABLE and they mean different things, all recorded in
@@ -407,14 +437,26 @@ def read_states(
 
     Emits umiCount and referenceCount, never the score. Re-derivation under a
     new grouping needs the counts, and no binding level may leave the block.
+
+    `referenceCount` is nullable, and null is not 0: null means no comparator
+    served this cell at all, 0 means a comparator served and read nothing. A
+    downstream `fill_null(0)` on this column destroys exactly the distinction
+    this module argues for everywhere else — collapsing "not measured" into
+    "measured as zero".
+
+    A cell present in `identities` but absent from the cell list
+    `silent_tally` is given is emitted a row here — this function does not
+    take a cell list to check against — and is silently dropped by
+    `silent_tally`, which only counts cells it was told about.
     """
+    reference, _, _ = admissibility
     keys = list(zip(identities["sampleId"].to_list(), identities["cellId"].to_list(), strict=True))
-    reasons = [_cell_admissibility_reason(k, reference, thin_line, gated) for k in keys]
+    reasons = [_cell_admissibility_reason(k, admissibility) for k in keys]
     refs = [reference.get(k) for k in keys]
 
     df = identities.with_columns(
         pl.Series("referenceCount", refs, dtype=pl.Int64),
-        pl.Series("unreliableReason", reasons, dtype=pl.String),
+        pl.Series("unreliableReason", [r.value if r is not None else None for r in reasons], dtype=pl.String),
     )
 
     scored = specificity_score(
@@ -438,9 +480,7 @@ def silent_tally(
     observed: pl.DataFrame,
     cells: pl.DataFrame,
     offered_by_sample: dict[str, set[str]],
-    reference: dict[tuple[str, str], int],
-    thin_line: int,
-    gated: set[tuple[str, str]],
+    admissibility: Admissibility,
 ) -> pl.DataFrame:
     """Per (sample, identity): how many asked cells were never observed, and how they resolve.
 
@@ -450,11 +490,15 @@ def silent_tally(
     11-20x the sparse input and does not fit at all.
 
     A silently admissible cell's count is 0, and specificity_score(0, r) is
-    0.042 at r = 0 and smaller for every larger r — below every cutoff this
-    block offers. So a silent cell resolves to NOT_BOUND unless the cell itself
-    cannot be compared (gated, no comparator, or below the thin line), which is
-    a per-cell fact independent of which identity was silent. That is what lets
-    this be three cheap terms instead of a materialized row per silent cell:
+    specificity_score(0, 0) ~= 0.0422 at r = 0 and smaller for every larger r.
+    So a silent cell resolves to NOT_BOUND unless the cell itself cannot be
+    compared (gated, no comparator, or below the thin line), which is a
+    per-cell fact independent of which identity was silent — but only when
+    `cutoff` is strictly above that ~0.0422 bound (see `specificity_score`).
+    At or below it the dense oracle can call a silent admissible cell BOUND
+    while this function still reports it NOT_BOUND, silently: refusing such a
+    cutoff is the CLI's job, not this function's. Above the bound, three
+    cheap terms replace a materialized row per silent cell:
 
         asked              = cells of the sample, for every identity it offered
         observed           = the (cell, identity) rows read_states already produced
@@ -465,33 +509,71 @@ def silent_tally(
     (cell, identity) pair `combine_tags_to_identities` actually produced, state
     already resolved. Nothing here inspects an identity's silent reading; the
     admissibility check that decides silentUnreliable never takes an identity.
-    """
-    keys = list(zip(cells["sampleId"].to_list(), cells["cellId"].to_list(), strict=True))
-    inadmissible = {k for k in keys if _cell_admissibility_reason(k, reference, thin_line, gated) is not None}
 
-    sample_of = dict(zip(keys, cells["sampleId"].to_list(), strict=True))
-    asked_count = {}
-    for sample in offered_by_sample:
-        asked_count[sample] = sum(1 for k in keys if sample_of[k] == sample)
-    inadmissible_count = {}
-    for sample in offered_by_sample:
-        inadmissible_count[sample] = sum(1 for k in keys if sample_of[k] == sample and k in inadmissible)
+    Precondition, unchecked by types: `cells` must be unique on the cell key,
+    and `observed` unique on (cell, identity). A duplicated `cells` row is
+    harmless — it is deduplicated below — but a duplicated `observed` row is
+    not: it is double-counted against totals that count the cell once, which
+    can drive `silentUnreliable` negative (verified: -1 for a single
+    duplicated observed row on an inadmissible cell). The assertion below
+    turns that into a loud failure rather than a silently wrong number.
+
+    A cell present in `identities` but absent from `cells` is emitted a row
+    by `read_states`, which takes no cell list to check against, and is
+    silently dropped here, where `cells` is the cell universe.
+    """
+    # A duplicated cells row must not count twice: unlike a duplicated
+    # observed row (see the precondition above), this one is a legitimate
+    # no-op to guard against, not a contract violation to surface.
+    keys = list(dict.fromkeys(zip(cells["sampleId"].to_list(), cells["cellId"].to_list(), strict=True)))
+    inadmissible = {k for k in keys if _cell_admissibility_reason(k, admissibility) is not None}
+    cell_keys = set(keys)
+
+    # Single accumulating pass, not one loop per sample: the previous version
+    # scanned all of `keys` once per sample in offered_by_sample, which is
+    # O(groups x cells) and harmless at 24 samples but quadratic once a wider
+    # key groups thousands of sets. `k[0]` is the sample directly — no need
+    # for a cell->sample dict when every key already carries it.
+    asked_count: dict[str, int] = {}
+    inadmissible_count: dict[str, int] = {}
+    for k in keys:
+        sample = k[0]
+        asked_count[sample] = asked_count.get(sample, 0) + 1
+        if k in inadmissible:
+            inadmissible_count[sample] = inadmissible_count.get(sample, 0) + 1
 
     obs_keys = list(zip(observed["sampleId"].to_list(), observed["cellId"].to_list(), strict=True))
     obs_identity = observed["identity"].to_list()
     observed_count: dict[tuple[str, str], int] = {}
     observed_inadmissible_count: dict[tuple[str, str], int] = {}
     for k, ident in zip(obs_keys, obs_identity, strict=True):
-        sample = sample_of.get(k)
-        if sample is None:
+        if k not in cell_keys:
+            # In `identities` but absent from `cells`: read_states emitted a
+            # row for it, and it is dropped here rather than counted against
+            # a cell universe that never named it.
             continue
-        pair = (sample, ident)
+        pair = (k[0], ident)
         observed_count[pair] = observed_count.get(pair, 0) + 1
         if k in inadmissible:
             observed_inadmissible_count[pair] = observed_inadmissible_count.get(pair, 0) + 1
 
     rows = []
     for sample, offered in sorted(offered_by_sample.items()):
+        # asked and total_inadmissible are hoisted out of the identity loop
+        # below because a sample offers the same identities to every one of
+        # its cells, so neither term depends on which identity is being
+        # tallied. That precondition is what makes the hoist valid, not an
+        # incidental property of this key: a regrouping that does not nest
+        # inside a sample — a group spanning two panels, say — breaks it,
+        # because then both terms DO depend on which identity was silent.
+        # Generalising the key means moving both terms back inside this loop,
+        # not renaming a column and leaving them where they are.
+        #
+        # `offered_by_sample` itself does not generalise with the key: what
+        # was offered is a property of the staining, which is done per
+        # sample, so it stays keyed by sample no matter what the output key
+        # becomes. Generalising the key is two inputs changing, not one
+        # renamed one.
         asked = asked_count.get(sample, 0)
         total_inadmissible = inadmissible_count.get(sample, 0)
         for identity in sorted(offered):
@@ -500,6 +582,11 @@ def silent_tally(
             observed_inadmissible_n = observed_inadmissible_count.get(pair, 0)
             silent_unreliable = total_inadmissible - observed_inadmissible_n
             silent_not_bound = asked - observed_n - silent_unreliable
+            assert asked >= 0 and silent_unreliable >= 0 and silent_not_bound >= 0, (
+                f"negative silent term for {sample!r}/{identity!r} "
+                f"(asked={asked}, silentUnreliable={silent_unreliable}, silentNotBound={silent_not_bound}): "
+                "cells or observed violated the uniqueness precondition documented above"
+            )
             rows.append((sample, identity, asked, observed_n, silent_unreliable, silent_not_bound))
 
     return pl.DataFrame(
