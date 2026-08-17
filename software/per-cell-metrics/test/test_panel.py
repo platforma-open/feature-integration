@@ -122,7 +122,26 @@ def test_trailing_blank_line_is_not_a_blank_sample_cell(tmp_path):
 
 
 def test_reserved_column_name_is_fatal(tmp_path):
+    # A NON-role column named "tag" would be overwritten by the one this
+    # reader produces, so it is refused rather than silently shadowed.
     path = _csv(tmp_path, [["S1", "AgA", "AAAA", "x"]], ["Samples", "Name", "Sequence", "tag"])
     with pytest.raises(SystemExit) as e:
         read_panel(path, ROLES)
     assert "tag" in str(e.value)
+
+    path = _csv(tmp_path, [["S1", "AgA", "AAAA", "x"]], ["Samples", "Name", "Sequence", "sample"])
+    with pytest.raises(SystemExit) as e:
+        read_panel(path, ROLES)
+    assert "sample" in str(e.value)
+
+
+def test_role_column_may_be_named_tag(tmp_path):
+    # emit_panel.py in this package documents this very shape and defaults
+    # --tag-col to "tag". A role column cannot collide: alias() replaces the
+    # source column rather than duplicating it.
+    path = _csv(tmp_path, [["S1", "AgA", "AAAA"]], ["sample", "feature", "tag"])
+    panel, dropped = read_panel(path, {"barcode": "tag", "feature": "feature", "sample": "sample"})
+    assert panel.height == 1
+    assert panel["tag"].to_list() == ["AAAA"]
+    assert panel["sample"].to_list() == ["S1"]
+    assert dropped == []

@@ -29,9 +29,15 @@ def read_panel(csv_path: str, roles: dict[str, str]) -> tuple[pl.DataFrame, list
     if sample_col and sample_col not in raw.columns:
         raise SystemExit(f"panel file has no sample column {sample_col!r}; columns are {raw.columns}")
 
-    # "_row" joins "tag" and "sample" as names this function owns. Colliding
-    # with one is a raw polars DuplicateError three lines later otherwise.
-    reserved = {"tag", "sample", "_row"} & set(raw.columns)
+    # "_row" joins "tag" and "sample" as names this function owns; colliding
+    # with one is a raw polars DuplicateError ten lines later otherwise. But a
+    # ROLE column may legitimately be called "tag" or "sample" — emit_panel.py
+    # in this same package defaults --tag-col to "tag" — and it cannot collide,
+    # because alias() replaces a same-named source column and the role columns
+    # are excluded from the carry-through below. "_row" stays unconditional: it
+    # is injected, so any source column of that name really does collide.
+    role_cols = {barcode_col, sample_col} - {""}
+    reserved = ({"tag", "sample"} & (set(raw.columns) - role_cols)) | ({"_row"} & set(raw.columns))
     if reserved:
         raise SystemExit(
             f"panel file uses reserved column name(s) {sorted(reserved)}; rename them. "
