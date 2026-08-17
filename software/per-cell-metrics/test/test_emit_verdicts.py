@@ -162,10 +162,92 @@ def test_a_cutoff_at_the_analytic_floor_is_refused(bed):
     # At or below specificity_score(0, 0) the analytic tally and the dense
     # oracle disagree about a silent admissible cell with no error raised.
     # `silent_tally` states that refusing such a cutoff is this CLI's job.
+    # Tested *at* the bound, not merely either side of it. The refusal is
+    # "at or below", and 0.04/0.05 alone cannot tell that from "below".
+    from verdict import specificity_score
+
+    bound = float(specificity_score(0, 0))
+
     r = _run(bed, *BASE, "--cutoff", "0.04")
     assert r.returncode != 0
     assert "0.042" in (r.stderr + r.stdout)
+    assert _run(bed, *BASE, "--cutoff", repr(bound)).returncode != 0, "the bound itself must be refused"
+    assert _run(bed, *BASE, "--cutoff", repr(bound * 1.001)).returncode == 0
     assert _run(bed, *BASE, "--cutoff", "0.05").returncode == 0
+
+
+def test_rows_are_sorted_on_a_bed_wide_enough_for_order_to_show(bed):
+    # The default bed has one set and one identity, where sorted and unsorted
+    # are the same frame and a missing sort is invisible. Three identities
+    # declared in descending order across two sets make the two differ.
+    (bed / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type\nS1,AgZ,ZZZZ,Target\nS1,AgM,MMMM,Target\nS1,AgA,AAAA,Target\nS1,Ctrl,CTRL,Control\n"
+    )
+    rows = ["sampleId,cellId,tag,umiCount"]
+    for cell in ("c1", "c2", "c3"):
+        rows.append(f"S1,{cell},CTRL,6")
+        for tag in ("ZZZZ", "MMMM", "AAAA"):
+            rows.append(f"S1,{cell},{tag},500")
+    (bed / "counts.csv").write_text("\n".join(rows) + "\n")
+    (bed / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K2\nS1,c2,K1\nS1,c3,K1\n")
+
+    r = _run(bed, *BASE)
+    assert r.returncode == 0, r.stderr
+    verdicts = pl.read_csv(bed / "result_verdicts.csv", infer_schema_length=0)
+    assert verdicts.height == 6, "two sets by three identities"
+
+    for name, keys in (
+        ("result_verdicts.csv", ["setId", "identity"]),
+        ("result_cell_counts.csv", ["sampleId", "cellId", "tag"]),
+        ("result_offered.csv", ["sampleId", "identity"]),
+        ("result_tag_identity.csv", ["tag", "identity"]),
+    ):
+        frame = pl.read_csv(bed / name, infer_schema_length=0)
+        assert frame.height > 1, f"{name} is too small for order to mean anything"
+        assert frame.equals(frame.sort(keys)), name
+
+
+def test_run_meta_records_the_comparator_served_not_the_one_requested(bed):
+    # `served_source` degrades to `none` where it cannot honour a request --
+    # here a panel comparator is asked for and the panel is far too small to
+    # stand in as one. Recording the request instead would claim a comparator
+    # the run never had, and two runs compared against different things would
+    # look like two runs compared against the same thing.
+    r = _run(bed, *BASE, "--reference-source", "panel", "--panel-min-members", "50")
+    assert r.returncode == 0, r.stderr
+    # The flag spelling and the recorded value differ on purpose: "none" is what
+    # a caller asks for, `ReferenceChoice.NONE` is what the record says happened.
+    from verdict import ReferenceChoice
+
+    meta = json.loads((bed / "result_run_meta.json").read_text())
+    assert meta["referenceChoice"] == ReferenceChoice.NONE.value
+    assert meta["referenceChoice"] != "panel", "the request must not be reported as though it were served"
+
+    verdicts = pl.read_csv(bed / "result_verdicts.csv", infer_schema_length=0)
+    assert verdicts.filter(pl.col("identity") == "AAAA").row(0, named=True)["state"] == "unreliable"
+
+
+def test_sequencing_depth_divides_by_the_cell_list_not_by_observed_barcodes(bed):
+    # The vendor's five thousand is per called cell. Observed barcodes exceed
+    # called cells by one to two orders of magnitude in droplet data, because
+    # ambient reads land on most barcodes, so dividing by them would let a
+    # badly undersequenced run read acceptable. The bed makes the two differ:
+    # four barcodes carry counts, three are in the cell list.
+    (bed / "counts.csv").write_text((bed / "counts.csv").read_text() + "S1,zzz,AAAA,7\n")
+    (bed / "qc.csv").write_text(
+        "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
+        "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction\n"
+        "S1,20000,18000,0.9,4,2,1200,300,0.82\n"
+    )
+    r = _run(bed, *BASE, "--qc-summary", "qc.csv")
+    assert r.returncode == 0, r.stderr
+
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    depth = qc.filter(pl.col("measurement") == "readsPerCell").row(0, named=True)
+    # 18000 / 3 listed cells = 6000, which clears the 5000 line.
+    # 18000 / 4 observed barcodes = 4500, which would not.
+    assert float(depth["value"]) == pytest.approx(6000.0)
+    assert depth["status"] == "acceptable"
 
 
 def test_the_dense_oracle_is_not_reachable_from_the_entrypoint():
@@ -238,6 +320,12 @@ def test_output_is_byte_stable_across_runs(bed):
     _run(bed, *BASE)
     second = {p.name: p.read_bytes() for p in bed.glob("result_*")}
     assert first == second
+
+    # Repeating the run is not enough on its own: polars groups deterministically
+    # for one input, so an unsorted frame reproduces itself byte for byte and
+    # this passes while the sort is missing. Sortedness itself is asserted in
+    # `test_rows_are_sorted_on_a_bed_wide_enough_for_order_to_show`, which needs
+    # a bed this one is too narrow to provide.
 
 
 def test_a_computed_but_unjudged_measurement_is_not_reported_as_unchecked(bed):
