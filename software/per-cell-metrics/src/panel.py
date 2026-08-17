@@ -144,6 +144,21 @@ def read_panel(csv_path: str, roles: dict[str, str]) -> Panel:
                 "entirely to declare one panel over every sample; a blank cell is ambiguous."
             )
 
+        # ANY_SAMPLE is what this reader writes when there is no sample column,
+        # not a sample name a caller can declare. Accepting it in an explicit
+        # sample column would let one row claim every sample; downstream, a
+        # frame mixing "*" with real sample names is exactly what turns the
+        # panel-versus-reads check blind.
+        star = panel.filter(pl.col("sample") == ANY_SAMPLE)
+        if star.height:
+            rows = ", ".join(str(_csv_line(r)) for r in star["_row"])
+            raise SystemExit(
+                f"panel file has the literal {ANY_SAMPLE!r} in column {sample_col!r} on line(s) "
+                f"{rows}. Leave the column out entirely to declare one panel over every sample; "
+                f"{ANY_SAMPLE!r} is what this reader writes when there is no sample column, not a "
+                "sample name you can use."
+            )
+
     panel = panel.drop("_row")
 
     dupes = panel.group_by(["tag", "sample"]).len().filter(pl.col("len") > 1).sort(["tag", "sample"])
@@ -243,10 +258,19 @@ def panel_read_mismatch(panel: pl.DataFrame, seen: pl.DataFrame) -> pl.DataFrame
     different sample's panel: a global check lets a barcode undeclared in one
     sample pass on another sample's declaration.
     """
+    # A row with no sample or no barcode cannot be placed on either side of the
+    # comparison, and a null key is not a usable p-column key. Dropping them
+    # keeps the promise that this check never raises.
+    seen = seen.filter(pl.col("sampleId").is_not_null() & pl.col("tag").is_not_null())
+
     rows = []
     global_panel = panel.filter(pl.col("sample") == ANY_SAMPLE)
 
-    if global_panel.height:
+    # All rows, not any: a frame mixing "*" with real sample names must not take
+    # the global branch, which would discard every named row and report a
+    # per-sample disagreement as agreement. The reader refuses such a frame, so
+    # this is the second line of defence for a caller that builds one directly.
+    if panel.height and global_panel.height == panel.height:
         declared = set(global_panel["tag"].to_list())
         observed = set(seen["tag"].to_list())
         for tag in sorted(declared - observed):

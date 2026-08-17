@@ -392,3 +392,35 @@ def test_both_directions_can_fire_for_one_sample_at_once():
     rows = {(r["sample"], r["tag"], r["direction"]) for r in panel_read_mismatch(panel, seen).to_dicts()}
     assert ("S1", "AAAA", "declared-never-seen") in rows
     assert ("S1", "CCCC", "undeclared-in-panel") in rows
+
+
+def test_a_literal_star_in_a_sample_column_is_fatal(tmp_path):
+    # "*" is what the reader writes when there is no sample column. Accepting it
+    # as a sample name lets one row claim every sample, and downstream the whole
+    # panel-versus-reads check goes blind.
+    path = _csv(tmp_path, rows=[["S1", "AgA", "AAAA", "T"], ["*", "AgB", "CCCC", "T"]])
+    with pytest.raises(SystemExit) as e:
+        read_panel(path, ROLES)
+    assert "*" in str(e.value)
+
+
+def test_a_mixed_star_and_named_panel_does_not_go_global():
+    # Second line of defence: the reader refuses this frame, but a caller
+    # building one directly must not get an empty table for a real disagreement.
+    panel = pl.DataFrame({"tag": ["AAAA", "CCCC"], "sample": ["*", "S1"], "Name": ["a", "c"]})
+    seen = _counts([("S1", "c1", "AAAA", 5)])
+    rows = {(r["sample"], r["tag"], r["direction"]) for r in panel_read_mismatch(panel, seen).to_dicts()}
+    assert ("S1", "CCCC", "declared-never-seen") in rows
+
+
+def test_null_keys_in_the_reads_do_not_raise():
+    panel = pl.DataFrame({"tag": ["AAAA"], "sample": ["S1"], "Name": ["a"]})
+    seen = pl.DataFrame(
+        [("S1", "c1", "AAAA", 5), (None, "c2", "CCCC", 3), ("S1", "c3", None, 1)],
+        orient="row",
+        schema={"sampleId": pl.String, "cellId": pl.String, "tag": pl.String, "umiCount": pl.Int64},
+    )
+    out = panel_read_mismatch(panel, seen)
+    assert out.height == 0
+    assert None not in out["sample"].to_list()
+    assert None not in out["tag"].to_list()
