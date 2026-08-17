@@ -17,14 +17,14 @@ from qc_measures import (
     measurement_rows,
     outlier_status,
     per_antigen_measures,
-    reads_per_barcode,
+    reads_per_cell,
     roll_up,
     roll_up_capture,
     roll_up_panel,
     status_for,
 )
 
-# The spec's row for sequencing saturation and reads per barcode covers two
+# The spec's row for sequencing saturation and sequencing depth covers two
 # figures with different fates in this build -- one derivable from counts the
 # package already has, the other not -- so it becomes two declared ids here,
 # both at the row's stated level. Every other row maps one to one. This is the
@@ -34,7 +34,7 @@ EXPECTED_LEVEL_BY_ID = {
     "readsTotal": "sample",
     "panelAssignedFraction": "sample",
     "sequencingSaturation": "sample",
-    "readsPerBarcode": "sample",
+    "readsPerCell": "sample",
     "antigenCountDistribution": "sample",
     "aggregateBarcodeFraction": "sample",
     "undeclaredBarcodes": "tag",
@@ -228,15 +228,15 @@ def test_per_antigen_measures_differs_between_tag_and_identity_grain():
     assert by_identity.row(0, named=True)["cellsAboveTheLine"] == 2
 
 
-# --- reads_per_barcode --------------------------------------------------------
+# --- reads_per_cell --------------------------------------------------------
 
 
-def test_reads_per_barcode_computes_the_rate():
-    assert reads_per_barcode(1000, 200) == 5.0
+def test_reads_per_cell_computes_the_rate():
+    assert reads_per_cell(1000, 200) == 5.0
 
 
-def test_reads_per_barcode_zero_barcodes_observed_does_not_divide_by_zero():
-    assert reads_per_barcode(1000, 0) is None
+def test_reads_per_cell_empty_cell_list_does_not_divide_by_zero():
+    assert reads_per_cell(1000, 0) is None
 
 
 # --- antigen_count_deciles -----------------------------------------------------
@@ -377,23 +377,43 @@ def test_the_invented_matched_fraction_line_is_gone():
 
 
 def test_depth_line_is_a_parameter_not_a_literal():
-    assert DEFAULT_LINES["readsPerBarcode"] == 5_000
-    assert status_for("readsPerBarcode", 4_000, {"readsPerBarcode": 5_000}) is Status.ALERTING
-    assert status_for("readsPerBarcode", 4_000, {"readsPerBarcode": 1_000}) is Status.ACCEPTABLE
+    assert DEFAULT_LINES["readsPerCell"] == 5_000
+    assert status_for("readsPerCell", 4_000, {"readsPerCell": 5_000}) is Status.ALERTING
+    assert status_for("readsPerCell", 4_000, {"readsPerCell": 1_000}) is Status.ACCEPTABLE
 
 
 def test_at_least_is_acceptable_exactly_at_the_line():
     # Atom 315 alerts *below* the recommendation, so the recommendation itself
     # is acceptable. The named value satisfies the condition it names.
-    assert status_for("readsPerBarcode", 5_000, DEFAULT_LINES) is Status.ACCEPTABLE
-    assert status_for("readsPerBarcode", 4_999, DEFAULT_LINES) is Status.ALERTING
+    assert status_for("readsPerCell", 5_000, DEFAULT_LINES) is Status.ACCEPTABLE
+    assert status_for("readsPerCell", 4_999, DEFAULT_LINES) is Status.ALERTING
     assert status_for("panelAssignedFraction", 0.5, DEFAULT_LINES) is Status.ACCEPTABLE
     assert status_for("panelAssignedFraction", 0.49, DEFAULT_LINES) is Status.ALERTING
 
 
-def test_at_most_is_acceptable_exactly_at_the_line():
-    assert status_for("undeclaredBarcodes", 0.1, DEFAULT_LINES) is Status.ACCEPTABLE
-    assert status_for("undeclaredBarcodes", 0.11, DEFAULT_LINES) is Status.ALERTING
+def test_at_most_is_acceptable_exactly_at_the_line(monkeypatch):
+    # No shipped measurement reads `at-most`: the only candidate was the
+    # undeclared-barcode fraction, which now ships unjudged. The reading stays in
+    # the vocabulary because a line can be an upper bound as easily as a lower
+    # one, so it is exercised against a registered stand-in rather than left as
+    # an untested branch.
+    monkeypatch.setitem(_COMPARISON, "syntheticUpperBound", "at-most")
+    lines = {"syntheticUpperBound": 0.1}
+    assert status_for("syntheticUpperBound", 0.1, lines) is Status.ACCEPTABLE
+    assert status_for("syntheticUpperBound", 0.11, lines) is Status.ALERTING
+
+
+def test_the_undeclared_barcode_fraction_ships_unjudged():
+    # Atom 315 lists it among the four inherited numbers and the field does
+    # publish 0.50 -- but for one aggregate library fraction, while this
+    # measurement is per sequence at tag level. A fraction's line does not
+    # transfer to a list of sequences, and given a count any upper bound
+    # collapses into "alerting if a single undeclared barcode exists".
+    by_id = {m.id: m for m in MEASUREMENTS}
+    assert by_id["undeclaredBarcodes"].line is None
+    assert by_id["undeclaredBarcodes"].implies is None
+    assert "undeclaredBarcodes" not in DEFAULT_LINES
+    assert status_for("undeclaredBarcodes", 0.4, DEFAULT_LINES) is Status.UNJUDGED
 
 
 def test_categorical_alerts_only_on_the_named_fact():
@@ -412,7 +432,7 @@ def test_a_deferred_measurement_is_never_unjudged_even_holding_a_value():
 
 
 def test_a_missing_value_is_not_evaluated():
-    assert status_for("readsPerBarcode", None, DEFAULT_LINES) is Status.NOT_EVALUATED
+    assert status_for("readsPerCell", None, DEFAULT_LINES) is Status.NOT_EVALUATED
 
 
 # --- the against-the-run route ---------------------------------------------

@@ -70,19 +70,29 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         # none of them, so nothing here says what a low one would mean.
         "Every read the parser saw, and the share matching the tag pattern.",
     ),
+    # The label names the recognized fraction rather than the spec row's
+    # "usable" fraction, because that is the quantity this block computes and
+    # has always computed: `qc_report._refine_assigned_fraction` returns the
+    # refine-tags step's outputCount/inputCount, the share of reads kept after
+    # correcting the barcode against the panel. The field's "usable" fraction
+    # additionally requires a cell-associated barcode and a valid UMI, and
+    # carries a different published line (0.20 against this one's 0.50). The
+    # shipped p-column's own description already says the recognized fraction;
+    # only this label had drifted. The id is a p-column name and must not be
+    # renamed -- a p-column's identity is its name, domain and axes.
     Measurement(
         "panelAssignedFraction",
-        "Fraction of antigen reads usable",
+        "Fraction of antigen reads matching the panel",
         "sample",
         "Reads whose corrected barcode is on the panel, over reads matched.",
         "A low share means most reads carry barcodes the panel never declared.",
         "inherited",
     ),
-    # The spec's one row for saturation and reads-per-barcode covers two figures
-    # with different fates in this build: reads-per-barcode can be derived from
-    # counts this package already has, saturation cannot. One Measurement could
-    # not carry "computed" and "deferred" at once, so the row becomes two ids
-    # here, both at the row's declared level.
+    # The spec's one row for saturation and sequencing depth covers two figures
+    # with different fates in this build: depth can be derived from counts this
+    # package already has, saturation cannot. One Measurement could not carry
+    # "computed" and "deferred" at once, so the row becomes two ids here, both
+    # at the row's declared level.
     Measurement(
         "sequencingSaturation",
         "Sequencing saturation",
@@ -90,11 +100,17 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "Duplicate reads over total reads.",
         deferred_reason="needs read-level data the per-sample fan-out discards",
     ),
+    # Per *cell*, not per observed barcode. The vendor's five thousand is a
+    # per-cell recommendation, and in droplet data the observed-barcode count
+    # exceeds the called-cell count by one to two orders of magnitude, because
+    # ambient antigen reads land on most barcodes -- so dividing by it would
+    # alert on a healthy library. The cell list is an input that arrives later
+    # than this module, which is why the division happens in the entrypoint.
     Measurement(
-        "readsPerBarcode",
-        "Reads per barcode",
+        "readsPerCell",
+        "Reads per cell",
         "sample",
-        "Reads matched, over barcodes observed.",
+        "Reads matched, over cells in the cell list.",
         "Below the vendor's recommended minimum the library is undersequenced.",
         "recommended-and-observed",
     ),
@@ -111,13 +127,21 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "Reads in barcodes flagged as aggregates, over reads matched.",
         deferred_reason="no aggregate-barcode detection exists in this block",
     ),
+    # No line, and this one is worth spelling out because the spec looks like it
+    # supplies one. Atom 315 lists "the fraction of undeclared barcodes" among
+    # its four inherited numbers, and the field does publish 0.50 -- but for one
+    # aggregate library fraction. This measurement is per sequence at tag level,
+    # which is the improvement the spec set asks for, and a fraction's line does
+    # not transfer to a list of sequences. Given a count instead, any at-most
+    # line collapses into "alerting if a single undeclared barcode exists" -- a
+    # categorical predicate wearing an inherited number. So it ships unjudged,
+    # with its sequences and their counts, and says nothing about what a bad
+    # value would mean.
     Measurement(
         "undeclaredBarcodes",
         "Undeclared barcodes, and which sequences",
         "tag",
         "Barcodes the reads carry that the sample's panel does not declare, and which sequences they are.",
-        "A declared-nothing barcode carrying reads means the panel file is incomplete.",
-        "inherited",
     ),
     Measurement(
         "declaredNeverSeen",
@@ -199,28 +223,31 @@ NUMERIC_LINE_ROUTES: frozenset[str] = frozenset({"inherited", "categorical", "re
 # applies the measurement stays unjudged rather than being given a number with
 # nothing behind it.
 DEFAULT_LINES: dict[str, float] = {
-    "panelAssignedFraction": 0.5,  # inherited
-    "undeclaredBarcodes": 0.1,  # inherited
+    "panelAssignedFraction": 0.5,  # inherited: complement of the field's 0.50 unrecognized line
     "declaredNeverSeen": 0,  # categorical: alerting at zero reads
-    "readsPerBarcode": 5_000,  # recommended-and-observed
+    "readsPerCell": 5_000,  # recommended-and-observed: the vendor's per-cell depth
 }
 
 # How each line is read. Deliberately *not* overridable: an operator moves a
 # number, never a direction. Three comparisons rather than one flag, because a
-# floor and a categorical fact disagree at the boundary -- `readsPerBarcode`
-# alerts strictly *below* the recommendation, while `declaredNeverSeen` alerts
-# *at* zero. One `<=` cannot serve both.
+# floor and a categorical fact disagree at the boundary -- `readsPerCell` alerts
+# strictly *below* the recommendation, while `declaredNeverSeen` alerts *at*
+# zero. One `<=` cannot serve both.
 #
 #   at-least    acceptable at or above the line, alerting strictly below
 #   at-most     acceptable at or below the line, alerting strictly above
 #   alerting-at alerting where the value equals the line
 #
 # In every case the named value satisfies the condition it names.
+#
+# `at-most` currently has no member. It is kept because it is one of the three
+# readings a line can have, not because something uses it: the only candidate
+# was the undeclared-barcode fraction, which ships unjudged for want of a
+# defensible line rather than for want of a direction.
 _COMPARISON: dict[str, str] = {
     "panelAssignedFraction": "at-least",
-    "undeclaredBarcodes": "at-most",
     "declaredNeverSeen": "alerting-at",
-    "readsPerBarcode": "at-least",
+    "readsPerCell": "at-least",
 }
 
 _ORDINAL = {Status.ACCEPTABLE: 0, Status.ALERTING: 1}
@@ -371,9 +398,8 @@ def per_antigen_measures(states: pl.DataFrame) -> pl.DataFrame:
     The sparse frame is the right input here: "cells with any reading" means
     cells with an observed reading, and a cell silent for this tag has no
     count to contribute. There is no asked population to complete this
-    against, unlike a per-cell total or a reads-per-barcode rate, both of
-    which are asked-cell questions and use a densified or a whole-run count
-    instead.
+    against, unlike a per-cell total or a reads-per-cell rate, both of which
+    are asked-cell questions and use a densified or a whole-run count instead.
     """
     return (
         states.group_by("tag")
@@ -386,19 +412,30 @@ def per_antigen_measures(states: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def reads_per_barcode(reads_matched: int, barcodes_observed: int) -> float | None:
-    """Reads matched, over barcodes observed.
+def reads_per_cell(reads_matched: int, cells_in_list: int) -> float | None:
+    """Reads matched, over cells in the cell list.
 
-    Both counts already exist in the per-sample QC row -- `readsMatched` and
-    `cellsDetected` -- so this only divides them; neither is recounted here.
+    The denominator is the **cell list**, not the barcodes the reads happened to
+    touch. The vendor's five-thousand recommendation this is judged against is
+    per called cell, and in droplet data the observed-barcode count runs one to
+    two orders of magnitude higher, because ambient antigen reads land on most
+    barcodes. Dividing by observed barcodes would make a healthy library alert,
+    which is worse than not judging depth at all: a status that fires on good
+    runs teaches a reader to ignore it.
 
-    None when no barcode was observed. A rate over zero barcodes is not a
-    small number, it is no number, and returning None keeps that distinct
-    from a rate that was computed and happens to be zero.
+    `reads_matched` already exists in the per-sample QC row; the cell list is a
+    separate input that arrives with gene expression or with the receptors, so
+    the caller supplies its size. Deliberately not `cellsDetected` from that
+    same row -- that is the observed-barcode count this docstring exists to
+    warn against.
+
+    None when the cell list is empty. A rate over no cells is not a small
+    number, it is no number, and returning None keeps that distinct from a rate
+    that was computed and happens to be zero.
     """
-    if barcodes_observed <= 0:
+    if cells_in_list <= 0:
         return None
-    return reads_matched / barcodes_observed
+    return reads_matched / cells_in_list
 
 
 # The extremes are included alongside the interior deciles so the distribution's
