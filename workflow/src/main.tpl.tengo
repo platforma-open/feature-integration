@@ -504,6 +504,10 @@ wf.body(func(args) {
 		// family lead selection can see, the pivoted per-identity summary, the offered scope, the
 		// re-derivation material, the tag -> identity linker and the label columns.
 		blockExports.antigenVerdicts = verdictImport.output("antigenVerdicts")
+		// The same frame as an OUTPUT, because a block's own exports are not in its own result pool: without
+		// this the block that produced the verdicts is the one place that cannot show them. The model reads
+		// it, keeps the columns keyed (clonotype set, identity) plus the identity label, and drops the rest.
+		blockOutputs.antigenVerdictsTable = pframes.exportFrame(verdictImport.output("antigenVerdicts"))
 		// The run's own report. Outputs rather than exports: these are read by this block's model and UI.
 		blockOutputs.antigenQcTable = pframes.exportFrame(verdictImport.output("qcTable"))
 		blockOutputs.antigenPanelMismatchTable = pframes.exportFrame(verdictImport.output("panelMismatchTable"))

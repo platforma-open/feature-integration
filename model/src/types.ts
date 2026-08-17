@@ -117,6 +117,14 @@ export type BlockData = {
    */
   datasetRef?: PlRef;
   roleColumn?: string;
+  /**
+   * The panel's headers as they stood when the role column or the grouping column was picked. Both of
+   * those name a panel column, and emit_verdicts.py exits the whole run when the panel does not carry the
+   * one it was given — a failure the user meets as a dead run rather than as a message about the setting
+   * that caused it. args() validates from data alone, so the headers have to BE in data; they are
+   * snapshotted on the pick gesture, exactly as sampleColumnValues is.
+   */
+  panelColumnSnapshot?: string[];
   referenceValues?: string[];
   referenceSource?: ReferenceSource;
   panelReferenceMinMembers: number;

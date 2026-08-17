@@ -30,6 +30,7 @@ import { AgGridVue } from "ag-grid-vue3";
 import { computed, ref, watch } from "vue";
 import { useApp } from "../app";
 import PatternEditor from "../components/PatternEditor.vue";
+import VerdictSettings from "../components/VerdictSettings.vue";
 import SampleReportPanel from "./SampleReportPanel.vue";
 import {
   sampleResults,
@@ -97,11 +98,11 @@ const tagMappingDisabled = computed(
   () => !app.model.data.tagFeatureCsvHandle || csvProcessing.value,
 );
 
-// Combine-mode column options exclude the columns already bound to the barcode/feature roles: those hold
-// DNA barcodes / feature names, not per-feature modes ("sum"/"all"), so offering them only invites a
-// mis-pick. The model's args() also rejects such a collision (belt-and-suspenders), but filtering the
-// dropdown prevents the mistake up front.
-const combineColumnOptions = computed(() =>
+// CSV columns not already bound to the barcode-sequence or feature-name roles. A column holding DNA
+// barcodes or antigen names is not a sample column, and offering it only invites a mis-pick: the data
+// layer refuses two roles on one column, but it refuses it at the end of the run. The model's args() also
+// rejects the collision; filtering here prevents the mistake up front.
+const roleFreeColumnOptions = computed(() =>
   (app.model.outputs.csvColumnOptions ?? []).filter(
     (o) =>
       o.value !== app.model.data.barcodeSeqColumn && o.value !== app.model.data.featureNameColumn,
@@ -110,8 +111,9 @@ const combineColumnOptions = computed(() =>
 
 // Visible reason when the Combine-mode column is invalid, so a disabled Run button is explained rather
 // than mysterious. The model's args() is the authoritative gate (it throws and greys out Run); this
-// mirrors the same condition into an inline alert the user actually sees. Fires when the chosen column
-// collides with the barcode/feature roles — e.g. a value left stale after changing the feature column.
+// mirrors the same condition into an inline alert the user actually sees. The selector itself is not
+// offered today, but a project saved while it was — or migrated — can still carry a value that collides
+// with the barcode/feature roles, and without this the Run button would simply be grey.
 const combineColumnError = computed(() => {
   const c = app.model.data.combineColumn;
   if (!c) return undefined;
@@ -175,12 +177,19 @@ function clearSampleAwareOnInputChange() {
 }
 
 // CSV swap invalidates every CSV-derived selection: the barcode / feature-name columns (the new file's
-// headers differ), the negative control, and the sample-aware selection (columns/values change). Clear
-// them all so the user re-picks against the new CSV.
+// headers differ), the negative control, the sample-aware selection (columns/values change), and every
+// setting of the binding reading that names a panel column or a panel value. The last group matters most:
+// emit_verdicts.py ends the whole run when the role column or the grouping column is not one the panel
+// carries, so a stale pick left behind here costs a run and reports it where the user never looks.
 function clearOnCsvChange() {
   app.model.data.barcodeSeqColumn = undefined;
   app.model.data.featureNameColumn = undefined;
   app.model.data.combineColumn = undefined;
+  app.model.data.roleColumn = undefined;
+  app.model.data.referenceValues = undefined;
+  app.model.data.grouping = undefined;
+  app.model.data.contendingGroups = undefined;
+  app.model.data.panelColumnSnapshot = undefined;
   clearControlOnInputChange();
   clearSampleAwareOnInputChange();
 }
@@ -431,14 +440,15 @@ const gridOptions = {
         >
           <template #tooltip>
             <b>If your panel includes a non-binding background control</b>, pick it here. The block
-            then computes a per-antigen specificity score (binding vs background) and keeps
-            background-swamped cells from being miscalled. Leave blank if you have no control.
+            marks that feature in its output, so a downstream reader can tell the background control
+            apart from the antigens. It changes no per-cell number and no verdict. Leave blank if
+            you have no control.
           </template>
         </PlDropdown>
 
         <PlDropdown
           :model-value="app.model.data.sampleColumn"
-          :options="app.model.outputs.csvColumnOptions"
+          :options="roleFreeColumnOptions"
           label="Sample column"
           :disabled="tagMappingDisabled"
           clearable
@@ -453,34 +463,23 @@ const gridOptions = {
           </template>
         </PlDropdown>
       </PlRow>
-      <!-- Combine-mode column selector is intentionally hidden from users for now (MILAB-6496). The
-           control + its validation and the workflow's combine-mode logic are kept for later re-enable;
-           with it hidden, combineColumn stays unset and every antigen uses the default "sum" mode. -->
-      <template v-if="false">
-        <PlDropdown
-          v-model="app.model.data.combineColumn"
-          :options="combineColumnOptions"
-          label="Combine-mode column"
-          :disabled="tagMappingDisabled"
-          clearable
-        >
-          <template #tooltip>
-            <b>For dual-probe designs</b> — only matters when one antigen is tagged by 2+ barcodes;
-            leave blank otherwise. Names the Tag-feature CSV column that sets each antigen's mode:
-            <b>sum</b> = add its barcodes, call it if any fires (default); <b>all</b> = call it only
-            in cells where <i>every</i> one of its barcodes fired.
-          </template>
-        </PlDropdown>
-        <PlAlert v-if="combineColumnError" type="warn">
-          {{ combineColumnError }}
-        </PlAlert>
-      </template>
+      <!-- The combine-mode column selector is not offered (MILAB-6496): with it unset, every antigen
+           uses the default "sum" mode. The parameter itself is live — combineColumn and minUmi still
+           reach per_cell_metrics.py — so a value carried in from an older project is still honoured,
+           and the alert below explains a Run button greyed out by one that collides with a role. -->
+      <PlAlert v-if="combineColumnError" type="warn">
+        {{ combineColumnError }}
+      </PlAlert>
       <PlAlert v-if="controlInfoVisible" type="info">
-        Specificity scores will not be computed without a negative control feature
+        No negative control is designated, so no feature will be marked as the background control in
+        the output. Nothing else changes.
       </PlAlert>
       <PlAlert v-if="sampleMappingWarning?.length" type="warn">
         <div v-for="(line, i) in sampleMappingWarning" :key="i">{{ line }}</div>
       </PlAlert>
+      <!-- The binding reading's own settings. The same component is mounted in the Verdicts page's
+           Settings drawer, so the rule that produced a table can be changed from the table. -->
+      <VerdictSettings />
       <!-- Less-common params. -->
       <PlAccordionSection label="Advanced Settings">
         <PlNumberField
@@ -491,10 +490,10 @@ const gridOptions = {
           label="Min UMIs per barcode (AND combine)"
         >
           <template #tooltip>
-            <b>For "all"-combine antigens only</b> — ignore unless you set some antigens to
-            <b>all</b> above. Minimum distinct UMIs a barcode needs to count as "fired" (present) in
-            a cell; below it, that barcode doesn't count toward the AND. Leave empty for the default
-            (1).
+            <b>For "all"-combine antigens only</b> — it applies when the run carries a combine-mode
+            column, which is not offered today. Minimum distinct UMIs a barcode needs to count as
+            "fired" (present) in a cell; below it, that barcode doesn't count toward the AND. Leave
+            empty for the default (1).
           </template>
         </PlNumberField>
         <PlNumberField

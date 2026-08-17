@@ -9,7 +9,7 @@ import {
 } from "@platforma-sdk/model";
 import { assemblePattern, CELL_TAG, FEATURE_TAG, UMI_TAG, validatePattern } from "./pattern";
 import { getPreset } from "./presets";
-import type { BlockArgs, BlockData } from "./types";
+import type { BlockArgs, BlockData, ReferenceSource } from "./types";
 
 export { assemblePattern, parsePattern, validatePattern } from "./pattern";
 export type { PatternParts } from "./pattern";
@@ -28,6 +28,41 @@ const DEFAULT_MIN_VOTING_CELLS = 1;
 const DEFAULT_PANEL_REFERENCE_MIN_MEMBERS = 8;
 const DEFAULT_REFERENCE_THIN_LINE = 2;
 const DEFAULT_HIGH_REFERENCE_LINE = 100;
+
+// The two axes the verdict view is assembled from. The exported verdict frame carries every table the
+// reading emitted — per-cell counts keyed by cell, the offered scope keyed by sample, the tag→identity
+// linker keyed by tag — and any of them joined into this view fans one verdict row into many. So the view
+// is pinned to its own key: what a verdict is ABOUT (the identity) and who it is about it FOR (the
+// clonotype set). The set axis name is the one the datasetOptions query requires of an anchor, so a
+// dataset that could be picked here always carries it.
+const IDENTITY_AXIS = "pl7.app/antigen/identityId";
+const CLONOTYPE_SET_AXIS = "pl7.app/vdj/scClonotypeKey";
+
+// The run record emit_verdicts.py writes (result_run_meta.json), read as content. Only the fields the UI
+// states back to the user are typed here; the file carries every parameter the reading used.
+export type VerdictRunMeta = {
+  /** The comparator that actually SERVED — a request the panel cannot honour degrades to none. */
+  referenceChoice: string;
+  /** The comparator that was ASKED for, so a degraded run can say what it lost. */
+  referenceSourceRequested: string;
+  referenceTags: string[];
+  identityCount: number;
+  setCount: number;
+  cellsAnalysed: number;
+  /** Tags the grouping column said nothing about; each stands as its own identity, under a bare barcode. */
+  tagsWithoutGroupingValue: string[];
+};
+
+// What the software resolves an unset reference source to, restated so the dropdown can say it. Mirrors
+// verdict.py resolve_default_source: a declared reagent, else the panel's own readings where the panel is
+// big enough, else nothing.
+export type ReferenceSourceChoices = {
+  options: { value: ReferenceSource; label: string; description: string }[];
+  /** One line per source this panel cannot serve, saying why. */
+  unavailable: string[];
+  /** What an unset source resolves to for this panel, as a sentence. */
+  fallback: string;
+};
 
 // Ordinal step key -> the step a sample is CURRENTLY on once that report has settled. A stepReports entry
 // appears when its step finishes, so the furthest-present report implies the next running step
@@ -388,6 +423,23 @@ export const platforma = BlockModelV3.create(dataModel)
     // the choice is recorded but the user never sees they lost it.
     if (data.referenceSource === "declared" && !data.referenceValues?.length)
       throw new Error("Choose which role values mark the reference, or pick another source");
+    // A role column or a grouping column the panel does not carry ends the whole run at the exec
+    // (emit_verdicts.py exits rather than degrading), and the user meets that as a dead run with no hint
+    // of which setting caused it. The check is against the headers snapshotted when the column was picked
+    // — args reads data only — so a panel swap that leaves the pick behind disables Run with a message
+    // naming the column instead.
+    const panelColumns = data.panelColumnSnapshot;
+    if (panelColumns?.length) {
+      for (const [role, column] of [
+        ["Reference role", data.roleColumn],
+        ["Grouping", data.grouping?.by === "property" ? data.grouping.column : undefined],
+      ] as const) {
+        if (column && !panelColumns.includes(column))
+          throw new Error(
+            `${role} column "${column}" is not a column of the uploaded panel file; re-select it`,
+          );
+      }
+    }
 
     // Contending groups, canonicalised here rather than in the editor: the args value is a cache key, so
     // the same declaration written in a different order must produce the same string or the block goes
@@ -877,6 +929,101 @@ export const platforma = BlockModelV3.create(dataModel)
     },
     { retentive: true, withStatus: true },
   )
+  // The verdict view: one row per (clonotype set, antigen identity), carrying the four-state verdict and
+  // the support behind it. Assembled from the exported verdict frame, which the workflow also surfaces as
+  // an output because a block's own exports are not in its own result pool.
+  //
+  // The identity LABEL column travels in the columns list rather than being discovered: createPlDataTable
+  // looks for label columns in the result pool, and this block's are not there. It is what puts the
+  // antigen's readable name in the row — emit_verdicts.py writes the panel's feature name, the tag itself
+  // where the panel names none, and "name (tag)" where two tags would otherwise share one label.
+  //
+  // createPlDataTableV2 rather than V3 for the same reason as perCellTable above: V3's discovery walks the
+  // whole result pool and hangs on the upstream Samples&Data File dataset. V2 takes the columns as given.
+  // Filtering, ordering and default visibility all come from the specs the workflow built — the four
+  // states and wasCompeted carry pl7.app/isDiscreteFilter, and no column carries an orderable annotation,
+  // which column-specs.lib.tengo enforces rather than assumes.
+  .output(
+    "verdictTable",
+    (ctx) => {
+      const pCols = ctx.outputs
+        ?.resolve({ field: "antigenVerdictsTable", allowPermanentAbsence: true })
+        ?.getPColumns();
+      if (pCols === undefined) return undefined;
+      const cols = pCols.filter((c) => {
+        const axes = c.spec.axesSpec.map((a) => a.name);
+        if (c.spec.name === "pl7.app/label") return axes.length === 1 && axes[0] === IDENTITY_AXIS;
+        return axes.length === 2 && axes[0] === CLONOTYPE_SET_AXIS && axes[1] === IDENTITY_AXIS;
+      });
+      if (cols.length === 0) return undefined;
+      return createPlDataTableV2(ctx, cols, ctx.data.verdictTableState);
+    },
+    { retentive: true, withStatus: true },
+  )
+  // What the reading was actually answered under. The page states the comparator that SERVED rather than
+  // the one that was requested, because the software degrades a request it cannot honour and a reader
+  // meeting an all-unreliable table otherwise has no way to learn that happened. Absent until a run with a
+  // V(D)J dataset has produced it.
+  .output("verdictRunMeta", (ctx): VerdictRunMeta | undefined =>
+    ctx.outputs
+      ?.resolve({ field: "antigenRunMeta", allowPermanentAbsence: true })
+      ?.getDataAsJsonOrUndefined<VerdictRunMeta>(),
+  )
+  // The comparator sources this panel can serve, with a line for each it cannot. Both facts are knowable
+  // before a run, from the panel metadata staging already emits: the panel's size is the count of distinct
+  // barcodes, and a declared comparator needs a role column and values of it that the column actually
+  // carries. Offering a source the run would silently degrade would record a choice the user never gets.
+  .retentiveOutput("referenceSources", (ctx): ReferenceSourceChoices => {
+    const meta = readCsvMeta(ctx);
+    const barcodeColumn = ctx.data.barcodeSeqColumn;
+    const panelSize = barcodeColumn
+      ? (meta?.valuesByColumn?.[barcodeColumn] ?? []).filter((v) => v.trim() !== "").length
+      : 0;
+    const minMembers = Math.round(ctx.data.panelReferenceMinMembers);
+    const roleColumn = ctx.data.roleColumn;
+    const roleValues = new Set(roleColumn ? (meta?.valuesByColumn?.[roleColumn] ?? []) : []);
+    const declaredTags = (ctx.data.referenceValues ?? []).filter((v) => roleValues.has(v));
+
+    const options: ReferenceSourceChoices["options"] = [];
+    const unavailable: string[] = [];
+    if (declaredTags.length > 0)
+      options.push({
+        value: "declared",
+        label: "Declared reference tag",
+        description: "Counts are read against the tags the panel marks as the comparator.",
+      });
+    else
+      unavailable.push(
+        "Declared reference tag — no tag is marked as the comparator yet. Choose the panel column " +
+          "that declares each tag's role, then the values of it that mark the comparator.",
+      );
+    if (panelSize >= minMembers)
+      options.push({
+        value: "panel",
+        label: "The panel's own readings",
+        description: `Counts are read against the rest of the panel (${panelSize} tags).`,
+      });
+    else
+      unavailable.push(
+        `The panel's own readings — the panel declares ${panelSize} tag(s) and this source needs at ` +
+          `least ${minMembers}. Lower the panel minimum in Advanced Settings, or use a declared reference tag.`,
+      );
+    options.push({
+      value: "none",
+      label: "No comparator",
+      description:
+        "Every reading is left unreliable rather than compared against something that cannot serve.",
+    });
+
+    // The three-rung default, restated from verdict.py resolve_default_source.
+    const fallback =
+      declaredTags.length > 0
+        ? "the declared reference tags"
+        : panelSize >= minMembers
+          ? "the panel's own readings"
+          : "no comparator — every reading would be unreliable";
+    return { options, unavailable, fallback };
+  })
   .title(() => "Feature Barcode Profiling")
   // Standard block-label subtitle. The subtitle render context is args-only (no result pool / outputs
   // — touching them renders "Invalid subtitle"), so the dynamic "<dataset> / <barcode> - <feature>"
@@ -896,6 +1043,10 @@ export const platforma = BlockModelV3.create(dataModel)
         ? [
             { type: "link" as const, href: "/qc" as const, label: "Per-sample QC" },
             { type: "link" as const, href: "/results" as const, label: "Per-cell results" },
+            // Shown for every run, including one with no V(D)J dataset. That run produces no antigen
+            // columns at all, and the page saying so is the only place a user learns why — hiding the
+            // tab would leave the absence unexplained.
+            { type: "link" as const, href: "/verdicts" as const, label: "Binding verdicts" },
           ]
         : []),
     ];
