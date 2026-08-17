@@ -610,6 +610,15 @@ def silent_tally(
                 # a row for it, and it is dropped here rather than counted
                 # against a cell universe that never named it.
                 continue
+            if ident not in offered_by_sample.get(k[0], frozenset()):
+                # Read, but this cell's OWN sample never offered the identity,
+                # so the cell was never asked about it. `asked` below counts
+                # only members whose own sample offered it, so counting this
+                # reading would draw the numerator and the denominator from two
+                # different populations. Where enough silent cells absorb the
+                # imbalance it does not even raise: it displaces a silent
+                # cell's real vote with one from a cell that was never asked.
+                continue
             pair = (k[0], ident)
             observed_count[pair] = observed_count.get(pair, 0) + 1
             if k in inadmissible:
@@ -652,6 +661,15 @@ def silent_tally(
         observed_inadmissible_count = {}
         for k, ident in zip(obs_keys, obs_identity, strict=True):
             if k not in cell_keys:
+                continue
+            if ident not in offered_by_sample.get(k[0], frozenset()):
+                # Read, but this cell's OWN sample never offered the identity,
+                # so the cell was never asked about it. `asked` below counts
+                # only members whose own sample offered it, so counting this
+                # reading would draw the numerator and the denominator from two
+                # different populations. Where enough silent cells absorb the
+                # imbalance it does not even raise: it displaces a silent
+                # cell's real vote with one from a cell that was never asked.
                 continue
             pair = (group_by_cell[k], ident)
             observed_count[pair] = observed_count.get(pair, 0) + 1

@@ -64,10 +64,12 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "readsTotal",
         "Reads total and fraction matched",
         "sample",
-        # No line: the four inherited numbers atom 315 names are the usable
-        # antigen-read fraction, the undeclared-barcode fraction, the aggregate-
-        # barcode read fraction and barcode validity. The matched share is on
-        # none of them, so nothing here says what a low one would mean.
+        # No line. Exactly four numbers are inherited from the field, and the
+        # matched share is not one of them: the usable antigen-read fraction
+        # (published warn below 0.20), the undeclared-barcode fraction (warn
+        # above 0.50), the aggregate-barcode read fraction (warn above 0.05)
+        # and barcode validity (warn below 0.75). Nothing published says what a
+        # low matched share means, so nothing here claims to.
         "Every read the parser saw, and the share matching the tag pattern.",
     ),
     # The label names the recognized fraction rather than the spec row's

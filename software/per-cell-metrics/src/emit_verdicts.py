@@ -199,7 +199,7 @@ def _build_grouping(
     panel: pl.DataFrame,
     properties: dict[str, dict[str, str]],
     reference_tags: set[str],
-) -> tuple[Grouping, str]:
+) -> tuple[Grouping, str, list[str]]:
     """The tag -> identity map the run reads at, and the id of the rule behind it.
 
     A property grouping is built from `consistent_properties`, never from the
@@ -368,7 +368,7 @@ def _qc_frame(rows: list[QcRow]) -> pl.DataFrame:
             {
                 "level": row.level,
                 "entity": row.entity,
-                "panelId": row.panel_id or None,
+                "panelId": row.panel_id,  # "" not None: this is an AXIS key, and a null is not a usable one
                 "measurement": row.measurement,
                 "value": row.value,
                 "detail": row.detail or None,

@@ -191,6 +191,14 @@ def combine_cells(
             # kept here so a vote can never be counted for a cell nobody
             # asked to vote.
             continue
+        if identity not in offered.get(sample_id, frozenset()):
+            # This cell's own sample never offered the identity, so the cell
+            # was never asked about it and its reading is not a vote. The
+            # denominator below counts only members whose own sample offered
+            # it; counting the vote here would mix two populations, and where
+            # a set sits in one sample this reading is already discarded as
+            # never-asked. The multi-sample case now behaves the same way.
+            continue
         bucket = explicit_counts.setdefault((set_id, identity), {})
         bucket[state] = bucket.get(state, 0) + 1
 
@@ -501,6 +509,14 @@ def self_disagreement(
         if set_id is None:
             # Same drop `combine_cells` applies: a vote is never counted for
             # a cell that no set's membership list names.
+            continue
+        if key not in offered.get(sample_id, frozenset()):
+            # This cell's own sample never offered the identity, so the cell
+            # was never asked about it and its reading is not a vote. The
+            # denominator below counts only members whose own sample offered
+            # it; counting the vote here would mix two populations, and where
+            # a set sits in one sample this reading is already discarded as
+            # never-asked. The multi-sample case now behaves the same way.
             continue
         bucket = explicit_counts.setdefault((set_id, key), {})
         bucket[state] = bucket.get(state, 0) + 1

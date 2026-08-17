@@ -848,3 +848,74 @@ def test_the_bed_panel_without_a_declared_comparator_serves_as_its_own(wide_bed)
     assert _run(wide_bed, *_bed_args("panel_with_reference.csv")).returncode == 0
     with_declared = json.loads((wide_bed / "result_run_meta.json").read_text())["readingsFloored"]
     assert without > with_declared > 0
+
+
+def test_a_reading_from_a_sample_that_never_offered_it_is_not_a_vote(bed):
+    # The denominator counts only members whose OWN sample offered the identity.
+    # If the numerator does not apply the same test, the two are drawn from
+    # different populations: a reading from a cell that was never asked
+    # displaces a silent cell's real vote. Reachable whenever a sample-keyed
+    # panel meets a set spanning two samples and a tag declared for one sample
+    # is read in the other -- which is the undeclared-in-panel case this block
+    # measures on purpose, not an exotic shape.
+    (bed / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type\nS1,Ctrl,CTRL,Control\nS2,Ctrl,CTRL,Control\nS2,AgX,XXXX,Target\n"
+    )
+    (bed / "counts.csv").write_text(
+        "sampleId,cellId,tag,umiCount\n"
+        "S1,c1,CTRL,6\nS1,c1,XXXX,500\n"  # S1 never offered XXXX; this is not a vote
+        "S2,c2,CTRL,6\nS2,c2,XXXX,500\n"  # offered and bound
+        "S2,c3,CTRL,6\n"  # offered and silent -> not bound
+    )
+    (bed / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS2,c2,K1\nS2,c3,K1\n")
+
+    r = _run(bed, *BASE)
+    assert r.returncode == 0, r.stderr
+    row = (
+        pl.read_csv(bed / "result_verdicts.csv", infer_schema_length=0)
+        .filter(pl.col("identity") == "XXXX")
+        .row(0, named=True)
+    )
+    # One bound and one not-bound among the two cells that were actually asked.
+    assert row["state"] == "unreliable"
+    assert row["unreliableReason"] == "tie"
+    assert (row["cellsCouldAnswer"], row["cellsAnswered"]) == ("2", "2")
+
+
+def test_every_asked_cell_reading_still_counts_when_both_samples_offered_it(bed):
+    # The guard above must not throw away legitimate cross-sample votes: with
+    # both samples offering the identity, all three cells vote as before.
+    (bed / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type\n"
+        "S1,Ctrl,CTRL,Control\nS1,AgX,XXXX,Target\nS2,Ctrl,CTRL,Control\nS2,AgX,XXXX,Target\n"
+    )
+    (bed / "counts.csv").write_text(
+        "sampleId,cellId,tag,umiCount\nS1,c1,CTRL,6\nS1,c1,XXXX,500\nS2,c2,CTRL,6\nS2,c2,XXXX,500\nS2,c3,CTRL,6\n"
+    )
+    (bed / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS2,c2,K1\nS2,c3,K1\n")
+
+    r = _run(bed, *BASE)
+    assert r.returncode == 0, r.stderr
+    row = (
+        pl.read_csv(bed / "result_verdicts.csv", infer_schema_length=0)
+        .filter(pl.col("identity") == "XXXX")
+        .row(0, named=True)
+    )
+    assert (row["cellsCouldAnswer"], row["cellsAnswered"]) == ("3", "3")
+    assert row["state"] == "bound"  # two bound against one silent
+
+
+def test_no_qc_row_carries_a_null_panel_key(bed):
+    # panelId is an AXIS of the imported QC frame, and a null is not a usable
+    # p-column key. Sample-level and capture-level rows belong to no panel, so
+    # they carry an empty string -- which is a key -- never a null.
+    _run(bed, *BASE, "--capture-map", json.dumps({"S1": "C1"}))
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    assert qc["panelId"].null_count() == 0
+
+    # Both kinds must be present, or the assertion above proves nothing: rows
+    # that belong to a panel carry its id, rows that belong to none carry an
+    # empty string.
+    panels = set(qc["panelId"].to_list())
+    assert "" in panels, "sample and capture rows belong to no panel and must carry an empty key"
+    assert any(p for p in panels), "tag and identity rows must carry a real panel id"
