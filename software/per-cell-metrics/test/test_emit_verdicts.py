@@ -121,6 +121,81 @@ def test_reference_source_none_produces_unreliable_not_a_crash(bed):
     assert v.filter(pl.col("identity") == "AAAA").row(0, named=True)["state"] == "unreliable"
 
 
+def test_a_tag_the_grouping_could_not_place_is_named_in_the_output(bed):
+    # A property the panel file does not carry narrows what can be answered,
+    # and the narrowing has to be visible where the answers are. Such a tag
+    # keeps its own identity rather than vanishing, so a bare barcode sits
+    # among the family identities -- inferable from the labels, but only this
+    # says why it is there.
+    (bed / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type,Family\n"
+        "S1,AgA,AAAA,Target,Spike\n"
+        "S1,AgB,CCCC,Target,\n"
+        "S1,Ctrl,CTRL,Control,Reference\n"
+    )
+    (bed / "counts.csv").write_text((bed / "counts.csv").read_text() + "S1,c1,CCCC,40\nS1,c2,CCCC,40\nS1,c3,CCCC,40\n")
+    r = _run(bed, *BASE, "--grouping", json.dumps({"by": "property", "column": "Family"}))
+    assert r.returncode == 0, r.stderr
+
+    meta = json.loads((bed / "result_run_meta.json").read_text())
+    assert meta["tagsWithoutGroupingValue"] == ["CCCC"]
+
+    identities = set(pl.read_csv(bed / "result_verdicts.csv", infer_schema_length=0)["identity"].to_list())
+    assert identities == {"Spike", "CCCC"}, "the unplaceable tag keeps its own identity rather than vanishing"
+
+
+def test_a_tag_grouping_reports_no_unplaceable_tags(bed):
+    # The default grouping places every tag by construction, so the field is
+    # present and empty rather than absent -- a reader must be able to tell
+    # "none" from "not checked".
+    _run(bed, *BASE)
+    meta = json.loads((bed / "result_run_meta.json").read_text())
+    assert meta["tagsWithoutGroupingValue"] == []
+
+
+def test_an_alerting_tag_carries_the_figures_for_the_identities_it_feeds(bed):
+    # A noisy reagent whose identities read steady is a reagent to replace, not
+    # a run to distrust, and only the two numbers together say which. One tag
+    # whose clonotype disagrees with itself, against four that do not: its rate
+    # stands clear of its peers, so it alerts and must carry the identity
+    # figures beside it.
+    tags = [f"T{i:02d}" for i in range(5)]
+    (bed / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type\n"
+        + "".join(f"S1,Ag{i},{t},Target\n" for i, t in enumerate(tags))
+        + "S1,Ctrl,CTRL,Control\n"
+    )
+    rows = ["sampleId,cellId,tag,umiCount"]
+    for cell in ("c1", "c2", "c3", "c4"):
+        rows.append(f"S1,{cell},CTRL,6")
+        # T00 splits the clonotype: two cells bind it, two do not.
+        rows.append(f"S1,{cell},{tags[0]},{500 if cell in ('c1', 'c2') else 5}")
+        rows.extend(f"S1,{cell},{t},5" for t in tags[1:])
+    (bed / "counts.csv").write_text("\n".join(rows) + "\n")
+    (bed / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS1,c2,K1\nS1,c3,K1\nS1,c4,K1\n")
+
+    r = _run(bed, *BASE)
+    assert r.returncode == 0, r.stderr
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    tag_rows = qc.filter(pl.col("measurement") == "tagDisagreement")
+
+    alerting = tag_rows.filter(pl.col("status") == "alerting")
+    assert alerting.height == 1, "exactly the split tag should stand clear of its peers"
+    row = alerting.row(0, named=True)
+    assert row["entity"] == tags[0]
+    assert row["detail"].startswith("identitiesFed="), row["detail"]
+    assert tags[0] in row["detail"]
+
+    # Neither figure is suppressed: the identity rows are still emitted in full.
+    assert qc.filter(pl.col("measurement") == "identityDisagreement").height > 0
+
+    # And a tag that did not alert carries no attachment -- the pairing is the
+    # answer to a question the alert raised, not decoration on every row.
+    quiet = tag_rows.filter(pl.col("status") != "alerting")
+    assert quiet.height > 0
+    assert not any((d or "").startswith("identitiesFed=") for d in quiet["detail"].to_list())
+
+
 def test_the_key_only_frames_carry_a_value_column_so_they_can_become_columns(bed):
     # A p-column is built from a CSV's *value* columns, so a file of key columns
     # alone imports as nothing at all -- silently, since the file exists and is

@@ -75,6 +75,7 @@ from qc_measures import (
     Coverage,
     Status,
     antigen_count_deciles,
+    attach_alerting_identities,
     outlier_status,
     per_antigen_measures,
     reads_per_cell,
@@ -218,7 +219,7 @@ def _build_grouping(
     """
     by_tag = default_grouping(panel, reference_tags)
     if rule is None or rule.get("by") == "tag":
-        return by_tag, "per-tag"
+        return by_tag, "per-tag", []
     if rule.get("by") != "property":
         raise SystemExit(f"--grouping must be {{'by':'tag'}} or {{'by':'property','column':...}}; got {rule!r}")
 
@@ -237,12 +238,17 @@ def _build_grouping(
             grouping[tag] = tag
             ungrouped.append(tag)
     if ungrouped:
+        # Also returned, not only logged. A property the file does not carry
+        # narrows what can be answered, and that narrowing has to be visible in
+        # the output rather than in a log line nobody reads afterwards: these
+        # tags are answered under a grouping that could not place them, so a
+        # bare barcode sits among the family identities and only this says why.
         print(
             f"[emit-verdicts] {len(ungrouped)} tag(s) carry no agreed {column!r} value and stand as their own "
             f"identity: {ungrouped[:8]}",
             file=sys.stderr,
         )
-    return grouping, f"property:{column}"
+    return grouping, f"property:{column}", ungrouped
 
 
 def _identity_labels(
@@ -483,7 +489,7 @@ def main() -> None:
         reference_tags = {t for t, props in properties.items() if props.get(args.role_column) in reference_values}
 
     grouping_rule = _json_arg(args.grouping, "--grouping")
-    grouping, grouping_id = _build_grouping(grouping_rule, panel, properties, reference_tags)
+    grouping, grouping_id, ungrouped_tags = _build_grouping(grouping_rule, panel, properties, reference_tags)
     universe = identity_universe(panel, grouping)
     by_tag_grouping = default_grouping(panel, reference_tags)
     tag_universe = identity_universe(panel, by_tag_grouping)
@@ -888,10 +894,43 @@ def main() -> None:
         # being judged: including it would inflate the upper quartile it is
         # then measured against, so the one reading the measure exists to
         # catch is the one it would miss.
+        disagreement_at = len(rows)
         for tag in sorted(panel_tags & set(tag_rate)):
             peers = [tag_rate[o] for o in panel_tags if o != tag and tag_rate.get(o) is not None]
             status = outlier_status(tag_rate[tag], peers)
             rows.append(_leaf("tag", tag, "tagDisagreement", tag_rate[tag], "", panel_id, status))
+
+        # Beside an alerting tag, the figures for the identities it feeds. A
+        # noisy reagent whose identities read steady is a reagent to replace,
+        # not a run to distrust, and only the two numbers together say which.
+        # Neither is suppressed: the identity rows are emitted in full below,
+        # and this attaches a copy to the tag that raised the question so a
+        # reader meeting the alert does not have to go looking.
+        alerting_tags = {r.entity for r in rows[disagreement_at:] if r.status is Status.ALERTING}
+        if alerting_tags:
+            beside = attach_alerting_identities(
+                pl.DataFrame(
+                    [
+                        (identity, identity_rate[identity])
+                        for identity in sorted(identities_of_panel[panel_id] & set(identity_rate))
+                    ],
+                    orient="row",
+                    schema={"key": pl.String, "identityDisagreement": pl.Float64},
+                ),
+                {tag: {grouping[tag]} for tag in panel_tags if tag in grouping},
+                alerting_tags,
+            )
+            attached: dict[str, list[str]] = {}
+            for row in beside.iter_rows(named=True):
+                rate = row["identityDisagreement"]
+                attached.setdefault(row["tag"], []).append(
+                    f"{row['identity']}={'' if rate is None else round(float(rate), 4)}"
+                )
+            for i in range(disagreement_at, len(rows)):
+                feeds = attached.get(rows[i].entity)
+                if feeds:
+                    rows[i] = rows[i]._replace(detail=f"identitiesFed={'|'.join(feeds)}")
+
         tag_statuses = [r.status for r in rows[first:]]
 
         identity_first = len(rows)
@@ -953,6 +992,10 @@ def main() -> None:
         "referenceTags": sorted(reference_tags),
         "grouping": grouping_rule or {"by": "tag"},
         "groupingId": grouping_id,
+        # The narrowing a short panel file costs, carried in the output
+        # rather than only in a log line: these tags were answered under a
+        # grouping that could not place them.
+        "tagsWithoutGroupingValue": sorted(ungrouped_tags),
         "contending": [sorted(group) for group in contending],
         "identityCount": len(universe),
         "identitySummaryEmitted": summary_emitted,
