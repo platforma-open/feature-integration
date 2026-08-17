@@ -121,6 +121,21 @@ def test_reference_source_none_produces_unreliable_not_a_crash(bed):
     assert v.filter(pl.col("identity") == "AAAA").row(0, named=True)["state"] == "unreliable"
 
 
+def test_the_key_only_frames_carry_a_value_column_so_they_can_become_columns(bed):
+    # A p-column is built from a CSV's *value* columns, so a file of key columns
+    # alone imports as nothing at all -- silently, since the file exists and is
+    # well formed. What a sample was offered, and which identity a tag feeds,
+    # would simply never leave the block.
+    _run(bed, *BASE)
+    offered = pl.read_csv(bed / "result_offered.csv", infer_schema_length=0)
+    assert offered.columns == ["sampleId", "identity", "offered"]
+    assert set(offered["offered"].to_list()) == {"true"}
+
+    linker = pl.read_csv(bed / "result_tag_identity.csv", infer_schema_length=0)
+    assert linker.columns == ["tag", "identity", "1"]
+    assert set(linker["1"].to_list()) == {"1"}
+
+
 def test_a_panel_with_no_declared_reference_falls_to_the_panel_not_to_nothing(bed):
     # Three rungs in order: a declared reagent, else the panel's own readings
     # where the panel carries enough members, else nothing. Skipping the middle

@@ -664,15 +664,24 @@ def main() -> None:
     )
     _write_sorted(cell_scalars, f"{prefix}_cell_scalars.csv", ["sampleId", "cellId"])
 
+    # Both of these frames are pure key sets -- what a sample was offered, and
+    # which identity a tag feeds -- and each carries a constant value column so
+    # it can become a p-column at all. A frame of key columns alone imports as
+    # nothing: columns are built from value columns, so a key-only file yields
+    # no column and the fact it records never leaves the block.
     offered_frame = pl.DataFrame(
-        [(sample, identity) for sample in samples for identity in sorted(offered_by_sample[sample])],
+        [(sample, identity, "true") for sample in samples for identity in sorted(offered_by_sample[sample])],
         orient="row",
-        schema={"sampleId": pl.String, "identity": pl.String},
+        schema={"sampleId": pl.String, "identity": pl.String, "offered": pl.String},
     )
     _write_sorted(offered_frame, f"{prefix}_offered.csv", ["sampleId", "identity"])
 
+    # The value column is named "1" and holds 1, matching the cell-linker
+    # convention already used for linker columns elsewhere in the platform.
     linker_frame = pl.DataFrame(
-        sorted(grouping.items()), orient="row", schema={"tag": pl.String, "identity": pl.String}
+        [(tag, identity, 1) for tag, identity in sorted(grouping.items())],
+        orient="row",
+        schema={"tag": pl.String, "identity": pl.String, "1": pl.Int64},
     )
     _write_sorted(linker_frame, f"{prefix}_tag_identity.csv", ["tag", "identity"])
 
