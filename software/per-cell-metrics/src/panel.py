@@ -230,3 +230,39 @@ def offered_identities(panel: pl.DataFrame, grouping: Grouping, samples: list[st
     """
     rows = panel.filter((pl.col("sample") == ANY_SAMPLE) | pl.col("sample").is_in(samples))
     return {grouping[t] for t in rows["tag"].unique().to_list() if t in grouping}
+
+
+def panel_read_mismatch(panel: pl.DataFrame, seen: pl.DataFrame) -> pl.DataFrame:
+    """Both directions of the panel-versus-reads check, per sample.
+
+    Neither direction can be known before the reads are processed, so by the
+    time either is known the reading exists; withholding it then would turn a
+    partial answer into none. This reports and never raises.
+
+    Per sample, because the same barcode can carry a different antigen in a
+    different sample's panel: a global check lets a barcode undeclared in one
+    sample pass on another sample's declaration.
+    """
+    rows = []
+    global_panel = panel.filter(pl.col("sample") == ANY_SAMPLE)
+
+    if global_panel.height:
+        declared = set(global_panel["tag"].to_list())
+        observed = set(seen["tag"].to_list())
+        for tag in sorted(declared - observed):
+            rows.append({"sample": ANY_SAMPLE, "tag": tag, "direction": "declared-never-seen"})
+        for tag in sorted(observed - declared):
+            rows.append({"sample": ANY_SAMPLE, "tag": tag, "direction": "undeclared-in-panel"})
+    else:
+        samples = sorted(set(panel["sample"].to_list()) | set(seen["sampleId"].to_list()))
+        for sample in samples:
+            declared = set(panel.filter(pl.col("sample") == sample)["tag"].to_list())
+            observed = set(seen.filter(pl.col("sampleId") == sample)["tag"].to_list())
+            for tag in sorted(declared - observed):
+                rows.append({"sample": sample, "tag": tag, "direction": "declared-never-seen"})
+            for tag in sorted(observed - declared):
+                rows.append({"sample": sample, "tag": tag, "direction": "undeclared-in-panel"})
+
+    return pl.DataFrame(rows, schema={"sample": pl.String, "tag": pl.String, "direction": pl.String}).sort(
+        ["sample", "direction", "tag"]
+    )
