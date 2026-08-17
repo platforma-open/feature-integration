@@ -179,3 +179,41 @@ def consistent_properties(
             elif len(values) > 1:
                 inconsistent.append((name, col, values))
     return props, inconsistent
+
+
+def default_grouping(panel: pl.DataFrame, reference_tags: set[str]) -> dict[str, str]:
+    """One identity per tag, over non-reference tags.
+
+    The feature name cannot key an identity: the same barcode carries a
+    different name in a different sample's panel, so name-keying splits one
+    reagent and can merge two. The reference is a comparator and never an
+    identity.
+    """
+    return {t: t for t in panel["tag"].unique().to_list() if t not in reference_tags}
+
+
+def identity_universe(panel: pl.DataFrame, grouping: dict[str, str]) -> set[str]:
+    """Every identity a question is asked at — the row set for every set's verdicts.
+
+    A verdict exists at every identity, including ones a given set was never
+    offered: that is precisely where *never asked* lives. Using the offered set
+    as the row set instead makes an unoffered identity vanish from the answer.
+    """
+    return {grouping[t] for t in panel["tag"].to_list() if t in grouping}
+
+
+def offered_identities(panel: pl.DataFrame, grouping: dict[str, str], samples: list[str]) -> set[str]:
+    """Which identities a set was offered, given the samples its cells came from.
+
+    An identity was offered when any one of its tags was on any of those
+    samples' panels. The `any` is deliberate: an identity is a group of tags,
+    and that group can span several panels.
+
+    A sample the panel never mentions is offered nothing, so every identity
+    reads *never asked* for a set drawn from it. That is the honest reading of
+    a panel that does not cover the run, and the panel-versus-reads check is
+    what makes the gap visible rather than leaving it to be inferred.
+    """
+    wanted = set(samples)
+    rows = panel.filter((pl.col("sample") == ANY_SAMPLE) | pl.col("sample").is_in(list(wanted)))
+    return {grouping[t] for t in rows["tag"].to_list() if t in grouping}

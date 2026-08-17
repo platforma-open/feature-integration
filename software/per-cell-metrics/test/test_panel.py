@@ -1,6 +1,13 @@
 import polars as pl
 import pytest
-from panel import consistent_properties, property_columns, read_panel
+from panel import (
+    consistent_properties,
+    default_grouping,
+    identity_universe,
+    offered_identities,
+    property_columns,
+    read_panel,
+)
 
 ROLES = {"barcode": "Sequence", "feature": "Name", "sample": "Samples"}
 
@@ -213,3 +220,81 @@ def test_barcode_is_stripped(tmp_path):
     path = _csv(tmp_path, rows=[["S1", "AgA", " AAAA ", "Target"]])
     panel, _ = read_panel(path, ROLES)
     assert panel["tag"].to_list() == ["AAAA"]
+
+
+def test_universe_is_every_identity_not_a_per_set_subset():
+    panel = pl.DataFrame({"tag": ["AAAA", "CCCC", "GGGG"], "sample": ["S1", "S2", "S2"], "Name": ["a", "c", "g"]})
+    g = {"AAAA": "A", "CCCC": "C", "GGGG": "G"}
+    assert identity_universe(panel, g) == {"A", "C", "G"}
+
+
+def test_reference_tags_never_enter_the_universe():
+    panel = pl.DataFrame({"tag": ["AAAA", "CTRL"], "sample": ["S1", "S1"], "Name": ["a", "ctrl"]})
+    g = default_grouping(panel, reference_tags={"CTRL"})
+    assert g == {"AAAA": "AAAA"}
+    assert identity_universe(panel, g) == {"AAAA"}
+
+
+def test_offered_is_the_union_over_the_sets_samples():
+    panel = pl.DataFrame({"tag": ["AAAA", "CCCC", "GGGG"], "sample": ["S1", "S2", "S2"], "Name": ["a", "c", "g"]})
+    g = {"AAAA": "A", "CCCC": "C", "GGGG": "G"}
+    assert offered_identities(panel, g, ["S1"]) == {"A"}
+    assert offered_identities(panel, g, ["S2"]) == {"C", "G"}
+    assert offered_identities(panel, g, ["S1", "S2"]) == {"A", "C", "G"}
+
+
+def test_offered_needs_only_one_member_tag():
+    panel = pl.DataFrame({"tag": ["AAAA", "CCCC"], "sample": ["S1", "S2"], "Name": ["a1", "a2"]})
+    g = {"AAAA": "A", "CCCC": "A"}
+    assert offered_identities(panel, g, ["S1"]) == {"A"}
+    assert offered_identities(panel, g, ["S2"]) == {"A"}
+
+
+def test_star_sample_offers_everything():
+    panel = pl.DataFrame({"tag": ["AAAA", "CCCC"], "sample": ["*", "*"], "Name": ["a", "c"]})
+    g = {"AAAA": "A", "CCCC": "C"}
+    assert offered_identities(panel, g, ["anything"]) == {"A", "C"}
+
+
+def test_an_identity_not_offered_is_still_in_the_universe():
+    # The universe is what makes a never-asked ROW exist. An earlier revision
+    # used `offered` as the row set, so a never-offered identity vanished
+    # instead of reading "never asked".
+    panel = pl.DataFrame({"tag": ["AAAA", "CCCC"], "sample": ["S1", "S2"], "Name": ["a", "c"]})
+    g = {"AAAA": "A", "CCCC": "C"}
+    assert "C" in identity_universe(panel, g)
+    assert "C" not in offered_identities(panel, g, ["S1"])
+
+
+def test_a_sample_absent_from_the_panel_is_offered_nothing():
+    # A set whose cells came from a sample the panel never mentions was
+    # offered nothing, so every identity reads "never asked" for it. That is
+    # the honest answer, not a bug — but it is a big claim from a silent
+    # lookup, so it is pinned here and reported by the panel/reads check.
+    panel = pl.DataFrame({"tag": ["AAAA"], "sample": ["S1"], "Name": ["a"]})
+    g = {"AAAA": "A"}
+    assert offered_identities(panel, g, ["S9"]) == set()
+
+
+def test_a_panel_of_only_references_has_an_empty_universe():
+    panel = pl.DataFrame({"tag": ["CTRL"], "sample": ["S1"], "Name": ["ctrl"]})
+    g = default_grouping(panel, reference_tags={"CTRL"})
+    assert g == {}
+    assert identity_universe(panel, g) == set()
+
+
+def test_no_samples_offers_nothing_but_the_star():
+    # An empty sample list must not accidentally mean "all samples".
+    panel = pl.DataFrame({"tag": ["AAAA"], "sample": ["S1"], "Name": ["a"]})
+    assert offered_identities(panel, {"AAAA": "A"}, []) == set()
+    star = pl.DataFrame({"tag": ["AAAA"], "sample": ["*"], "Name": ["a"]})
+    assert offered_identities(star, {"AAAA": "A"}, []) == {"A"}
+
+
+def test_a_tag_outside_the_grouping_is_skipped_not_an_error():
+    # The reference is the ordinary case of this: it is on the panel and
+    # deliberately absent from the grouping.
+    panel = pl.DataFrame({"tag": ["AAAA", "ZZZZ"], "sample": ["S1", "S1"], "Name": ["a", "z"]})
+    g = {"AAAA": "A"}
+    assert identity_universe(panel, g) == {"A"}
+    assert offered_identities(panel, g, ["S1"]) == {"A"}
