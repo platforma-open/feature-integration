@@ -144,8 +144,29 @@ def reference_by_cell(
     requested one in exactly one direction — down to NONE where the requested
     source cannot be served — because a comparison that cannot be made is
     reported as absent rather than approximated.
+
+    `cells`, when given, is authoritative in both directions: the result holds
+    exactly those cells, zero-filled where the comparator read nothing. Omit it
+    and the cell universe is taken from the counts frame instead, which covers
+    only cells with an observed reading — pass it explicitly wherever the
+    analysis has a cell list, or a cell that was asked and read nothing will be
+    missing rather than zero.
     """
-    all_cells = cells or list(zip(counts["sampleId"].to_list(), counts["cellId"].to_list(), strict=True))
+    all_cells = (
+        list(zip(counts["sampleId"].to_list(), counts["cellId"].to_list(), strict=True)) if cells is None else cells
+    )
+    # A semi join on the cell list, applied before either branch aggregates, so
+    # a cell outside the analysis is dropped before its rows are ever combined
+    # rather than combined and then discarded.
+    scoped = (
+        counts
+        if cells is None
+        else counts.join(
+            pl.DataFrame(cells, orient="row", schema={"sampleId": pl.String, "cellId": pl.String}),
+            on=CELL_KEY,
+            how="semi",
+        )
+    )
 
     if source is ReferenceChoice.NONE:
         return {}, ReferenceChoice.NONE
@@ -157,7 +178,7 @@ def reference_by_cell(
         # highest. Taking an arbitrary one would make the comparator depend on
         # row order.
         rows = (
-            counts.filter(pl.col("tag").is_in(list(reference_tags)))
+            scoped.filter(pl.col("tag").is_in(list(reference_tags)))
             .group_by(CELL_KEY)
             .agg(pl.col("umiCount").max().alias("ref"))
         )
@@ -167,7 +188,7 @@ def reference_by_cell(
             # A scientist told plainly that a verdict could not be produced is
             # better served than one handed a number resting on nothing.
             return {}, ReferenceChoice.NONE
-        rows = counts.group_by(CELL_KEY).agg(pl.col("umiCount").median().alias("ref"))
+        rows = scoped.group_by(CELL_KEY).agg(pl.col("umiCount").median().alias("ref"))
     else:
         raise SystemExit(f"reference source {source.value!r} is not available in this run")
 
@@ -190,8 +211,11 @@ def gate_cells(
     in returns as a confident *not bound*, which is the collapse the four-state
     model exists to prevent.
     """
-    line = threshold if threshold is not None else observation_line
-    high = sum(1 for v in reference.values() if v >= line)
+    # The observation line is independent of the gate: it measures how many
+    # cells sat in high background, which is a fact about the run whether or
+    # not anything was set aside. Folding it into the threshold would make the
+    # count mean "cells the gate removed" and lose the measurement entirely.
+    high = sum(1 for v in reference.values() if v >= observation_line)
     if threshold is None:
         return set(), high
     return {k for k, v in reference.items() if v >= threshold}, high

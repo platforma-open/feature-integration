@@ -215,12 +215,24 @@ def test_the_gate_boundary_includes_the_line_itself():
     assert aside_below == set() and high_below == 0
 
 
-def test_high_reference_counting_is_independent_of_the_gate_acting():
-    # The exposure count must not quietly become "cells the gate removed".
-    ref = {("S1", "c1"): 500, ("S1", "c2"): 1}
-    _, high_off = gate_cells(ref, threshold=None, observation_line=100)
-    _, high_on = gate_cells(ref, threshold=100, observation_line=100)
-    assert high_off == high_on == 1
+def test_the_observation_line_is_independent_of_the_gate_threshold():
+    # The two lines are separate parameters and must be given separate values
+    # here: with them equal, no assertion can tell whether the exposure count
+    # follows the observation line or the gate. It must follow the observation
+    # line, because it measures how many cells sat in high background — true
+    # whether or not the gate removed any of them.
+    ref = {("S1", "a"): 500, ("S1", "b"): 50, ("S1", "c"): 2000}
+
+    aside_off, high_off = gate_cells(ref, threshold=None, observation_line=100)
+    assert aside_off == set() and high_off == 2
+
+    # Gate stricter than the observation line: fewer set aside, same exposure.
+    aside_hi, high_hi = gate_cells(ref, threshold=1000, observation_line=100)
+    assert aside_hi == {("S1", "c")} and high_hi == 2
+
+    # Gate looser than the observation line: more set aside, same exposure.
+    aside_lo, high_lo = gate_cells(ref, threshold=10, observation_line=100)
+    assert aside_lo == {("S1", "a"), ("S1", "b"), ("S1", "c")} and high_lo == 2
 
 
 def test_a_source_that_cannot_be_served_falls_to_none_and_never_sideways():
@@ -253,3 +265,37 @@ def test_the_panel_comparator_is_the_median_not_the_mean():
     ref, choice = reference_by_cell(counts, set(), ReferenceChoice.PANEL, panel_size=8, min_members=5)
     assert choice is ReferenceChoice.PANEL
     assert ref[("S1", "c1")] == 2  # median of 1,2,3,200 -> 2.5 -> int 2; mean would be 51
+
+
+def test_an_explicit_empty_cell_list_means_no_cells():
+    # Not "derive them from the counts frame". An empty list is a statement.
+    counts = _counts([("S1", "c1", "CTRL", 7)])
+    ref, choice = reference_by_cell(counts, {"CTRL"}, ReferenceChoice.DECLARED, cells=[])
+    assert choice is ReferenceChoice.DECLARED
+    assert ref == {}
+
+
+def test_cells_outside_the_given_list_are_excluded():
+    # The cell list is the analysis. A cell with a real reference reading that
+    # is not in it has a comparator nobody will consult, and returning it would
+    # invite a reader to treat the result as the cell universe.
+    counts = _counts([("S1", "c1", "CTRL", 7), ("S1", "c2", "CTRL", 9)])
+    ref, _ = reference_by_cell(counts, {"CTRL"}, ReferenceChoice.DECLARED, cells=[("S1", "c1")])
+    assert ref == {("S1", "c1"): 7}
+
+
+def test_a_named_cell_with_no_reference_reading_is_zero_not_missing():
+    # Both directions in one assertion: c2 is added at 0, c3 is excluded.
+    counts = _counts([("S1", "c1", "CTRL", 7), ("S1", "c3", "CTRL", 4)])
+    ref, _ = reference_by_cell(counts, {"CTRL"}, ReferenceChoice.DECLARED, cells=[("S1", "c1"), ("S1", "c2")])
+    assert ref == {("S1", "c1"): 7, ("S1", "c2"): 0}
+
+
+def test_the_panel_source_also_respects_the_given_cell_list():
+    # Two branches now share the cell-list rule; only one is covered above.
+    counts = _counts([("S1", "c1", "AAAA", 9), ("S1", "c2", "AAAA", 3)])
+    ref, choice = reference_by_cell(
+        counts, set(), ReferenceChoice.PANEL, cells=[("S1", "c1")], panel_size=8, min_members=5
+    )
+    assert choice is ReferenceChoice.PANEL
+    assert ref == {("S1", "c1"): 9}
