@@ -79,3 +79,13 @@ def test_the_same_cell_id_in_two_samples_empties_independently():
     df = _counts([("S1", "c1", "AAAA", 1), ("S2", "c1", "AAAA", 9)])
     _, stats = apply_floor(df, floor=4, reference_tags=set())
     assert stats["cellsEmptied"] == 1
+
+
+def test_a_disabled_floor_is_a_no_op_even_for_a_zero_reading():
+    # floor <= 0 returns early, and that early return is behavioural rather
+    # than an optimisation: falling through would count a cell whose only
+    # reading is already 0 as "emptied", when the floor removed nothing.
+    df = _counts([("S1", "c1", "AAAA", 0)])
+    out, stats = apply_floor(df, floor=0, reference_tags=set())
+    assert out["umiCount"].to_list() == [0]
+    assert stats == {"readingsFloored": 0, "cellsEmptied": 0}

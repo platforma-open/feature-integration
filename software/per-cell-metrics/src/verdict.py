@@ -53,6 +53,8 @@ def apply_floor(counts: pl.DataFrame, floor: int, reference_tags: set[str]) -> t
     Returns the floored counts and {"readingsFloored", "cellsEmptied"}, the two
     quantities the quality measurement set asks of this step.
     """
+    # Not an optimisation: falling through would count a cell whose only
+    # reading is already zero as "emptied", when the floor removed nothing.
     if floor <= 0:
         return counts, {"readingsFloored": 0, "cellsEmptied": 0}
 
