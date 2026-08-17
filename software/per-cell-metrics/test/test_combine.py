@@ -1,6 +1,6 @@
 import polars as pl
 import pytest
-from combine import DEFAULT_MIN_VOTERS, SetUnreliableReason, combine_cells
+from combine import DEFAULT_MIN_VOTERS, SetUnreliableReason, attach_competitor_notes, combine_cells
 from verdict import Admissibility, State, combine_tags_to_identities, gate_cells, read_states
 
 B, N, U, NA = (State.BOUND.value, State.NOT_BOUND.value, State.UNRELIABLE.value, State.NEVER_ASKED.value)
@@ -295,3 +295,106 @@ def test_dominant_reason_raises_rather_than_falling_through_to_thin_comparator()
     admissibility = Admissibility({("S1", "c1"): 10}, 2, set())
     with pytest.raises(AssertionError):
         combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility)
+
+
+def _verdicts(rows):
+    return pl.DataFrame(rows, orient="row", schema={"setId": pl.String, "identity": pl.String, "state": pl.String})
+
+
+def _competitor_row(out, identity):
+    return out.filter(pl.col("identity") == identity).row(0, named=True)
+
+
+def test_negative_beside_a_bound_competitor_names_it():
+    out = attach_competitor_notes(_verdicts([("s1", "A", B), ("s1", "C", N)]), [{"A", "C"}])
+    r = _competitor_row(out, "C")
+    assert r["competedWith"] == "A" and r["state"] == N
+
+
+def test_a_statement_can_test_the_note():
+    out = attach_competitor_notes(_verdicts([("s1", "A", B), ("s1", "C", N)]), [{"A", "C"}])
+    assert _competitor_row(out, "C")["wasCompeted"] == "true"
+    assert _competitor_row(out, "A")["wasCompeted"] == "false"
+
+
+def test_no_note_where_no_competitor_was_bound():
+    out = attach_competitor_notes(_verdicts([("s1", "A", N), ("s1", "C", N)]), [{"A", "C"}])
+    assert _competitor_row(out, "C")["competedWith"] is None
+
+
+def test_no_note_on_a_bound_identity():
+    out = attach_competitor_notes(_verdicts([("s1", "A", B), ("s1", "C", B)]), [{"A", "C"}])
+    assert out["competedWith"].to_list() == [None, None]
+
+
+def test_no_note_without_a_declared_group():
+    out = attach_competitor_notes(_verdicts([("s1", "A", B), ("s1", "C", N)]), [])
+    assert out["competedWith"].to_list() == [None, None]
+
+
+def test_notes_do_not_leak_across_sets():
+    out = attach_competitor_notes(_verdicts([("s1", "A", B), ("s2", "C", N)]), [{"A", "C"}])
+    assert _competitor_row(out.filter(pl.col("setId") == "s2"), "C")["competedWith"] is None
+
+
+def test_several_bound_competitors_are_all_named():
+    out = attach_competitor_notes(_verdicts([("s1", "A", B), ("s1", "B", B), ("s1", "C", N)]), [{"A", "B", "C"}])
+    assert _competitor_row(out, "C")["competedWith"] == "A, B"
+
+
+def test_was_competed_is_the_string_false_never_null_with_no_declared_groups():
+    # wasCompeted is the predicate a downstream statement filters on. With no
+    # contending groups at all, every row's flag must still be the literal
+    # string "false" -- a null here would make "wasCompeted == false" fail to
+    # match the exact rows the flag exists to describe.
+    out = attach_competitor_notes(_verdicts([("s1", "A", B), ("s1", "C", N)]), [])
+    assert out["wasCompeted"].to_list() == ["false", "false"]
+    assert out["wasCompeted"].dtype == pl.String
+
+
+def test_was_competed_is_the_string_false_never_null_with_declared_groups_present():
+    # Same requirement, but with a declared group in play and a row that
+    # simply has no bound rival: the flag column must not switch to null just
+    # because contention was possible elsewhere in the frame.
+    out = attach_competitor_notes(_verdicts([("s1", "A", N), ("s1", "C", N)]), [{"A", "C"}])
+    assert out["wasCompeted"].to_list() == ["false", "false"]
+
+
+def test_no_note_on_an_unreliable_reading():
+    # An UNRELIABLE identity made no settled comparison, so it has no
+    # negative for a competitor to sit beside -- naming one would assert a
+    # comparison this run never made.
+    out = attach_competitor_notes(_verdicts([("s1", "A", B), ("s1", "C", U)]), [{"A", "C"}])
+    r = _competitor_row(out, "C")
+    assert r["competedWith"] is None
+    assert r["wasCompeted"] == "false"
+
+
+def test_no_note_on_a_never_asked_reading():
+    out = attach_competitor_notes(_verdicts([("s1", "A", B), ("s1", "C", NA)]), [{"A", "C"}])
+    r = _competitor_row(out, "C")
+    assert r["competedWith"] is None
+    assert r["wasCompeted"] == "false"
+
+
+def test_overlapping_declared_groups_union_their_bound_competitors():
+    # C sits in two declared groups, {A, C} and {C, D}, with A and D each
+    # bound in only one of them. The note names both: the union of bound
+    # competitors across every group that contains the identity, not just
+    # the first matching group.
+    out = attach_competitor_notes(
+        _verdicts([("s1", "A", B), ("s1", "D", B), ("s1", "C", N)]),
+        [{"A", "C"}, {"C", "D"}],
+    )
+    assert _competitor_row(out, "C")["competedWith"] == "A, D"
+
+
+def test_competitor_names_are_joined_in_sorted_order():
+    # Three bound rivals whose declared-group and bound-set iteration order
+    # is not alphabetical; only a sorted join reliably reads "Bee, Mango,
+    # Zebra" run after run. A byte-stable column depends on this.
+    out = attach_competitor_notes(
+        _verdicts([("s1", "Zebra", B), ("s1", "Mango", B), ("s1", "Bee", B), ("s1", "C", N)]),
+        [{"Zebra", "Mango", "Bee", "C"}],
+    )
+    assert _competitor_row(out, "C")["competedWith"] == "Bee, Mango, Zebra"

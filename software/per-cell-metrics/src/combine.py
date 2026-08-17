@@ -316,3 +316,66 @@ def combine_cells(
             "unreliableReason": pl.String,
         },
     ).sort(["setId", "identity"])
+
+
+def attach_competitor_notes(verdicts: pl.DataFrame, contending: list[set[str]]) -> pl.DataFrame:
+    """Name the bound competitor beside a not-bound reading; change nothing else.
+
+    A negative beside a bound competitor and one beside nothing are different
+    evidence, and the counts cannot tell them apart. The verdict reports what
+    could have caused the reading and leaves the call to the reader; the state
+    stays at *not bound* because the doubt travels beside it. Only a settled
+    NOT_BOUND row is eligible: an UNRELIABLE or NEVER_ASKED row made no
+    comparison to begin with, so it has no negative for a competitor to sit
+    beside.
+
+    `wasCompeted` exists so a statement can test the note. Without a predicate
+    a condition naming the off-target passes on the state alone, the doubt is
+    lost, and *not bound* becomes a claim the run never earned. It is emitted
+    as an explicit "true"/"false" string on every row, matching the convention
+    this project already uses for a boolean that becomes a p-column value
+    (see `emit_feature_properties.py`'s control-feature marker) -- never null,
+    because a downstream filter for the absence of contention must be able to
+    match on the flag alone.
+
+    Which identities contend is chosen when the repertoire is annotated and is
+    never inferred from the counts: contention is a property of the design, so
+    no arithmetic over the readings recovers it. An identity may sit in more
+    than one declared group; the note then names the union of bound
+    competitors across every group that contains it, since each group is an
+    independent claim of contention and a reader has no reason to see only
+    one of them. The names are joined in sorted order so the same data always
+    produces the same string, which matters once this column is
+    content-addressed as a p-column.
+    """
+    if not contending:
+        return verdicts.with_columns(
+            pl.lit(None, dtype=pl.String).alias("competedWith"),
+            pl.lit("false", dtype=pl.String).alias("wasCompeted"),
+        )
+
+    bound_by_set: dict[str, set[str]] = {}
+    for row in verdicts.filter(pl.col("state") == State.BOUND.value).iter_rows(named=True):
+        bound_by_set.setdefault(row["setId"], set()).add(row["identity"])
+
+    notes, flags = [], []
+    for row in verdicts.iter_rows(named=True):
+        note = None
+        if row["state"] == State.NOT_BOUND.value:
+            bound_here = bound_by_set.get(row["setId"], set())
+            rivals = {
+                other
+                for group in contending
+                if row["identity"] in group
+                for other in group & bound_here
+                if other != row["identity"]
+            }
+            if rivals:
+                note = ", ".join(sorted(rivals))
+        notes.append(note)
+        flags.append("true" if note else "false")
+
+    return verdicts.with_columns(
+        pl.Series("competedWith", notes, dtype=pl.String),
+        pl.Series("wasCompeted", flags, dtype=pl.String),
+    )
