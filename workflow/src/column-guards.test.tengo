@@ -1,0 +1,32 @@
+test := import("@platforma-sdk/workflow-tengo:test")
+columnSpecs := import(":column-specs")
+
+// The legacy per-cell contract keys features by NAME on pl7.app/feature/featureId. A new antigen table
+// reusing that axis while carrying barcode SEQUENCES would leave the axis identity untouched and invert
+// its value space, so nothing downstream would error — joins would simply return wrong rows. That is the
+// worst available failure, which is why it is asserted at import rather than reviewed for.
+//
+// The predicate is tested rather than the assertion: tengo has no try/catch, so a panicking guard cannot
+// be exercised from a test at all.
+Test_the_legacy_feature_axis_is_detected := func() {
+	legacy := [
+		{ column: "sampleId", spec: { name: "pl7.app/sampleId", type: "String" } },
+		{ column: "tag", spec: { name: "pl7.app/feature/featureId", type: "String" } }
+	]
+	test.isTrue(columnSpecs.usesLegacyFeatureAxis(legacy),
+		"an antigen table keyed on the legacy feature axis must be detected")
+}
+
+// The minted antigen axes pass, so this is a check on one name rather than a blanket refusal that every
+// caller would have to work around.
+Test_the_minted_antigen_axes_are_not_the_legacy_axis := func() {
+	blockId := "blk"
+	minted := [
+		{ column: "tag", spec: columnSpecs.tagAxis(blockId) },
+		{ column: "panelId", spec: columnSpecs.panelAxis(blockId) }
+	]
+	test.isFalse(columnSpecs.usesLegacyFeatureAxis(minted),
+		"the minted antigen axes are not the legacy axis and must pass")
+	test.isEqual(len(columnSpecs.guardNoLegacyFeatureAxis(minted)), 2,
+		"the guard returns its input unchanged when nothing is wrong")
+}

@@ -68,7 +68,12 @@ self.body(func(inputs) {
 	// The importer's result map is walked with maps.forEach, whose key order is sorted. A bare
 	// `for k, v in` has no defined order in Tengo, which would make the built frame's resource handle vary
 	// run to run and silently cost every downstream node its deduplication, with nothing reported.
+	// Every antigen table imported by this block goes through here, which makes it the one place that
+	// can check them all. The check is that none keys on the legacy feature axis: that axis is keyed by
+	// feature NAME, and a new column reusing it while carrying barcode sequences would keep the axis
+	// identity and invert its value space, so joins downstream would return wrong rows rather than fail.
 	addTo := func(fb, name, file, spec) {
+		columnSpecs.guardNoLegacyFeatureAxis(spec.axes)
 		imported := xsv.importFile(file, "csv", spec, { splitDataAndSpec: true })
 		maps.forEach(imported, func(key, column) {
 			fb.add(name + "/" + key, trace.inject(column.spec), column.data)

@@ -30,6 +30,7 @@ text := import("text")
 // block's emitted columns in the block test.
 SCORE_ANNOTATION := "pl7.app/isScore"
 SCORE_FAMILY_PREFIX := "pl7.app/score/"
+LEGACY_FEATURE_AXIS := "pl7.app/feature/featureId"
 
 guardNoScore := func(annotations) {
 	for key, _ in annotations {
@@ -39,6 +40,34 @@ guardNoScore := func(annotations) {
 			key)
 	}
 	return annotations
+}
+
+/* The legacy per-cell contract keys features by name on pl7.app/feature/featureId, and those columns
+   stay exactly as they are. What must never happen is a NEW column keying on that same axis while
+   carrying barcode sequences as its values: the axis identity would be unchanged and its value space
+   inverted, so no downstream query would fail — joins would simply return wrong rows, which is the
+   worst way for this to break. Every antigen axis is therefore minted under its own name, and this
+   asserts it for the axis sets the verdict families are built from.
+
+   A stronger check — that no EMITTED column does this — needs a running workflow, and lives in the
+   block test. That test is deliberately the last task, so this is the only guard until then. */
+// Split from the assertion below so it can be tested both ways: tengo has no try/catch, so a predicate
+// is the only part of a guard a test can actually exercise.
+usesLegacyFeatureAxis := func(axesSpec) {
+	for _, axis in axesSpec {
+		if axis.spec.name == LEGACY_FEATURE_AXIS {
+			return true
+		}
+	}
+	return false
+}
+
+guardNoLegacyFeatureAxis := func(axesSpec) {
+	ll.assert(
+		!usesLegacyFeatureAxis(axesSpec),
+		"column-specs: an antigen table keys on %v; antigen axes are minted under their own names so a barcode value space cannot inherit a feature-name axis identity",
+		LEGACY_FEATURE_AXIS)
+	return axesSpec
 }
 
 // Standard table annotations: order priority + default visibility.
@@ -1016,5 +1045,7 @@ export {
 	panelLabelsImportSpec: panelLabelsImportSpec,
 	samplePanelImportSpec: samplePanelImportSpec,
 	panelMismatchImportSpec: panelMismatchImportSpec,
-	qcImportSpec: qcImportSpec
+	qcImportSpec: qcImportSpec,
+	guardNoLegacyFeatureAxis: guardNoLegacyFeatureAxis,
+	usesLegacyFeatureAxis: usesLegacyFeatureAxis
 }
