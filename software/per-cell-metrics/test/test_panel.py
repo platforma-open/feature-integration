@@ -338,7 +338,7 @@ def test_a_barcode_declared_in_another_sample_does_not_pass_silently():
     assert ("S1", "AAAA") in list(zip(undeclared["sample"], undeclared["tag"], strict=True))
 
 
-def test_star_panel_checks_globally():
+def test_a_star_panel_is_satisfied_by_reads_in_any_sample():
     panel = pl.DataFrame({"tag": ["AAAA"], "sample": ["*"], "Name": ["a"]})
     seen = _counts([("S1", "c1", "AAAA", 1), ("S2", "c1", "AAAA", 1)])
     assert panel_read_mismatch(panel, seen).height == 0
@@ -347,8 +347,11 @@ def test_star_panel_checks_globally():
 def test_mismatch_never_raises():
     panel = pl.DataFrame({"tag": ["AAAA"], "sample": ["S1"], "Name": ["a"]})
     seen = _counts([("S9", "c1", "ZZZZ", 1)])
-    out = panel_read_mismatch(panel, seen)  # must not raise
-    assert out.height >= 1
+    rows = {(r["sample"], r["tag"], r["direction"]) for r in panel_read_mismatch(panel, seen).to_dicts()}
+    assert rows == {
+        ("S1", "AAAA", "declared-never-seen"),
+        ("S9", "ZZZZ", "undeclared-in-panel"),
+    }
 
 
 def test_a_sample_with_reads_but_no_panel_rows_reports_every_barcode():
@@ -407,19 +410,28 @@ def test_a_literal_star_in_a_sample_column_is_fatal(tmp_path):
 def test_a_mixed_star_and_named_panel_does_not_go_global():
     # Second line of defence: the reader refuses this frame, but a caller
     # building one directly must not get an empty table for a real disagreement.
+    # The output is asserted in full, not just membership: a mixed frame reports
+    # every row as noise, including the star row compared as a literal sample
+    # name, and a future "clean that spurious row up" edit must not pass here.
     panel = pl.DataFrame({"tag": ["AAAA", "CCCC"], "sample": ["*", "S1"], "Name": ["a", "c"]})
     seen = _counts([("S1", "c1", "AAAA", 5)])
     rows = {(r["sample"], r["tag"], r["direction"]) for r in panel_read_mismatch(panel, seen).to_dicts()}
-    assert ("S1", "CCCC", "declared-never-seen") in rows
+    assert rows == {
+        ("*", "AAAA", "declared-never-seen"),
+        ("S1", "AAAA", "undeclared-in-panel"),
+        ("S1", "CCCC", "declared-never-seen"),
+    }
 
 
-def test_null_keys_in_the_reads_do_not_raise():
-    panel = pl.DataFrame({"tag": ["AAAA"], "sample": ["S1"], "Name": ["a"]})
-    seen = pl.DataFrame(
-        [("S1", "c1", "AAAA", 5), (None, "c2", "CCCC", 3), ("S1", "c3", None, 1)],
-        orient="row",
-        schema={"sampleId": pl.String, "cellId": pl.String, "tag": pl.String, "umiCount": pl.Int64},
+def test_null_keys_on_either_side_do_not_raise():
+    # A null tag or a null sample cannot be placed on either side of the
+    # comparison, on either input — the panel side gets the same guard as the
+    # reads side, not a narrower one.
+    panel = pl.DataFrame(
+        {"tag": ["AAAA", "CCCC", None], "sample": ["S1", None, "S1"], "Name": ["a", "c", "z"]},
+        schema={"tag": pl.String, "sample": pl.String, "Name": pl.String},
     )
+    seen = _counts([("S1", "c1", "AAAA", 5), (None, "c2", "CCCC", 3), ("S1", "c3", None, 1)])
     out = panel_read_mismatch(panel, seen)
     assert out.height == 0
     assert None not in out["sample"].to_list()

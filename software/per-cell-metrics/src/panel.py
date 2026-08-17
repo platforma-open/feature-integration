@@ -257,10 +257,19 @@ def panel_read_mismatch(panel: pl.DataFrame, seen: pl.DataFrame) -> pl.DataFrame
     Per sample, because the same barcode can carry a different antigen in a
     different sample's panel: a global check lets a barcode undeclared in one
     sample pass on another sample's declaration.
+
+    In the global case every row is keyed ANY_SAMPLE, so "*" appears as a value
+    beside real sample ids — it is not a sampleId. For declared-never-seen that
+    key is honest, because the claim really is global. For undeclared-in-panel
+    it is lossy: a barcode read only in one sample reports under "*" and which
+    sample carried it is not recoverable. That is accepted, because a panel with
+    no sample dimension has no per-sample declaration to compare against.
     """
-    # A row with no sample or no barcode cannot be placed on either side of the
-    # comparison, and a null key is not a usable p-column key. Dropping them
-    # keeps the promise that this check never raises.
+    # Neither side can place a row with no sample or no barcode, and a null is
+    # not a usable p-column key. The reader never emits one; this keeps the
+    # promise true for a caller that builds a frame directly, as the star
+    # branch below does for the same reason.
+    panel = panel.filter(pl.col("sample").is_not_null() & pl.col("tag").is_not_null())
     seen = seen.filter(pl.col("sampleId").is_not_null() & pl.col("tag").is_not_null())
 
     rows = []
@@ -270,22 +279,27 @@ def panel_read_mismatch(panel: pl.DataFrame, seen: pl.DataFrame) -> pl.DataFrame
     # the global branch, which would discard every named row and report a
     # per-sample disagreement as agreement. The reader refuses such a frame, so
     # this is the second line of defence for a caller that builds one directly.
+    # In such a frame "*" is then compared as a literal sample name, so a star
+    # row reports a disagreement against a sample called "*". Those extra rows
+    # are intended: a caller who builds a frame the reader refuses gets noise
+    # rather than a silent pass.
     if panel.height and global_panel.height == panel.height:
-        declared = set(global_panel["tag"].to_list())
-        observed = set(seen["tag"].to_list())
-        for tag in sorted(declared - observed):
-            rows.append({"sample": ANY_SAMPLE, "tag": tag, "direction": "declared-never-seen"})
-        for tag in sorted(observed - declared):
-            rows.append({"sample": ANY_SAMPLE, "tag": tag, "direction": "undeclared-in-panel"})
+        pairs = [(ANY_SAMPLE, set(global_panel["tag"].to_list()), set(seen["tag"].to_list()))]
     else:
-        samples = sorted(set(panel["sample"].to_list()) | set(seen["sampleId"].to_list()))
-        for sample in samples:
-            declared = set(panel.filter(pl.col("sample") == sample)["tag"].to_list())
-            observed = set(seen.filter(pl.col("sampleId") == sample)["tag"].to_list())
-            for tag in sorted(declared - observed):
-                rows.append({"sample": sample, "tag": tag, "direction": "declared-never-seen"})
-            for tag in sorted(observed - declared):
-                rows.append({"sample": sample, "tag": tag, "direction": "undeclared-in-panel"})
+        pairs = [
+            (
+                s,
+                set(panel.filter(pl.col("sample") == s)["tag"].to_list()),
+                set(seen.filter(pl.col("sampleId") == s)["tag"].to_list()),
+            )
+            for s in sorted(set(panel["sample"].to_list()) | set(seen["sampleId"].to_list()))
+        ]
+
+    for sample, declared, observed in pairs:
+        for tag in sorted(declared - observed):
+            rows.append({"sample": sample, "tag": tag, "direction": "declared-never-seen"})
+        for tag in sorted(observed - declared):
+            rows.append({"sample": sample, "tag": tag, "direction": "undeclared-in-panel"})
 
     return pl.DataFrame(rows, schema={"sample": pl.String, "tag": pl.String, "direction": pl.String}).sort(
         ["sample", "direction", "tag"]
