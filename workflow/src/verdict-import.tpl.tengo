@@ -135,7 +135,8 @@ self.body(func(inputs) {
 	addTo(qcFb, "qc", inputs.qc, columnSpecs.qcImportSpec(
 		columnSpecs.qcLevelAxis(blockId),
 		columnSpecs.qcEntityAxis(blockId),
-		columnSpecs.qcMeasurementAxis(blockId)))
+		columnSpecs.qcMeasurementAxis(blockId),
+		columnSpecs.panelAxis(blockId)))
 
 	// The panel-versus-reads check is emitted as a p-column rather than left as a file: a mismatch report
 	// the user cannot see defeats its purpose.

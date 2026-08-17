@@ -936,7 +936,19 @@ panelMismatchImportSpec := func(panelAxisSpec, tagAxisSpec) {
 // never mistake "nothing computed this yet" for "this was checked and found fine". `panelId` travels
 // as an ordinary column rather than a fourth axis — it is how a panel rollup finds its constituents,
 // and a sample-level row simply leaves it empty.
-qcImportSpec := func(levelAxisSpec, entityAxisSpec, measurementAxisSpec) {
+/* The panel is part of the KEY, not a value column beside it. A barcode
+   recurring across panels -- the ordinary case, since the same reagent is
+   stained into several samples -- writes one row per panel at the same
+   (level, entity, measurement). With the panel as a value column those rows
+   share an axis key, which is a duplicate-key import: it does not raise, it
+   silently keeps one row and loses the rest, so a reagent misbehaving in one
+   panel and not another reads as whichever row survived. Measured on the
+   committed fixture bed, 22 of 122 QC rows collided this way.
+
+   Sample-level and capture-level rows carry an empty panel, which is honest:
+   a per-sample measurement belongs to no single panel. Per-tag QC keyed by
+   (panel, tag) is also what the architecture already required. */
+qcImportSpec := func(levelAxisSpec, entityAxisSpec, measurementAxisSpec, panelAxisSpec) {
 	col := func(colName, name, valueType, label, order, visible, annotations) {
 		return {
 			column: colName,
@@ -951,6 +963,7 @@ qcImportSpec := func(levelAxisSpec, entityAxisSpec, measurementAxisSpec) {
 	return {
 		axes: [
 			{ column: "level", spec: levelAxisSpec },
+			{ column: "panelId", spec: panelAxisSpec },
 			{ column: "entity", spec: entityAxisSpec },
 			{ column: "measurement", spec: measurementAxisSpec }
 		],
@@ -967,8 +980,7 @@ qcImportSpec := func(levelAxisSpec, entityAxisSpec, measurementAxisSpec) {
 			col("notEvaluated", "pl7.app/antigen/qcNotEvaluated", "Int", "Not evaluated", 67000, false, { "pl7.app/min": "0" }),
 			col("counts", "pl7.app/antigen/qcCounts", "String", "What it counts", 66000, false, {}),
 			col("implies", "pl7.app/antigen/qcImplies", "String", "What a bad value means", 65000, false, {}),
-			col("reason", "pl7.app/antigen/qcReason", "String", "Why deferred", 64000, false, {}),
-			col("panelId", "pl7.app/antigen/qcPanelId", "String", "Panel", 63000, false, {})
+			col("reason", "pl7.app/antigen/qcReason", "String", "Why deferred", 64000, false, {})
 		],
 		storageFormat: "Parquet",
 		partitionKeyLength: 0
