@@ -419,3 +419,118 @@ def set_counts(verdicts: pl.DataFrame) -> pl.DataFrame:
         )
         .sort("setId")
     )
+
+
+def self_disagreement(
+    states: pl.DataFrame,
+    universe: set[str],
+    offered: dict[str, set[str]],
+    cells_by_set: dict[str, list[tuple[str, str]]],
+    admissibility: Admissibility,
+    level: str,
+) -> pl.DataFrame:
+    """How often sets contradict themselves, at an identity or at a tag.
+
+    A clonotype is one receptor and one receptor has one specificity, so
+    where two of a set's evaluable cells read differently at one position, at
+    least one reading is wrong. That makes this the cheapest quality signal
+    available: no threshold and no external reference, because the
+    contradiction comes from the data disagreeing with itself.
+
+    A set's evaluable cells at a position are every admissible cell that
+    settled there, whether the reading is an explicit row in `states` or
+    silent. A silent admissible cell always resolves not bound (see
+    `specificity_score` in verdict.py), so it is as evaluable as an explicit
+    row and votes not bound; an inadmissible cell, silent or explicit, never
+    votes. The silent count comes from `silent_tally`, generalised to key its
+    tally by set rather than only by sample -- the same source
+    `combine_cells` draws on for the same fact, never recomputed here.
+
+    Both levels are always carried by calling this twice, once per level. The
+    two answer different questions: a tag with a high rate is a reagent
+    misbehaving for everyone; an identity with a high rate is the answer a
+    scientist acts on being unstable. Where an identity carries one tag the
+    two coincide, and saying so beats dropping a row a reader would then hunt
+    for.
+
+    The tag figure is diagnostic only. It rests on comparing each tag against
+    the reference separately, which no verdict is built from, so it is never
+    read as evidence about an answer.
+
+    `states` carries a `key` column holding the identity or the tag according
+    to `level`, plus sampleId, cellId and state -- the same sparse shape
+    `combine_cells` takes as `states`, with `identity` renamed to `key` and
+    with no setId column: which set a cell belongs to comes only from
+    `cells_by_set`, never from a second column that could disagree with it.
+    `offered` and `universe` are at that same grain: the identities or the
+    tags each sample offers, and the full set of keys to report on, since a
+    key with every one of its cells silent has no explicit row anywhere in
+    `states` and cannot be recovered from it.
+
+    Only a set's position with two or more evaluable cells contributes: a
+    singleton cannot disagree with itself. The rate is over sets evaluated,
+    not every set that exists, so a key nobody could evaluate reports a null
+    rate rather than a rate of zero, which would read as agreement.
+    """
+    group_by_cell: dict[tuple[str, str], str] = {}
+    for set_id, members in cells_by_set.items():
+        for cell_key in members:
+            owner = group_by_cell.get(cell_key)
+            assert owner is None or owner == set_id, (
+                f"cell {cell_key!r} appears in both set {owner!r} and set {set_id!r} in cells_by_set: "
+                "a cell must belong to exactly one set"
+            )
+            group_by_cell[cell_key] = set_id
+
+    cells_frame = pl.DataFrame(list(group_by_cell), orient="row", schema={"sampleId": pl.String, "cellId": pl.String})
+    observed_for_tally = states.select("sampleId", "cellId", pl.col("key").alias("identity"))
+    tally = silent_tally(
+        observed_for_tally, cells_frame, offered, admissibility, group_by_cell=group_by_cell, group_column="setId"
+    )
+
+    settled = states.filter(pl.col("state").is_in(SETTLED))
+    explicit_counts: dict[tuple[str, str], dict[str, int]] = {}
+    for sample_id, cell_id, key, state in zip(
+        settled["sampleId"].to_list(),
+        settled["cellId"].to_list(),
+        settled["key"].to_list(),
+        settled["state"].to_list(),
+        strict=True,
+    ):
+        set_id = group_by_cell.get((sample_id, cell_id))
+        if set_id is None:
+            # Same drop `combine_cells` applies: a vote is never counted for
+            # a cell that no set's membership list names.
+            continue
+        bucket = explicit_counts.setdefault((set_id, key), {})
+        bucket[state] = bucket.get(state, 0) + 1
+
+    sets_evaluated: dict[str, int] = {}
+    sets_disagreeing: dict[str, int] = {}
+    for row in tally.iter_rows(named=True):
+        set_id, key = row["setId"], row["identity"]
+        counts = dict(explicit_counts.get((set_id, key), {}))
+        counts[State.NOT_BOUND.value] = counts.get(State.NOT_BOUND.value, 0) + row["silentNotBound"]
+        evaluable = sum(counts.values())
+        if evaluable < 2:
+            continue
+        sets_evaluated[key] = sets_evaluated.get(key, 0) + 1
+        if sum(1 for n in counts.values() if n > 0) > 1:
+            sets_disagreeing[key] = sets_disagreeing.get(key, 0) + 1
+
+    return (
+        pl.DataFrame({"key": sorted(universe)})
+        .with_columns(
+            pl.col("key").replace_strict(sets_evaluated, default=0, return_dtype=pl.Int64).alias("setsEvaluated"),
+            pl.col("key").replace_strict(sets_disagreeing, default=0, return_dtype=pl.Int64).alias("setsDisagreeing"),
+        )
+        .with_columns(
+            pl.when(pl.col("setsEvaluated") > 0)
+            .then(pl.col("setsDisagreeing") / pl.col("setsEvaluated"))
+            .otherwise(None)
+            .alias("disagreementRate"),
+            pl.lit(level).alias("level"),
+            pl.lit("true" if level == "tag" else "false").alias("diagnosticOnly"),
+        )
+        .sort("key")
+    )

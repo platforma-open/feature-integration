@@ -2,7 +2,14 @@ import random
 
 import polars as pl
 import pytest
-from combine import DEFAULT_MIN_VOTERS, SetUnreliableReason, attach_competitor_notes, combine_cells, set_counts
+from combine import (
+    DEFAULT_MIN_VOTERS,
+    SetUnreliableReason,
+    attach_competitor_notes,
+    combine_cells,
+    self_disagreement,
+    set_counts,
+)
 from verdict import Admissibility, State, combine_tags_to_identities, gate_cells, read_states
 
 B, N, U, NA = (State.BOUND.value, State.NOT_BOUND.value, State.UNRELIABLE.value, State.NEVER_ASKED.value)
@@ -500,4 +507,154 @@ def test_output_row_order_is_deterministic_regardless_of_input_row_order():
         shuffled = list(rows)
         rng.shuffle(shuffled)
         out = set_counts(_v(shuffled))
+        assert out.equals(baseline)
+
+
+# self_disagreement's states frame is keyed by `key` (an identity or a tag,
+# according to `level`), never by `identity`: the same sparse per-cell shape
+# `combine_cells` reads, minus a setId column -- set membership comes only
+# from `cells_by_set`, matching that function's own rule.
+_KEY_STATES_SCHEMA = {"sampleId": pl.String, "cellId": pl.String, "key": pl.String, "state": pl.String}
+
+
+def _key_states(rows):
+    return pl.DataFrame(rows, orient="row", schema=_KEY_STATES_SCHEMA)
+
+
+def _row_for_key(out, key):
+    return out.filter(pl.col("key") == key).row(0, named=True)
+
+
+def test_a_set_whose_cells_agree_does_not_disagree():
+    states = _key_states([("S1", "c1", "A", B), ("S1", "c2", "A", B)])
+    cells_by_set = {"s1": [("S1", "c1"), ("S1", "c2")]}
+    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL, level="identity")
+    r = _row_for_key(out, "A")
+    assert r["setsEvaluated"] == 1
+    assert r["disagreementRate"] == 0.0
+
+
+def test_a_set_whose_cells_differ_disagrees():
+    states = _key_states([("S1", "c1", "A", B), ("S1", "c2", "A", N)])
+    cells_by_set = {"s1": [("S1", "c1"), ("S1", "c2")]}
+    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL, level="identity")
+    assert _row_for_key(out, "A")["disagreementRate"] == 1.0
+
+
+def test_singletons_do_not_contribute():
+    states = _key_states([("S1", "c1", "A", B)])
+    cells_by_set = {"s1": [("S1", "c1")]}
+    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL, level="identity")
+    assert _row_for_key(out, "A")["setsEvaluated"] == 0
+
+
+def test_unsettled_cells_are_not_evaluable():
+    # c2's row is UNRELIABLE, not silent: it has an explicit row and so is
+    # not asked through `silent_tally`, but UNRELIABLE never counts as a
+    # settled vote either. One evaluable cell remains -- a singleton -- so
+    # the position does not contribute.
+    states = _key_states([("S1", "c1", "A", B), ("S1", "c2", "A", U)])
+    cells_by_set = {"s1": [("S1", "c1"), ("S1", "c2")]}
+    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL, level="identity")
+    assert _row_for_key(out, "A")["setsEvaluated"] == 0
+
+
+def test_both_levels_are_carried_even_when_they_coincide():
+    states = _key_states([("S1", "c1", "AAAA", B), ("S1", "c2", "AAAA", N)])
+    cells_by_set = {"s1": [("S1", "c1"), ("S1", "c2")]}
+    universe, offered = {"AAAA"}, {"S1": {"AAAA"}}
+    ident = self_disagreement(states, universe, offered, cells_by_set, _NEUTRAL, level="identity")
+    tag = self_disagreement(states, universe, offered, cells_by_set, _NEUTRAL, level="tag")
+    assert ident.height == 1 and tag.height == 1
+    assert tag.row(0, named=True)["level"] == "tag"
+    assert ident.row(0, named=True)["level"] == "identity"
+
+
+def test_tag_level_is_marked_diagnostic_only():
+    states = _key_states([("S1", "c1", "AAAA", B)])
+    cells_by_set = {"s1": [("S1", "c1")]}
+    universe, offered = {"AAAA"}, {"S1": {"AAAA"}}
+    tag = self_disagreement(states, universe, offered, cells_by_set, _NEUTRAL, level="tag")
+    ident = self_disagreement(states, universe, offered, cells_by_set, _NEUTRAL, level="identity")
+    assert tag.row(0, named=True)["diagnosticOnly"] == "true"
+    assert ident.row(0, named=True)["diagnosticOnly"] == "false"
+
+
+def test_rate_is_over_sets_evaluated_not_all_sets():
+    # s2 is a singleton at A and is not evaluable.
+    states = _key_states([("S1", "c1", "A", B), ("S1", "c2", "A", N), ("S1", "c3", "A", B)])
+    cells_by_set = {"s1": [("S1", "c1"), ("S1", "c2")], "s2": [("S1", "c3")]}
+    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL, level="identity")
+    r = _row_for_key(out, "A")
+    assert r["setsEvaluated"] == 1 and r["disagreementRate"] == 1.0
+
+
+def test_silent_cells_flip_agreement_into_disagreement():
+    # THE defect this generalisation exists to fix: a set with 2 observed
+    # bound cells and 38 silent, admissible not-bound cells. Counting rows on
+    # the sparse frame sees only the 2 bound rows and calls this agreement;
+    # the 38 silent cells are settled not-bound votes and the set actually
+    # disagrees as badly as it is possible to.
+    members = [("S1", "c0"), ("S1", "c1")] + [("S1", f"s{i}") for i in range(38)]
+    states = _key_states([("S1", "c0", "A", B), ("S1", "c1", "A", B)])
+    cells_by_set = {"s1": members}
+    admissibility = Admissibility({k: 5 for k in members}, 2, set())
+    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility, level="identity")
+    r = _row_for_key(out, "A")
+    assert r["setsEvaluated"] == 1
+    assert r["disagreementRate"] == 1.0
+
+
+def test_one_observed_positive_among_many_silent_negatives_is_evaluable():
+    # A single explicit row is a singleton by row count alone, but 19 silent,
+    # admissible cells settle not-bound alongside it: 20 evaluable cells, not
+    # a discarded singleton.
+    members = [("S1", "c0")] + [("S1", f"s{i}") for i in range(19)]
+    states = _key_states([("S1", "c0", "A", B)])
+    cells_by_set = {"s1": members}
+    admissibility = Admissibility({k: 5 for k in members}, 2, set())
+    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility, level="identity")
+    r = _row_for_key(out, "A")
+    assert r["setsEvaluated"] == 1
+    assert r["disagreementRate"] == 1.0
+
+
+def test_all_silent_not_bound_cells_agree():
+    # The mirror of the defect test: every cell of the set is silent and
+    # admissible, so every one settles not-bound. All evaluable cells give
+    # the same settled state, so the set agrees with itself -- this must not
+    # be over-corrected into calling every silent set a disagreement.
+    members = [("S1", f"s{i}") for i in range(5)]
+    states = _key_states([])
+    cells_by_set = {"s1": members}
+    admissibility = Admissibility({k: 5 for k in members}, 2, set())
+    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility, level="identity")
+    r = _row_for_key(out, "A")
+    assert r["setsEvaluated"] == 1
+    assert r["disagreementRate"] == 0.0
+
+
+def test_self_disagreement_output_is_deterministic_regardless_of_input_row_order():
+    # This becomes a p-column, so it must be byte-stable across row orders.
+    rows = [
+        ("S1", "c0", "A", B),
+        ("S1", "c1", "A", N),
+        ("S1", "d0", "B", B),
+        ("S1", "d1", "B", B),
+        ("S2", "e0", "A", N),
+    ]
+    cells_by_set = {
+        "s1": [("S1", "c0"), ("S1", "c1")],
+        "s2": [("S1", "d0"), ("S1", "d1")],
+        "s3": [("S2", "e0")],
+    }
+    universe = {"A", "B"}
+    offered = {"S1": {"A", "B"}, "S2": {"A", "B"}}
+    baseline = self_disagreement(_key_states(rows), universe, offered, cells_by_set, _NEUTRAL, level="identity")
+
+    rng = random.Random(2026)
+    for _ in range(5):
+        shuffled = list(rows)
+        rng.shuffle(shuffled)
+        out = self_disagreement(_key_states(shuffled), universe, offered, cells_by_set, _NEUTRAL, level="identity")
         assert out.equals(baseline)
