@@ -29,6 +29,18 @@ def read_panel(csv_path: str, roles: dict[str, str]) -> tuple[pl.DataFrame, list
     if sample_col and sample_col not in raw.columns:
         raise SystemExit(f"panel file has no sample column {sample_col!r}; columns are {raw.columns}")
 
+    # "_row" joins "tag" and "sample" as names this function owns. Colliding
+    # with one is a raw polars DuplicateError three lines later otherwise.
+    reserved = {"tag", "sample", "_row"} & set(raw.columns)
+    if reserved:
+        raise SystemExit(
+            f"panel file uses reserved column name(s) {sorted(reserved)}; rename them. "
+            "'tag' and 'sample' are what this reader produces."
+        )
+
+    # fill_null is load-bearing, not defensive: under infer_schema_length=0 a
+    # bare empty field parses to null while a quoted one parses to "", so the
+    # two spellings of blank would otherwise take different branches below.
     panel = raw.with_row_index("_row").with_columns(pl.col(barcode_col).str.strip_chars().fill_null("").alias("tag"))
     panel = panel.with_columns(
         pl.col(sample_col).str.strip_chars().fill_null("").alias("sample")
@@ -36,7 +48,18 @@ def read_panel(csv_path: str, roles: dict[str, str]) -> tuple[pl.DataFrame, list
         else pl.lit(ANY_SAMPLE).alias("sample")
     )
 
-    # A blank sample cell in a panel that HAS a sample column is fatal, never
+    # Blank barcodes are separated FIRST, and the order is the whole point.
+    # polars materializes a trailing blank line as a real all-null row, so a
+    # panel whose only flaw is a stray newline at EOF would otherwise die on
+    # the blank-sample check below — telling the user to remove a sample column
+    # that is not the problem. An empty line is a dropped row, not an ambiguous
+    # cell. Blank barcodes are returned rather than filtered away: dropping a
+    # malformed row silently is the failure the no-silent-drop rule exists to
+    # prevent, and worse, because nothing downstream can tell the panel was short.
+    dropped = [r + 2 for r in panel.filter(pl.col("tag") == "")["_row"]]
+    panel = panel.filter(pl.col("tag") != "")
+
+    # A blank sample cell on a row that IS otherwise real is fatal, never
     # ANY_SAMPLE. "*" means the panel declares no sample dimension at all;
     # reading an empty cell that way would widen one malformed row into a claim
     # over every sample in the run.
@@ -49,11 +72,7 @@ def read_panel(csv_path: str, roles: dict[str, str]) -> tuple[pl.DataFrame, list
                 "entirely to declare one panel over every sample; a blank cell is ambiguous."
             )
 
-    # Blank barcodes are returned, not filtered away. Dropping a malformed row
-    # silently is the same failure the property no-silent-drop rule exists to
-    # prevent, and worse: nothing downstream can tell the panel was short.
-    dropped = [r + 2 for r in panel.filter(pl.col("tag") == "")["_row"]]
-    panel = panel.filter(pl.col("tag") != "").drop("_row")
+    panel = panel.drop("_row")
 
     dupes = panel.group_by(["tag", "sample"]).len().filter(pl.col("len") > 1).sort(["tag", "sample"])
     if dupes.height:

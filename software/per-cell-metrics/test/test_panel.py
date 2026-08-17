@@ -92,7 +92,8 @@ def test_blank_barcode_row_is_reported_not_dropped(tmp_path):
     )
     panel, dropped = read_panel(path, ROLES)
     assert panel.height == 1
-    assert dropped == [3]  # 1-based line number in the CSV, header counted
+    assert dropped == [3]  # CSV record ordinal, header counted (not the
+    # physical line, which differs if a quoted field contains a newline)
 
 
 def test_blank_sample_cell_is_fatal(tmp_path):
@@ -107,3 +108,21 @@ def test_blank_sample_cell_is_fatal(tmp_path):
     with pytest.raises(SystemExit) as e:
         read_panel(path, ROLES)
     assert "3" in str(e.value)
+
+
+def test_trailing_blank_line_is_not_a_blank_sample_cell(tmp_path):
+    # polars materializes a trailing newline as a real all-null row. A stray
+    # newline at EOF is the commonest shape a panel file arrives in; it must
+    # not read as an ambiguous sample cell.
+    p = tmp_path / "panel.csv"
+    p.write_text("Samples,Name,Sequence,Type\nS1,AgA,AAAA,Target\n\n")
+    panel, dropped = read_panel(str(p), ROLES)
+    assert panel.height == 1
+    assert dropped == [3]
+
+
+def test_reserved_column_name_is_fatal(tmp_path):
+    path = _csv(tmp_path, [["S1", "AgA", "AAAA", "x"]], ["Samples", "Name", "Sequence", "tag"])
+    with pytest.raises(SystemExit) as e:
+        read_panel(path, ROLES)
+    assert "tag" in str(e.value)
