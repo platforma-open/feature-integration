@@ -1,6 +1,7 @@
 import polars as pl
 from verdict import (
     DEFAULT_FLOOR,
+    DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE,
     DEFAULT_PANEL_MIN_MEMBERS,
     DEFAULT_REFERENCE_THIN_LINE,
     ReferenceChoice,
@@ -163,8 +164,16 @@ def test_source_none_yields_no_comparator():
 
 
 def test_defaults_are_named_not_magic():
+    # Pins the actual shipped values, not just their sign. These are
+    # user-facing numbers that appear in a dropdown and change what the block
+    # produces, so an edit to any of them must be a deliberate, visible act —
+    # not a silent one that only this test would otherwise catch. The values
+    # themselves are not calibrated against real data.
     assert DEFAULT_PANEL_MIN_MEMBERS > 0
     assert DEFAULT_REFERENCE_THIN_LINE >= 0
+    assert DEFAULT_PANEL_MIN_MEMBERS == 8
+    assert DEFAULT_REFERENCE_THIN_LINE == 2
+    assert DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE == 100
 
 
 def test_gate_defaults_off_but_still_measures_exposure():
@@ -212,3 +221,35 @@ def test_high_reference_counting_is_independent_of_the_gate_acting():
     _, high_off = gate_cells(ref, threshold=None, observation_line=100)
     _, high_on = gate_cells(ref, threshold=100, observation_line=100)
     assert high_off == high_on == 1
+
+
+def test_a_source_that_cannot_be_served_falls_to_none_and_never_sideways():
+    # The served choice may only move down to NONE. Substituting a different
+    # comparator would silently answer a question the scientist did not ask,
+    # and two runs served by different comparators are not comparable.
+    counts = _counts([("S1", "c1", "AAAA", 9), ("S1", "c1", "CCCC", 3)])
+    # DECLARED with nothing declared: not PANEL, even though a panel exists.
+    ref, choice = reference_by_cell(counts, set(), ReferenceChoice.DECLARED, panel_size=100, min_members=5)
+    assert choice is ReferenceChoice.NONE
+    assert ref == {}
+    # PANEL below the minimum: not DECLARED, even though a reference tag exists.
+    ref2, choice2 = reference_by_cell(counts, {"CTRL"}, ReferenceChoice.PANEL, panel_size=1, min_members=5)
+    assert choice2 is ReferenceChoice.NONE
+    assert ref2 == {}
+
+
+def test_the_panel_comparator_is_the_median_not_the_mean():
+    # A cell with one strong binder: the mean is dragged up by it, the median
+    # is not. The comparator is meant to stand for the cell's background, so a
+    # single high reading must not raise the bar it is measured against.
+    counts = _counts(
+        [
+            ("S1", "c1", "AAAA", 1),
+            ("S1", "c1", "CCCC", 2),
+            ("S1", "c1", "GGGG", 3),
+            ("S1", "c1", "TTTT", 200),
+        ]
+    )
+    ref, choice = reference_by_cell(counts, set(), ReferenceChoice.PANEL, panel_size=8, min_members=5)
+    assert choice is ReferenceChoice.PANEL
+    assert ref[("S1", "c1")] == 2  # median of 1,2,3,200 -> 2.5 -> int 2; mean would be 51
