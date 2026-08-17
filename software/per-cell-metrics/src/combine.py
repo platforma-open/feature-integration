@@ -93,8 +93,22 @@ def _dominant_reason(asked_keys: list[tuple[str, str]], admissibility: Admissibi
     that a silent admissible cell always resolves NOT_BOUND. So every key
     here has a real, non-None cell-level reason, and this only has to pick
     among the three.
+
+    The assertion is not a formality: it is the difference between that
+    claim failing loudly and failing as a wrong answer. Without it, an
+    admissible key slipping in here (the caller's vote-counting and its
+    admissibility disagreeing about which cells were asked) reads a `None`
+    reason, matches neither of the two checks below, and falls through to
+    THIN_COMPARATOR -- reporting a comparator problem for a cell whose
+    comparator is fine.
     """
     reasons = {_cell_admissibility_reason(k, admissibility) for k in asked_keys}
+    assert None not in reasons, (
+        f"an admissible cell reached _dominant_reason among {asked_keys!r}: this is only called "
+        "when cellsAnswered is 0, which should be possible only when every asked cell is "
+        "individually inadmissible -- a None reason here means the caller's vote count and "
+        "admissibility disagree about which cells were actually asked"
+    )
     if reasons == {UnreliableReason.GATED}:
         return SetUnreliableReason.ALL_CELLS_GATED
     if UnreliableReason.NO_COMPARATOR in reasons:
@@ -120,10 +134,17 @@ def combine_cells(
 ) -> pl.DataFrame:
     """One row per (set, identity) over the whole universe.
 
-    `states` is per-cell output shaped like `read_states`' -- columns
-    setId, sampleId, cellId, identity, state -- one row per (cell, identity)
-    that got an explicit reading; a cell asked about an identity and absent
-    here is silent for it, not unasked.
+    `states` is `read_states`' output directly -- columns sampleId, cellId,
+    identity, state, plus whatever else `read_states` emits, which this
+    ignores -- one row per (cell, identity) that got an explicit reading; a
+    cell asked about an identity and absent here is silent for it, not
+    unasked. There is deliberately no setId column in that shape: which set
+    a row belongs to is decided once, below, by looking its cell up in
+    `cells_by_set` -- never by trusting a column, which would be a second,
+    independently-suppliable source of truth for the same fact. A row for a
+    cell no set in `cells_by_set` lists is dropped, exactly as `silent_tally`
+    already drops such cells from its own counts; a vote is never counted
+    for a cell that was not asked.
 
     `offered` is keyed by sample: for a given set, the identities it was
     offered are the union, over its member samples, of what each sample's
@@ -135,10 +156,19 @@ def combine_cells(
     `cells_by_set` gives each set's full cell membership, including cells
     with no row in `states` at all -- the set's silent cells, which vote
     through `silent_tally` rather than through a row that was never written.
+    It must be disjoint: a cell key may repeat within one set's own list
+    with no effect, but must not appear under two different set ids, which
+    is asserted below rather than left to surface later as a `silent_tally`
+    precondition failure whose message points at the wrong function.
     """
     group_by_cell: dict[tuple[str, str], str] = {}
     for set_id, members in cells_by_set.items():
         for key in members:
+            owner = group_by_cell.get(key)
+            assert owner is None or owner == set_id, (
+                f"cell {key!r} appears in both set {owner!r} and set {set_id!r} in cells_by_set: "
+                "a cell must belong to exactly one set"
+            )
             group_by_cell[key] = set_id
 
     cells_frame = pl.DataFrame(list(group_by_cell), orient="row", schema={"sampleId": pl.String, "cellId": pl.String})
@@ -147,9 +177,20 @@ def combine_cells(
 
     settled = states.filter(pl.col("state").is_in(SETTLED))
     explicit_counts: dict[tuple[str, str], dict[str, int]] = {}
-    for set_id, identity, state in zip(
-        settled["setId"].to_list(), settled["identity"].to_list(), settled["state"].to_list(), strict=True
+    for sample_id, cell_id, identity, state in zip(
+        settled["sampleId"].to_list(),
+        settled["cellId"].to_list(),
+        settled["identity"].to_list(),
+        settled["state"].to_list(),
+        strict=True,
     ):
+        set_id = group_by_cell.get((sample_id, cell_id))
+        if set_id is None:
+            # This cell is not in any set's membership list: the same drop
+            # `silent_tally` applies to a cell absent from its `cells` frame,
+            # kept here so a vote can never be counted for a cell nobody
+            # asked to vote.
+            continue
         bucket = explicit_counts.setdefault((set_id, identity), {})
         bucket[state] = bucket.get(state, 0) + 1
 
