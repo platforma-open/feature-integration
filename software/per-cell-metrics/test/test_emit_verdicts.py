@@ -1,11 +1,12 @@
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import polars as pl
 import pytest
-from verdict import ReferenceChoice
+from verdict import DEFAULT_PANEL_MIN_MEMBERS, ReferenceChoice
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 
@@ -589,3 +590,261 @@ def test_the_floor_runs_before_tags_combine(bed):
     assert meta["cellsEmptied"] == 1
     v = pl.read_csv(bed / "result_verdicts.csv")
     assert v.filter(pl.col("identity") == "Spike").row(0, named=True)["state"] == "not bound"
+
+
+# ---- the committed fixture bed ---------------------------------------------------------------
+#
+# Every test above writes its own three-line bed, which keeps each one readable and keeps none of
+# them realistic: a run whose panel is one size, whose comparator is one tag and whose cells all
+# come from one sample cannot show what happens when four samples were stained differently. The
+# committed bed at software/test-data/fixtures/verdicts/ carries the awkward panel shapes at once --
+# panels of differing size, barcodes recurring under different names, one antigen on two barcodes,
+# one comparator and two, and a barcode declared on one sample and read on another.
+
+VERDICT_BED = Path(__file__).resolve().parents[2] / "test-data" / "fixtures" / "verdicts"
+VERDICT_BED_FILES = ("counts.csv", "linker.csv", "panel.csv", "panel_with_reference.csv", "panel_multi_reference.csv")
+
+NAME_GROUPING = ("--grouping", json.dumps({"by": "property", "column": "Name"}))
+
+
+@pytest.fixture
+def wide_bed(tmp_path):
+    """The committed bed, copied so a run's output files never land in the repository."""
+    for name in VERDICT_BED_FILES:
+        source = VERDICT_BED / name
+        if not source.exists():
+            pytest.fail(f"committed bed missing at {source}; regenerate it with generate.py", pytrace=False)
+        shutil.copy(source, tmp_path / name)
+    return tmp_path
+
+
+def _bed_args(panel_csv, *extra):
+    # The bed's column names are the ones BASE already names, so only the panel file varies across
+    # the three shapes: no comparator, one comparator, two.
+    return ["counts.csv", panel_csv, *BASE[2:], *extra]
+
+
+def _bed_shape(bed):
+    """The handles these tests need, recovered from the bed by the role each barcode plays.
+
+    Derived rather than written down because the sequences come from a seeded RNG. A bed regenerated
+    under a different seed still has four barcodes carrying two antigen names, one antigen carried on
+    two barcodes and one barcode declared by a single sample and read only in another; spelling the
+    sequences out here would tie every assertion below to the seed instead of to the shape.
+    """
+    panel = pl.read_csv(bed / "panel_multi_reference.csv", infer_schema_length=0)
+    counts = pl.read_csv(bed / "counts.csv", infer_schema_length=0)
+    linker = pl.read_csv(bed / "linker.csv", infer_schema_length=0)
+
+    names: dict[str, set[str]] = {}
+    declared_in: dict[str, set[str]] = {}
+    offered: dict[str, set[str]] = {}
+    for row in panel.filter(pl.col("Type") != "Control").iter_rows(named=True):
+        names.setdefault(row["Sequence"], set()).add(row["Name"])
+        declared_in.setdefault(row["Sequence"], set()).add(row["Samples"])
+        offered.setdefault(row["Samples"], set()).add(row["Sequence"])
+
+    tags_of_name: dict[str, set[str]] = {}
+    for tag, tag_names in names.items():
+        for name in tag_names:
+            tags_of_name.setdefault(name, set()).add(tag)
+
+    read_in: dict[str, set[str]] = {}
+    for sample, tag in counts.select("sampleId", "tag").iter_rows():
+        read_in.setdefault(tag, set()).add(sample)
+
+    sets_of_sample: dict[str, set[str]] = {}
+    samples_of_set: dict[str, set[str]] = {}
+    for sample, set_id in linker.select("sampleId", "setId").iter_rows():
+        sets_of_sample.setdefault(sample, set()).add(set_id)
+        samples_of_set.setdefault(set_id, set()).add(sample)
+
+    # Declared by exactly one sample and read in none of that sample's cells: the only arrangement in
+    # which both directions of the panel-versus-reads check fire on the same barcode at once.
+    cross = [t for t, samples in declared_in.items() if len(samples) == 1 and not samples & read_in.get(t, set())]
+    shared = [(name, sorted(tags)) for name, tags in tags_of_name.items() if len(tags) > 1]
+    short_sample = min(offered, key=lambda s: (len(offered[s]), s))
+    spanning = sorted(s for s, samples in samples_of_set.items() if len(samples) > 1)
+
+    return {
+        "antigens": set(names),
+        "names": set(tags_of_name),
+        "renamed": {t for t, tag_names in names.items() if len(tag_names) > 1},
+        "shared": shared,
+        "cross": cross,
+        "read_in": read_in,
+        "declared_in": declared_in,
+        "offered": offered,
+        "short_sample": short_sample,
+        "sets_of_sample": sets_of_sample,
+        "spanning": spanning,
+    }
+
+
+def _states(bed):
+    v = pl.read_csv(bed / "result_verdicts.csv", infer_schema_length=0)
+    return {(r["setId"], r["identity"]): r["state"] for r in v.iter_rows(named=True)}
+
+
+def _only_set(shape, sample):
+    sets = shape["sets_of_sample"][sample]
+    assert len(sets) == 1, f"the bed must draw one set from {sample} for this assertion to be about that set"
+    return next(iter(sets))
+
+
+def _samples_of(shape, set_id):
+    return {s for s, sets in shape["sets_of_sample"].items() if set_id in sets}
+
+
+def test_the_bed_keys_identity_by_barcode_where_the_names_would_split(wide_bed):
+    shape = _bed_shape(wide_bed)
+    assert len(shape["renamed"]) >= 4, "the bed must carry the case that makes name keying wrong"
+
+    r = _run(wide_bed, *_bed_args("panel_with_reference.csv"))
+    assert r.returncode == 0, r.stderr
+    identities = set(pl.read_csv(wide_bed / "result_verdicts.csv", infer_schema_length=0)["identity"].to_list())
+    assert identities == shape["antigens"], "one identity per declared barcode, whatever it was named"
+
+    # The two keyings do not even agree on how many questions the run asks: keying on the name would
+    # split each renamed barcode in two and fuse the antigen carried on two barcodes into one.
+    assert len(shape["names"]) > len(shape["antigens"])
+
+    # A label is not an identity, and two identities under one label are two rows a reader cannot
+    # tell apart -- so where two barcodes share a name the label has to carry the barcode as well.
+    labels = dict(pl.read_csv(wide_bed / "result_identity_labels.csv", infer_schema_length=0).iter_rows())
+    assert set(labels) == shape["antigens"]
+    assert len(set(labels.values())) == len(labels)
+
+    # And from the other side: asked to group by the name, the run cannot place exactly the renamed
+    # barcodes, because no one name holds for them. It says so rather than dropping them.
+    r = _run(wide_bed, *_bed_args("panel_with_reference.csv", *NAME_GROUPING))
+    assert r.returncode == 0, r.stderr
+    meta = json.loads((wide_bed / "result_run_meta.json").read_text())
+    assert set(meta["tagsWithoutGroupingValue"]) == shape["renamed"]
+
+
+def test_the_bed_reaches_all_four_states_in_one_run(wide_bed):
+    # A bed that cannot reach a state tests nothing about it. All four come from one run here: bound
+    # from counts of 500 and 5000 against a comparator of 6, not bound from counts of 8, never asked
+    # from the three-tag panel, and unreliable from the one cell whose comparator reads 1 -- below
+    # the thin line of 2, so that cell cannot be compared at all.
+    r = _run(wide_bed, *_bed_args("panel_with_reference.csv"))
+    assert r.returncode == 0, r.stderr
+    v = pl.read_csv(wide_bed / "result_verdicts.csv", infer_schema_length=0)
+    assert set(v["state"].to_list()) == {"bound", "not bound", "never asked", "unreliable"}
+
+
+def test_the_short_panel_is_where_never_asked_appears(wide_bed):
+    shape = _bed_shape(wide_bed)
+    short = shape["short_sample"]
+    assert len(shape["offered"][short]) < len(shape["antigens"]), "the bed needs panels of differing size"
+
+    r = _run(wide_bed, *_bed_args("panel_with_reference.csv"))
+    assert r.returncode == 0, r.stderr
+    states = _states(wide_bed)
+
+    unasked = {i for (s, i), state in states.items() if s == _only_set(shape, short) and state == "never asked"}
+    assert unasked == shape["antigens"] - shape["offered"][short]
+    assert unasked
+
+    # A set spanning two samples was offered whatever either panel offered, so the gap closes where
+    # the two panels together cover the run. Nothing in it reads never asked.
+    spanning = shape["spanning"]
+    assert spanning, "the bed needs one set drawn from two samples"
+    covered = set().union(*(shape["offered"][s] for s in _samples_of(shape, spanning[0])))
+    assert covered == shape["antigens"], "the spanning set's panels must together cover the universe"
+    assert not [i for (s, i), state in states.items() if s == spanning[0] and state == "never asked"]
+
+
+def test_the_panel_mismatch_fires_per_sample_in_both_directions(wide_bed):
+    shape = _bed_shape(wide_bed)
+    assert len(shape["cross"]) == 1, "the bed carries exactly one barcode declared here and read there"
+    tag = shape["cross"][0]
+    declaring = next(iter(shape["declared_in"][tag]))
+    reading = sorted(shape["read_in"][tag])
+
+    # Read against the two-comparator panel, the only one here declaring every barcode the counts
+    # carry: on the others the undeclared comparator adds rows and the table is no longer a clean
+    # statement about this one barcode.
+    r = _run(wide_bed, *_bed_args("panel_multi_reference.csv"))
+    assert r.returncode == 0, r.stderr
+
+    m = pl.read_csv(wide_bed / "result_panel_mismatch.csv", infer_schema_length=0)
+    rows = {(row["tag"], row["direction"]): row["samples"] for row in m.iter_rows(named=True)}
+    assert m.height == 2, f"only the cross declaration should mismatch; got {m.to_dicts()}"
+    assert rows[(tag, "declared-never-seen")] == declaring
+    assert rows[(tag, "undeclared-in-panel")] == ", ".join(reading)
+
+    # A global check would have cancelled these two against each other. The verdicts show why that
+    # matters: the sample that read the barcode never declared it, so its set reads never asked
+    # while a real count of 500 sits in the counts file -- the verdict follows the panel.
+    states = _states(wide_bed)
+    assert states[(_only_set(shape, reading[0]), tag)] == "never asked"
+
+    # And the sample that declared it read nothing: its cells were offered the identity and could be
+    # compared, so they answer not bound. A silent cell that can be compared is a negative answer,
+    # not an absent one, and reading it as never asked was the earlier revision's bug.
+    assert states[(_only_set(shape, declaring), tag)] == "not bound"
+
+
+def test_one_antigen_on_two_barcodes_is_read_by_its_highest_member(wide_bed):
+    shape = _bed_shape(wide_bed)
+    assert len(shape["shared"]) == 1, "the bed carries exactly one antigen on two barcodes"
+    name, (first, second) = shape["shared"][0]
+    spanning = shape["spanning"][0]
+
+    # Per barcode the two cells that carry them bind opposite ones, so each barcode splits its set
+    # one to one and reads unreliable on the tie.
+    r = _run(wide_bed, *_bed_args("panel_with_reference.csv"))
+    assert r.returncode == 0, r.stderr
+    per_tag = _states(wide_bed)
+    assert per_tag[(spanning, first)] == "unreliable"
+    assert per_tag[(spanning, second)] == "unreliable"
+
+    # Read as one antigen the two barcodes combine by the highest member, never by the sum and never
+    # by an arbitrary one: each cell's reading becomes 500, both cells bind, and the set is bound.
+    # Summing would reach the same verdict here by accident; what the highest rule buys is that a
+    # cell's answer does not depend on how many barcodes happened to carry the antigen.
+    r = _run(wide_bed, *_bed_args("panel_with_reference.csv", *NAME_GROUPING))
+    assert r.returncode == 0, r.stderr
+    assert _states(wide_bed)[(spanning, name)] == "bound"
+
+
+def test_the_higher_of_two_declared_comparators_serves(wide_bed):
+    # Several comparator tags combine as any identity's tags do: by the highest. The bed's second
+    # comparator reads 60 against the first's 6, and specificity_score(500, 6) is 100 while
+    # specificity_score(500, 60) is 0.1 -- so a count of 500 binds against the lower comparator and
+    # fails against the higher. Taking the lower, or an arbitrary one, would make the two runs
+    # identical; taking the higher can only ever withdraw a binding.
+    assert _run(wide_bed, *_bed_args("panel_with_reference.csv")).returncode == 0
+    one = _states(wide_bed)
+    assert _run(wide_bed, *_bed_args("panel_multi_reference.csv")).returncode == 0
+    two = _states(wide_bed)
+
+    assert set(one) == set(two), "the two panels declare the same identities"
+    bound_one = {key for key, state in one.items() if state == "bound"}
+    bound_two = {key for key, state in two.items() if state == "bound"}
+    assert bound_two < bound_one, "the higher comparator must withdraw at least one binding"
+    assert bound_two, "and must not withdraw them all, or the bed says nothing about which one served"
+    # Withdrawn, not made unanswerable: the comparison was made against a bigger number and failed.
+    assert {two[key] for key in bound_one - bound_two} == {"not bound"}
+
+
+def test_the_bed_panel_without_a_declared_comparator_serves_as_its_own(wide_bed):
+    shape = _bed_shape(wide_bed)
+    assert len(shape["antigens"]) >= DEFAULT_PANEL_MIN_MEMBERS, "a panel this small cannot stand in"
+
+    r = _run(wide_bed, *_bed_args("panel.csv"))
+    assert r.returncode == 0, r.stderr
+    meta = json.loads((wide_bed / "result_run_meta.json").read_text())
+    assert meta["referenceChoice"] == ReferenceChoice.PANEL.value
+    states = set(_states(wide_bed).values())
+    assert states != {"unreliable"}, "the panel could serve as its own comparator and was not asked to"
+    without = meta["readingsFloored"]
+
+    # The floor spares a comparator's reading, and only a declared comparator has one to spare. With
+    # no declaration the thin comparator reading of 1 is floored like any other count, so this run
+    # floors strictly more than the same counts read against a declared comparator.
+    assert _run(wide_bed, *_bed_args("panel_with_reference.csv")).returncode == 0
+    with_declared = json.loads((wide_bed / "result_run_meta.json").read_text())["readingsFloored"]
+    assert without > with_declared > 0
