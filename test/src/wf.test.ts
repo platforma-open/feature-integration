@@ -119,16 +119,25 @@ blockTest.skip(
     const csvHandle = await helpers.getLocalFileHandle("./assets/tags.csv");
 
     // Configure the block. update-block-data must carry EVERY BlockArgsValid field, else the backend
-    // reports "currentArgs not set". controlFeature is optional (no specificity score here).
+    // reports "currentArgs not set". controlFeature is optional (no negative-control marker here), and
+    // so is datasetRef — with no single-cell V(D)J dataset the block skips the verdict stage and still
+    // emits everything this test reads. The reading's numeric parameters are required and carry the
+    // shipped defaults, the same values a freshly created block starts with.
     await project.mutateBlockStorage(fiBlockId, {
       operation: "update-block-data",
       value: {
         fbFastqRef: fiOutputs1.fastqOptions[0].ref,
         tagFeatureCsvHandle: csvHandle,
-        dominanceThreshold: 0.6,
         presetId: "tenx-beam", // 10x 5' v2 BEAM geometry (16/10/15); pattern owned by the preset
+        countFloor: 4,
+        boundCutoff: 75,
+        minVotingCells: 1,
+        panelReferenceMinMembers: 8,
+        referenceThinLine: 2,
+        highReferenceLine: 100,
         tableState: createPlDataTableStateV2(),
         qcSummaryTableState: createPlDataTableStateV2(),
+        verdictTableState: createPlDataTableStateV2(),
       } satisfies BlockData,
     });
 

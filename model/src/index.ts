@@ -15,9 +15,19 @@ export { assemblePattern, parsePattern, validatePattern } from "./pattern";
 export type { PatternParts } from "./pattern";
 export { allPresets, getPreset } from "./presets";
 export type { Preset } from "./presets";
-export type { BlockArgs, BlockData } from "./types";
+export type { BlockArgs, BlockData, GroupingRule, ReferenceSource } from "./types";
 
-const DOMINANCE_FLOOR = 0.5; // threshold is user-adjustable down to 0.5, never lower
+// The reading's shipped defaults. They restate the Python's own (verdict.py DEFAULT_FLOOR,
+// BOUND_CUTOFF, DEFAULT_PANEL_MIN_MEMBERS, DEFAULT_REFERENCE_THIN_LINE,
+// DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE, combine.py DEFAULT_MIN_VOTERS) so the value that produced a
+// run is a value the user can see and change, not an argparse default nobody chose. Every one of them
+// is a declared default rather than a calibrated line: nothing published sets any of them.
+const DEFAULT_COUNT_FLOOR = 4;
+const DEFAULT_BOUND_CUTOFF = 75;
+const DEFAULT_MIN_VOTING_CELLS = 1;
+const DEFAULT_PANEL_REFERENCE_MIN_MEMBERS = 8;
+const DEFAULT_REFERENCE_THIN_LINE = 2;
+const DEFAULT_HIGH_REFERENCE_LINE = 100;
 
 // Ordinal step key -> the step a sample is CURRENTLY on once that report has settled. A stepReports entry
 // appears when its step finishes, so the furthest-present report implies the next running step
@@ -199,9 +209,35 @@ function suggestSampleColumn(ctx: BlockRenderCtx<BlockArgs, BlockData>): string 
   return best?.col;
 }
 
+// v2 data shape: the preset selector + pattern string, with the dominance-era parameters still on it.
+// The dominant-feature readout, the off-target designation and the specificity score they fed are gone
+// from per_cell_metrics.py, so nothing consumes these three any more.
+type BlockDataV2 = Omit<
+  BlockData,
+  | "datasetRef"
+  | "roleColumn"
+  | "referenceValues"
+  | "referenceSource"
+  | "panelReferenceMinMembers"
+  | "referenceThinLine"
+  | "countFloor"
+  | "boundCutoff"
+  | "minVotingCells"
+  | "minAgreement"
+  | "gateThreshold"
+  | "highReferenceLine"
+  | "grouping"
+  | "contendingGroups"
+  | "verdictTableState"
+> & {
+  dominanceThreshold: number;
+  offtargetProperty?: string;
+  offtargetValues?: string[];
+};
+
 // v1 (pre-preset) data shape: read geometry was three explicit length fields. v2 replaces them with a
 // preset selector + a mitool tag-pattern string (see model/src/pattern.ts, model/src/presets).
-type BlockDataV1 = Omit<BlockData, "presetId" | "pattern"> & {
+type BlockDataV1 = Omit<BlockDataV2, "presetId" | "pattern"> & {
   cellLen: number;
   umiLen: number;
   featureLen: number;
@@ -209,7 +245,7 @@ type BlockDataV1 = Omit<BlockData, "presetId" | "pattern"> & {
 
 const dataModel = new DataModelBuilder()
   .from<BlockDataV1>("v1")
-  .migrate<BlockData>("v2", ({ cellLen, umiLen, featureLen, ...rest }) => {
+  .migrate<BlockDataV2>("v2", ({ cellLen, umiLen, featureLen, ...rest }) => {
     // The shipped default (16/10/15) maps to the fixed BEAM preset; any other geometry maps to the
     // generic preset carrying the assembled pattern (offset 0 — the only layout the v1 UI could express).
     const isBeamDefault = cellLen === 16 && umiLen === 10 && featureLen === 15;
@@ -227,15 +263,42 @@ const dataModel = new DataModelBuilder()
           }),
         };
   })
+  // v2 -> v3: the dominance parameters go and the reading's own arrive. The three dropped fields are
+  // dropped rather than carried: the rule they parameterised no longer exists, and a field kept "just in
+  // case" would still travel in the args hash and stale the block on an edit that changes no computation.
+  // The new numeric parameters are seeded with the shipped defaults so a migrated project renders the
+  // same run a fresh one would — a parameter left undefined here would reach the CLI as its argparse
+  // default, which is the same number arrived at without anyone choosing it.
+  .migrate<BlockData>(
+    "v3",
+    ({ dominanceThreshold: _d, offtargetProperty: _p, offtargetValues: _v, ...rest }) => ({
+      ...rest,
+      countFloor: DEFAULT_COUNT_FLOOR,
+      boundCutoff: DEFAULT_BOUND_CUTOFF,
+      minVotingCells: DEFAULT_MIN_VOTING_CELLS,
+      panelReferenceMinMembers: DEFAULT_PANEL_REFERENCE_MIN_MEMBERS,
+      referenceThinLine: DEFAULT_REFERENCE_THIN_LINE,
+      highReferenceLine: DEFAULT_HIGH_REFERENCE_LINE,
+      verdictTableState: createPlDataTableStateV2(),
+    }),
+  )
   .init(() => ({
-    dominanceThreshold: 0.6,
     runMode: "full" as const, // full run by default; "dry" = read-limited Preview
     // Default preset = the geometry the block shipped with: 10x 5' v2 BEAM (16 / 10 / 15).
     presetId: "tenx-beam",
     cellWhitelist: "", // de-novo CELL correction by default
     defaultBlockLabel: "",
+    // The reading's parameters. minAgreement and gateThreshold are deliberately absent: both are off by
+    // default, and off means absent rather than zero (see the args projection).
+    countFloor: DEFAULT_COUNT_FLOOR,
+    boundCutoff: DEFAULT_BOUND_CUTOFF,
+    minVotingCells: DEFAULT_MIN_VOTING_CELLS,
+    panelReferenceMinMembers: DEFAULT_PANEL_REFERENCE_MIN_MEMBERS,
+    referenceThinLine: DEFAULT_REFERENCE_THIN_LINE,
+    highReferenceLine: DEFAULT_HIGH_REFERENCE_LINE,
     tableState: createPlDataTableStateV2(),
     qcSummaryTableState: createPlDataTableStateV2(),
+    verdictTableState: createPlDataTableStateV2(),
   }));
 
 export const platforma = BlockModelV3.create(dataModel)
@@ -312,14 +375,35 @@ export const platforma = BlockModelV3.create(dataModel)
         );
     }
 
+    // The reading's own parameters. The single-cell V(D)J dataset is deliberately NOT required: without
+    // it the block still emits the tag counts, the per-cell scalars, the panel-versus-reads check and the
+    // per-sample QC, none of which need a clonotype set. A missing input narrows what can be answered
+    // and nothing more.
+    if (data.countFloor < 0) throw new Error("The count floor cannot be negative");
+    if (data.boundCutoff < 0 || data.boundCutoff > 100)
+      throw new Error("The bound cutoff is a score between 0 and 100");
+    if (data.minVotingCells < 1) throw new Error("At least one cell must vote");
+    // "declared" reads counts against a tag the panel marks as the comparator, and nothing marks one
+    // without the role values. Asking for it anyway would degrade to no comparator inside the run, where
+    // the choice is recorded but the user never sees they lost it.
+    if (data.referenceSource === "declared" && !data.referenceValues?.length)
+      throw new Error("Choose which role values mark the reference, or pick another source");
+
+    // Contending groups, canonicalised here rather than in the editor: the args value is a cache key, so
+    // the same declaration written in a different order must produce the same string or the block goes
+    // stale and re-runs the whole reading for nothing. A group of fewer than two members is dropped —
+    // one identity contends with nothing, and an empty group is that same case.
+    const contendingGroups = (data.contendingGroups ?? [])
+      .map((group) => [...new Set(group)].sort())
+      .filter((group) => group.length > 1)
+      .sort((a, b) => a.join(" ").localeCompare(b.join(" ")));
+
     return {
       fbFastqRef: data.fbFastqRef,
       tagFeatureCsvHandle: data.tagFeatureCsvHandle,
       barcodeSeqColumn: data.barcodeSeqColumn,
       featureNameColumn: data.featureNameColumn,
       controlFeature: data.controlFeature,
-      // canonicalize + clamp to the 0.5 floor
-      dominanceThreshold: Math.max(DOMINANCE_FLOOR, data.dominanceThreshold ?? 0.6),
       // Optional multi-barcode antigen combine mode. combineColumn names a tag-CSV column giving each
       // feature's mode (sum = OR, the default; all = AND, feature called only when every member barcode
       // fires). Projected only when set so the workflow default (every feature OR) is untouched otherwise.
@@ -330,19 +414,37 @@ export const platforma = BlockModelV3.create(dataModel)
       ...(data.combineColumn && typeof data.minUmi === "number" && data.minUmi >= 1
         ? { minUmi: Math.round(data.minUmi) }
         : {}),
-      // Optional off-target designation (F2). offtargetProperty names an imported per-feature property
-      // column (e.g. antigen_class); offtargetValues are that column's values marking a feature as
-      // off-target. Such features are excluded from the dominant call (like the control) and turn on the
-      // cross-reactive label. Projected only when both are set, so the dominant call is unchanged
-      // otherwise (empty column / values → workflow leaves the rule untouched).
-      ...(data.offtargetProperty && data.offtargetValues && data.offtargetValues.length > 0
-        ? {
-            offtargetProperty: data.offtargetProperty,
-            // Sort + dedup: the Python treats these as a set, so canonicalize here so re-selecting the
-            // same values in a different order yields the same args hash (no needless stale / re-run).
-            offtargetValues: [...new Set(data.offtargetValues)].sort(),
-          }
-        : {}),
+      // --- the binding reading ---
+      // The dataset anchor. Absent is a legitimate state, not a half-filled form, so it projects as
+      // absent and the workflow skips the verdict stage alone.
+      datasetRef: data.datasetRef,
+      // Empty and absent are the same claim for both of these, so an empty selection projects as absent
+      // rather than as "" / [] — two spellings of one request would otherwise be two cache keys.
+      roleColumn: data.roleColumn || undefined,
+      // Sorted + de-duplicated: the Python reads these as a set, so re-picking the same values in a
+      // different order must not re-run the reading.
+      referenceValues: data.referenceValues?.length
+        ? [...new Set(data.referenceValues)].sort()
+        : undefined,
+      referenceSource: data.referenceSource,
+      panelReferenceMinMembers: Math.round(data.panelReferenceMinMembers),
+      referenceThinLine: Math.round(data.referenceThinLine),
+      countFloor: Math.round(data.countFloor),
+      boundCutoff: data.boundCutoff,
+      minVotingCells: Math.round(data.minVotingCells),
+      // Off by default, and off means ABSENT: a minimum agreement of 0 passes every majority instead of
+      // skipping the check, and a gate of 0 sets aside every cell instead of gating none. Both are
+      // different claims from "off", so neither is projected as zero.
+      minAgreement: data.minAgreement,
+      gateThreshold:
+        typeof data.gateThreshold === "number" && data.gateThreshold > 0
+          ? Math.round(data.gateThreshold)
+          : undefined,
+      highReferenceLine: Math.round(data.highReferenceLine),
+      // A rule over declared panel properties, never a tag→identity map. Absent means one identity per
+      // tag, which is the reading's own default, so no hand-built { by: "tag" } is sent in its place.
+      grouping: data.grouping,
+      contendingGroups: contendingGroups.length > 0 ? contendingGroups : undefined,
       // Preview: cap reads only in dry mode; a full run omits it (all reads). Projected only when dry, so
       // toggling back to full changes the args hash and re-runs on the complete input.
       ...(data.runMode === "dry" && data.limitInput
@@ -395,6 +497,35 @@ export const platforma = BlockModelV3.create(dataModel)
       );
     }),
   )
+  // The single-cell V(D)J dataset the verdicts are keyed by: columns on [sampleId, scClonotypeKey]
+  // flagged as anchors — the same query VDJ Multiomic Integration uses, so the two blocks offer the user
+  // the same list. There is deliberately no linkerOptions beside it: the cell linker carries
+  // pl7.app/isLinkerColumn and is hidden in tables, so it is not a column a user can pick, and the
+  // workflow resolves it from this anchor by name.
+  .output("datasetOptions", (ctx) =>
+    ctx.resultPool.getOptions([
+      {
+        axes: [{ name: "pl7.app/sampleId" }, { name: "pl7.app/vdj/scClonotypeKey" }],
+        annotations: { "pl7.app/isAnchor": "true" },
+      },
+    ]),
+  )
+  // The identities the contending-groups editor picks from, live from the uploaded panel. An identity is
+  // whatever the grouping rule groups tags by: the tag itself under the default per-tag rule, and the
+  // property's value under a property rule — so the option list is the distinct values of the barcode
+  // column or of the chosen property column. Under the per-tag rule the ids ARE the barcode sequences,
+  // and they are their own labels: the panel metadata is column-wise (each column's distinct values), so
+  // it carries no tag→name pairing to name them by. Retentive so the editor does not blank on a rerun.
+  //
+  // This output exists so that only the USER'S PICKS are ever written to data. A watcher copying this
+  // list into data would make the output depend on data derived from it, and two open clients would race
+  // to write it.
+  .retentiveOutput("identityOptions", (ctx): { value: string; label: string }[] => {
+    const grouping = ctx.data.grouping;
+    const column = grouping?.by === "property" ? grouping.column : ctx.data.barcodeSeqColumn;
+    if (!column) return [];
+    return (readCsvMeta(ctx)?.valuesByColumn?.[column] ?? []).map((v) => ({ value: v, label: v }));
+  })
   // Suggested block label for the sidebar subtitle: "<dataset> / <barcode> - <feature>", derived from
   // the current inputs. Computed here (not in .subtitle) because the subtitle context has no result
   // pool; a UI watchEffect copies this into data.defaultBlockLabel. Each part is dropped until set.

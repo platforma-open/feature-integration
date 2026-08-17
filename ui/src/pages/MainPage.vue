@@ -12,7 +12,6 @@ import {
   PlBtnGhost,
   PlBtnGroup,
   PlDropdown,
-  PlDropdownMulti,
   PlDropdownRef,
   PlFileInput,
   PlLogView,
@@ -126,31 +125,6 @@ const combineColumnError = computed(() => {
   return undefined;
 });
 
-// Off-target designation (F2). The property dropdown offers imported per-feature property columns —
-// csvColumnOptions minus the columns already bound to the barcode/feature/sample roles (those aren't
-// per-feature properties). The values multi-select lists the chosen property's distinct values (from
-// csvValuesByColumn). Features whose property value is selected are excluded from the dominant call
-// (like the control) and enable the "cross-reactive" label.
-const offtargetPropertyOptions = computed(() =>
-  (app.model.outputs.csvColumnOptions ?? []).filter(
-    (o) =>
-      o.value !== app.model.data.barcodeSeqColumn &&
-      o.value !== app.model.data.featureNameColumn &&
-      o.value !== app.model.data.sampleColumn,
-  ),
-);
-const offtargetValueOptions = computed(() => {
-  const prop = app.model.data.offtargetProperty;
-  if (!prop) return [];
-  return (app.model.outputs.csvValuesByColumn?.[prop] ?? []).map((v) => ({ value: v, label: v }));
-});
-// Changing the property invalidates the selected values (they belong to the previous column), so clear
-// them on that explicit gesture — same data→data pattern as clearControlOnInputChange.
-function setOfftargetProperty(prop: string | undefined) {
-  app.model.data.offtargetProperty = prop;
-  app.model.data.offtargetValues = undefined;
-}
-
 // Run mode: read-limited Preview (dry run) vs full run — same PlBtnGroup pattern as mixcr-clonotyping /
 // demultiplex-fastq (Preview first). Feature-barcode is single-cell + shallow per cell, so the dry-run
 // default matches mixcr's single-cell recommendation (500k reads/sample).
@@ -201,16 +175,12 @@ function clearSampleAwareOnInputChange() {
 }
 
 // CSV swap invalidates every CSV-derived selection: the barcode / feature-name columns (the new file's
-// headers differ), the negative control, the off-target designation, and the sample-aware selection
-// (columns/values change). Clear them all so the user re-picks against the new CSV.
+// headers differ), the negative control, and the sample-aware selection (columns/values change). Clear
+// them all so the user re-picks against the new CSV.
 function clearOnCsvChange() {
   app.model.data.barcodeSeqColumn = undefined;
   app.model.data.featureNameColumn = undefined;
   app.model.data.combineColumn = undefined;
-  // Off-target property/values name columns + values of the OLD CSV; a new CSV may not have them, and
-  // args() projects them unconditionally once set (no column-existence guard), so clear them here.
-  app.model.data.offtargetProperty = undefined;
-  app.model.data.offtargetValues = undefined;
   clearControlOnInputChange();
   clearSampleAwareOnInputChange();
 }
@@ -483,37 +453,6 @@ const gridOptions = {
           </template>
         </PlDropdown>
       </PlRow>
-      <!-- Type-aware off-target call + "cross-reactive" label (F2). See MILAB-6496. -->
-      <PlDropdown
-        :model-value="app.model.data.offtargetProperty"
-        :options="offtargetPropertyOptions"
-        label="Off-target property"
-        :disabled="tagMappingDisabled"
-        clearable
-        @update:model-value="setOfftargetProperty"
-      >
-        <template #tooltip>
-          <b>For panels that tag antigens target/off-target</b> — leave blank otherwise. Pick the
-          per-feature property column holding those tags, then choose the off-target values below.
-          Off-target features are dropped from the dominant call (like the negative control), and
-          cells binding two or more real targets are labelled <b>Target cross-reactive</b> instead
-          of "ambiguous".
-        </template>
-      </PlDropdown>
-      <PlDropdownMulti
-        v-if="app.model.data.offtargetProperty"
-        :model-value="app.model.data.offtargetValues ?? []"
-        :options="offtargetValueOptions"
-        label="Off-target values"
-        :disabled="tagMappingDisabled"
-        @update:model-value="(v) => (app.model.data.offtargetValues = v)"
-      >
-        <template #tooltip>
-          Which values of the chosen property mean off-target (e.g. <b>Off-Target</b>,
-          <b>Off-target</b>). Any feature with one of these is dropped from the dominant call.
-          Matching trims surrounding spaces but is case-sensitive.
-        </template>
-      </PlDropdownMulti>
       <!-- Combine-mode column selector is intentionally hidden from users for now (MILAB-6496). The
            control + its validation and the workflow's combine-mode logic are kept for later re-enable;
            with it hidden, combineColumn stays unset and every antigen uses the default "sum" mode. -->
@@ -544,19 +483,6 @@ const gridOptions = {
       </PlAlert>
       <!-- Less-common params. -->
       <PlAccordionSection label="Advanced Settings">
-        <PlNumberField
-          v-model="app.model.data.dominanceThreshold"
-          :min-value="0.5"
-          :max-value="1"
-          :step="0.05"
-          label="Dominance threshold"
-        >
-          <template #tooltip>
-            <b>Advanced tuning</b> — the default suits most panels. Share of a cell's total signal
-            the top antigen must reach to be called (else <b>ambiguous</b>). Raise toward 0.8 for
-            stricter single-antigen calls; lower toward 0.5 to still call mixed-signal cells.
-          </template>
-        </PlNumberField>
         <PlNumberField
           v-model="app.model.data.minUmi"
           :min-value="1"
