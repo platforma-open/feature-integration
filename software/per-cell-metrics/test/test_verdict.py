@@ -97,3 +97,15 @@ def test_an_empty_frame_floors_to_nothing():
     out, stats = apply_floor(df, floor=4, reference_tags=set())
     assert out.height == 0
     assert stats == {"readingsFloored": 0, "cellsEmptied": 0}
+
+
+def test_a_reading_that_was_already_zero_still_counts_as_evidence_lost():
+    # Pins the deliberate asymmetry between had_evidence and kept_evidence.
+    # had_evidence must NOT filter on > 0: on the sparse frame this step is
+    # contracted to receive, every row is an observed reading, so a row's
+    # existence is what makes a cell one that had evidence. Adding "> 0" to
+    # had_evidence is a no-op on real input and silently changes this count
+    # once densified zeros exist — which is the reason densify runs after.
+    df = _counts([("S1", "c1", "AAAA", 0)])
+    _, stats = apply_floor(df, floor=4, reference_tags=set())
+    assert stats["cellsEmptied"] == 1
