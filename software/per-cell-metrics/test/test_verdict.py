@@ -255,6 +255,25 @@ def test_the_panel_comparator_is_the_median_not_the_mean():
     assert ref[("S1", "c1")] == 2  # median of 1,2,3,200 -> 2.5 -> int 2; mean would be 51
 
 
+def test_the_panel_median_truncates_rather_than_rounds():
+    # A median of 1.5 is the value that separates the two: truncation gives 1,
+    # and polars' round-half-to-even gives 2. At a median of 2.5 both give 2,
+    # so a fixture there cannot tell them apart — and the difference matters,
+    # because 1 falls below the thin line of 2 and reads unreliable while 2 is
+    # compared normally. Truncation is the behaviour; this pins it.
+    counts = _counts(
+        [
+            ("S1", "c1", "AAAA", 1),
+            ("S1", "c1", "CCCC", 1),
+            ("S1", "c1", "GGGG", 2),
+            ("S1", "c1", "TTTT", 2),
+        ]
+    )
+    ref, choice = reference_by_cell(counts, set(), ReferenceChoice.PANEL, panel_size=8, min_members=5)
+    assert choice is ReferenceChoice.PANEL
+    assert ref[("S1", "c1")] == 1
+
+
 def test_an_explicit_empty_cell_list_means_no_cells():
     # Not "derive them from the counts frame". An empty list is a statement.
     counts = _counts([("S1", "c1", "CTRL", 7)])
