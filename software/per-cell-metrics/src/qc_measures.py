@@ -25,9 +25,27 @@ computes only what none of those already do.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 
 import numpy as np
 import polars as pl
+
+
+class Status(str, Enum):
+    ACCEPTABLE = "acceptable"
+    ALERTING = "alerting"
+    UNJUDGED = "unjudged"
+    NOT_EVALUATED = "not evaluated"
+
+
+@dataclass(frozen=True)
+class Coverage:
+    """A level's status, and how much of it was actually checked."""
+
+    status: Status
+    judged: int
+    unjudged: int
+    not_evaluated: int
 
 
 @dataclass(frozen=True)
@@ -46,9 +64,11 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "readsTotal",
         "Reads total and fraction matched",
         "sample",
+        # No line: the four inherited numbers atom 315 names are the usable
+        # antigen-read fraction, the undeclared-barcode fraction, the aggregate-
+        # barcode read fraction and barcode validity. The matched share is on
+        # none of them, so nothing here says what a low one would mean.
         "Every read the parser saw, and the share matching the tag pattern.",
-        "A low matched share means the pattern does not fit the library's geometry.",
-        "inherited",
     ),
     Measurement(
         "panelAssignedFraction",
@@ -123,9 +143,11 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "highReferenceCells",
         "Cells carrying a high reference reading",
         "sample",
+        # No line: the observation line is the per-cell threshold this
+        # measurement uses to decide which cells to count, not a defended line on
+        # the share it reports. Nothing in the field publishes a share of cells
+        # that is too high, so the share is shown and the reader judges.
         "Cells whose reference reading is at or above the observation line.",
-        "A high share means ambient material or sticky cells are widespread.",
-        "observation-line",
     ),
     Measurement(
         "perAntigen",
@@ -160,7 +182,140 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     ),
 )
 
-NOT_EVALUATED = "not evaluated"
+# The four routes a line can be defended by, and no others. `Measurement.line`
+# names one of these or None, and it is the *only* declaration of which
+# measurements carry a line -- the tables below are derived facts about the
+# route, never a second opinion on whether a line exists. A test asserts the
+# correspondence in both directions.
+LINE_ROUTES: frozenset[str] = frozenset({"inherited", "categorical", "recommended-and-observed", "against-the-run"})
+
+# Three of the four routes put an absolute number on the measurement. The
+# fourth compares the run against itself and carries no number at all; see
+# `outlier_status`.
+NUMERIC_LINE_ROUTES: frozenset[str] = frozenset({"inherited", "categorical", "recommended-and-observed"})
+
+# Every line is a parameter with a shipped default, and the operator may
+# override any of them. No line is invented -- where none of the four routes
+# applies the measurement stays unjudged rather than being given a number with
+# nothing behind it.
+DEFAULT_LINES: dict[str, float] = {
+    "panelAssignedFraction": 0.5,  # inherited
+    "undeclaredBarcodes": 0.1,  # inherited
+    "declaredNeverSeen": 0,  # categorical: alerting at zero reads
+    "readsPerBarcode": 5_000,  # recommended-and-observed
+}
+
+# How each line is read. Deliberately *not* overridable: an operator moves a
+# number, never a direction. Three comparisons rather than one flag, because a
+# floor and a categorical fact disagree at the boundary -- `readsPerBarcode`
+# alerts strictly *below* the recommendation, while `declaredNeverSeen` alerts
+# *at* zero. One `<=` cannot serve both.
+#
+#   at-least    acceptable at or above the line, alerting strictly below
+#   at-most     acceptable at or below the line, alerting strictly above
+#   alerting-at alerting where the value equals the line
+#
+# In every case the named value satisfies the condition it names.
+_COMPARISON: dict[str, str] = {
+    "panelAssignedFraction": "at-least",
+    "undeclaredBarcodes": "at-most",
+    "declaredNeverSeen": "alerting-at",
+    "readsPerBarcode": "at-least",
+}
+
+_ORDINAL = {Status.ACCEPTABLE: 0, Status.ALERTING: 1}
+
+_DEFERRED: frozenset[str] = frozenset(m.id for m in MEASUREMENTS if m.deferred_reason)
+
+
+def status_for(measurement: str, value: float | None, lines: dict[str, float]) -> Status:
+    """How one measurement reads, given the lines in force.
+
+    A deferred measurement is not evaluated whatever it is handed: nothing
+    computes it, so a value reaching here is a caller's mistake and must not be
+    laundered into a judgement about the run.
+    """
+    if measurement in _DEFERRED or value is None:
+        return Status.NOT_EVALUATED
+    if measurement not in lines:
+        return Status.UNJUDGED
+    line = lines[measurement]
+    comparison = _COMPARISON[measurement]
+    if comparison == "at-least":
+        bad = value < line
+    elif comparison == "at-most":
+        bad = value > line
+    else:
+        bad = value == line
+    return Status.ALERTING if bad else Status.ACCEPTABLE
+
+
+# The interquartile fence a value must clear to count as standing apart from its
+# peers. A parameter like every other line, and visible for the same reason.
+DEFAULT_OUTLIER_FENCE: float = 3.0
+
+MIN_PEERS_TO_COMPARE = 3
+
+
+def outlier_status(
+    value: float | None,
+    peers: list[float],
+    fence: float = DEFAULT_OUTLIER_FENCE,
+) -> Status:
+    """The fourth route: a value standing clear of its peers in the same panel.
+
+    Needs no published number to be valid, which is the same ground the
+    self-disagreement measure stands on in the first place.
+
+    `peers` **excludes** `value` -- the other tags in the same panel, not all of
+    them. Including it would let a single extreme reading inflate the upper
+    quartile it is then measured against, so the one case the measure exists to
+    catch is the one it would miss.
+
+    Only high values are flagged. A disagreement rate below its peers is a tag
+    behaving better than the panel, which is not a finding.
+
+    Unjudged below `MIN_PEERS_TO_COMPARE` peers, where a quartile is not a
+    distribution but an arithmetic accident of two or three numbers.
+    """
+    if value is None:
+        return Status.NOT_EVALUATED
+    if len(peers) < MIN_PEERS_TO_COMPARE:
+        return Status.UNJUDGED
+    q1, q3 = (float(q) for q in np.quantile(peers, [0.25, 0.75]))
+    return Status.ALERTING if value > q3 + (q3 - q1) * fence else Status.ACCEPTABLE
+
+
+def roll_up(statuses: list[Status]) -> Coverage:
+    """The worst status among those that carry one, plus coverage.
+
+    Coverage stays out of the ordinal because acceptable/alerting and
+    not-evaluated answer different questions. The first says whether something
+    is wrong; the second says whether anybody looked. Ranked on one scale, an
+    unchecked run becomes indistinguishable from a checked one.
+    """
+    judged = [s for s in statuses if s in _ORDINAL]
+    unjudged = sum(1 for s in statuses if s is Status.UNJUDGED)
+    not_evaluated = sum(1 for s in statuses if s is Status.NOT_EVALUATED)
+    status = max(judged, key=lambda s: _ORDINAL[s]) if judged else Status.NOT_EVALUATED
+    return Coverage(status, len(judged), unjudged, not_evaluated)
+
+
+def roll_up_panel(tag_statuses: list[Status], identity_statuses: list[Status]) -> Coverage:
+    """A panel carries the worst status among its per-tag and per-identity measurements."""
+    return roll_up([*tag_statuses, *identity_statuses])
+
+
+def roll_up_capture(sample_statuses: list[Status], panel_statuses: list[Status]) -> Coverage:
+    """A capture carries the worst status among every sample and every panel within it.
+
+    Sample and panel are separate axes rather than nested: a per-tag failure is
+    usually a property of the reagent across the whole run rather than of any one
+    sample, and a dead reagent would otherwise mark every sample alerting. The
+    two call for different actions, and nothing hides because the capture rolls
+    up both.
+    """
+    return roll_up([*sample_statuses, *panel_statuses])
 
 
 def measurement_row(m: Measurement) -> dict:
@@ -176,7 +331,7 @@ def measurement_row(m: Measurement) -> dict:
         "level": m.level,
         "counts": m.counts,
         "implies": m.implies,
-        "status": NOT_EVALUATED if m.deferred_reason else None,
+        "status": Status.NOT_EVALUATED if m.deferred_reason else None,
         "reason": m.deferred_reason,
     }
 
