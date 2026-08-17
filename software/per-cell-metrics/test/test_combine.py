@@ -1,6 +1,8 @@
+import random
+
 import polars as pl
 import pytest
-from combine import DEFAULT_MIN_VOTERS, SetUnreliableReason, attach_competitor_notes, combine_cells
+from combine import DEFAULT_MIN_VOTERS, SetUnreliableReason, attach_competitor_notes, combine_cells, set_counts
 from verdict import Admissibility, State, combine_tags_to_identities, gate_cells, read_states
 
 B, N, U, NA = (State.BOUND.value, State.NOT_BOUND.value, State.UNRELIABLE.value, State.NEVER_ASKED.value)
@@ -398,3 +400,104 @@ def test_competitor_names_are_joined_in_sorted_order():
         [{"Zebra", "Mango", "Bee", "C"}],
     )
     assert _competitor_row(out, "C")["competedWith"] == "Bee, Mango, Zebra"
+
+
+def _v(rows):
+    return pl.DataFrame(rows, orient="row", schema={"setId": pl.String, "identity": pl.String, "state": pl.String})
+
+
+def test_denominator_is_offered_and_settled():
+    v = _v([("s1", f"i{i}", B) for i in range(8)] + [("s1", "i8", U), ("s1", "i9", NA)])
+    r = set_counts(v).row(0, named=True)
+    assert r["boundCount"] == 8
+    assert r["settledCount"] == 8  # i8 unsettled, i9 never asked
+    assert r["offeredCount"] == 9  # never-asked is not offered
+    assert r["unsettledCount"] == 1
+
+
+def test_not_bound_is_settled_and_in_the_denominator():
+    v = _v([("s1", "a", B), ("s1", "b", N)])
+    r = set_counts(v).row(0, named=True)
+    assert r["boundCount"] == 1 and r["settledCount"] == 2 and r["unsettledCount"] == 0
+
+
+def test_never_asked_is_outside_the_denominator():
+    v = _v([("s1", "a", B), ("s1", "b", NA)])
+    r = set_counts(v).row(0, named=True)
+    assert r["offeredCount"] == 1 and r["settledCount"] == 1
+
+
+def test_counts_are_in_identities_not_tags():
+    # One identity carried on two tags is one row here, so it counts once.
+    v = _v([("s1", "family", B)])
+    assert set_counts(v).row(0, named=True)["boundCount"] == 1
+
+
+def test_each_set_counted_separately():
+    v = _v([("s1", "a", B), ("s2", "a", N)])
+    out = set_counts(v).sort("setId")
+    assert out["boundCount"].to_list() == [1, 0]
+
+
+def test_offered_equals_settled_plus_unsettled_with_all_four_states_present():
+    # A fixture carrying BOUND, NOT_BOUND, UNRELIABLE, and NEVER_ASKED at
+    # once, so the arithmetic relationship is pinned rather than incidentally
+    # true because some state never appeared. A predicate that counts the
+    # wrong states (say offeredCount including NEVER_ASKED, or settledCount
+    # including UNRELIABLE) passes every test above that uses only two or
+    # three states; this one does not let that slip through.
+    v = _v([("s1", "a", B), ("s1", "b", N), ("s1", "c", U), ("s1", "d", NA)])
+    r = set_counts(v).row(0, named=True)
+    assert r["offeredCount"] == r["settledCount"] + r["unsettledCount"]
+    assert r["boundCount"] <= r["settledCount"]
+    assert r["boundCount"] == 1
+    assert r["settledCount"] == 2
+    assert r["unsettledCount"] == 1
+    assert r["offeredCount"] == 3
+
+
+def test_a_set_asked_nothing_reports_all_zero_and_a_reader_must_guard_the_divide():
+    # Every position NEVER_ASKED: offeredCount is 0, so a downstream reader
+    # computing boundCount / offeredCount would divide by zero. This pins
+    # what the row emits -- all zeros -- rather than leaving the shape
+    # undocumented; the guard against the zero is the caller's job, since
+    # this function cannot produce a rate for a set that was asked nothing.
+    v = _v([("s1", "a", NA), ("s1", "b", NA)])
+    r = set_counts(v).row(0, named=True)
+    assert r["boundCount"] == 0
+    assert r["offeredCount"] == 0
+    assert r["settledCount"] == 0
+    assert r["unsettledCount"] == 0
+
+
+def test_a_set_entirely_unreliable_reads_as_nothing_settled_not_as_a_bind_failure():
+    # All positions UNRELIABLE: boundCount=0, settledCount=0, unsettledCount=N.
+    # This is the shape a fully-gated or comparator-less set produces, and it
+    # is the one most likely to be misread downstream as "bound none of N" --
+    # the honest reading is that nothing settled, since no comparison was
+    # ever made.
+    v = _v([("s1", "a", U), ("s1", "b", U), ("s1", "c", U)])
+    r = set_counts(v).row(0, named=True)
+    assert r["boundCount"] == 0
+    assert r["settledCount"] == 0
+    assert r["unsettledCount"] == 3
+    assert r["offeredCount"] == 3
+
+
+def test_output_row_order_is_deterministic_regardless_of_input_row_order():
+    # This becomes a p-column, so it must be byte-stable: the same verdicts
+    # fed in several shuffled row orders must produce one identical output,
+    # including row order, not merely equal counts.
+    rows = (
+        [("s3", "a", B), ("s3", "b", N)]
+        + [("s1", "a", B), ("s1", "b", U), ("s1", "c", NA)]
+        + [("s2", "a", N), ("s2", "b", N)]
+    )
+    baseline = set_counts(_v(rows))
+
+    rng = random.Random(1234)
+    for _ in range(5):
+        shuffled = list(rows)
+        rng.shuffle(shuffled)
+        out = set_counts(_v(shuffled))
+        assert out.equals(baseline)

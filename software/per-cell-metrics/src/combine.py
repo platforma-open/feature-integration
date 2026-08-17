@@ -379,3 +379,43 @@ def attach_competitor_notes(verdicts: pl.DataFrame, contending: list[set[str]]) 
         pl.Series("competedWith", notes, dtype=pl.String),
         pl.Series("wasCompeted", flags, dtype=pl.String),
     )
+
+
+def set_counts(verdicts: pl.DataFrame) -> pl.DataFrame:
+    """Per set: bound, offered, settled, unsettled -- in identities.
+
+    The denominator is the identities the set was offered and whose reading
+    settled, not the size of the panel. A clonotype whose cells came from a
+    sample carrying only eight of ten, and which bound all eight, covered
+    everything it was ever asked; reported as eight of ten it looks like a
+    clone with two failures.
+
+    An offered position that did not settle leaves the count and is reported
+    beside it. Voiding the count instead is what the four-state model
+    literally implies, but on a large panel a single bad reading would then
+    destroy every count in the run.
+
+    `offeredCount` always equals `settledCount + unsettledCount`, since
+    UNRELIABLE is the only offered-but-unsettled state. A set asked nothing
+    (every identity NEVER_ASKED) reports all four counts as zero; a consumer
+    computing a rate from `boundCount` and `offeredCount` must guard the
+    division themselves, since this function cannot produce a rate for a set
+    that was asked nothing. A set that is entirely UNRELIABLE reports
+    `boundCount=0, settledCount=0, unsettledCount=N` -- read that as nothing
+    settled, never as a failure to bind N identities, since none of them
+    were ever compared.
+
+    `verdicts` is read at its existing (setId, identity) row grain, one row
+    per identity regardless of how many tags fed it, so counting rows counts
+    identities, never tags.
+    """
+    return (
+        verdicts.group_by("setId")
+        .agg(
+            (pl.col("state") == State.BOUND.value).sum().alias("boundCount"),
+            (pl.col("state") != State.NEVER_ASKED.value).sum().alias("offeredCount"),
+            pl.col("state").is_in(SETTLED).sum().alias("settledCount"),
+            (pl.col("state") == State.UNRELIABLE.value).sum().alias("unsettledCount"),
+        )
+        .sort("setId")
+    )
