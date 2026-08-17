@@ -1,11 +1,11 @@
 import polars as pl
 import pytest
-from panel import consistent_properties, read_panel
+from panel import consistent_properties, property_columns, read_panel
 
 ROLES = {"barcode": "Sequence", "feature": "Name", "sample": "Samples"}
 
 
-def _csv(tmp_path, rows, header):
+def _csv(tmp_path, header=("Samples", "Name", "Sequence", "Type"), *, rows):
     p = tmp_path / "panel.csv"
     p.write_text("\n".join([",".join(header)] + [",".join(r) for r in rows]) + "\n")
     return str(p)
@@ -14,12 +14,11 @@ def _csv(tmp_path, rows, header):
 def test_read_panel_one_row_per_tag_sample(tmp_path):
     path = _csv(
         tmp_path,
-        [
+        rows=[
             ["S1", "AgA", "AAAA", "Off-Target"],
             ["S2", "AgB", "AAAA", "Off-Target"],
             ["S1", "AgC", "CCCC", "Target"],
         ],
-        ["Samples", "Name", "Sequence", "Type"],
     )
     panel, dropped = read_panel(path, ROLES)
     assert panel.height == 3
@@ -28,7 +27,7 @@ def test_read_panel_one_row_per_tag_sample(tmp_path):
 
 
 def test_read_panel_without_sample_column_uses_star(tmp_path):
-    path = _csv(tmp_path, [["AgA", "AAAA"], ["AgB", "CCCC"]], ["Name", "Sequence"])
+    path = _csv(tmp_path, header=("Name", "Sequence"), rows=[["AgA", "AAAA"], ["AgB", "CCCC"]])
     panel, _ = read_panel(path, {"barcode": "Sequence", "feature": "Name", "sample": ""})
     assert panel["sample"].unique().to_list() == ["*"]
 
@@ -71,24 +70,19 @@ def test_consistent_properties_ignores_blanks():
 
 
 def test_duplicate_tag_sample_pair_is_fatal(tmp_path):
-    path = _csv(
-        tmp_path,
-        [["S1", "AgA", "AAAA", "Target"], ["S1", "AgB", "AAAA", "Target"]],
-        ["Samples", "Name", "Sequence", "Type"],
-    )
+    path = _csv(tmp_path, rows=[["S1", "AgA", "AAAA", "Target"], ["S1", "AgB", "AAAA", "Target"]])
     with pytest.raises(SystemExit) as e:
         read_panel(path, ROLES)
-    assert "AAAA" in str(e.value)
+    assert "AAAA/S1" in str(e.value)
 
 
 def test_blank_barcode_row_is_reported_not_dropped(tmp_path):
     path = _csv(
         tmp_path,
-        [
+        rows=[
             ["S1", "AgA", "AAAA", "Target"],
             ["S1", "AgB", "", "Target"],
         ],
-        ["Samples", "Name", "Sequence", "Type"],
     )
     panel, dropped = read_panel(path, ROLES)
     assert panel.height == 1
@@ -99,15 +93,14 @@ def test_blank_barcode_row_is_reported_not_dropped(tmp_path):
 def test_blank_sample_cell_is_fatal(tmp_path):
     path = _csv(
         tmp_path,
-        [
+        rows=[
             ["S1", "AgA", "AAAA", "Target"],
             ["", "AgB", "CCCC", "Target"],
         ],
-        ["Samples", "Name", "Sequence", "Type"],
     )
     with pytest.raises(SystemExit) as e:
         read_panel(path, ROLES)
-    assert "3" in str(e.value)
+    assert "line(s) 3." in str(e.value)
 
 
 def test_trailing_blank_line_is_not_a_blank_sample_cell(tmp_path):
@@ -121,25 +114,21 @@ def test_trailing_blank_line_is_not_a_blank_sample_cell(tmp_path):
     assert dropped == [3]
 
 
-def test_reserved_column_name_is_fatal(tmp_path):
-    # A NON-role column named "tag" would be overwritten by the one this
-    # reader produces, so it is refused rather than silently shadowed.
-    path = _csv(tmp_path, [["S1", "AgA", "AAAA", "x"]], ["Samples", "Name", "Sequence", "tag"])
+@pytest.mark.parametrize("bad_name", ["tag", "sample"])
+def test_reserved_column_name_is_fatal(tmp_path, bad_name):
+    # A NON-role column named "tag"/"sample" would be overwritten by the one
+    # this reader produces, so it is refused rather than silently shadowed.
+    path = _csv(tmp_path, header=("Samples", "Name", "Sequence", bad_name), rows=[["S1", "AgA", "AAAA", "x"]])
     with pytest.raises(SystemExit) as e:
         read_panel(path, ROLES)
-    assert "tag" in str(e.value)
-
-    path = _csv(tmp_path, [["S1", "AgA", "AAAA", "x"]], ["Samples", "Name", "Sequence", "sample"])
-    with pytest.raises(SystemExit) as e:
-        read_panel(path, ROLES)
-    assert "sample" in str(e.value)
+    assert f"['{bad_name}']" in str(e.value)
 
 
 def test_role_column_may_be_named_tag(tmp_path):
     # emit_panel.py in this package documents this very shape and defaults
     # --tag-col to "tag". A role column cannot collide: alias() replaces the
     # source column rather than duplicating it.
-    path = _csv(tmp_path, [["S1", "AgA", "AAAA"]], ["sample", "feature", "tag"])
+    path = _csv(tmp_path, header=("sample", "feature", "tag"), rows=[["S1", "AgA", "AAAA"]])
     panel, dropped = read_panel(path, {"barcode": "tag", "feature": "feature", "sample": "sample"})
     assert panel.height == 1
     assert panel["tag"].to_list() == ["AAAA"]
@@ -151,10 +140,10 @@ def test_sample_role_named_tag_is_fatal(tmp_path):
     # The barcode alias runs first and would overwrite this column, leaving
     # "sample" a silent copy of the barcode — per-sample keying gone, and no
     # duplicate raised because the pairs stay unique. Refused, not corrected.
-    path = _csv(tmp_path, [["S1", "AgA", "AAAA"]], ["tag", "Name", "Sequence"])
+    path = _csv(tmp_path, header=("tag", "Name", "Sequence"), rows=[["S1", "AgA", "AAAA"]])
     with pytest.raises(SystemExit) as e:
         read_panel(path, {"barcode": "Sequence", "feature": "Name", "sample": "tag"})
-    assert "tag" in str(e.value)
+    assert "['tag']" in str(e.value)
 
 
 def test_two_blank_barcode_rows_are_not_a_duplicate(tmp_path):
@@ -162,12 +151,11 @@ def test_two_blank_barcode_rows_are_not_a_duplicate(tmp_path):
     # pair if the blank-barcode filter ran after the dupe check.
     path = _csv(
         tmp_path,
-        [
+        rows=[
             ["S1", "AgA", "AAAA", "Target"],
             ["S1", "AgB", "", "Target"],
             ["S1", "AgC", "", "Target"],
         ],
-        ["Samples", "Name", "Sequence", "Type"],
     )
     panel, dropped = read_panel(path, ROLES)
     assert panel.height == 1
@@ -175,8 +163,53 @@ def test_two_blank_barcode_rows_are_not_a_duplicate(tmp_path):
 
 
 def test_two_roles_on_one_column_is_fatal(tmp_path):
-    # Reachable from the UI: the Sample-column dropdown is unfiltered.
-    path = _csv(tmp_path, [["S1", "AgA", "AAAA"]], ["Samples", "Name", "Sequence"])
+    # Two roles on one column silently makes "sample" a copy of "tag" —
+    # reachable from the UI today, since the Sample-column dropdown is
+    # unfiltered.
+    path = _csv(tmp_path, header=("Samples", "Name", "Sequence"), rows=[["S1", "AgA", "AAAA"]])
     with pytest.raises(SystemExit) as e:
         read_panel(path, {"barcode": "Sequence", "feature": "Name", "sample": "Sequence"})
-    assert "Sequence" in str(e.value)
+    assert "column 'Sequence'" in str(e.value)
+
+
+def test_missing_barcode_column_is_fatal(tmp_path):
+    path = _csv(tmp_path, rows=[["S1", "AgA", "AAAA", "Target"]])
+    with pytest.raises(SystemExit) as e:
+        read_panel(path, {"barcode": "NoSuchCol", "feature": "Name", "sample": "Samples"})
+    assert "no barcode column 'NoSuchCol'" in str(e.value)
+
+
+def test_missing_sample_column_is_fatal(tmp_path):
+    path = _csv(tmp_path, rows=[["S1", "AgA", "AAAA", "Target"]])
+    with pytest.raises(SystemExit) as e:
+        read_panel(path, {"barcode": "Sequence", "feature": "Name", "sample": "NoSuchCol"})
+    assert "no sample column 'NoSuchCol'" in str(e.value)
+
+
+def test_literal_row_header_is_fatal(tmp_path):
+    path = _csv(tmp_path, header=("Samples", "Name", "Sequence", "_row"), rows=[["S1", "AgA", "AAAA", "x"]])
+    with pytest.raises(SystemExit) as e:
+        read_panel(path, ROLES)
+    assert "['_row']" in str(e.value)
+
+
+def test_feature_role_named_tag_is_fatal(tmp_path):
+    # Pins that the rev-8 barcode-only "tag" exemption stays narrow: a FEATURE
+    # role named "tag" is not covered by it.
+    path = _csv(tmp_path, header=("Samples", "Sequence", "tag"), rows=[["S1", "AAAA", "AgA"]])
+    with pytest.raises(SystemExit) as e:
+        read_panel(path, {"barcode": "Sequence", "feature": "tag", "sample": "Samples"})
+    assert "['tag']" in str(e.value)
+
+
+def test_property_columns_excludes_tag_and_sample_and_preserves_order():
+    # Downstream column layout depends on source order being preserved.
+    panel = pl.DataFrame({"Type": ["Target"], "tag": ["AAAA"], "Name": ["AgA"], "sample": ["S1"], "Channel": ["APC"]})
+    assert property_columns(panel) == ["Type", "Name", "Channel"]
+
+
+def test_barcode_is_stripped(tmp_path):
+    # tag equality is the join key for every later task.
+    path = _csv(tmp_path, rows=[["S1", "AgA", " AAAA ", "Target"]])
+    panel, _ = read_panel(path, ROLES)
+    assert panel["tag"].to_list() == ["AAAA"]

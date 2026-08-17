@@ -12,6 +12,8 @@ identity: a name only travels where every row for that tag agrees on it.
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import polars as pl
 
 # Stands for "every sample" when the panel carries no sample column. The unkeyed
@@ -19,7 +21,35 @@ import polars as pl
 ANY_SAMPLE = "*"
 
 
-def read_panel(csv_path: str, roles: dict[str, str]) -> tuple[pl.DataFrame, list[int]]:
+class Panel(NamedTuple):
+    frame: pl.DataFrame
+    dropped_lines: list[int]
+
+
+def _csv_line(row_index: int) -> int:
+    """1-based CSV record ordinal, header counted. Not the physical line number:
+    the two differ when a quoted field contains a newline."""
+    return row_index + 2
+
+
+def read_panel(csv_path: str, roles: dict[str, str]) -> Panel:
+    """Read the panel CSV into a (tag, sample) table.
+
+    Returns the table and the CSV lines dropped for having a blank barcode.
+    Those line numbers are 1-based record ordinals with the header counted;
+    they are not physical line numbers when a quoted field contains a newline.
+
+    Normalisation is asymmetric on purpose: "tag" and "sample" are stripped,
+    because they are keys; property columns are carried through exactly as
+    written. consistent_properties() is the accessor that normalises them, so
+    reading a property column directly can yield " AgA " and "AgA" as two
+    distinct values.
+
+    Compare emit_feature_properties.py, which consolidates the same file's
+    properties by feature NAME with first-non-empty-wins and no sample
+    dimension. That is the global-check failure this module exists to avoid;
+    the two rules coexist today and a caller must choose knowingly.
+    """
     raw = pl.read_csv(csv_path, infer_schema_length=0)
     barcode_col, sample_col = roles["barcode"], roles.get("sample") or ""
 
@@ -29,13 +59,13 @@ def read_panel(csv_path: str, roles: dict[str, str]) -> tuple[pl.DataFrame, list
     if sample_col and sample_col not in raw.columns:
         raise SystemExit(f"panel file has no sample column {sample_col!r}; columns are {raw.columns}")
 
-    # Two roles must not name the SAME column. This is reachable from the UI:
-    # the Sample-column dropdown in MainPage.vue offers every CSV column
-    # unfiltered, unlike its siblings for combine-mode and off-target, which
-    # exclude the barcode/feature roles. Picking the barcode column as the
-    # sample column returns "sample" as a copy of "tag" — per-sample keying
-    # gone, silently. The name-vs-role guard below does not catch it, because
-    # it is name-independent: it reproduces with any column name.
+    # Two roles on one column silently makes "sample" a copy of "tag" — the
+    # barcode alias below runs first and overwrites it, so the sample
+    # expression then reads barcodes: per-sample keying gone, with no error and
+    # no duplicate to catch it. The name-vs-role guard further down does not
+    # catch this either, because it is name-independent and reproduces with
+    # any column name. Reachable from the UI today — the Sample-column
+    # dropdown is unfiltered.
     bound = [("barcode", barcode_col), ("feature", roles["feature"])]
     if sample_col:
         bound.append(("sample", sample_col))
@@ -59,8 +89,9 @@ def read_panel(csv_path: str, roles: dict[str, str]) -> tuple[pl.DataFrame, list
     # silently becomes a copy of "tag" — per-sample keying, the load-bearing
     # property of this whole design, collapsing with no error and no duplicate
     # to catch it. The mirror (a barcode column named "sample") happens to
-    # produce correct output today, but only because of the order of the two
-    # statements below; it is refused rather than left resting on that.
+    # produce correct output today, but only because the barcode alias is
+    # applied before the sample alias; it is refused rather than left resting
+    # on that.
     reserved = set()
     if "tag" in raw.columns and barcode_col != "tag":
         reserved.add("tag")
@@ -92,7 +123,7 @@ def read_panel(csv_path: str, roles: dict[str, str]) -> tuple[pl.DataFrame, list
     # cell. Blank barcodes are returned rather than filtered away: dropping a
     # malformed row silently is the failure the no-silent-drop rule exists to
     # prevent, and worse, because nothing downstream can tell the panel was short.
-    dropped = [r + 2 for r in panel.filter(pl.col("tag") == "")["_row"]]
+    dropped = [_csv_line(r) for r in panel.filter(pl.col("tag") == "")["_row"]]
     panel = panel.filter(pl.col("tag") != "")
 
     # A blank sample cell on a row that IS otherwise real is fatal, never
@@ -102,7 +133,7 @@ def read_panel(csv_path: str, roles: dict[str, str]) -> tuple[pl.DataFrame, list
     if sample_col:
         blank_sample = panel.filter(pl.col("sample") == "")
         if blank_sample.height:
-            rows = ", ".join(str(r + 2) for r in blank_sample["_row"])
+            rows = ", ".join(str(_csv_line(r)) for r in blank_sample["_row"])
             raise SystemExit(
                 f"panel file has a blank {sample_col!r} on line(s) {rows}. Leave the column out "
                 "entirely to declare one panel over every sample; a blank cell is ambiguous."
@@ -118,9 +149,9 @@ def read_panel(csv_path: str, roles: dict[str, str]) -> tuple[pl.DataFrame, list
             "Each (barcode, sample) pair must appear once."
         )
 
-    drop = {barcode_col} | ({sample_col} if sample_col else set())
-    kept = panel.select(["tag", "sample"] + [c for c in raw.columns if c not in drop])
-    return kept, dropped
+    role_cols = {barcode_col} | ({sample_col} if sample_col else set())
+    kept = panel.select(["tag", "sample"] + [c for c in raw.columns if c not in role_cols])
+    return Panel(kept, dropped)
 
 
 def property_columns(panel: pl.DataFrame) -> list[str]:
@@ -139,7 +170,7 @@ def consistent_properties(
     props: dict[str, dict[str, str]] = {}
     inconsistent: list[tuple[str, str, list[str]]] = []
     for tag, rows in panel.group_by("tag", maintain_order=True):
-        name = tag[0] if isinstance(tag, tuple) else tag
+        (name,) = tag
         props[name] = {}
         for col in columns:
             values = sorted({v.strip() for v in rows[col].to_list() if v and v.strip()})
