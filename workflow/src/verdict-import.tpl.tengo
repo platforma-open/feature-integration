@@ -1,0 +1,151 @@
+// The verdict import: every table emit_verdicts.py wrote, turned into p-columns.
+//
+// Separate from the exec (verdict-run.tpl.tengo) because the run record has to be read as a VALUE before
+// any of these specs can be built. `referenceChoice` and `cellListSource` are resolved by the software —
+// a declared comparator degrades to none where the panel carries no reference tag, a panel comparator
+// degrades below the minimum membership — and both sit in the emitted columns' DOMAIN, because a verdict
+// read against a declared reference is not the same reading as one read against the panel's own signal.
+// Domain is part of column identity and annotations are not, so recording the choice as an annotation
+// would let two incomparable runs emit columns of identical identity and be unioned in a pool holding
+// both. Building the specs inside the exec's own template would record the choice that was REQUESTED.
+//
+// Ephemeral: it awaits the bundle (for the clonotype axis, taken verbatim from the linker) and the run
+// record. It receives the bundle UNRESOLVED from main.tpl.tengo — verdict-run holds it resolved, as a map
+// with methods, which cannot be serialized as a template input, so each template resolves it itself.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
+pframes := import("@platforma-sdk/workflow-tengo:pframes")
+pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+columnSpecs := import(":column-specs")
+verdictLinker := import(":verdict-linker")
+
+json := import("json")
+
+// Returns three frames: antigenVerdicts (exported), qcTable and panelMismatchTable (this block's own).
+// defineOutputs is deliberately absent — an ephemeral template takes its output names from what the body
+// returns and never checks a declared list, so declaring one here would be inert.
+self.awaitState("columns", "PColumnBundle")
+self.awaitState("runMeta", "ResourceReady")
+
+self.body(func(inputs) {
+	blockId := inputs.blockId
+	sampleAxis := inputs.sampleAxisSpec
+
+	// What actually served, read from the run record rather than from the block's arguments.
+	served := json.decode(string(inputs.runMeta.getData()))
+
+	// The clonotype axis is taken VERBATIM from the linker rather than rebuilt: an axis assembled here
+	// would be a lookalike carrying a different identity, and would join to nothing.
+	columns := inputs.columns
+	anchorSpec := columns.getSpec(inputs.datasetRef)
+	linkerCol := verdictLinker.pick(columns.getColumns("linker"), anchorSpec.axesSpec[1])
+	setAxis := linkerCol.spec.axesSpec[2]
+
+	cellAxis := columnSpecs.cellAxis(sampleAxis.name)
+	identityAxis := columnSpecs.identityAxis(blockId, served.groupingId)
+	tagAxis := columnSpecs.tagAxis(blockId)
+	panelAxis := columnSpecs.panelAxis(blockId)
+
+	// Seeded from the FASTQ dataset spec: these columns' subject is the antigen readout that dataset
+	// produced, so seeding from the linker would label them after the clonotyping run instead. The
+	// clonotyping root is already recorded where it belongs — pl7.app/vdj/scClonotypeKey carries its
+	// clonotyping run id in its own domain — so it needs no trace step of its own. makeTrace is variadic
+	// and the linker is deliberately not one of its steps.
+	trace := pSpec.makeTrace(inputs.traceSeedSpec, {
+		type: "milaboratories.feature-integration",
+		id: blockId,
+		importance: 30,
+		label: "Feature Barcode Profiling"
+	})
+
+	// One import per table. Keys are prefixed with the table name because two tables can carry the same
+	// column id — both label tables call their column "label" in the CSV — and one p-frame key must mean
+	// one column.
+	//
+	// The importer's result map is walked with maps.forEach, whose key order is sorted. A bare
+	// `for k, v in` has no defined order in Tengo, which would make the built frame's resource handle vary
+	// run to run and silently cost every downstream node its deduplication, with nothing reported.
+	addTo := func(fb, name, file, spec) {
+		imported := xsv.importFile(file, "csv", spec, { splitDataAndSpec: true })
+		maps.forEach(imported, func(key, column) {
+			fb.add(name + "/" + key, trace.inject(column.spec), column.data)
+		})
+	}
+
+	// --- exported: everything a downstream block joins to -------------------------------------------
+	exportFb := pframes.pFrameBuilder()
+
+	addTo(exportFb, "verdicts", inputs.verdicts,
+		columnSpecs.verdictsImportSpec(setAxis, identityAxis, served))
+	addTo(exportFb, "setCounts", inputs.setCounts,
+		columnSpecs.setCountsImportSpec(setAxis, served))
+
+	// The pivoted per-identity summary is the only per-antigen state lead selection can see: a column
+	// carrying an axis the clonotype anchor does not have is dropped there with no error, so nothing keyed
+	// (set, identity) reaches it. The pivot costs one column per identity, so the software gates it on an
+	// identity count and records both the limit and whether it emitted. When it did not, the CSV carries
+	// only the key column, and an empty identity list yields no columns rather than a failed import.
+	summaryIdentities := []
+	if !is_undefined(served.identitySummaryEmitted) && served.identitySummaryEmitted {
+		ll.assert(!is_undefined(served.identities),
+			"the run record reports an emitted identity summary but names no identities")
+		summaryIdentities = served.identities
+	}
+	if len(summaryIdentities) > 0 {
+		addTo(exportFb, "identitySummary", inputs.identitySummary,
+			columnSpecs.identitySummaryImportSpec(setAxis, summaryIdentities, served.groupingId, served))
+	}
+
+	// The re-derivation material. Both are EXPORTS rather than outputs: an output is visible only to this
+	// block's own model, so material a reader needs in order to regroup the panel without a re-run would
+	// reach nobody.
+	addTo(exportFb, "cellCounts", inputs.cellCounts,
+		columnSpecs.cellTagCountsImportSpec(sampleAxis, cellAxis, tagAxis))
+	addTo(exportFb, "cellScalars", inputs.cellScalars,
+		columnSpecs.cellScalarsImportSpec(sampleAxis, cellAxis, served))
+
+	// Which identities each sample was actually stained with — without it "never asked" is a claim a
+	// reader cannot check.
+	addTo(exportFb, "offered", inputs.offered,
+		columnSpecs.offeredImportSpec(sampleAxis, identityAxis))
+
+	// The tag -> identity linker: what lets a reader put a tag's count beside its verdict without either
+	// layer knowing about the other.
+	addTo(exportFb, "tagIdentity", inputs.tagIdentity,
+		columnSpecs.tagIdentityLinkerImportSpec(tagAxis, identityAxis))
+
+	// The label columns. A label is satisfied only by a column NAMED pl7.app/label with exactly one axis,
+	// and the readable names are imported as columns rather than read as values — which is also why they
+	// cannot be used while these specs are built.
+	addTo(exportFb, "identityLabels", inputs.identityLabels,
+		columnSpecs.identityLabelsImportSpec(identityAxis))
+	addTo(exportFb, "panelLabels", inputs.panelLabels,
+		columnSpecs.panelLabelsImportSpec(panelAxis))
+
+	// sample -> panel, so per-tag QC keyed (panel, tag) can be read back to the samples it covers. Where
+	// one panel covers every sample this column is constant and drops out of view.
+	addTo(exportFb, "samplePanel", inputs.samplePanel,
+		columnSpecs.samplePanelImportSpec(sampleAxis))
+
+	// --- block-local: the run's own report ----------------------------------------------------------
+	qcFb := pframes.pFrameBuilder()
+	addTo(qcFb, "qc", inputs.qc, columnSpecs.qcImportSpec(
+		columnSpecs.qcLevelAxis(blockId),
+		columnSpecs.qcEntityAxis(blockId),
+		columnSpecs.qcMeasurementAxis(blockId)))
+
+	// The panel-versus-reads check is emitted as a p-column rather than left as a file: a mismatch report
+	// the user cannot see defeats its purpose.
+	mismatchFb := pframes.pFrameBuilder()
+	addTo(mismatchFb, "panelMismatch", inputs.panelMismatch,
+		columnSpecs.panelMismatchImportSpec(panelAxis, tagAxis))
+
+	return {
+		antigenVerdicts: exportFb.build(),
+		qcTable: qcFb.build(),
+		panelMismatchTable: mismatchFb.build()
+	}
+})

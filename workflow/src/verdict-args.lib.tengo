@@ -1,0 +1,187 @@
+// The emit-verdicts command line, built in one place and unit-tested.
+//
+// Every flag this CLI takes has a default, so an unthreaded parameter is silent in both directions: the
+// render succeeds, the exec succeeds, and the reading is answered under a value the user never chose. The
+// per-sample QC file is the sharpest case — without `--qc-summary` the run has no read count at all, so
+// `readsTotal`, `panelAssignedFraction` and `readsPerCell` render as declared-but-unchecked rather than
+// failing, and `readsPerCell` is the only sequencing-depth alert the block ships. Building the whole
+// argument list here, including the staged input filenames, is what makes the threading assertable
+// without a backend.
+//
+// The staged filenames are exported beside the flags that name them: verdict-run.tpl.tengo stages each
+// file under the same constant it is referenced by, so a rename cannot leave a flag pointing at a file
+// the exec never received.
+
+ll := import("@platforma-sdk/workflow-tengo:ll")
+canonical := import("@platforma-sdk/workflow-tengo:canonical")
+
+FILE_COUNTS := "counts.csv"
+FILE_PANEL := "panel.csv"
+FILE_LINKER := "linker.csv"
+FILE_QC_SUMMARY := "qc_summary.csv"
+OUTPUT_PREFIX := "result"
+
+// The block arguments this module reads. Exported so fanout-inputs.test.tengo can assert that none of
+// them has leaked into the per-sample mitool fan-out, which is what keeps the fan-out cached when only
+// the reading's parameters change. Extend this list whenever a parameter is added below.
+PARAMETER_NAMES := [
+	"boundCutoff",
+	"captureMap",
+	"contendingGroups",
+	"countFloor",
+	"datasetRef",
+	"gateThreshold",
+	"grouping",
+	"highReferenceLine",
+	"minAgreement",
+	"minVotingCells",
+	"panelReferenceMinMembers",
+	"referenceSource",
+	"referenceThinLine",
+	"referenceValues",
+	"roleColumn"
+]
+
+// Defaults mirroring the CLI's own (verdict.py DEFAULT_FLOOR, BOUND_CUTOFF, combine.py
+// DEFAULT_MIN_VOTERS, DEFAULT_PANEL_MIN_MEMBERS, DEFAULT_REFERENCE_THIN_LINE,
+// DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE). They are restated rather than left to argparse so the value
+// that produced a run is always on the command line, where the run record and a re-run both see it; a
+// parameter carried only as a CLI default drifts the moment one side changes.
+DEFAULT_COUNT_FLOOR := 4
+DEFAULT_BOUND_CUTOFF := 75
+DEFAULT_MIN_VOTING_CELLS := 1
+DEFAULT_PANEL_MIN_MEMBERS := 8
+DEFAULT_REFERENCE_THIN_LINE := 2
+DEFAULT_HIGH_REFERENCE_LINE := 100
+
+_num := func(value, fallback) {
+	return is_undefined(value) ? fallback : value
+}
+
+// An integer flag. int() first because a model that sends 4.0 would otherwise reach argparse as "4.0",
+// which `type=int` rejects — a whole-run failure from a value that was correct.
+_intArg := func(value) {
+	return string(int(value))
+}
+
+// build: the full argument vector, positionals first.
+//
+// `params` is the block's args map plus `hasLinker` / `hasQcSummary`, which say whether the caller staged
+// those two files. A flag naming a file the exec did not receive is a hard failure, so each is emitted
+// only with its file.
+build := func(params) {
+	args := [FILE_COUNTS, FILE_PANEL]
+
+	add := func(flag, value) {
+		args = append(args, flag)
+		args = append(args, value)
+	}
+
+	if !is_undefined(params.hasLinker) && params.hasLinker {
+		add("--linker", FILE_LINKER)
+	}
+	if !is_undefined(params.hasQcSummary) && params.hasQcSummary {
+		add("--qc-summary", FILE_QC_SUMMARY)
+	}
+
+	// The panel-file column roles. Passed even when empty: an empty --sample-col declares one panel for
+	// every sample and an empty --role-column declares no comparator designation, both of which are
+	// readings rather than omissions.
+	add("--barcode-col", params.barcodeSeqColumn)
+	add("--feature-col", params.featureNameColumn)
+	add("--sample-col", is_undefined(params.sampleColumn) ? "" : params.sampleColumn)
+	add("--role-column", is_undefined(params.roleColumn) ? "" : params.roleColumn)
+
+	// Comma-separated, because that is what the CLI splits on. The list is already de-duplicated and
+	// sorted by the args lambda, so the string is canonical and two equivalent selections produce one
+	// cache key.
+	referenceValues := ""
+	if !is_undefined(params.referenceValues) {
+		for i, value in params.referenceValues {
+			referenceValues = i == 0 ? value : referenceValues + "," + value
+		}
+	}
+	add("--reference-values", referenceValues)
+
+	// Which comparator was ASKED for. The run may serve "none" instead — never a different one — and what
+	// served is read back from the run record, not from here.
+	if !is_undefined(params.referenceSource) && params.referenceSource != "" {
+		add("--reference-source", params.referenceSource)
+	}
+
+	add("--panel-min-members", _intArg(_num(params.panelReferenceMinMembers, DEFAULT_PANEL_MIN_MEMBERS)))
+	add("--reference-thin-line", _intArg(_num(params.referenceThinLine, DEFAULT_REFERENCE_THIN_LINE)))
+	add("--floor", _intArg(_num(params.countFloor, DEFAULT_COUNT_FLOOR)))
+	add("--cutoff", string(_num(params.boundCutoff, DEFAULT_BOUND_CUTOFF)))
+	add("--min-voters", _intArg(_num(params.minVotingCells, DEFAULT_MIN_VOTING_CELLS)))
+	add("--high-reference-line", _intArg(_num(params.highReferenceLine, DEFAULT_HIGH_REFERENCE_LINE)))
+
+	// Off by default, and off means absent rather than zero: a floor of 0 would make every majority pass
+	// the check instead of skipping the check, and the two are different claims about the reading.
+	if !is_undefined(params.minAgreement) {
+		add("--min-agreement", string(params.minAgreement))
+	}
+	// The admissibility gate. Absent and zero both mean off, and zero would set aside every cell.
+	if !is_undefined(params.gateThreshold) && params.gateThreshold > 0 {
+		add("--gate-threshold", _intArg(params.gateThreshold))
+	}
+
+	// The three JSON-valued flags are encoded key-sorted rather than with the plain encoder. Tengo maps
+	// have no iteration order, so the plain encoder can emit the same rule as two different strings on two
+	// renders — which changes the exec's argument list, and with it the cache key, for a run that is
+	// identical in every way that matters.
+	//
+	// A rule over declared properties, not a tag map. Absent means one identity per tag, which is the
+	// CLI's own default, so the flag is omitted rather than carrying a hand-built {"by":"tag"}.
+	if !is_undefined(params.grouping) {
+		add("--grouping", canonical.encode(params.grouping))
+	}
+	// Groups of identities declared to contend for one binding site. The args lambda drops any group of
+	// fewer than two members and sorts the rest, so an empty list here means nothing contends.
+	if !is_undefined(params.contendingGroups) && len(params.contendingGroups) > 0 {
+		add("--contending", canonical.encode(params.contendingGroups))
+	}
+	// No capture assignment reaches the block yet, so this is normally absent and every capture rolls up
+	// as not evaluated. Threaded now so supplying the map is a model change alone.
+	if !is_undefined(params.captureMap) {
+		add("--capture-map", canonical.encode(params.captureMap))
+	}
+
+	add("--output-prefix", OUTPUT_PREFIX)
+
+	ll.assert(len(args) % 2 == 0, "verdict-args: every flag must carry a value")
+	return args
+}
+
+// has: whether the built vector contains a flag. Used by the threading test.
+has := func(args, flag) {
+	for _, a in args {
+		if a == flag {
+			return true
+		}
+	}
+	return false
+}
+
+// valueOf: the value following a flag, or undefined. Used by the threading test to check that a flag
+// carries what the caller asked for rather than merely appearing.
+valueOf := func(args, flag) {
+	for i, a in args {
+		if a == flag && i + 1 < len(args) {
+			return args[i + 1]
+		}
+	}
+	return undefined
+}
+
+export {
+	FILE_COUNTS: FILE_COUNTS,
+	FILE_PANEL: FILE_PANEL,
+	FILE_LINKER: FILE_LINKER,
+	FILE_QC_SUMMARY: FILE_QC_SUMMARY,
+	OUTPUT_PREFIX: OUTPUT_PREFIX,
+	PARAMETER_NAMES: PARAMETER_NAMES,
+	build: build,
+	has: has,
+	valueOf: valueOf
+}

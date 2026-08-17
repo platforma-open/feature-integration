@@ -5,12 +5,18 @@
 // outputs). They consume tagstat.tsv (fb-tagstat) plus the parse/refine JSON reports (fb-parse /
 // fb-refine). Running them inside this render.create boundary returns their per-sample outputs as render
 // outputs that flatten cleanly. Mirrors blocks/peptide-extraction downstream-pipeline.tpl.tengo.
+//
+// Nothing here knows about the binding verdicts. The verdict stage reads the run as a whole — a panel is a
+// property of a declared tag set rather than of one sample, and the quality rollup spans samples — so it
+// runs once, after this fan-out, on the gathered counts. Keeping every one of its parameters out of this
+// template is what lets a change to the reading recover each per-sample body from cache instead of
+// re-running parse, refine-tags and tag-stat.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 
-self.defineOutputs("abundance", "fractions", "consensus", "specificity", "perCellSummary", "qc", "qcJson", "metricsLogStream")
+self.defineOutputs("abundance", "fractions", "perCellSummary", "qc", "qcJson", "metricsLogStream")
 
 metricsSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:main")
 qcReportSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:qc-report")
@@ -21,8 +27,6 @@ self.body(func(inputs) {
 	refineReport := inputs.refineReport
 	tags := inputs.tags // { cell, umi, feature } tag names (from the model; see pattern.ts)
 	tagsCsv := inputs.tagsCsv
-	control := inputs.control // undefined / "" -> no specificity score (render.create skips undefined)
-	dominanceThreshold := inputs.dominanceThreshold
 	barcodeSeqColumn := inputs.barcodeSeqColumn
 	featureNameColumn := inputs.featureNameColumn
 	// Optional multi-barcode antigen combine mode. "" = off (per_cell_metrics defaults every feature to
@@ -30,12 +34,6 @@ self.body(func(inputs) {
 	// AND per-barcode "fired" floor.
 	combineColumn := is_undefined(inputs.combineColumn) ? "" : inputs.combineColumn
 	minUmi := is_undefined(inputs.minUmi) ? 1 : inputs.minUmi
-	// Optional off-target designation (F2). offtargetColumn names an imported per-feature property column
-	// (e.g. antigen_class); offtargetValues is the comma-separated set of its values marking a feature as
-	// off-target. Both empty = off (unchanged dominant call). Features so marked are excluded from the
-	// dominant call (like the control) and turn on the cross-reactive label.
-	offtargetColumn := is_undefined(inputs.offtargetColumn) ? "" : inputs.offtargetColumn
-	offtargetValues := is_undefined(inputs.offtargetValues) ? "" : inputs.offtargetValues
 
 	// Per-sample QC summary: reads parsed/matched (parse JSON report) + cell/feature/UMI metrics
 	// (tag-stat) + best-effort panel-assigned fraction (refine JSON report).
@@ -70,7 +68,6 @@ self.body(func(inputs) {
 		between(formula.gib(metricsBaseGB), formula.gib(256)).
 		staticFallback(formula.gib(metricsBaseGB))
 
-	hasControl := !is_undefined(control) && control != ""
 	metrics := exec.builder().
 		printErrStreamToStdout().
 		saveStdoutStream().
@@ -87,37 +84,27 @@ self.body(func(inputs) {
 		arg("--umi-count-col").arg("unique_" + tags.umi).
 		arg("--csv-barcode-col").arg(barcodeSeqColumn).
 		arg("--csv-feature-col").arg(featureNameColumn).
-		arg("--dominance-threshold").arg(string(dominanceThreshold)).
 		arg("--output-prefix").arg("result").
 		saveFile("result_abundance.csv").
 		saveFile("result_fractions.csv").
-		saveFile("result_consensus.csv").
-		saveFile("result_specificity.csv").
 		saveFile("result_per_cell_summary.csv")
-	if hasControl {
-		metrics = metrics.arg("--control").arg(control)
-	}
 	// Multi-barcode antigen combine mode (optional). Only pass --combine-col when a column is configured;
 	// otherwise per_cell_metrics defaults every feature to OR/sum (unchanged behaviour). --min-umi is the
 	// AND per-barcode "fired" floor and is harmless when no combine column is set.
 	if combineColumn != "" {
 		metrics = metrics.arg("--combine-col").arg(combineColumn).arg("--min-umi").arg(string(minUmi))
 	}
-	// Off-target designation (optional, F2). Only pass both flags when a column AND values are configured;
-	// per_cell_metrics requires them together and leaves the dominant call unchanged when absent.
-	if offtargetColumn != "" && offtargetValues != "" {
-		metrics = metrics.arg("--offtarget-col").arg(offtargetColumn).arg("--offtarget-values").arg(offtargetValues)
-	}
 	metrics = metrics.run()
 
-	// specificity is meaningful only with a control feature, so the Python always writes
-	// result_specificity.csv (empty header-only when no --control) and we always return it. main.tpl and
-	// the model gate the specificity *import* on hasControl, so the empty file is simply never read.
+	// The consensus (dominant-feature) and Cell Ranger specificity tables are gone with the dominance rule
+	// they reported: per_cell_metrics.py no longer writes either, and no longer takes the four flags that
+	// drove them (--control, --dominance-threshold, --offtarget-col, --offtarget-values). The binding
+	// question is now asked of every antigen independently in the verdict stage, so a cell that bound three
+	// antigens carries three verdicts rather than one winner and two absences. The negative-control
+	// designation survives as a per-feature marker column, emitted outside this fan-out.
 	return {
 		abundance: metrics.getFile("result_abundance.csv"),
 		fractions: metrics.getFile("result_fractions.csv"),
-		consensus: metrics.getFile("result_consensus.csv"),
-		specificity: metrics.getFile("result_specificity.csv"),
 		perCellSummary: metrics.getFile("result_per_cell_summary.csv"),
 		qc: qc.getFile("result_qc.csv"),
 		qcJson: qc.getFileContent("result_qc.json"), // inline content (saveFileContent) so the model can read it

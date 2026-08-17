@@ -998,6 +998,12 @@ def main() -> None:
         "tagsWithoutGroupingValue": sorted(ungrouped_tags),
         "contending": [sorted(group) for group in contending],
         "identityCount": len(universe),
+        # The identities themselves, in the order the pivot lays them out. The workflow builds one
+        # p-column per column of result_identity_summary.csv, and the column names are the identities --
+        # which are panel data, unknown until this runs. A count cannot name them, so without this the
+        # pivoted summary imports as nothing and the only per-antigen state a clonotype-anchored reader
+        # can see disappears with no error.
+        "identities": sorted(universe),
         "identitySummaryEmitted": summary_emitted,
         "identitySummaryLimit": IDENTITY_SUMMARY_MAX_IDENTITIES,
         "readingsFloored": readings_floored,

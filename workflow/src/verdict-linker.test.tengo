@@ -1,0 +1,76 @@
+test := import("@platforma-sdk/workflow-tengo:test")
+linker := import(":verdict-linker")
+
+_sampleAxis := { name: "pl7.app/sampleId", type: "String" }
+_cellAxis := { name: "pl7.app/sc/cellId", type: "String" }
+
+_clonotypeAxis := func(runId) {
+	return {
+		name: "pl7.app/vdj/scClonotypeKey",
+		type: "String",
+		domain: { "pl7.app/vdj/clonotypingRunId": runId }
+	}
+}
+
+_linkerCol := func(clonotypeAxis) {
+	return {
+		spec: {
+			name: "pl7.app/sc/cellLinker",
+			valueType: "Int",
+			axesSpec: [_sampleAxis, _cellAxis, clonotypeAxis],
+			annotations: { "pl7.app/isLinkerColumn": "true", "pl7.app/label": "Cell linker" }
+		},
+		data: "data-placeholder"
+	}
+}
+
+// A dataset carrying one linker per receptor is legitimate, and the anchor says which receptor the user
+// chose. Picking by the clonotype axis rather than by count is what keeps a BCR + TCR run working.
+Test_pick_selects_the_anchors_own_linker := func() {
+	tcr := _linkerCol(_clonotypeAxis("run-tcr"))
+	bcr := _linkerCol(_clonotypeAxis("run-bcr"))
+	test.isEqual(bcr.spec, linker.pick([tcr, bcr], _clonotypeAxis("run-bcr")).spec,
+		"the linker keyed on the chosen dataset's clonotype axis is selected")
+	test.isEqual(tcr.spec, linker.pick([bcr, tcr], _clonotypeAxis("run-tcr")).spec,
+		"selection does not depend on the order the linkers were resolved in")
+}
+
+// Axis identity is name plus domain. Two clonotyping runs produce axes of the same name whose domains
+// differ, and treating them as one would join the verdicts to the wrong clonotypes.
+Test_axis_identity_includes_the_domain := func() {
+	test.isTrue(linker.sameAxis(_clonotypeAxis("r1"), _clonotypeAxis("r1")), "same name and domain match")
+	test.isFalse(linker.sameAxis(_clonotypeAxis("r1"), _clonotypeAxis("r2")),
+		"the same axis name under a different clonotyping run is a different axis")
+	test.isTrue(linker.sameAxis({ name: "pl7.app/sampleId" }, { name: "pl7.app/sampleId", domain: {} }),
+		"an absent domain and an empty one are the same identity")
+}
+
+// A sample-axis mismatch produces no rows and no error, so it is named rather than left to surface as an
+// empty block.
+Test_sample_axis_mismatch_is_named := func() {
+	matched := _linkerCol(_clonotypeAxis("r1"))
+	test.isEqual("", linker.sampleAxisMismatch(matched.spec, _sampleAxis),
+		"a matching sample axis reports no mismatch")
+
+	grouped := {
+		spec: {
+			axesSpec: [{ name: "pl7.app/sampleGroupId", type: "String" }, _cellAxis, _clonotypeAxis("r1")]
+		}
+	}
+	test.isFalse(linker.sampleAxisMismatch(grouped.spec, _sampleAxis) == "",
+		"a multiplexed sample axis is reported as a mismatch rather than joining to nothing")
+}
+
+// The marker is dropped from a copy: mutating the resolved spec would change what every other reader of
+// the bundle sees, and the CSV export is the only consumer that needs it gone.
+Test_plainSpec_copies_and_keeps_everything_else := func() {
+	original := _linkerCol(_clonotypeAxis("r1")).spec
+	plain := linker.plainSpec(original)
+	test.isTrue(is_undefined(plain.annotations["pl7.app/isLinkerColumn"]),
+		"the linker marker is removed from the exported spec")
+	test.isEqual("Cell linker", plain.annotations["pl7.app/label"],
+		"every other annotation survives")
+	test.isEqual("true", original.annotations["pl7.app/isLinkerColumn"],
+		"the resolved spec itself is untouched")
+	test.isEqual(original.axesSpec, plain.axesSpec, "the axis tuple is unchanged")
+}

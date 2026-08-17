@@ -20,7 +20,7 @@ columnSpecs := import(":column-specs")
 
 json := import("json")
 
-self.defineOutputs("qcSummaryTable")
+self.defineOutputs("qcSummaryTable", "qcSummaryCsv")
 
 self.body(func(inputs) {
 	qcData := inputs.qcData // ResourceMap: [sampleId] -> per-sample QC CSV file
@@ -61,6 +61,11 @@ self.body(func(inputs) {
 	qcSummaryTable := xsv.importFile(csvFile, "csv", columnsSpec, { cpu: 1, mem: "2GiB" })
 
 	return {
-		qcSummaryTable: qcSummaryTable
+		qcSummaryTable: qcSummaryTable,
+		// The same combined table as a FILE. The verdict stage reads its read counts through --qc-summary,
+		// and it is returned here rather than concatenated a second time because the two must agree: the
+		// per-sample sampleId is injected from the resource-map key, so a second gather could key the rows
+		// differently and the verdict stage would silently match no sample and evaluate nothing.
+		qcSummaryCsv: csvFile
 	}
 })

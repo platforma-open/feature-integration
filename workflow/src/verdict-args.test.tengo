@@ -1,0 +1,119 @@
+test := import("@platforma-sdk/workflow-tengo:test")
+va := import(":verdict-args")
+
+// A fully configured reading. Every optional parameter is set, so a flag missing from the built vector is
+// a threading defect rather than an intentional omission.
+_full := {
+	hasLinker: true,
+	hasQcSummary: true,
+	barcodeSeqColumn: "Sequence",
+	featureNameColumn: "Name",
+	sampleColumn: "Samples",
+	roleColumn: "Type",
+	referenceValues: ["Control", "Isotype"],
+	referenceSource: "declared",
+	panelReferenceMinMembers: 8,
+	referenceThinLine: 2,
+	countFloor: 4,
+	boundCutoff: 75,
+	minVotingCells: 1,
+	minAgreement: 0.6,
+	gateThreshold: 40,
+	highReferenceLine: 100,
+	grouping: { by: "property", column: "family" },
+	contendingGroups: [["AgA", "AgB"]],
+	captureMap: { S1: "lane1" }
+}
+
+// Every flag emit_verdicts.py declares, checked against the built vector. An unthreaded parameter fails
+// nothing at render or exec time — the CLI defaults it — so this list is the only place the omission
+// shows up.
+Test_every_flag_is_threaded := func() {
+	args := va.build(_full)
+	flags := [
+		"--linker", "--qc-summary",
+		"--barcode-col", "--feature-col", "--sample-col", "--role-column", "--reference-values",
+		"--reference-source", "--panel-min-members", "--reference-thin-line", "--floor", "--cutoff",
+		"--min-voters", "--min-agreement", "--gate-threshold", "--high-reference-line",
+		"--grouping", "--contending", "--capture-map", "--output-prefix"
+	]
+	for _, flag in flags {
+		test.isTrue(va.has(args, flag), "argument list is missing " + flag)
+	}
+}
+
+// The per-sample read QC is the one input whose absence is invisible: three of the fifteen measurements
+// have no other source, and they render as declared-but-unchecked rather than as an error. The flag must
+// name the file the run template stages, or the exec fails on a path it never received.
+Test_qc_summary_points_at_the_staged_file := func() {
+	args := va.build(_full)
+	test.isEqual(va.FILE_QC_SUMMARY, va.valueOf(args, "--qc-summary"),
+		"--qc-summary must name the staged per-sample QC CSV")
+}
+
+// The two positionals lead, and each names a staged file.
+Test_positionals_lead_and_name_staged_files := func() {
+	args := va.build(_full)
+	test.isEqual(va.FILE_COUNTS, args[0], "the counts table is the first positional")
+	test.isEqual(va.FILE_PANEL, args[1], "the panel file is the second positional")
+}
+
+// A flag naming a file the exec never received is a hard failure, so neither file flag may appear on its
+// own. Without a dataset there is no linker; the rest of the reading still runs.
+Test_file_flags_follow_their_files := func() {
+	args := va.build({ barcodeSeqColumn: "Sequence", featureNameColumn: "Name" })
+	test.isFalse(va.has(args, "--linker"), "the linker flag must be absent when no linker was staged")
+	test.isFalse(va.has(args, "--qc-summary"), "the QC flag must be absent when no QC table was staged")
+}
+
+// Off means absent, not zero. A zero gate would set aside every cell and a zero agreement floor would
+// pass every majority instead of skipping the check — both are readings, and neither is "off".
+Test_optional_lines_are_absent_when_off := func() {
+	args := va.build({ barcodeSeqColumn: "Sequence", featureNameColumn: "Name", gateThreshold: 0 })
+	test.isFalse(va.has(args, "--gate-threshold"), "the gate must be absent when off")
+	test.isFalse(va.has(args, "--min-agreement"), "the agreement floor must be absent when off")
+	test.isFalse(va.has(args, "--grouping"), "an absent grouping rule leaves the CLI's per-tag default")
+	test.isFalse(va.has(args, "--contending"), "no contending groups means no flag")
+	test.isFalse(va.has(args, "--reference-source"), "an unchosen comparator is resolved by the software")
+}
+
+// The parameters that shape the reading are always on the command line, defaulted here rather than left
+// to argparse, so the value a run was answered under is recorded with the run.
+Test_shaping_parameters_are_always_present := func() {
+	args := va.build({ barcodeSeqColumn: "Sequence", featureNameColumn: "Name" })
+	test.isEqual("4", va.valueOf(args, "--floor"), "the count floor is stated even when defaulted")
+	test.isEqual("75", va.valueOf(args, "--cutoff"), "the bound cutoff is stated even when defaulted")
+	test.isEqual("1", va.valueOf(args, "--min-voters"), "the voter minimum is stated even when defaulted")
+	test.isEqual("8", va.valueOf(args, "--panel-min-members"), "the panel minimum is stated")
+	test.isEqual("2", va.valueOf(args, "--reference-thin-line"), "the thin-comparator line is stated")
+	test.isEqual("100", va.valueOf(args, "--high-reference-line"), "the high-reference line is stated")
+}
+
+// argparse declares --floor, --min-voters, --panel-min-members, --reference-thin-line,
+// --high-reference-line and --gate-threshold as `type=int`, which rejects "4.0". A model that rounds to a
+// whole number still hands it over as a JSON number, so the conversion happens here.
+Test_integer_flags_carry_no_decimal_point := func() {
+	args := va.build({
+		barcodeSeqColumn: "Sequence", featureNameColumn: "Name",
+		countFloor: 4.0, minVotingCells: 2.0, gateThreshold: 40.0,
+		panelReferenceMinMembers: 8.0, referenceThinLine: 2.0, highReferenceLine: 100.0
+	})
+	test.isEqual("4", va.valueOf(args, "--floor"), "the count floor reaches argparse as an integer")
+	test.isEqual("2", va.valueOf(args, "--min-voters"), "the voter minimum reaches argparse as an integer")
+	test.isEqual("40", va.valueOf(args, "--gate-threshold"), "the gate reaches argparse as an integer")
+}
+
+// The role values are comma-separated because that is what the CLI splits on, and they arrive already
+// sorted so two equivalent selections produce one cache key.
+Test_reference_values_are_comma_separated := func() {
+	args := va.build(_full)
+	test.isEqual("Control,Isotype", va.valueOf(args, "--reference-values"),
+		"role values reach the CLI comma-separated")
+}
+
+// The grouping rule travels as JSON, so a property grouping reaches the software intact.
+Test_grouping_rule_travels_as_json := func() {
+	args := va.build(_full)
+	test.isEqual("{\"by\":\"property\",\"column\":\"family\"}", va.valueOf(args, "--grouping"),
+		"the grouping rule is passed as JSON")
+}

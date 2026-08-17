@@ -7,7 +7,8 @@
   "scripts": {
     "build": "shx rm -rf dist && pl-tengo build",
     "format": "/usr/bin/env emacs --script ./format.el || echo 'No emacs.'",
-    "check": "pl-tengo check"
+    "check": "pl-tengo check",
+    "test": "pl-tengo test"
   },
   "dependencies": {
     "@platforma-open/milaboratories.feature-integration.per-cell-metrics": "workspace:*",

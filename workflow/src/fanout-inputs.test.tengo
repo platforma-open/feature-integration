@@ -1,0 +1,60 @@
+test := import("@platforma-sdk/workflow-tengo:test")
+fanout := import(":fanout-inputs")
+va := import(":verdict-args")
+
+_one := func(key) {
+	m := {}
+	m[key] = "x"
+	return m
+}
+
+// The whole point of the two-stage split: changing the reading must not re-run the per-sample mitool
+// chain. Every verdict-stage parameter is checked against both allowlists, so adding one to
+// verdict-args.PARAMETER_NAMES and to the fan-out at the same time fails here rather than costing every
+// user a full parse / refine-tags / tag-stat re-run with nothing in the logs to explain it.
+Test_no_verdict_parameter_may_reach_the_fanout := func() {
+	for _, name in va.PARAMETER_NAMES {
+		test.isEqual([name], fanout.unlisted(_one(name), fanout.EXTRA_INPUT_KEYS),
+			"verdict-stage parameter " + name + " must not be a per-sample body input")
+		test.isEqual([name], fanout.unlisted(_one(name), fanout.META_EXTRA_KEYS),
+			"verdict-stage parameter " + name + " must not be part of the per-sample resource meta")
+	}
+}
+
+// The resolved clonotype linker is a resource, not a parameter, and it is the other thing that must never
+// enter: it would put every per-sample body behind the clonotyping chain as well as re-keying it.
+Test_no_linker_resource_may_reach_the_fanout := func() {
+	for _, name in ["linker", "linkerColumn", "cellLinker", "columns", "setAxisSpec"] {
+		test.isEqual([name], fanout.unlisted(_one(name), fanout.EXTRA_INPUT_KEYS),
+			name + " must not be a per-sample body input")
+		test.isEqual([name], fanout.unlisted(_one(name), fanout.META_EXTRA_KEYS),
+			name + " must not be part of the per-sample resource meta")
+	}
+}
+
+// The allowlist accepts exactly what main.tpl.tengo passes today, so the render-time check is not
+// vacuously satisfied by an over-broad list.
+Test_the_declared_fanout_inputs_are_accepted := func() {
+	extra := {}
+	for _, key in fanout.EXTRA_INPUT_KEYS {
+		extra[key] = "x"
+	}
+	test.isEqual([], fanout.unlisted(extra, fanout.EXTRA_INPUT_KEYS),
+		"every declared per-sample body input is accepted")
+
+	meta := {}
+	for _, key in fanout.META_EXTRA_KEYS {
+		meta[key] = 1
+	}
+	test.isEqual([], fanout.unlisted(meta, fanout.META_EXTRA_KEYS),
+		"every declared resource-meta key is accepted")
+}
+
+// Offenders come back sorted, so a failing render reports the same message every time.
+Test_offenders_are_reported_sorted := func() {
+	m := {}
+	m.zzz = 1
+	m.aaa = 2
+	test.isEqual(["aaa", "zzz"], fanout.unlisted(m, fanout.EXTRA_INPUT_KEYS),
+		"unlisted keys are reported in sorted order")
+}
