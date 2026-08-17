@@ -1004,12 +1004,19 @@ qcImportSpec := func(levelAxisSpec, entityAxisSpec, measurementAxisSpec, panelAx
 				"pl7.app/discreteValues": QC_STATUSES,
 				"pl7.app/description": "'unjudged' means no line exists to judge this against; 'not evaluated' means nothing computed it. Neither is a pass."
 			}),
-			col("judged", "pl7.app/antigen/qcJudged", "Int", "Judged", 69000, false, { "pl7.app/min": "0" }),
-			col("unjudged", "pl7.app/antigen/qcUnjudged", "Int", "Unjudged", 68000, false, { "pl7.app/min": "0" }),
-			col("notEvaluated", "pl7.app/antigen/qcNotEvaluated", "Int", "Not evaluated", 67000, false, { "pl7.app/min": "0" }),
+			// The coverage triple is shown by default, beside the status rather than folded into it: a
+			// status says whether what was checked is wrong, and the triple says how much of the level was
+			// checked at all. Hiding the triple behind the column chooser would leave "nothing here is
+			// wrong" and "almost nothing here was checkable" looking identical on the page.
+			col("judged", "pl7.app/antigen/qcJudged", "Int", "Judged", 69000, true, { "pl7.app/min": "0" }),
+			col("unjudged", "pl7.app/antigen/qcUnjudged", "Int", "Unjudged", 68000, true, { "pl7.app/min": "0" }),
+			col("notEvaluated", "pl7.app/antigen/qcNotEvaluated", "Int", "Not evaluated", 67000, true, { "pl7.app/min": "0" }),
 			col("counts", "pl7.app/antigen/qcCounts", "String", "What it counts", 66000, false, {}),
 			col("implies", "pl7.app/antigen/qcImplies", "String", "What a bad value means", 65000, false, {}),
-			col("reason", "pl7.app/antigen/qcReason", "String", "Why deferred", 64000, false, {})
+			// Also shown by default. A row reading "not evaluated" carries the reason nothing computed it,
+			// and a deferral whose reason is one click away is a blank cell to everyone who does not click —
+			// which reads as "checked, and fine", the one thing this vocabulary exists to prevent.
+			col("reason", "pl7.app/antigen/qcReason", "String", "Why deferred", 64000, true, {})
 		],
 		storageFormat: "Parquet",
 		partitionKeyLength: 0

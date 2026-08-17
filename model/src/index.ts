@@ -37,6 +37,7 @@ const DEFAULT_HIGH_REFERENCE_LINE = 100;
 // dataset that could be picked here always carries it.
 const IDENTITY_AXIS = "pl7.app/antigen/identityId";
 const CLONOTYPE_SET_AXIS = "pl7.app/vdj/scClonotypeKey";
+const PANEL_AXIS = "pl7.app/antigen/panelId";
 
 // The run record emit_verdicts.py writes (result_run_meta.json), read as content. Only the fields the UI
 // states back to the user are typed here; the file carries every parameter the reading used.
@@ -194,6 +195,25 @@ function parseQcRows(ctx: BlockRenderCtx<BlockArgs, BlockData>) {
   return (qcMap?.data ?? []).filter((e) => e.value != null);
 }
 
+// The readable name of each declared tag set, for the two report tables keyed on the panel axis.
+//
+// A panel id is a twelve-character hash of the sorted tag list — stable across re-runs of the same
+// declaration, and unreadable on sight. The name emit_verdicts.py writes for it ("<n> tags: <the samples
+// it covers>") is a label column in the EXPORTED verdict frame, so it has to travel in the columns list
+// like the identity label does on the verdict table: createPlDataTable discovers label columns in the
+// result pool, and a block's own exports are not in its own pool.
+function panelLabelColumns(ctx: BlockRenderCtx<BlockArgs, BlockData>) {
+  const pCols = ctx.outputs
+    ?.resolve({ field: "antigenVerdictsTable", allowPermanentAbsence: true })
+    ?.getPColumns();
+  return (pCols ?? []).filter(
+    (c) =>
+      c.spec.name === "pl7.app/label" &&
+      c.spec.axesSpec.length === 1 &&
+      c.spec.axesSpec[0].name === PANEL_AXIS,
+  );
+}
+
 // Tag→feature CSV metadata from the prerun (emit-csv-meta), or undefined until staging has produced it.
 // Shared by the two column dropdowns, the control dropdown, and the csvColumnsLoading signal.
 function readCsvMeta(ctx: BlockRenderCtx<BlockArgs, BlockData>): CsvMeta | undefined {
@@ -264,6 +284,8 @@ type BlockDataV2 = Omit<
   | "grouping"
   | "contendingGroups"
   | "verdictTableState"
+  | "antigenQcTableState"
+  | "panelMismatchTableState"
 > & {
   dominanceThreshold: number;
   offtargetProperty?: string;
@@ -315,6 +337,8 @@ const dataModel = new DataModelBuilder()
       referenceThinLine: DEFAULT_REFERENCE_THIN_LINE,
       highReferenceLine: DEFAULT_HIGH_REFERENCE_LINE,
       verdictTableState: createPlDataTableStateV2(),
+      antigenQcTableState: createPlDataTableStateV2(),
+      panelMismatchTableState: createPlDataTableStateV2(),
     }),
   )
   .init(() => ({
@@ -334,6 +358,8 @@ const dataModel = new DataModelBuilder()
     tableState: createPlDataTableStateV2(),
     qcSummaryTableState: createPlDataTableStateV2(),
     verdictTableState: createPlDataTableStateV2(),
+    antigenQcTableState: createPlDataTableStateV2(),
+    panelMismatchTableState: createPlDataTableStateV2(),
   }));
 
 export const platforma = BlockModelV3.create(dataModel)
@@ -960,6 +986,55 @@ export const platforma = BlockModelV3.create(dataModel)
     },
     { retentive: true, withStatus: true },
   )
+  // The run's own quality report: one row per (level, panel, measured thing, measurement), carrying the
+  // measurement's status, the coverage triple beside it and — where nothing computed the measurement — the
+  // reason it was deferred. Every declared measurement keeps its row whether or not this run could compute
+  // it, so the frame is complete by construction and the view needs no handling for a measurement that is
+  // simply absent.
+  //
+  // The panel is part of the KEY here, not a value beside it: the same reagent stained into several samples
+  // writes one row per panel at the same (level, measured thing, measurement), and rows sharing an axis key
+  // are silently collapsed on import to whichever one survives.
+  //
+  // createPlDataTableV2 rather than V3 for the reason recorded on perCellTable above: V3's discovery walks
+  // the entire result pool and hangs on the upstream Samples & Data FASTQ dataset. Every column is keyed on
+  // this frame's own four axes, so no filtering by axis shape is needed — unlike verdictTable, which reads a
+  // frame holding several tables at once.
+  .output(
+    "antigenQcTable",
+    (ctx) => {
+      const pCols = ctx.outputs
+        ?.resolve({ field: "antigenQcTable", allowPermanentAbsence: true })
+        ?.getPColumns();
+      if (pCols === undefined || pCols.length === 0) return undefined;
+      return createPlDataTableV2(
+        ctx,
+        [...pCols, ...panelLabelColumns(ctx)],
+        ctx.data.antigenQcTableState,
+      );
+    },
+    { retentive: true, withStatus: true },
+  )
+  // The panel-versus-reads check: one row per (panel, tag), with the direction of the mismatch and the
+  // samples that reported it. Keyed on the panel rather than on the sample because a declared tag the reads
+  // never carried is a property of the declared tag set, not of any one sample; the samples travel in the
+  // row so nothing about where it was seen is lost. Both directions live in the one frame under the
+  // direction column, which is what lets a single table show them both.
+  .output(
+    "antigenPanelMismatchTable",
+    (ctx) => {
+      const pCols = ctx.outputs
+        ?.resolve({ field: "antigenPanelMismatchTable", allowPermanentAbsence: true })
+        ?.getPColumns();
+      if (pCols === undefined || pCols.length === 0) return undefined;
+      return createPlDataTableV2(
+        ctx,
+        [...pCols, ...panelLabelColumns(ctx)],
+        ctx.data.panelMismatchTableState,
+      );
+    },
+    { retentive: true, withStatus: true },
+  )
   // What the reading was actually answered under. The page states the comparator that SERVED rather than
   // the one that was requested, because the software degrades a request it cannot honour and a reader
   // meeting an all-unreliable table otherwise has no way to learn that happened. Absent until a run with a
@@ -1047,6 +1122,10 @@ export const platforma = BlockModelV3.create(dataModel)
             // columns at all, and the page saying so is the only place a user learns why — hiding the
             // tab would leave the absence unexplained.
             { type: "link" as const, href: "/verdicts" as const, label: "Binding verdicts" },
+            // Shown on the same terms as the verdict tab, for the same reason: a run with no V(D)J
+            // dataset produced neither the measurements nor the panel check, and the page saying so is
+            // the only place a user learns why.
+            { type: "link" as const, href: "/checks" as const, label: "Quality checks" },
           ]
         : []),
     ];

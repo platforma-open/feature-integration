@@ -138,6 +138,8 @@ blockTest.skip(
         tableState: createPlDataTableStateV2(),
         qcSummaryTableState: createPlDataTableStateV2(),
         verdictTableState: createPlDataTableStateV2(),
+        antigenQcTableState: createPlDataTableStateV2(),
+        panelMismatchTableState: createPlDataTableStateV2(),
       } satisfies BlockData,
     });
 

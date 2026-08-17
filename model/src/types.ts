@@ -143,6 +143,14 @@ export type BlockData = {
    */
   contendingGroups?: string[][];
   verdictTableState: PlDataTableStateV2; // verdict grid state (UI-only, never projected to args)
+  /**
+   * Grid state for the two halves of the run's own report — the quality measurements and the
+   * panel-versus-reads check. Separate states because they are separate frames on separate keys: the
+   * measurements are keyed (level, panel, measured thing, measurement) and the check is keyed
+   * (panel, tag), so a column set or filter saved for one means nothing in the other. UI-only.
+   */
+  antigenQcTableState: PlDataTableStateV2;
+  panelMismatchTableState: PlDataTableStateV2;
 
   presetId?: string;
   pattern?: string;
