@@ -57,16 +57,15 @@ blockTest("empty inputs", { timeout: 20000 }, async ({ rawPrj: project, expect }
 
   // Every output a page reads must RESOLVE on a freshly added block, before anything has run. An
   // output that throws here is not a failed computation — it breaks the page that reads it at the
-  // moment the block is created, which is the first thing a user sees. This block gained five table
-  // outputs and a run-record output on the verdict branch, each guarded by its own
-  // undefined-until-computed path, so the guards are what this asserts. Values are deliberately not
-  // asserted: `ok` with an undefined value is the correct empty-state answer for all of them.
+  // moment the block is created, which is the first thing a user sees. Each verdict-branch output is
+  // guarded by its own undefined-until-computed path, so the guards are what this asserts. Values are
+  // deliberately not asserted: `ok` with an undefined value is the correct empty-state answer for all of
+  // them — including punchcardIdentityOptions, which answers with an empty list before any run.
   const mustResolve = [
     "perCellTable",
     "qcSummaryTable",
-    "verdictTable",
-    "antigenQcTable",
-    "antigenPanelMismatchTable",
+    "punchcardTable",
+    "punchcardIdentityOptions",
     "verdictRunMeta",
     "isRunning",
     "started",
@@ -177,9 +176,8 @@ blockTest.skip(
         highReferenceLine: 100,
         tableState: createPlDataTableStateV2(),
         qcSummaryTableState: createPlDataTableStateV2(),
-        verdictTableState: createPlDataTableStateV2(),
-        antigenQcTableState: createPlDataTableStateV2(),
-        panelMismatchTableState: createPlDataTableStateV2(),
+        punchcardTableState: createPlDataTableStateV2(),
+        punchcardIdentities: [],
       } satisfies BlockData,
     });
 

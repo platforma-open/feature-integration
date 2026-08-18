@@ -142,15 +142,17 @@ export type BlockData = {
    * data it feeds — a write-on-read loop, and a write race between two open clients.
    */
   contendingGroups?: string[][];
-  verdictTableState: PlDataTableStateV2; // verdict grid state (UI-only, never projected to args)
+  punchcardTableState: PlDataTableStateV2; // punchcard grid state (UI-only, never projected to args)
   /**
-   * Grid state for the two halves of the run's own report — the quality measurements and the
-   * panel-versus-reads check. Separate states because they are separate frames on separate keys: the
-   * measurements are keyed (level, panel, measured thing, measurement) and the check is keyed
-   * (panel, tag), so a column set or filter saved for one means nothing in the other. UI-only.
+   * The identities whose columns the punchcard shows, picked one at a time. A view filter and nothing
+   * more: every identity is already in the pivoted frame, so adding one costs a column render rather
+   * than a run, and an empty list means "none picked yet" rather than "all".
+   *
+   * Written on a user gesture only. The choices come from the punchcardIdentityOptions output, and a
+   * watcher copying that output into data would make the output depend on the data feeding it — a
+   * write-on-read loop, and a write race between two open clients.
    */
-  antigenQcTableState: PlDataTableStateV2;
-  panelMismatchTableState: PlDataTableStateV2;
+  punchcardIdentities: string[];
 
   presetId?: string;
   pattern?: string;

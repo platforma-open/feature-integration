@@ -306,20 +306,51 @@ def _cells_by_set(linker: pl.DataFrame) -> dict[str, list[CellKey]]:
     return {set_id: sorted(keys) for set_id, keys in sorted(members.items())}
 
 
-def _pivot_identity_summary(verdicts: pl.DataFrame, universe: set[str]) -> tuple[pl.DataFrame, bool]:
-    """The per-set verdict row, one column per identity.
+def _pivot_identity_summary(verdicts: pl.DataFrame, universe: set[str]) -> tuple[pl.DataFrame, pl.DataFrame, bool]:
+    """The per-set verdict row and its support, one column per identity in each.
 
     Pivoted onto the set axis alone because a column carrying an axis the
     clonotype anchor does not have is dropped with no error by the block that
     consumes this, so a `(set, identity)` column is invisible there. Gated on
     identity count: the pivot costs a column per identity and a large panel
     would turn one artifact into a thousand.
+
+    The second frame is the punchcard's, and its cell carries the state AND the
+    support in one value, `state|answered|couldAnswer`. Two reasons it is one
+    column rather than three:
+
+    `support-travels-with-the-reading` obliges both counts to travel with a
+    verdict *wherever it appears*, and its reason is about the page rather than
+    the artifact — a reading resting on three cells must not look like one
+    resting on forty. A punchcard drawn from the state pivot alone would be
+    exactly that, so the support has to reach the same cell.
+
+    And it cannot reach it as sibling columns. A column name here IS an antigen
+    name from a customer's panel file, so any suffix marking a support column is
+    a name some panel is entitled to use; and a grid pairs a cell to another
+    column's cell only by position, which no import guarantees. One value per
+    identity removes both problems, and keeps the pivot one column wide per
+    identity so the size gate above still means what it says.
+
+    The state pivot is left exactly as it was, because lead selection reads it
+    and a compound value would not filter.
     """
     if len(universe) > IDENTITY_SUMMARY_MAX_IDENTITIES or verdicts.height == 0:
         sets = verdicts.select("setId").unique() if verdicts.height else pl.DataFrame(schema={"setId": pl.String})
-        return sets, False
-    wide = verdicts.pivot(on="identity", index="setId", values="state")
-    return wide.select(["setId", *sorted(universe)]), True
+        return sets, sets, False
+    ordered = ["setId", *sorted(universe)]
+    states = verdicts.pivot(on="identity", index="setId", values="state").select(ordered)
+    punch = verdicts.with_columns(
+        pl.concat_str(
+            [
+                pl.col("state"),
+                pl.col("cellsAnswered").cast(pl.String),
+                pl.col("cellsCouldAnswer").cast(pl.String),
+            ],
+            separator="|",
+        ).alias("punch")
+    ).pivot(on="identity", index="setId", values="punch")
+    return states, punch.select(ordered), True
 
 
 def _leaf(level, entity, measurement, value, detail, panel_id, status: Status) -> QcRow:
@@ -621,8 +652,9 @@ def main() -> None:
     _write_sorted(verdicts, f"{prefix}_verdicts.csv", ["setId", "identity"])
     _write_sorted(set_counts(verdicts), f"{prefix}_set_counts.csv", ["setId"])
 
-    summary, summary_emitted = _pivot_identity_summary(verdicts, universe)
+    summary, punch, summary_emitted = _pivot_identity_summary(verdicts, universe)
     _write_sorted(summary, f"{prefix}_identity_summary.csv", ["setId"])
+    _write_sorted(punch, f"{prefix}_identity_punch.csv", ["setId"])
 
     # The sparse per-tag counts and the per-cell scalars together carry every
     # per-cell state, at a small fraction of the size a per-cell-per-identity

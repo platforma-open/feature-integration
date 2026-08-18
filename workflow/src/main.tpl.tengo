@@ -439,6 +439,7 @@ wf.body(func(args) {
 			verdicts: verdictRun.output("verdicts"),
 			setCounts: verdictRun.output("setCounts"),
 			identitySummary: verdictRun.output("identitySummary"),
+			identityPunch: verdictRun.output("identityPunch"),
 			cellCounts: verdictRun.output("cellCounts"),
 			cellScalars: verdictRun.output("cellScalars"),
 			offered: verdictRun.output("offered"),
@@ -513,6 +514,10 @@ wf.body(func(args) {
 		// this the block that produced the verdicts is the one place that cannot show them. The model reads
 		// it, keeps the columns keyed (clonotype set, identity) plus the identity label, and drops the rest.
 		blockOutputs.antigenVerdictsTable = pframes.exportFrame(verdictImport.output("antigenVerdicts"))
+		// The punchcard's source: the same verdicts pivoted onto the clonotype set, one column per identity
+		// for the state and one for the support behind it. A table cannot pivot a (set, identity) frame into
+		// columns, so the shape the punchcard needs is made here rather than in the model.
+		blockOutputs.antigenPunchcardTable = pframes.exportFrame(verdictImport.output("punchcard"))
 		// The run's own report. Outputs rather than exports: these are read by this block's model and UI.
 		blockOutputs.antigenQcTable = pframes.exportFrame(verdictImport.output("qcTable"))
 		blockOutputs.antigenPanelMismatchTable = pframes.exportFrame(verdictImport.output("panelMismatchTable"))

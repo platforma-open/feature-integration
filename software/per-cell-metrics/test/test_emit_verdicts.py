@@ -1163,3 +1163,79 @@ def test_a_role_value_differing_only_in_case_is_not_matched(wide_bed):
 def _states_prefix(bed, prefix):
     v = pl.read_csv(bed / f"{prefix}_verdicts.csv", infer_schema_length=0)
     return {(r["setId"], r["identity"]) for r in v.iter_rows(named=True)}
+
+
+# --- the punchcard's pivot ---------------------------------------------------------
+#
+# All of these run against the COMMITTED bed rather than the small inline one, and that is
+# load-bearing. On the inline bed every row has cellsAnswered == cellsCouldAnswer and the
+# panel yields a single identity, so swapping the two counts and shuffling the column
+# order are both invisible: mutating either passed the first version of these tests. The
+# committed bed carries several identities, readings whose support is short of what could
+# have answered, and *never asked* positions where couldAnswer is zero.
+#
+# Verified by mutation: swapping the two counts, dropping the state from the value, and
+# changing the separator are each caught. Dropping the `select(ordered)` that aligns the
+# punch pivot with the state pivot is NOT caught and cannot be here — polars pivots columns
+# in order of first appearance, which on this bed already equals sorted order. That
+# alignment is enforced by construction rather than observed by a test.
+
+
+def _punch_bed(bed):
+    r = _run(bed, *_bed_args("panel_with_reference.csv"))
+    assert r.returncode == 0, r.stderr
+    return (
+        pl.read_csv(bed / "result_verdicts.csv", infer_schema_length=0),
+        pl.read_csv(bed / "result_identity_punch.csv", infer_schema_length=0),
+    )
+
+
+def test_punch_bed_can_tell_the_two_counts_apart(wide_bed):
+    # The guard on the tests below. If every row answered exactly as many cells as could
+    # have, swapping the two counts is undetectable and the agreement test below passes
+    # while the punch draws the wrong size everywhere.
+    verdicts, punch = _punch_bed(wide_bed)
+    differing = verdicts.filter(pl.col("cellsAnswered") != pl.col("cellsCouldAnswer"))
+    assert differing.height > 0, "bed no longer distinguishes answered from could-answer"
+    assert len([c for c in punch.columns if c != "setId"]) > 1, "bed no longer has several identities"
+
+
+def test_punch_pivot_agrees_with_the_long_verdicts(wide_bed):
+    # The punchcard's cell is the only place its three facts meet, so this is the one check
+    # that they are the SAME three facts the long frame carries. A pivot that dropped a
+    # field, swapped the counts, or paired a state with another identity's numbers would
+    # still write a well-formed file.
+    verdicts, punch = _punch_bed(wide_bed)
+    identities = sorted(set(verdicts["identity"].to_list()))
+    assert punch.columns == ["setId", *identities]
+
+    expected = {
+        (r["setId"], r["identity"]): f"{r['state']}|{r['cellsAnswered']}|{r['cellsCouldAnswer']}"
+        for r in verdicts.iter_rows(named=True)
+    }
+    for row in punch.iter_rows(named=True):
+        for identity in identities:
+            assert row[identity] == expected[(row["setId"], identity)], (row["setId"], identity)
+
+
+def test_punch_pivot_keys_and_order_match_the_state_pivot(wide_bed):
+    # Both pivots are gated together and ordered together: the punchcard reads one and lead
+    # selection reads the other, and a reader comparing them must not meet a set or an
+    # identity present in one and absent from the other -- or in a different column order,
+    # which is what makes the two frames comparable side by side at all.
+    _punch_bed(wide_bed)
+    states = pl.read_csv(wide_bed / "result_identity_summary.csv", infer_schema_length=0)
+    punch = pl.read_csv(wide_bed / "result_identity_punch.csv", infer_schema_length=0)
+    assert states.columns == punch.columns
+    assert states["setId"].to_list() == punch["setId"].to_list()
+
+
+def test_punch_state_is_the_state_the_long_frame_gives(wide_bed):
+    # The state is the half of the cell that carries the answer, so it is asserted on its
+    # own: a punch whose counts are right and whose state is another identity's would still
+    # draw a glyph, in the wrong colour, with nothing to catch it.
+    verdicts, punch = _punch_bed(wide_bed)
+    by_key = {(r["setId"], r["identity"]): r["state"] for r in verdicts.iter_rows(named=True)}
+    for row in punch.iter_rows(named=True):
+        for identity in [c for c in punch.columns if c != "setId"]:
+            assert row[identity].split("|")[0] == by_key[(row["setId"], identity)]

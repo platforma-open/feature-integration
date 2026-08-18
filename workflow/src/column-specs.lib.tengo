@@ -665,24 +665,27 @@ setCountsImportSpec := func(setAxisSpec, served) {
 // The label is the identity string itself. The readable name lives in result_identity_labels.csv,
 // which is imported as a column rather than read as a value, so it is not available while these
 // specs are built.
-identitySummaryImportSpec := func(setAxisSpec, identities, groupingId, served) {
+// Both identity pivots — the state and the support behind it — are keyed the same way, carry the same
+// column order and the same labels, and differ only in what a column holds. One builder produces both so
+// the pair cannot drift: the punchcard pairs a state with its support by identity, and a divergence in
+// naming or ordering here would pair a state with a different identity's support with nothing to signal it.
+// The id prefix differs between the two families because both frames name their columns after the same
+// identities, and the punchcard frame holds BOTH at once: one prefix would give a state column and its
+// support column the same id inside one frame, where one of the pair silently wins.
+identityPivotImportSpec := func(setAxisSpec, identities, groupingId, served, colName, valueType, basePriority, idPrefix, extra) {
 	cols := []
 	for i, identity in identities {
 		cols = append(cols, {
 			column: identity,
-			id: "identity_" + strings.substituteSpecialCharacters(identity),
+			id: idPrefix + strings.substituteSpecialCharacters(identity),
 			spec: {
-				name: "pl7.app/antigen/identityVerdict",
-				valueType: "String",
+				name: colName,
+				valueType: valueType,
 				domain: maps.merge(servedDomain(served), {
 					"pl7.app/antigen/identityId": identity,
 					"pl7.app/antigen/groupingId": groupingId
 				}),
-				annotations: a(92000 - i, false, {
-					"pl7.app/label": identity,
-					"pl7.app/isDiscreteFilter": "true",
-					"pl7.app/discreteValues": VERDICT_STATES
-				})
+				annotations: a(basePriority - i, false, maps.merge({ "pl7.app/label": identity }, extra))
 			}
 		})
 	}
@@ -692,6 +695,30 @@ identitySummaryImportSpec := func(setAxisSpec, identities, groupingId, served) {
 		storageFormat: "Parquet",
 		partitionKeyLength: 0
 	}
+}
+
+// --- The punchcard's pivot: result_identity_punch.csv, keyed (setId) --------------------
+//
+// One column per identity whose value carries the state AND the support behind it, `state|answered|
+// couldAnswer`. The UI reads all three from the one cell: the state picks the punch's colour, the two
+// counts its size and its tooltip.
+//
+// Compound rather than three columns because `support-travels-with-the-reading` requires both counts to
+// travel with the verdict wherever it appears — a punch showing state alone would make a reading resting
+// on three cells look like one resting on forty — and a grid can only pair a cell with another column's
+// cell by position, which no import guarantees. Carrying it as an opaque String is also why this family is
+// kept out of the exported frame: lead selection filters the state pivot, and a compound value would not.
+identityPunchImportSpec := func(setAxisSpec, identities, groupingId, served) {
+	return identityPivotImportSpec(setAxisSpec, identities, groupingId, served,
+		"pl7.app/antigen/identityPunch", "String", 92000, "identityPunch_", {})
+}
+
+identitySummaryImportSpec := func(setAxisSpec, identities, groupingId, served) {
+	return identityPivotImportSpec(setAxisSpec, identities, groupingId, served,
+		"pl7.app/antigen/identityVerdict", "String", 92000, "identity_", {
+			"pl7.app/isDiscreteFilter": "true",
+			"pl7.app/discreteValues": VERDICT_STATES
+		})
 }
 
 // --- Re-derivation material -------------------------------------------------------------
@@ -1048,6 +1075,7 @@ export {
 	verdictsImportSpec: verdictsImportSpec,
 	setCountsImportSpec: setCountsImportSpec,
 	identitySummaryImportSpec: identitySummaryImportSpec,
+	identityPunchImportSpec: identityPunchImportSpec,
 	cellTagCountsImportSpec: cellTagCountsImportSpec,
 	cellScalarsImportSpec: cellScalarsImportSpec,
 	offeredImportSpec: offeredImportSpec,

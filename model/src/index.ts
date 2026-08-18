@@ -1,4 +1,4 @@
-import type { BlockRenderCtx, InferOutputsType } from "@platforma-sdk/model";
+import type { BlockRenderCtx, InferOutputsType, PlDataTableStateV2 } from "@platforma-sdk/model";
 import {
   BlockModelV3,
   createPlDataTableStateV2,
@@ -29,15 +29,16 @@ const DEFAULT_PANEL_REFERENCE_MIN_MEMBERS = 8;
 const DEFAULT_REFERENCE_THIN_LINE = 2;
 const DEFAULT_HIGH_REFERENCE_LINE = 100;
 
-// The two axes the verdict view is assembled from. The exported verdict frame carries every table the
-// reading emitted — per-cell counts keyed by cell, the offered scope keyed by sample, the tag→identity
-// linker keyed by tag — and any of them joined into this view fans one verdict row into many. So the view
-// is pinned to its own key: what a verdict is ABOUT (the identity) and who it is about it FOR (the
-// clonotype set). The set axis name is the one the datasetOptions query requires of an anchor, so a
-// dataset that could be picked here always carries it.
-const IDENTITY_AXIS = "pl7.app/antigen/identityId";
-const CLONOTYPE_SET_AXIS = "pl7.app/vdj/scClonotypeKey";
-const PANEL_AXIS = "pl7.app/antigen/panelId";
+// The punchcard's frame is keyed on the clonotype set alone, and each identity is a COLUMN rather than an
+// axis value — which is what a punchcard needs and what a (set, identity) frame cannot give a table. The
+// identity therefore travels in the column's DOMAIN, which is how the model reads which identity a column
+// belongs to without parsing a label.
+//
+// One column per identity, its value carrying the state and both support counts together (see
+// identityPunchImportSpec). The pairing is inside the value because a grid pairs a cell with another
+// column's cell only by position, which no import guarantees.
+const IDENTITY_PUNCH_COLUMN = "pl7.app/antigen/identityPunch";
+const IDENTITY_ID_DOMAIN = "pl7.app/antigen/identityId";
 
 // The run record emit_verdicts.py writes (result_run_meta.json), read as content. Only the fields the UI
 // states back to the user are typed here; the file carries every parameter the reading used.
@@ -195,25 +196,6 @@ function parseQcRows(ctx: BlockRenderCtx<BlockArgs, BlockData>) {
   return (qcMap?.data ?? []).filter((e) => e.value != null);
 }
 
-// The readable name of each declared tag set, for the two report tables keyed on the panel axis.
-//
-// A panel id is a twelve-character hash of the sorted tag list — stable across re-runs of the same
-// declaration, and unreadable on sight. The name emit_verdicts.py writes for it ("<n> tags: <the samples
-// it covers>") is a label column in the EXPORTED verdict frame, so it has to travel in the columns list
-// like the identity label does on the verdict table: createPlDataTable discovers label columns in the
-// result pool, and a block's own exports are not in its own pool.
-function panelLabelColumns(ctx: BlockRenderCtx<BlockArgs, BlockData>) {
-  const pCols = ctx.outputs
-    ?.resolve({ field: "antigenVerdictsTable", allowPermanentAbsence: true })
-    ?.getPColumns();
-  return (pCols ?? []).filter(
-    (c) =>
-      c.spec.name === "pl7.app/label" &&
-      c.spec.axesSpec.length === 1 &&
-      c.spec.axesSpec[0].name === PANEL_AXIS,
-  );
-}
-
 // Tag→feature CSV metadata from the prerun (emit-csv-meta), or undefined until staging has produced it.
 // Shared by the two column dropdowns, the control dropdown, and the csvColumnsLoading signal.
 function readCsvMeta(ctx: BlockRenderCtx<BlockArgs, BlockData>): CsvMeta | undefined {
@@ -264,11 +246,19 @@ function suggestSampleColumn(ctx: BlockRenderCtx<BlockArgs, BlockData>): string 
   return best?.col;
 }
 
+// v3 data shape: the reading's parameters, with the three grid states the two removed result views owned.
+// v4 replaces them with the punchcard's own state and its identity picker.
+type BlockDataV3 = Omit<BlockData, "punchcardTableState" | "punchcardIdentities"> & {
+  verdictTableState: PlDataTableStateV2;
+  antigenQcTableState: PlDataTableStateV2;
+  panelMismatchTableState: PlDataTableStateV2;
+};
+
 // v2 data shape: the preset selector + pattern string, with the dominance-era parameters still on it.
 // The dominant-feature readout, the off-target designation and the specificity score they fed are gone
 // from per_cell_metrics.py, so nothing consumes these three any more.
 type BlockDataV2 = Omit<
-  BlockData,
+  BlockDataV3,
   | "datasetRef"
   | "roleColumn"
   | "referenceValues"
@@ -326,7 +316,7 @@ const dataModel = new DataModelBuilder()
   // The new numeric parameters are seeded with the shipped defaults so a migrated project renders the
   // same run a fresh one would — a parameter left undefined here would reach the CLI as its argparse
   // default, which is the same number arrived at without anyone choosing it.
-  .migrate<BlockData>(
+  .migrate<BlockDataV3>(
     "v3",
     ({ dominanceThreshold: _d, offtargetProperty: _p, offtargetValues: _v, ...rest }) => ({
       ...rest,
@@ -339,6 +329,23 @@ const dataModel = new DataModelBuilder()
       verdictTableState: createPlDataTableStateV2(),
       antigenQcTableState: createPlDataTableStateV2(),
       panelMismatchTableState: createPlDataTableStateV2(),
+    }),
+  )
+  // v3 -> v4: the flat verdict table and the quality-report tables are gone as VIEWS, and the punchcard
+  // takes their place. The three grid states go with them rather than being carried: a saved column set or
+  // filter is meaningful only against the frame it was saved on, and none of these three frames is on
+  // screen any more. The punchcard's own state starts fresh, and its identity picker starts empty — the
+  // page fills the first columns itself rather than a migration guessing which antigens matter.
+  //
+  // What the removed pages showed is still EMITTED: the verdicts and the run's measurements are both
+  // artifacts `verdict-block-interface` obliges this block to produce, and dropping a view does not
+  // release it from producing them.
+  .migrate<BlockData>(
+    "v4",
+    ({ verdictTableState: _v, antigenQcTableState: _q, panelMismatchTableState: _m, ...rest }) => ({
+      ...rest,
+      punchcardTableState: createPlDataTableStateV2(),
+      punchcardIdentities: [],
     }),
   )
   .init(() => ({
@@ -357,9 +364,8 @@ const dataModel = new DataModelBuilder()
     highReferenceLine: DEFAULT_HIGH_REFERENCE_LINE,
     tableState: createPlDataTableStateV2(),
     qcSummaryTableState: createPlDataTableStateV2(),
-    verdictTableState: createPlDataTableStateV2(),
-    antigenQcTableState: createPlDataTableStateV2(),
-    panelMismatchTableState: createPlDataTableStateV2(),
+    punchcardTableState: createPlDataTableStateV2(),
+    punchcardIdentities: [],
   }));
 
 export const platforma = BlockModelV3.create(dataModel)
@@ -958,86 +964,63 @@ export const platforma = BlockModelV3.create(dataModel)
     },
     { retentive: true, withStatus: true },
   )
-  // The verdict view: one row per (clonotype set, antigen identity), carrying the four-state verdict and
-  // the support behind it. Assembled from the exported verdict frame, which the workflow also surfaces as
-  // an output because a block's own exports are not in its own result pool.
+  // Every combined identity the punchcard could show, in the order the workflow gave them. Options for the
+  // picker, and the source of the page's own fallback: with nothing picked the page opens on the first few
+  // of these rather than on an empty grid.
   //
-  // The identity LABEL column travels in the columns list rather than being discovered: createPlDataTable
-  // looks for label columns in the result pool, and this block's are not there. It is what puts the
-  // antigen's readable name in the row — emit_verdicts.py writes the panel's feature name, the tag itself
-  // where the panel names none, and "name (tag)" where two tags would otherwise share one label.
+  // Read from the pivot's own columns rather than from the run record's identity list, because the two can
+  // disagree in exactly one way that matters — the pivot is size-gated upstream, so a run over a large
+  // panel names its identities in the record and emits no columns at all. Reading the columns means the
+  // picker offers what the punchcard can actually draw.
+  .retentiveOutput("punchcardIdentityOptions", (ctx): { value: string; label: string }[] => {
+    const pCols = ctx.outputs
+      ?.resolve({ field: "antigenPunchcardTable", allowPermanentAbsence: true })
+      ?.getPColumns();
+    if (pCols === undefined) return [];
+    const seen = new Set<string>();
+    const options: { value: string; label: string }[] = [];
+    for (const c of pCols) {
+      if (c.spec.name !== IDENTITY_PUNCH_COLUMN) continue;
+      const identity = c.spec.domain?.[IDENTITY_ID_DOMAIN];
+      if (identity === undefined || seen.has(identity)) continue;
+      seen.add(identity);
+      options.push({ value: identity, label: identity });
+    }
+    return options;
+  })
+  // The punchcard: one row per clonotype set, one column per picked identity, each cell carrying the
+  // four-state verdict and the count of cells that answered it. The pivoted shape comes from the workflow
+  // because a table cannot pivot a (set, identity) frame into columns.
+  //
+  // Only the picked identities' columns are passed. Every identity is in the frame either way, so the
+  // picker costs a re-render rather than a run — and a panel of a thousand antigens would otherwise render
+  // a thousand columns nobody asked for.
   //
   // createPlDataTableV2 rather than V3 for the same reason as perCellTable above: V3's discovery walks the
   // whole result pool and hangs on the upstream Samples&Data File dataset. V2 takes the columns as given.
-  // Filtering, ordering and default visibility all come from the specs the workflow built — the four
-  // states and wasCompeted carry pl7.app/isDiscreteFilter, and no column carries an orderable annotation,
-  // which column-specs.lib.tengo enforces rather than assumes.
   .output(
-    "verdictTable",
+    "punchcardTable",
     (ctx) => {
       const pCols = ctx.outputs
-        ?.resolve({ field: "antigenVerdictsTable", allowPermanentAbsence: true })
+        ?.resolve({ field: "antigenPunchcardTable", allowPermanentAbsence: true })
         ?.getPColumns();
       if (pCols === undefined) return undefined;
+      const picked = new Set(ctx.data.punchcardIdentities);
       const cols = pCols.filter((c) => {
-        const axes = c.spec.axesSpec.map((a) => a.name);
-        if (c.spec.name === "pl7.app/label") return axes.length === 1 && axes[0] === IDENTITY_AXIS;
-        return axes.length === 2 && axes[0] === CLONOTYPE_SET_AXIS && axes[1] === IDENTITY_AXIS;
+        const identity = c.spec.domain?.[IDENTITY_ID_DOMAIN];
+        return identity !== undefined && picked.has(identity);
       });
       if (cols.length === 0) return undefined;
-      return createPlDataTableV2(ctx, cols, ctx.data.verdictTableState);
+      return createPlDataTableV2(ctx, cols, ctx.data.punchcardTableState);
     },
     { retentive: true, withStatus: true },
   )
-  // The run's own quality report: one row per (level, panel, measured thing, measurement), carrying the
-  // measurement's status, the coverage triple beside it and — where nothing computed the measurement — the
-  // reason it was deferred. Every declared measurement keeps its row whether or not this run could compute
-  // it, so the frame is complete by construction and the view needs no handling for a measurement that is
-  // simply absent.
-  //
-  // The panel is part of the KEY here, not a value beside it: the same reagent stained into several samples
-  // writes one row per panel at the same (level, measured thing, measurement), and rows sharing an axis key
-  // are silently collapsed on import to whichever one survives.
-  //
-  // createPlDataTableV2 rather than V3 for the reason recorded on perCellTable above: V3's discovery walks
-  // the entire result pool and hangs on the upstream Samples & Data FASTQ dataset. Every column is keyed on
-  // this frame's own four axes, so no filtering by axis shape is needed — unlike verdictTable, which reads a
-  // frame holding several tables at once.
-  .output(
-    "antigenQcTable",
-    (ctx) => {
-      const pCols = ctx.outputs
-        ?.resolve({ field: "antigenQcTable", allowPermanentAbsence: true })
-        ?.getPColumns();
-      if (pCols === undefined || pCols.length === 0) return undefined;
-      return createPlDataTableV2(
-        ctx,
-        [...pCols, ...panelLabelColumns(ctx)],
-        ctx.data.antigenQcTableState,
-      );
-    },
-    { retentive: true, withStatus: true },
-  )
-  // The panel-versus-reads check: one row per (panel, tag), with the direction of the mismatch and the
-  // samples that reported it. Keyed on the panel rather than on the sample because a declared tag the reads
-  // never carried is a property of the declared tag set, not of any one sample; the samples travel in the
-  // row so nothing about where it was seen is lost. Both directions live in the one frame under the
-  // direction column, which is what lets a single table show them both.
-  .output(
-    "antigenPanelMismatchTable",
-    (ctx) => {
-      const pCols = ctx.outputs
-        ?.resolve({ field: "antigenPanelMismatchTable", allowPermanentAbsence: true })
-        ?.getPColumns();
-      if (pCols === undefined || pCols.length === 0) return undefined;
-      return createPlDataTableV2(
-        ctx,
-        [...pCols, ...panelLabelColumns(ctx)],
-        ctx.data.panelMismatchTableState,
-      );
-    },
-    { retentive: true, withStatus: true },
-  )
+  // The run's quality report and the panel-versus-reads check have no model output. Both are still emitted
+  // by the workflow — `verdict-block-interface` names the run-level measurements as one of this block's two
+  // artifacts, and a removed view does not release it from producing them — but nothing in this block reads
+  // them any more, because the tables that did were removed as the wrong way to deliver the quality
+  // end-goal. Whether they should instead cross the boundary as exports is an open question, not something
+  // to settle by leaving an unread output behind.
   // What the reading was actually answered under. The page states the comparator that SERVED rather than
   // the one that was requested, because the software degrades a request it cannot honour and a reader
   // meeting an all-unreliable table otherwise has no way to learn that happened. Absent until a run with a
@@ -1125,11 +1108,7 @@ export const platforma = BlockModelV3.create(dataModel)
             // Shown for every run, including one with no V(D)J dataset. That run produces no antigen
             // columns at all, and the page saying so is the only place a user learns why — hiding the
             // tab would leave the absence unexplained.
-            { type: "link" as const, href: "/verdicts" as const, label: "Binding verdicts" },
-            // Shown on the same terms as the verdict tab, for the same reason: a run with no V(D)J
-            // dataset produced neither the measurements nor the panel check, and the page saying so is
-            // the only place a user learns why.
-            { type: "link" as const, href: "/checks" as const, label: "Quality checks" },
+            { type: "link" as const, href: "/punchcard" as const, label: "Punchcard" },
           ]
         : []),
     ];

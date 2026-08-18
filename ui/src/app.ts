@@ -3,9 +3,8 @@ import { defineAppV3 } from "@platforma-sdk/ui-vue";
 import { watchEffect } from "vue";
 import MainPage from "./pages/MainPage.vue";
 import QcSummaryPage from "./pages/QcSummaryPage.vue";
-import QualityChecksPage from "./pages/QualityChecksPage.vue";
+import PunchcardPage from "./pages/PunchcardPage.vue";
 import ResultsPage from "./pages/ResultsPage.vue";
-import VerdictsPage from "./pages/VerdictsPage.vue";
 
 export const sdkPlugin = defineAppV3(platforma, (app) => {
   // Block-label pattern: mirror the model's suggestedBlockLabel ("<dataset> / <barcode> → <feature>")
@@ -32,8 +31,7 @@ export const sdkPlugin = defineAppV3(platforma, (app) => {
       "/": () => MainPage,
       "/qc": () => QcSummaryPage,
       "/results": () => ResultsPage,
-      "/verdicts": () => VerdictsPage,
-      "/checks": () => QualityChecksPage,
+      "/punchcard": () => PunchcardPage,
     },
   };
 });

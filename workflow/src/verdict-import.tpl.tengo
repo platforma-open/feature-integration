@@ -24,7 +24,8 @@ verdictLinker := import(":verdict-linker")
 
 json := import("json")
 
-// Returns three frames: antigenVerdicts (exported), qcTable and panelMismatchTable (this block's own).
+// Returns five frames: antigenVerdicts (exported), and punchcard, cellTable, qcTable and
+// panelMismatchTable (this block's own).
 // defineOutputs is deliberately absent — an ephemeral template takes its output names from what the body
 // returns and never checks a declared list, so declaring one here would be inert.
 self.awaitState("columns", "PColumnBundle")
@@ -104,6 +105,22 @@ self.body(func(inputs) {
 			columnSpecs.identitySummaryImportSpec(setAxis, summaryIdentities, served.groupingId, served))
 	}
 
+	// --- the punchcard's own frame, as an OUTPUT --------------------------------------------------------
+	//
+	// The punchcard is the view `block-set` calls this block's own — every clonotype against every identity,
+	// each position in one of the four states. It needs the pivoted shape, because a table cannot pivot a
+	// (set, identity) frame into columns, and it needs it as an output rather than an export: a block's own
+	// exports are not in its own result pool.
+	//
+	// Its cell carries the state and the two support counts together, so no glyph on that page states a
+	// verdict without what it rests on. Gated on the same identity count as the summary above — either both
+	// pivots are present or neither is, and the page says so rather than rendering an empty grid.
+	punchFb := pframes.pFrameBuilder()
+	if len(summaryIdentities) > 0 {
+		addTo(punchFb, "identityPunch", inputs.identityPunch,
+			columnSpecs.identityPunchImportSpec(setAxis, summaryIdentities, served.groupingId, served))
+	}
+
 	// The per-cell material stays INSIDE the block: outputs, never exports. Reading the same experiment
 	// under another grouping is another execution of this block, not a re-derivation performed by a
 	// reader, so nothing downstream needs the per-cell per-tag states — and nothing downstream ever asked
@@ -157,6 +174,7 @@ self.body(func(inputs) {
 
 	return {
 		antigenVerdicts: exportFb.build(),
+		punchcard: punchFb.build(),
 		cellTable: cellFb.build(),
 		qcTable: qcFb.build(),
 		panelMismatchTable: mismatchFb.build()

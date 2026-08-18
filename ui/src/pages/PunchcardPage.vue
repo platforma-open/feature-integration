@@ -1,0 +1,137 @@
+<script setup lang="ts">
+import {
+  PlAgDataTableV2,
+  PlAlert,
+  PlBlockPage,
+  PlBtnGhost,
+  PlDropdownMulti,
+  PlMaskIcon24,
+  PlSlideModal,
+  usePlDataTableSettingsV2,
+} from "@platforma-sdk/ui-vue";
+import { computed, ref } from "vue";
+import { useApp } from "../app";
+import PunchCell from "../components/PunchCell.vue";
+import VerdictSettings from "../components/VerdictSettings.vue";
+
+const app = useApp();
+
+// Every clonotype set against every picked identity: rows are the sets, columns are the identities, and a
+// cell is one punch. This is the reading `block-set` calls this block's own view — every clonotype against
+// every identity, each position in one of the four states with what it rests on beside it.
+const tableSettings = usePlDataTableSettingsV2({
+  model: () => app.model.outputs.punchcardTable,
+});
+
+// Every cell in this table is a punch. The columns are identities and nothing else — the model passes only
+// the punch family — so the selector needs no per-column test, and an axis column (the clonotype set) is
+// not routed here by the grid.
+const cellRendererSelector = () => ({ component: PunchCell });
+
+// The reading's own settings, reachable from the page they explain.
+const settingsOpen = ref(false);
+
+// A missing V(D)J dataset is a legitimate state rather than a half-filled form: the block runs, and the
+// verdict stage alone is skipped. Read from data rather than from an output, because the point is what the
+// user has chosen — including before the next run.
+//
+// This is a limit of how the stage is currently WIRED, not of the view. A row here is a clonotype or
+// whatever else was rolled up, the read is taken per cell before anything is combined, and the software
+// already accepts a cell list in place of a linker — so rows of cells are drawable in principle. What
+// stands in the way is that main.tpl gates the whole verdict stage on the dataset ref. The page says what
+// is true today and does not dress it up as a property of the punchcard.
+const noDataset = computed(() => app.model.data.datasetRef === undefined);
+
+// What the run was actually answered under. The software degrades a comparator it cannot serve, so the
+// choice that SERVED is the only one worth stating: a reader meeting a grid of rings otherwise has nothing
+// telling them the comparator they asked for was never available.
+const runMeta = computed(() => app.model.outputs.verdictRunMeta);
+const noComparator = computed(() => runMeta.value?.referenceChoice === "no comparator available");
+const comparatorDegraded = computed(
+  () =>
+    runMeta.value !== undefined &&
+    runMeta.value.referenceSourceRequested !== runMeta.value.referenceChoice,
+);
+
+// Tags the grouping column said nothing about stand as their own identity under a bare barcode. The
+// software reports this to stderr; a column a reader cannot place needs saying on the page too.
+const ungroupedTags = computed(() => runMeta.value?.tagsWithoutGroupingValue ?? []);
+
+const identityOptions = computed(() => app.model.outputs.punchcardIdentityOptions ?? []);
+const picked = computed(() => app.model.data.punchcardIdentities);
+
+// The pivot is size-gated upstream: a panel above the limit emits no identity columns at all, so a run can
+// have produced verdicts and still offer nothing to draw. Told apart from "nothing picked yet" because the
+// two need opposite things from the reader — one is a panel too wide for this view, the other is one click.
+const nothingToOffer = computed(() => !noDataset.value && identityOptions.value.length === 0);
+const nothingPicked = computed(() => identityOptions.value.length > 0 && picked.value.length === 0);
+</script>
+
+<template>
+  <PlBlockPage>
+    <template #title>Punchcard</template>
+    <template #append>
+      <PlBtnGhost @click.stop="settingsOpen = true">
+        Settings
+        <template #append>
+          <PlMaskIcon24 name="settings" />
+        </template>
+      </PlBtnGhost>
+    </template>
+
+    <PlAlert v-if="noDataset" type="warn">
+      This run has no rows to punch: the verdict stage only runs once a single-cell V(D)J dataset is
+      picked, so the run counted barcodes per cell and stopped there. Pick a dataset in Settings and
+      run again.
+    </PlAlert>
+
+    <PlAlert v-else-if="nothingToOffer" type="info">
+      This run produced no per-identity columns to draw. The punchcard costs one column per antigen
+      identity, so it is emitted only for panels below the block's identity limit; a larger panel
+      still produced its verdicts, and they are still exported to downstream blocks.
+    </PlAlert>
+
+    <template v-else>
+      <PlAlert v-if="noComparator" type="warn">
+        No comparator served this run, so every reading was taken against nothing and each punch is
+        drawn from a count alone. Treat the whole grid as unsettled.
+      </PlAlert>
+      <PlAlert v-else-if="comparatorDegraded" type="warn">
+        The comparator that served was not the one requested: asked for
+        <b>{{ runMeta?.referenceSourceRequested }}</b
+        >, served <b>{{ runMeta?.referenceChoice }}</b
+        >. Every punch below was read against what served.
+      </PlAlert>
+
+      <PlAlert v-if="ungroupedTags.length > 0" type="info">
+        {{ ungroupedTags.length }} declared
+        {{ ungroupedTags.length === 1 ? "barcode carries" : "barcodes carry" }} no value in the
+        grouping column, so each stands as its own identity under its raw sequence.
+      </PlAlert>
+
+      <PlDropdownMulti
+        v-model="app.model.data.punchcardIdentities"
+        :options="identityOptions"
+        label="Identities to show"
+      />
+
+      <PlAlert v-if="nothingPicked" type="info">
+        Pick an identity above to draw its column. Every identity is already in the result, so
+        adding one costs a redraw rather than a run.
+      </PlAlert>
+
+      <PlAgDataTableV2
+        v-else-if="app.model.outputs.punchcardTable"
+        v-model="app.model.data.punchcardTableState"
+        :settings="tableSettings"
+        :cell-renderer-selector="cellRendererSelector"
+        show-export-button
+      />
+    </template>
+
+    <PlSlideModal v-model="settingsOpen" width="448px">
+      <template #title>Binding verdict settings</template>
+      <VerdictSettings />
+    </PlSlideModal>
+  </PlBlockPage>
+</template>
