@@ -11,10 +11,28 @@ from verdict import DEFAULT_PANEL_MIN_MEMBERS, ReferenceChoice
 SRC = Path(__file__).resolve().parents[1] / "src"
 
 
-def _run(cwd, *args):
-    return subprocess.run(
+def _run(cwd, *args, expect_failure=False):
+    """Run the CLI, asserting it succeeded unless the caller wants a failure.
+
+    Success is asserted HERE rather than left to each test, because a crashed run
+    is invisible to most assertions in this file: the tool writes into `cwd`, so a
+    run that dies before writing leaves the PREVIOUS run's files in place and
+    every read of them still succeeds. `test_output_is_byte_stable_across_runs`
+    was the live case -- it compares two runs' bytes and asserted neither
+    returncode, so a second invocation crashing on startup compared the first
+    run's files against themselves and passed.
+
+    stderr rides along in the message because a bare `assert returncode == 0`
+    tells you the run died and not why.
+    """
+    r = subprocess.run(
         [sys.executable, str(SRC / "emit_verdicts.py"), *map(str, args)], cwd=cwd, capture_output=True, text=True
     )
+    if expect_failure:
+        assert r.returncode != 0, f"expected a non-zero exit, got 0. stdout={r.stdout!r}"
+    else:
+        assert r.returncode == 0, f"exited {r.returncode}. stderr={r.stderr!r}"
+    return r
 
 
 BASE = [
@@ -348,12 +366,11 @@ def test_a_cutoff_at_the_analytic_floor_is_refused(bed):
 
     bound = float(specificity_score(0, 0))
 
-    r = _run(bed, *BASE, "--cutoff", "0.04")
-    assert r.returncode != 0
+    r = _run(bed, *BASE, "--cutoff", "0.04", expect_failure=True)
     assert "0.042" in (r.stderr + r.stdout)
-    assert _run(bed, *BASE, "--cutoff", repr(bound)).returncode != 0, "the bound itself must be refused"
-    assert _run(bed, *BASE, "--cutoff", repr(bound * 1.001)).returncode == 0
-    assert _run(bed, *BASE, "--cutoff", "0.05").returncode == 0
+    _run(bed, *BASE, "--cutoff", repr(bound), expect_failure=True)  # the bound itself is refused
+    _run(bed, *BASE, "--cutoff", repr(bound * 1.001))
+    _run(bed, *BASE, "--cutoff", "0.05")
 
 
 def test_rows_are_sorted_on_a_bed_wide_enough_for_order_to_show(bed):
