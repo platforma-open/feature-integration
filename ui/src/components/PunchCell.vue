@@ -2,9 +2,15 @@
 import { computed } from "vue";
 
 // One punch. The glyph vocabulary is the use case's own punch-card figure
-// (catalogue/discovery/antigen-barcode-binding-profiling/assets/punch-card.svg): a filled dot is bound, a
-// BLANK cell is not bound, and a dashed grey ring is a position never offered to this clonotype. Blank
-// carries meaning there, so nothing is drawn for a negative answer and the eye counts only what is filled.
+// (catalogue/discovery/antigen-barcode-binding-profiling/assets/punch-card.svg): a filled dot is bound and
+// a dashed grey ring is a position never offered to this clonotype.
+//
+// The figure draws NOT BOUND as a blank cell, and this deviates from it: not-bound is a faint small dot.
+// Blank reads as "not bound" only when hits are common. A real card is mostly negative by construction —
+// a clonotype binds one antigen out of the panel, so a 74 x 13 grid is ~92% not-bound before anything goes
+// wrong — and at that density a blank-for-negative card is indistinguishable from one that failed to load.
+// The first reader of a live run asked why the punchcard was empty; it was not empty, it was answering.
+// The faint dot says "asked, and the answer was no" while leaving bound the only thing that reads as ink.
 //
 // The figure has three glyphs because it predates the fourth state. `unreliable` — asked, and the data
 // cannot settle it — gets the one shape left that reads as neither an answer nor an absence: a solid ring.
@@ -18,7 +24,7 @@ import { computed } from "vue";
 //
 // The cell's value carries all three facts, `state|answered|couldAnswer`, because a grid pairs a cell with
 // another column's cell only by position and no import guarantees that. Anything that does not parse is
-// drawn as its own mark rather than guessed at — and never as blank, which already means not bound.
+// drawn as its own mark rather than guessed at, so an unreadable value cannot pass as an answer.
 const props = defineProps<{ params: { value: unknown } }>();
 
 const VERDICT_STATES = ["bound", "not bound", "unreliable", "never asked"] as const;
@@ -43,22 +49,23 @@ const punch = computed<Punch>(() => {
 });
 
 // Area rather than diameter tracks the support: doubling a diameter quadruples the ink, which reads as four
-// times the evidence. The floor keeps a one-cell reading visible — a dot that shrinks to nothing is a blank
-// cell, and blank already means not bound.
+// times the evidence, and the floor keeps a one-cell reading visible rather than shrinking it to nothing.
+// Only `bound` scales. A negative answer carries no magnitude worth showing, and sizing it would invite
+// reading a large pale dot as a strong negative — so not-bound is one fixed, deliberately small size.
 const diameter = computed(() => {
   const p = punch.value;
+  if (p.kind === "read" && p.state === "not bound") return 5;
   if (p.kind !== "read" || p.state !== "bound" || p.couldAnswer <= 0) return 15;
   const fraction = Math.min(1, Math.max(0, p.answered / p.couldAnswer));
   return 8 + Math.sqrt(fraction) * 7;
 });
 
-// Which glyph, if any. `not bound` draws nothing at all, which is the figure's own reading of blank. A
-// total map rather than a switch, so a fifth state would fail to compile rather than fall through to blank
-// — and blank is an answer here.
-type Glyph = "dot" | "ring" | "undef" | "unknown" | "none";
+// A total map rather than a switch, so a fifth state would fail to compile rather than silently fall
+// through to whichever mark happened to be the default.
+type Glyph = "dot" | "faint" | "ring" | "undef" | "unknown";
 const GLYPH_OF: Record<VerdictState, Glyph> = {
   bound: "dot",
-  "not bound": "none",
+  "not bound": "faint",
   unreliable: "ring",
   "never asked": "undef",
 };
@@ -66,8 +73,8 @@ const glyph = computed<Glyph>(() =>
   punch.value.kind === "read" ? GLYPH_OF[punch.value.state] : "unknown",
 );
 
-// Every cell carries its reading in words, including the blank ones — a blank punch is the one glyph a
-// reader cannot ask about by looking harder.
+// Every cell carries its reading in words. The faint and hollow marks are the ones a reader cannot resolve
+// by looking harder, so the sentence is where the counts and the state actually live.
 const tooltip = computed(() => {
   const p = punch.value;
   if (p.kind !== "read") return "No readable verdict for this clonotype at this identity";
@@ -80,7 +87,6 @@ const tooltip = computed(() => {
 <template>
   <div class="punch-cell" :title="tooltip">
     <span
-      v-if="glyph !== 'none'"
       class="punch"
       :class="`punch--${glyph}`"
       :style="{ width: `${diameter}px`, height: `${diameter}px` }"
@@ -102,9 +108,16 @@ const tooltip = computed(() => {
   box-sizing: border-box;
 }
 
-/* The figure's own three marks, and its colours. */
+/* The figure's own marks and colours, plus the faint negative. */
 .punch--dot {
   background: #d94438;
+}
+
+/* Deliberately the smallest and palest mark: present enough that the grid reads as answered, quiet
+   enough that scanning a column still counts only the filled dots. */
+.punch--faint {
+  background: #9aa3ae;
+  opacity: 0.35;
 }
 
 .punch--undef {
