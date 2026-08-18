@@ -581,3 +581,41 @@ def test_the_minimum_peer_count_is_satisfied_at_the_named_value():
     # to compare against, two is not. Nothing else pins this boundary.
     assert outlier_status(0.9, [0.01, 0.02, 0.03]) is not Status.UNJUDGED
     assert outlier_status(0.9, [0.01, 0.02]) is Status.UNJUDGED
+
+
+# --- corrupt numbers must never read green -------------------------------------------
+#
+# Every `<` and `>` comparison against NaN is False, so before this was fixed a NaN
+# value fell through to `bad = False` and the measurement read ACCEPTABLE -- and a NaN
+# among the peers made np.quantile return NaN fences, with the same result. For QC
+# code, corrupt-input-reads-green is the worst available failure mode: it is the one
+# state a reader will not investigate.
+
+
+def test_a_nan_value_is_not_evaluated_rather_than_acceptable():
+    assert status_for("readsPerCell", float("nan"), DEFAULT_LINES) is Status.NOT_EVALUATED
+
+
+def test_infinite_values_are_not_evaluated_rather_than_judged():
+    # +inf would have read ACCEPTABLE against an at-least line, which is the green
+    # reading again. -inf happens to alert, so only one direction was dangerous -- but
+    # neither is a measurement, and one rule for "not a finite number" is easier to
+    # defend than a rule that depends on the sign.
+    assert status_for("readsPerCell", float("inf"), DEFAULT_LINES) is Status.NOT_EVALUATED
+    assert status_for("readsPerCell", float("-inf"), DEFAULT_LINES) is Status.NOT_EVALUATED
+
+
+def test_a_nan_value_is_not_evaluated_against_its_peers():
+    assert outlier_status(float("nan"), [0.1, 0.2, 0.3, 0.4]) is Status.NOT_EVALUATED
+
+
+def test_nan_among_the_peers_leaves_the_comparison_unjudged():
+    # The value is a real number here; what cannot be defended is the distribution it
+    # would be measured against. That is unjudged, not not-evaluated -- the
+    # measurement was computed, and only the comparison is unavailable.
+    assert outlier_status(0.9, [0.1, float("nan"), 0.3, 0.4]) is Status.UNJUDGED
+
+
+def test_a_clear_outlier_still_alerts_with_finite_peers():
+    # The guard above must not swallow the case the measure exists for.
+    assert outlier_status(0.9, [0.01, 0.02, 0.03, 0.04]) is Status.ALERTING

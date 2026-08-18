@@ -24,6 +24,7 @@ computes only what none of those already do.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from enum import Enum
 
@@ -279,7 +280,13 @@ def status_for(measurement: str, value: float | None, lines: dict[str, float]) -
             f"{measurement!r} is judged against the run itself, not against a line: "
             "call outlier_status(value, peers) with the measurement's peers in the same panel"
         )
-    if measurement in _DEFERRED or value is None:
+    # A non-finite value is treated exactly as an absent one. Every `<` and `>` against
+    # NaN is False, so without this a NaN fell through to `bad = False` and the
+    # measurement read ACCEPTABLE -- corrupt input reading green, which is the one status
+    # a reader will not investigate. +inf read green too, against an at-least line; -inf
+    # happened to alert. One rule for "not a finite number" is easier to defend than a
+    # rule whose answer depends on the sign, and neither is a measurement.
+    if measurement in _DEFERRED or value is None or not math.isfinite(value):
         return Status.NOT_EVALUATED
     if measurement not in lines:
         return Status.UNJUDGED
@@ -322,11 +329,20 @@ def outlier_status(
     Unjudged below `MIN_PEERS_TO_COMPARE` peers, where a quartile is not a
     distribution but an arithmetic accident of two or three numbers.
     """
-    if value is None:
+    # Same rule as `status_for` for the value itself: not a finite number is not a
+    # measurement, and a NaN compared against any fence is False, which read ACCEPTABLE.
+    if value is None or not math.isfinite(value):
         return Status.NOT_EVALUATED
     if len(peers) < MIN_PEERS_TO_COMPARE:
         return Status.UNJUDGED
     q1, q3 = (float(q) for q in np.quantile(peers, [0.25, 0.75]))
+    # A non-finite fence is a different failure from a non-finite value, and reads
+    # differently. One NaN among the peers makes np.quantile return NaN quartiles, so
+    # every comparison went False and the tag read ACCEPTABLE. The value here is a real
+    # number and the measurement WAS computed -- what cannot be defended is the
+    # distribution it would be measured against, which is what unjudged says.
+    if not (math.isfinite(q1) and math.isfinite(q3)):
+        return Status.UNJUDGED
     return Status.ALERTING if value > q3 + (q3 - q1) * fence else Status.ACCEPTABLE
 
 
