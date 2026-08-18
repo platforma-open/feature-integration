@@ -112,8 +112,9 @@ self.body(func(inputs) {
 	// (set, identity) frame into columns, and it needs it as an output rather than an export: a block's own
 	// exports are not in its own result pool.
 	//
-	// Its cell carries the state and the two support counts together, so no glyph on that page states a
-	// verdict without what it rests on. Gated on the same identity count as the summary above — either both
+	// Its cell carries the state, the two support counts, the agreement among them and — where the verdict
+	// did not settle — which of the seven ways it failed to, as one five-field value. No glyph on that page
+	// states a verdict without what it rests on. Gated on the same identity count as the summary above — either both
 	// pivots are present or neither is, and the page says so rather than rendering an empty grid.
 	punchFb := pframes.pFrameBuilder()
 	if len(summaryIdentities) > 0 {

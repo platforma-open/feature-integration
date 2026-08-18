@@ -11,12 +11,15 @@ import pathlib
 import subprocess
 import sys
 
+import polars as pl
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from per_cell_metrics import (
     _load,
     combine_barcode_counts,
+    per_cell_summary,
+    with_fraction,
 )
 
 SRC = pathlib.Path(__file__).parents[1] / "src" / "per_cell_metrics.py"
@@ -392,3 +395,41 @@ def test_cli_rejects_conflicting_combine_mode(tmp_path):
         cwd=tmp_path,
     )
     assert r.returncode != 0
+
+
+def test_a_cell_whose_every_count_is_zero_gets_a_zero_share_not_a_nan():
+    # 0/0 is NaN, and the NaN does not stay put: it reaches the exported fractions CSV as a float
+    # nothing downstream expects, and in per_cell_summary it slips past the "<1%" guard (which requires
+    # umiCount > 0) into a cast to Int64 that raises and takes the whole CLI down with a raw traceback.
+    # Real tag-stat cannot emit such a row, but this CLI is driven by hand during verification.
+    frame = pl.DataFrame(
+        {
+            "sampleId": ["S1", "S1"],
+            "cellId": ["c1", "c1"],
+            "feature": ["A", "B"],
+            "umiCount": [0, 0],
+        }
+    )
+    fractions = with_fraction(frame)
+    assert fractions["fraction"].to_list() == [0.0, 0.0]
+
+    # And the collapse runs rather than dying. A cell with no signal still gets its row: dropping it
+    # would make a cell that was measured and read nothing indistinguishable from one never measured.
+    summary = per_cell_summary(fractions)
+    assert summary.height == 1
+    assert summary["maxUmiCount"].to_list() == [0]
+    assert summary["maxFraction"].to_list() == [0.0]
+
+
+def test_a_cell_with_signal_is_unaffected_by_the_zero_total_guard():
+    # The guard must not change the ordinary case -- a `when/otherwise` around a division is exactly the
+    # shape that quietly zeroes a whole column if the predicate is wrong.
+    frame = pl.DataFrame(
+        {
+            "sampleId": ["S1", "S1"],
+            "cellId": ["c1", "c1"],
+            "feature": ["A", "B"],
+            "umiCount": [3, 1],
+        }
+    )
+    assert with_fraction(frame)["fraction"].to_list() == [0.75, 0.25]

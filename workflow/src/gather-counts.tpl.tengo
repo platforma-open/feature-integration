@@ -34,7 +34,15 @@ self.body(func(inputs) {
 
 	// The gather reads every sample's distinct-UMI table, which scales with the run rather than with one
 	// sample, so it is not a light-queue job.
-	wf := pt.workflow().cpu(2).mem("8GiB")
+	//
+	// A FLAT grant on a step whose input grows with the sample count, which is the shape that OOMs late and
+	// on someone else's run. It is flat because the sizing formulas `exec.builder().resources()` takes are
+	// not reachable from this builder — `pt.workflow().mem()` hands a plain amount to the process template
+	// — so there is nothing here to make it track `size(...)` the way the verdict exec beside it does.
+	// Raised to the same 16 GiB floor that exec uses rather than left at 8, which buys headroom without
+	// pretending to be a formula. Not observed failing; the risk is stated here so the next run that does
+	// fail has somewhere to land.
+	wf := pt.workflow().cpu(2).mem("16GiB")
 
 	dfs := []
 	for key in maps.getKeys(inputsMap) {

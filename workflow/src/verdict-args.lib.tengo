@@ -162,7 +162,7 @@ build := func(params) {
 
 // has: whether the built vector contains a flag. Used by the threading test.
 has := func(args, flag) {
-	for _, a in args {
+	for a in args {
 		if a == flag {
 			return true
 		}

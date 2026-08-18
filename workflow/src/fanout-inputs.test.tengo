@@ -13,7 +13,7 @@ _one := func(key) {
 // verdict-args.PARAMETER_NAMES and to the fan-out at the same time fails here rather than costing every
 // user a full parse / refine-tags / tag-stat re-run with nothing in the logs to explain it.
 Test_no_verdict_parameter_may_reach_the_fanout := func() {
-	for _, name in va.PARAMETER_NAMES {
+	for name in va.PARAMETER_NAMES {
 		test.isEqual([name], fanout.unlisted(_one(name), fanout.EXTRA_INPUT_KEYS),
 			"verdict-stage parameter " + name + " must not be a per-sample body input")
 		test.isEqual([name], fanout.unlisted(_one(name), fanout.META_EXTRA_KEYS),
@@ -24,7 +24,7 @@ Test_no_verdict_parameter_may_reach_the_fanout := func() {
 // The resolved clonotype linker is a resource, not a parameter, and it is the other thing that must never
 // enter: it would put every per-sample body behind the clonotyping chain as well as re-keying it.
 Test_no_linker_resource_may_reach_the_fanout := func() {
-	for _, name in ["linker", "linkerColumn", "cellLinker", "columns", "setAxisSpec"] {
+	for name in ["linker", "linkerColumn", "cellLinker", "columns", "setAxisSpec"] {
 		test.isEqual([name], fanout.unlisted(_one(name), fanout.EXTRA_INPUT_KEYS),
 			name + " must not be a per-sample body input")
 		test.isEqual([name], fanout.unlisted(_one(name), fanout.META_EXTRA_KEYS),
@@ -36,14 +36,14 @@ Test_no_linker_resource_may_reach_the_fanout := func() {
 // vacuously satisfied by an over-broad list.
 Test_the_declared_fanout_inputs_are_accepted := func() {
 	extra := {}
-	for _, key in fanout.EXTRA_INPUT_KEYS {
+	for key in fanout.EXTRA_INPUT_KEYS {
 		extra[key] = "x"
 	}
 	test.isEqual([], fanout.unlisted(extra, fanout.EXTRA_INPUT_KEYS),
 		"every declared per-sample body input is accepted")
 
 	meta := {}
-	for _, key in fanout.META_EXTRA_KEYS {
+	for key in fanout.META_EXTRA_KEYS {
 		meta[key] = 1
 	}
 	test.isEqual([], fanout.unlisted(meta, fanout.META_EXTRA_KEYS),

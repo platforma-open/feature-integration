@@ -73,7 +73,11 @@ self.body(func(inputs) {
 	linkerCsv.setAxisHeader(linkerAxes[1].name, "cellId")
 	linkerCsv.setAxisHeader(linkerAxes[2].name, "setId")
 	linkerCsv.cpu(1)
-	linkerCsv.mem("8GiB")
+	// Flat, and it scales with the total cell count of the run — every cell of every sample appears once.
+	// The csv builder's `mem` takes a plain amount rather than one of the sizing formulas the exec below
+	// uses, so this cannot track its input. Raised to the exec's own 16 GiB floor rather than left at 8.
+	// Not observed failing; stated so a future OOM here is recognised rather than re-diagnosed.
+	linkerCsv.mem("16GiB")
 	linkerCsvFile := linkerCsv.build()
 
 	// The reading holds one entry per analysed cell and one per (cell, tag) count, so it scales with the
@@ -106,10 +110,10 @@ self.body(func(inputs) {
 		b = b.addFile(va.FILE_QC_SUMMARY, inputs.qcSummaryFile)
 	}
 
-	for _, a in va.build(params) {
+	for a in va.build(params) {
 		b = b.arg(a)
 	}
-	for _, table in RESULT_TABLES {
+	for table in RESULT_TABLES {
 		b = b.saveFile(table.file)
 	}
 	run := b.saveFileContent("result_run_meta.json").run()
@@ -118,7 +122,7 @@ self.body(func(inputs) {
 	// as files because the import template hands them to xsv.importFile. An exec result object is not
 	// serializable as a template output, so each table is returned on its own field.
 	result := { runMeta: run.getFileContent("result_run_meta.json") }
-	for _, table in RESULT_TABLES {
+	for table in RESULT_TABLES {
 		result[table.out] = run.getFile(table.file)
 	}
 	return result

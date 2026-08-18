@@ -501,7 +501,10 @@ def test_duplicated_observed_rows_are_rejected_not_silently_wrong():
     cells = _cells([("S1", "c1")])
     admissibility = Admissibility({}, 2, set())  # no comparator for c1: inadmissible
     observed = read_states(_ident([("S1", "c1", "A", 50), ("S1", "c1", "A", 50)]), admissibility, 75.0)
-    with pytest.raises(AssertionError):
+    # ValueError rather than AssertionError, and the type is the point: an `assert` is stripped
+    # under -O, and this guard stripped does not crash -- it returns a wrong answer. Pinning the
+    # type here is what keeps it from quietly becoming strippable again.
+    with pytest.raises(ValueError):
         silent_tally(observed, cells, {"S1": {"A"}}, admissibility)
 
 

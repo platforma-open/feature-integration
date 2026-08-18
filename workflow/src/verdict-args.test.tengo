@@ -41,7 +41,7 @@ Test_every_flag_is_threaded := func() {
 		"--min-voters", "--min-agreement", "--gate-threshold", "--high-reference-line",
 		"--grouping", "--contending", "--capture-map", "--output-prefix"
 	]
-	for _, flag in flags {
+	for flag in flags {
 		test.isTrue(va.has(args, flag), "argument list is missing " + flag)
 	}
 

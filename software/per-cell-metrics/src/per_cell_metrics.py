@@ -66,10 +66,20 @@ def with_fraction(counts: pl.DataFrame) -> pl.DataFrame:
     """Add the within-cell UMI ``fraction`` (each feature's share of its cell's total; sums to 1 per
     cell) to the (sampleId, cellId, feature, umiCount) long frame. An empty frame carries its schema
     through. Computed once in main() and reused for both the exported fractions CSV and the per-cell
-    summary so the two never diverge or recompute the window."""
-    return counts.with_columns(
-        (pl.col("umiCount") / pl.col("umiCount").sum().over(["sampleId", "cellId"])).alias("fraction")
-    )
+    summary so the two never diverge or recompute the window.
+
+    A cell whose every count is zero has a zero total, and the bare division makes its fractions NaN.
+    That NaN is not contained: it reaches the exported fractions CSV as a float nothing downstream
+    expects, and in `per_cell_summary` it falls past the "<1%" guard -- which requires umiCount > 0 --
+    into a cast to Int64 that raises and kills the whole CLI with a raw traceback. Zero is the honest
+    reading: a feature holding none of a cell's signal holds none of it whatever the total.
+
+    Real input cannot produce the case: `mitool tag-stat` emits count>0 rows only, and both combine
+    modes sum over barcodes that are present, so every emitted feature has a positive count. The guard
+    is here for the hand-fed CSV -- this CLI is driven by hand during verification -- and for any future
+    counts source that does not share tag-stat's guarantee."""
+    total = pl.col("umiCount").sum().over(["sampleId", "cellId"])
+    return counts.with_columns(pl.when(total > 0).then(pl.col("umiCount") / total).otherwise(0.0).alias("fraction"))
 
 
 def per_cell_summary(per_cell: pl.DataFrame) -> pl.DataFrame:

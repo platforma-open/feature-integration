@@ -217,6 +217,55 @@ def test_an_alerting_tag_carries_the_figures_for_the_identities_it_feeds(bed):
     assert not any((d or "").startswith("identitiesFed=") for d in quiet["detail"].to_list())
 
 
+def test_a_tag_noisy_in_one_panel_does_not_alert_the_panel_it_was_clean_in(bed):
+    # Two samples declaring different tag sets are two panels, and both declare T00. T00's clonotype
+    # splits itself in S2 and reads steady in S1. A run-global disagreement rate puts S2's noise on S1's
+    # row as well, so `outlier_status` alerts inside S1 for a reagent that was clean there -- the reader
+    # is sent to re-prepare the wrong panel. The rows are keyed `(tag, panelId)`, so the figure on them
+    # has to be that panel's.
+    shared = [f"T{i:02d}" for i in range(5)]
+    (bed / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type\n"
+        + "".join(f"S1,Ag{i},{t},Target\n" for i, t in enumerate(shared))
+        + "S1,Ctrl,CTRL,Control\n"
+        # S2 declares the same five plus one more, which is what makes it a different panel.
+        + "".join(f"S2,Ag{i},{t},Target\n" for i, t in enumerate(shared))
+        + "S2,AgX,TXXX,Target\n"
+        + "S2,Ctrl,CTRL,Control\n"
+    )
+    rows = ["sampleId,cellId,tag,umiCount"]
+    # S1: every tag reads the same in every cell -- nothing disagrees with itself.
+    for cell in ("a1", "a2", "a3", "a4"):
+        rows.append(f"S1,{cell},CTRL,6")
+        rows.extend(f"S1,{cell},{t},5" for t in shared)
+    # S2: T00 splits its clonotype two against two.
+    for cell in ("b1", "b2", "b3", "b4"):
+        rows.append(f"S2,{cell},CTRL,6")
+        rows.append(f"S2,{cell},{shared[0]},{500 if cell in ('b1', 'b2') else 5}")
+        rows.extend(f"S2,{cell},{t},5" for t in shared[1:])
+        rows.append(f"S2,{cell},TXXX,5")
+    (bed / "counts.csv").write_text("\n".join(rows) + "\n")
+    (bed / "linker.csv").write_text(
+        "sampleId,cellId,setId\n"
+        + "".join(f"S1,a{i},K1\n" for i in range(1, 5))
+        + "".join(f"S2,b{i},K2\n" for i in range(1, 5))
+    )
+
+    _run(bed, *BASE)
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    t00 = qc.filter((pl.col("measurement") == "tagDisagreement") & (pl.col("entity") == shared[0]))
+    assert t00.height == 2, "T00 is declared by both panels, so it carries a row in each"
+
+    by_panel = {r["panelId"]: r for r in t00.iter_rows(named=True)}
+    rates = {p: float(r["value"]) for p, r in by_panel.items()}
+    assert len(set(rates.values())) == 2, f"one rate on both panels means the run-global figure: {rates}"
+
+    clean = min(rates, key=lambda p: rates[p])
+    assert rates[clean] == 0.0, "the panel whose cells never disagreed reads zero"
+    assert by_panel[clean]["status"] != "alerting", "a panel must not alert for a reagent clean inside it"
+    assert by_panel[max(rates, key=lambda p: rates[p])]["status"] == "alerting"
+
+
 def test_the_key_only_frames_carry_a_value_column_so_they_can_become_columns(bed):
     # A p-column is built from a CSV's *value* columns, so a file of key columns
     # alone imports as nothing at all -- silently, since the file exists and is
@@ -568,6 +617,42 @@ def test_two_identities_that_disagree_the_same_way_do_not_share_a_label(bed):
     for identity, label in labels.items():
         assert label.startswith("Nuc / Spike")
         assert identity in label
+
+
+def test_a_flat_contending_list_is_refused_rather_than_read_as_characters(bed):
+    # `["AgA","AgB"]` is valid JSON and the shape a hand-driven run reaches for first. Read as groups it
+    # makes `set("AgA")` -- a set of CHARACTERS -- so the run completes, no competitor note ever fires,
+    # every `wasCompeted` reads false, and the run record states a contention nothing tested. A silent
+    # wrong answer is the worst outcome available here, so the flag is refused instead.
+    r = _run(bed, *BASE, "--contending", json.dumps(["AgA", "AgB"]), expect_failure=True)
+    assert "--contending" in r.stderr
+
+    # A group of one tests nothing: an identity cannot contend with itself.
+    r = _run(bed, *BASE, "--contending", json.dumps([["AgA"]]), expect_failure=True)
+    assert "fewer than two members" in r.stderr
+
+    # The valid shape still runs, so the guard rejects the mistake rather than the feature.
+    _run(bed, *BASE, "--contending", json.dumps([["AgA", "AgB"]]))
+
+
+def test_a_non_object_grouping_gets_the_usage_message_not_an_attribute_error(bed):
+    # `--grouping '"tag"'` parses as JSON and is not a mapping. Reaching `.get` on it raises an
+    # AttributeError -- a stack trace about a str, where a usage message for this exact mistake is
+    # already written two lines away.
+    r = _run(bed, *BASE, "--grouping", json.dumps("tag"), expect_failure=True)
+    assert "--grouping must be" in r.stderr
+    assert "AttributeError" not in r.stderr
+
+
+def test_a_non_integer_umi_count_names_the_file_and_the_column(bed):
+    # A blank or a decimal dies in the cast as a raw polars traceback naming neither the file nor the
+    # column -- the two things a reader needs. This module's convention is that a bad input exits with a
+    # message about the input.
+    (bed / "counts.csv").write_text("sampleId,cellId,tag,umiCount\nS1,c1,AAAA,\nS1,c2,AAAA,3.5\n")
+    r = _run(bed, *BASE, expect_failure=True)
+    assert "counts.csv" in r.stderr
+    assert "umiCount" in r.stderr
+    assert "Traceback" not in r.stderr
 
 
 DECLARED_FLAGS = (

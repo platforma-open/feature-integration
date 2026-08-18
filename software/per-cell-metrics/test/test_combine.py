@@ -288,7 +288,10 @@ def test_a_cell_in_two_sets_fails_naming_cells_by_set():
     # thing that is actually wrong.
     cells_by_set = {"s1": [("S1", "c1")], "s2": [("S1", "c1")]}
     df = _states([])
-    with pytest.raises(AssertionError, match="cells_by_set"):
+    # ValueError rather than AssertionError, and the type is the point: an `assert` is stripped
+    # under -O, and this guard stripped does not crash -- it returns a wrong answer. Pinning the
+    # type here is what keeps it from quietly becoming strippable again.
+    with pytest.raises(ValueError, match="cells_by_set"):
         combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL)
 
 
@@ -302,7 +305,10 @@ def test_dominant_reason_raises_rather_than_falling_through_to_thin_comparator()
     df = _states([("S1", "c1", "A", U)])
     cells_by_set = {"s1": [("S1", "c1")]}
     admissibility = Admissibility({("S1", "c1"): 10}, 2, set())
-    with pytest.raises(AssertionError):
+    # ValueError rather than AssertionError, and the type is the point: an `assert` is stripped
+    # under -O, and this guard stripped does not crash -- it returns a wrong answer. Pinning the
+    # type here is what keeps it from quietly becoming strippable again.
+    with pytest.raises(ValueError):
         combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility)
 
 

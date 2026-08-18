@@ -103,12 +103,16 @@ def _dominant_reason(asked_keys: list[tuple[str, str]], admissibility: Admissibi
     comparator is fine.
     """
     reasons = {_cell_admissibility_reason(k, admissibility) for k in asked_keys}
-    assert None not in reasons, (
-        f"an admissible cell reached _dominant_reason among {asked_keys!r}: this is only called "
-        "when cellsAnswered is 0, which should be possible only when every asked cell is "
-        "individually inadmissible -- a None reason here means the caller's vote count and "
-        "admissibility disagree about which cells were actually asked"
-    )
+    # Raised rather than asserted: stripped under -O this does not crash, it falls through to
+    # THIN_COMPARATOR and reports a comparator problem for a cell whose comparator is fine -- the exact
+    # wrong answer the docstring above says the check is here to turn into a loud failure.
+    if None in reasons:
+        raise ValueError(
+            f"an admissible cell reached _dominant_reason among {asked_keys!r}: this is only called "
+            "when cellsAnswered is 0, which should be possible only when every asked cell is "
+            "individually inadmissible -- a None reason here means the caller's vote count and "
+            "admissibility disagree about which cells were actually asked"
+        )
     if reasons == {UnreliableReason.GATED}:
         return SetUnreliableReason.ALL_CELLS_GATED
     if UnreliableReason.NO_COMPARATOR in reasons:
@@ -165,10 +169,14 @@ def combine_cells(
     for set_id, members in cells_by_set.items():
         for key in members:
             owner = group_by_cell.get(key)
-            assert owner is None or owner == set_id, (
-                f"cell {key!r} appears in both set {owner!r} and set {set_id!r} in cells_by_set: "
-                "a cell must belong to exactly one set"
-            )
+            # Raised rather than asserted: under -O an assert vanishes, and this one vanishing does not
+            # crash -- it double-counts the cell into two sets and reports tallies that are simply wrong,
+            # which is the failure the docstring above says this check exists to prevent.
+            if owner is not None and owner != set_id:
+                raise ValueError(
+                    f"cell {key!r} appears in both set {owner!r} and set {set_id!r} in cells_by_set: "
+                    "a cell must belong to exactly one set"
+                )
             group_by_cell[key] = set_id
 
     cells_frame = pl.DataFrame(list(group_by_cell), orient="row", schema={"sampleId": pl.String, "cellId": pl.String})
@@ -484,10 +492,14 @@ def self_disagreement(
     for set_id, members in cells_by_set.items():
         for cell_key in members:
             owner = group_by_cell.get(cell_key)
-            assert owner is None or owner == set_id, (
-                f"cell {cell_key!r} appears in both set {owner!r} and set {set_id!r} in cells_by_set: "
-                "a cell must belong to exactly one set"
-            )
+            # Raised rather than asserted: under -O an assert vanishes, and this one vanishing does not
+            # crash -- it double-counts the cell into two sets and reports tallies that are simply wrong,
+            # which is the failure the docstring above says this check exists to prevent.
+            if owner is not None and owner != set_id:
+                raise ValueError(
+                    f"cell {cell_key!r} appears in both set {owner!r} and set {set_id!r} in cells_by_set: "
+                    "a cell must belong to exactly one set"
+                )
             group_by_cell[cell_key] = set_id
 
     cells_frame = pl.DataFrame(list(group_by_cell), orient="row", schema={"sampleId": pl.String, "cellId": pl.String})

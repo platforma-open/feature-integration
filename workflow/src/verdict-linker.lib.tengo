@@ -38,7 +38,7 @@ pick := func(linkerCols, clonotypeAxis) {
 	if len(linkerCols) == 0 {
 		ll.panic("Antigen binding: the selected dataset has no cell linker. Choose a single-cell V(D)J dataset produced by the Import V(D)J Data block.")
 	}
-	for _, col in linkerCols {
+	for col in linkerCols {
 		axes := col.spec.axesSpec
 		if len(axes) == 3 && sameAxis(axes[2], clonotypeAxis) {
 			return col

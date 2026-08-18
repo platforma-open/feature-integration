@@ -181,8 +181,23 @@ def _read_columns(path: str, columns: tuple[str, ...], what: str) -> pl.DataFram
 
 
 def _read_counts(path: str) -> pl.DataFrame:
+    """The counts frame, with umiCount as an integer or a curated exit saying which value was not.
+
+    `_read_columns` reads every column as a string and fills nulls with "", so a blank cell and a
+    decimal both survive to the cast. A bare `.cast` dies there as a raw polars traceback naming
+    neither the file nor the column, which is the one thing a reader needs -- this module's convention
+    is that a bad input exits with a message about the input.
+    """
     counts = _read_columns(path, ("sampleId", "cellId", "tag", "umiCount"), "counts file")
-    return counts.with_columns(pl.col("umiCount").cast(pl.Int64))
+    umi = counts["umiCount"].cast(pl.Int64, strict=False)
+    offenders = [raw for raw, cast in zip(counts["umiCount"], umi, strict=True) if cast is None]
+    if offenders:
+        shown = ", ".join(repr(v) for v in offenders[:5])
+        raise SystemExit(
+            f"counts file {path!r} has {len(offenders)} umiCount value(s) that are not whole numbers: "
+            f"{shown}. A UMI count is a count of observations; a blank or a decimal is not one."
+        )
+    return counts.with_columns(umi.alias("umiCount"))
 
 
 def _json_arg(raw: str | None, flag: str):
@@ -218,6 +233,13 @@ def _build_grouping(
     the answer with nothing downstream able to tell the panel was short.
     """
     by_tag = default_grouping(panel, reference_tags)
+    # Type-checked before it is read as one. `--grouping '"tag"'` is valid JSON and not a mapping, and
+    # reaching `.get` on it raises an AttributeError instead of the usage message written two lines below
+    # for exactly this mistake.
+    if rule is not None and not isinstance(rule, dict):
+        raise SystemExit(
+            f"--grouping must be a JSON object, {{'by':'tag'}} or {{'by':'property','column':...}}; got {rule!r}"
+        )
     if rule is None or rule.get("by") == "tag":
         return by_tag, "per-tag", []
     if rule.get("by") != "property":
@@ -648,7 +670,25 @@ def main() -> None:
     by_tag_grouping = default_grouping(panel, reference_tags)
     tag_universe = identity_universe(panel, by_tag_grouping)
 
+    # Validated as a list of lists before it is read as one. A flat `["AgA","AgB"]` is valid JSON, and
+    # `set("AgA")` is a set of CHARACTERS -- so the run completes, no competitor note ever fires, every
+    # `wasCompeted` reads false, and the run record states a contention that was never tested. A silent
+    # wrong answer, and the only shape of this argument a hand-driven run is likely to reach for.
     contending_raw = _json_arg(args.contending, "--contending") or []
+    if not isinstance(contending_raw, list):
+        raise SystemExit(f"--contending must be a JSON list of lists of identities; got {contending_raw!r}")
+    for group in contending_raw:
+        if not isinstance(group, list) or not all(isinstance(member, str) for member in group):
+            raise SystemExit(
+                f"--contending must be a JSON list of LISTS of identities; {group!r} is not a list of "
+                'strings. A flat list such as ["AgA","AgB"] declares no group -- it reads each name as '
+                "its own set of characters."
+            )
+        if len(group) < 2:
+            raise SystemExit(
+                f"--contending group {group!r} has fewer than two members; an identity cannot contend "
+                "with itself, and a group of one tests nothing."
+            )
     contending = [set(group) for group in contending_raw]
     capture_of_sample: dict[str, str] = _json_arg(args.capture_map, "--capture-map") or {}
 
@@ -957,22 +997,51 @@ def main() -> None:
 
     # ---- the quality measurements -------------------------------------------------
 
-    identity_dis = self_disagreement(
-        states.select("sampleId", "cellId", pl.col("identity").alias("key"), "state"),
-        universe,
-        offered_by_sample,
-        cells_by_set,
-        admissibility,
-        "identity",
-    )
-    tag_dis = self_disagreement(
-        tag_states.select("sampleId", "cellId", pl.col("identity").alias("key"), "state"),
-        tag_universe,
-        tag_offered_by_sample,
-        cells_by_set,
-        admissibility,
-        "tag",
-    )
+    def _disagreement_rates(samples_here: list[str]) -> tuple[dict[str, float | None], dict[str, float | None]]:
+        """The two self-disagreement rates over one panel's samples only.
+
+        Scoped per panel rather than computed once over the run, because the rows that carry these
+        figures are keyed `(tag, panelId)` and `(identity, panelId)`. A run-global rate on a panel's row
+        says something the panel did not do: a reagent declared in panels P and Q but misbehaving only in
+        Q's samples shows the same inflated rate on P's row, and `outlier_status` inside P then alerts P's
+        rollup for a reagent that was clean there -- pointing the reader at the wrong panel and the wrong
+        remedy. `310-qc-status-and-rollup` keeps sample and panel as separate axes precisely so a reagent
+        fault lands on the panel that has it.
+
+        This is the same restriction `per_antigen_measures` already gets from `panel_states` a few lines
+        below; disagreement was the one per-panel measure still reading a run-wide number.
+
+        The cell sets are restricted too, not only the states. A set spanning two panels' samples would
+        otherwise bring its other panel's cells into this panel's evaluable count, and self-disagreement
+        is precisely a count of a set's cells contradicting each other.
+        """
+        here = set(samples_here)
+        sets_here = {set_id: [key for key in members if key[0] in here] for set_id, members in cells_by_set.items()}
+        sets_here = {set_id: members for set_id, members in sets_here.items() if members}
+        by_tag = self_disagreement(
+            tag_states.filter(pl.col("sampleId").is_in(samples_here)).select(
+                "sampleId", "cellId", pl.col("identity").alias("key"), "state"
+            ),
+            tag_universe,
+            {s: tag_offered_by_sample[s] for s in samples_here},
+            sets_here,
+            admissibility,
+            "tag",
+        )
+        by_identity = self_disagreement(
+            states.filter(pl.col("sampleId").is_in(samples_here)).select(
+                "sampleId", "cellId", pl.col("identity").alias("key"), "state"
+            ),
+            universe,
+            {s: offered_by_sample[s] for s in samples_here},
+            sets_here,
+            admissibility,
+            "identity",
+        )
+        return (
+            dict(zip(by_tag["key"].to_list(), by_tag["disagreementRate"].to_list(), strict=True)),
+            dict(zip(by_identity["key"].to_list(), by_identity["disagreementRate"].to_list(), strict=True)),
+        )
 
     read_qc: dict[str, dict] = {}
     if args.qc_summary:
@@ -1054,8 +1123,6 @@ def main() -> None:
 
         sample_coverage[sample] = roll_up([r.status for r in rows[first:]])
 
-    tag_rate = dict(zip(tag_dis["key"].to_list(), tag_dis["disagreementRate"].to_list(), strict=True))
-    identity_rate = dict(zip(identity_dis["key"].to_list(), identity_dis["disagreementRate"].to_list(), strict=True))
     identities_of_panel: dict[str, set[str]] = {
         panel_id: {grouping[t] for t in tags if t in grouping} for panel_id, tags in tags_of_panel.items()
     }
@@ -1071,6 +1138,7 @@ def main() -> None:
         first = len(rows)
         panel_samples_here = samples_of_panel[panel_id]
         panel_tags = tags_of_panel[panel_id]
+        tag_rate, identity_rate = _disagreement_rates(panel_samples_here)
         here_total = {
             tag: float(sum(per_sample_tag_total.get((s, tag), 0) for s in panel_samples_here))
             for tag in {t for (s, t) in per_sample_tag_total if s in panel_samples_here} | set(panel_tags)

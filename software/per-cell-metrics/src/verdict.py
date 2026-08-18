@@ -648,11 +648,15 @@ def silent_tally(
                 observed_inadmissible_n = observed_inadmissible_count.get(pair, 0)
                 silent_unreliable = total_inadmissible - observed_inadmissible_n
                 silent_not_bound = asked - observed_n - silent_unreliable
-                assert asked >= 0 and silent_unreliable >= 0 and silent_not_bound >= 0, (
-                    f"negative silent term for {sample!r}/{identity!r} "
-                    f"(asked={asked}, silentUnreliable={silent_unreliable}, silentNotBound={silent_not_bound}): "
-                    "cells or observed violated the uniqueness precondition documented above"
-                )
+                # Raised rather than asserted. Stripped under -O these terms stay negative and are
+                # summed into the tallies, so the run reports fewer silent positions than it has -- a
+                # wrong count with nothing to show it, which is what the precondition exists to catch.
+                if asked < 0 or silent_unreliable < 0 or silent_not_bound < 0:
+                    raise ValueError(
+                        f"negative silent term for {sample!r}/{identity!r} "
+                        f"(asked={asked}, silentUnreliable={silent_unreliable}, silentNotBound={silent_not_bound}): "
+                        "cells or observed violated the uniqueness precondition documented above"
+                    )
                 rows.append((sample, identity, asked, observed_n, silent_unreliable, silent_not_bound))
     else:
         # Group-keyed path: a group can mix members from samples with
@@ -705,11 +709,15 @@ def silent_tally(
                 observed_inadmissible_n = observed_inadmissible_count.get(pair, 0)
                 silent_unreliable = total_inadmissible - observed_inadmissible_n
                 silent_not_bound = asked - observed_n - silent_unreliable
-                assert asked >= 0 and silent_unreliable >= 0 and silent_not_bound >= 0, (
-                    f"negative silent term for {group!r}/{identity!r} "
-                    f"(asked={asked}, silentUnreliable={silent_unreliable}, silentNotBound={silent_not_bound}): "
-                    "cells or observed violated the uniqueness precondition documented above"
-                )
+                # Raised rather than asserted. Stripped under -O these terms stay negative and are
+                # summed into the tallies, so the run reports fewer silent positions than it has -- a
+                # wrong count with nothing to show it, which is what the precondition exists to catch.
+                if asked < 0 or silent_unreliable < 0 or silent_not_bound < 0:
+                    raise ValueError(
+                        f"negative silent term for {group!r}/{identity!r} "
+                        f"(asked={asked}, silentUnreliable={silent_unreliable}, silentNotBound={silent_not_bound}): "
+                        "cells or observed violated the uniqueness precondition documented above"
+                    )
                 rows.append((group, identity, asked, observed_n, silent_unreliable, silent_not_bound))
 
     return pl.DataFrame(

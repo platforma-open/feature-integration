@@ -54,7 +54,7 @@ guardNoScore := func(annotations) {
 // Split from the assertion below so it can be tested both ways: tengo has no try/catch, so a predicate
 // is the only part of a guard a test can actually exercise.
 usesLegacyFeatureAxis := func(axesSpec) {
-	for _, axis in axesSpec {
+	for axis in axesSpec {
 		if axis.spec.name == LEGACY_FEATURE_AXIS {
 			return true
 		}
@@ -1062,9 +1062,8 @@ panelMismatchImportSpec := func(panelAxisSpec, tagAxisSpec) {
 //
 // Every declared measurement keeps its place whether or not this run could compute it: a measurement
 // nothing computed reads "not evaluated" with its reason rather than being absent, so a reader can
-// never mistake "nothing computed this yet" for "this was checked and found fine". `panelId` travels
-// as an ordinary column rather than a fourth axis — it is how a panel rollup finds its constituents,
-// and a sample-level row simply leaves it empty.
+// never mistake "nothing computed this yet" for "this was checked and found fine". A row that belongs
+// to no panel — every sample-level and capture-level row — leaves `panelId` empty.
 /* The panel is part of the KEY, not a value column beside it. A barcode
    recurring across panels -- the ordinary case, since the same reagent is
    stained into several samples -- writes one row per panel at the same

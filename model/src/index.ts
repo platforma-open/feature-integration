@@ -39,18 +39,15 @@ const DEFAULT_HIGH_REFERENCE_LINE = 100;
 // One column per identity, its value carrying the state and both support counts together (see
 // identityPunchImportSpec). The pairing is inside the value because a grid pairs a cell with another
 // column's cell only by position, which no import guarantees.
-// The p-frame key every punch column is imported under, and therefore the prefix of its column id in the
-// table. Exported because the punchcard's cell renderer has to tell a verdict column from the axis and
-// label columns beside it, and the grid layer sees ids rather than specs. Set in verdict-import.tpl.tengo
-// as `addTo(punchFb, "identityPunch", ...)`; the two must move together.
-export const PUNCH_COLUMN_KEY_PREFIX = "identityPunch/";
-
-// The prefix of an individual punch COLUMN's id inside that frame — `identityPunch_<identity>`, set as
-// `idPrefix` in identityPivotImportSpec. Deliberately separate from the frame key above: the two differ
-// by one character, they both appear in a column id, and using the frame key where the column id was
-// wanted matches every punch column and identifies none of them, which is a match that looks like it
-// works.
-export const PUNCH_COLUMN_ID_PREFIX = "identityPunch_";
+//
+// The UI identifies a punch column by these two — the column's own name and the domain key its identity
+// travels under — read off the spec the grid hands back on `colDef.context`. It used to match the
+// identity against the column ID instead, and that was wrong twice over: an id is
+// `identityPunch_<substituteSpecialCharacters(identity)>`, so any identity carrying a hyphen or a space
+// never matched itself, and a substring test let `SpikeWT` match `SpikeWT_alt`'s column and name the
+// wrong antigen. Both id prefixes existed only to serve that match and are gone with it.
+export const PUNCH_COLUMN_NAME = "pl7.app/antigen/identityPunch";
+export const PUNCH_IDENTITY_DOMAIN = "pl7.app/antigen/identityId";
 
 // Longest antigen header drawn before it is cut. The grid auto-sizes every column to fit its contents
 // and a block cannot override that, so one joined label - "Anti-Hen_Egg_Lysozyme /
@@ -61,9 +58,6 @@ const MAX_HEADER_CHARS = 20;
 export function truncateHeader(label: string): string {
   return label.length <= MAX_HEADER_CHARS ? label : `${label.slice(0, MAX_HEADER_CHARS - 1)}…`;
 }
-
-const IDENTITY_PUNCH_COLUMN = "pl7.app/antigen/identityPunch";
-const IDENTITY_ID_DOMAIN = "pl7.app/antigen/identityId";
 
 // How each comparator choice is written for a reader. The single place the wording lives: the Python
 // enum, the run-meta JSON and the p-column domain all carry the machine token, so rewording a sentence
@@ -562,7 +556,10 @@ export const platforma = BlockModelV3.create(dataModel)
       // Off by default, and off means ABSENT: a minimum agreement of 0 passes every majority instead of
       // skipping the check, and a gate of 0 sets aside every cell instead of gating none. Both are
       // different claims from "off", so neither is projected as zero.
-      minAgreement: data.minAgreement,
+      minAgreement:
+        typeof data.minAgreement === "number" && data.minAgreement > 0
+          ? data.minAgreement
+          : undefined,
       gateThreshold:
         typeof data.gateThreshold === "number" && data.gateThreshold > 0
           ? Math.round(data.gateThreshold)
@@ -1020,8 +1017,8 @@ export const platforma = BlockModelV3.create(dataModel)
     const seen = new Set<string>();
     const options: { value: string; label: string }[] = [];
     for (const c of pCols) {
-      if (c.spec.name !== IDENTITY_PUNCH_COLUMN) continue;
-      const identity = c.spec.domain?.[IDENTITY_ID_DOMAIN];
+      if (c.spec.name !== PUNCH_COLUMN_NAME) continue;
+      const identity = c.spec.domain?.[PUNCH_IDENTITY_DOMAIN];
       if (identity === undefined || seen.has(identity)) continue;
       seen.add(identity);
       // The label the workflow put on the column, which for a merged identity is the joined name rather
@@ -1069,7 +1066,7 @@ export const platforma = BlockModelV3.create(dataModel)
       // than "none": the punchcard's whole job is the full grid of clonotypes against the panel, so a page
       // that opens empty and waits to be told which antigens matter has inverted its own purpose.
       const picked = new Set(ctx.data.punchcardIdentities);
-      const identityOf = (c: (typeof pCols)[number]) => c.spec.domain?.[IDENTITY_ID_DOMAIN];
+      const identityOf = (c: (typeof pCols)[number]) => c.spec.domain?.[PUNCH_IDENTITY_DOMAIN];
       const punchCols = pCols.filter((c) => identityOf(c) !== undefined);
       const cols =
         picked.size === 0

@@ -11,8 +11,8 @@ import {
   usePlDataTableSettingsV2,
 } from "@platforma-sdk/ui-vue";
 import {
-  PUNCH_COLUMN_ID_PREFIX,
-  PUNCH_COLUMN_KEY_PREFIX,
+  PUNCH_COLUMN_NAME,
+  PUNCH_IDENTITY_DOMAIN,
   REFERENCE_SOURCE_LABELS,
 } from "@platforma-open/milaboratories.feature-integration.model";
 import { computed, ref } from "vue";
@@ -36,21 +36,46 @@ const tableSettings = usePlDataTableSettingsV2({
 // table carries are the punch family plus the clonotype axis and whatever label columns the pool supplies
 // for it, and only the first should be drawn.
 //
-// Matched on the column id, because the grid layer sees ids rather than specs. The prefix is exported by
-// the model rather than written here, so the coupling to the workflow's p-frame key has one home.
+// Identified from the column's own SPEC, which the grid hands back on `colDef.context`, and never by
+// matching the identity against the column id. Two ways that string match was wrong, one root:
 //
-// A merged identity also gets a note explaining ITSELF. Its column header reads as a joined label
+//   1. A column id is `identityPunch_<substituteSpecialCharacters(identity)>`, and the SDK's substitution
+//      rewrites `-`, space, `.`, `/`, `(`, `)` and more to `_`. So an identity containing any of them —
+//      every antigen name under a property grouping — never matched its OWN column, and the tooltip
+//      silently lost both the antigen line and the merged note.
+//   2. `.includes()` is a substring test, so `SpikeWT` also matched `identityPunch_SpikeWT_alt`. The
+//      hover panel then named the wrong antigen with no sign anything was amiss, which is worse than
+//      naming none.
+//
+// The spec is the exact handle: the identity travels in the column's domain, put there by
+// identityPivotImportSpec, and reading it needs no knowledge of how an id is spelled. If the grid ever
+// stops supplying `context` the punch renderer simply does not apply, and the card renders raw values —
+// visibly broken, rather than quietly mislabelled.
+type PunchColumnContext = {
+  type?: string;
+  spec?: { name?: string; domain?: Record<string, string>; annotations?: Record<string, string> };
+};
+
+const identityOfColumn = (params: {
+  colDef?: { context?: PunchColumnContext };
+}): string | undefined => {
+  const spec = params.colDef?.context?.spec;
+  if (spec === undefined || spec.name !== PUNCH_COLUMN_NAME) return undefined;
+  return spec.domain?.[PUNCH_IDENTITY_DOMAIN];
+};
+
+// A merged identity gets a note explaining ITSELF. Its column header reads as a joined label
 // (`SpikeWT / SpikeWT__alt`) where every other header is a single antigen, and nothing on the header
 // says why. The banner above the card says two barcodes lost their grouping value, but it sits far from
 // the column it is about and names barcodes rather than the label now shown. Attaching the note to the
 // column's cells puts the explanation where the reader's cursor already is.
-const mergedNote = (colId: string): string | undefined => {
-  const merged = ungroupedTags.value.find((tag) =>
-    colId.includes(`${PUNCH_COLUMN_ID_PREFIX}${tag}`),
-  );
-  if (merged === undefined) return undefined;
+//
+// A merged identity IS its barcode — the tag that lost its grouping value stands as its own identity —
+// so this is an exact set membership rather than a search.
+const mergedNote = (identity: string | undefined): string | undefined => {
+  if (identity === undefined || !ungroupedTags.value.includes(identity)) return undefined;
   return (
-    `merged: the panel gives barcode ${merged} a different name in different samples, ` +
+    `merged: the panel gives barcode ${identity} a different name in different samples, ` +
     `so there is no single value to group it under — it stands alone, labelled with both names. ` +
     `Every other column groups on one agreed name.`
   );
@@ -63,19 +88,17 @@ const labelOf = computed(() => {
   return m;
 });
 
-const cellRendererSelector = (params: { colDef?: { colId?: string } }) => {
-  const colId = String(params.colDef?.colId ?? "");
-  if (!colId.includes(PUNCH_COLUMN_KEY_PREFIX)) return undefined;
-  // The full name travels to the cell because the header above it may be truncated, and a reader
-  // hovering a dot halfway down a long grid cannot see the header at all.
-  const identity = Object.keys(labelOf.value).find((id) =>
-    colId.includes(`${PUNCH_COLUMN_ID_PREFIX}${id}`),
-  );
+const cellRendererSelector = (params: { colDef?: { context?: PunchColumnContext } }) => {
+  const identity = identityOfColumn(params);
+  if (identity === undefined) return undefined;
   return {
     component: PunchCell,
     params: {
-      antigen: identity === undefined ? undefined : labelOf.value[identity],
-      mergedNote: mergedNote(colId),
+      // The full name travels to the cell because the header above it may be truncated, and a reader
+      // hovering a dot halfway down a long grid cannot see the header at all. The picker's label is
+      // preferred over the column's, which the model truncates for display.
+      antigen: labelOf.value[identity] ?? identity,
+      mergedNote: mergedNote(identity),
     },
   };
 };
