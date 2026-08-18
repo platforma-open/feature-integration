@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { CSSProperties } from "vue";
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { PUNCH_PAINT } from "./punchMarks";
 
 // One punch, in the operator's vocabulary rather than the use case figure's:
@@ -108,10 +108,14 @@ const punchStyle = computed<CSSProperties>(() => ({
   ...(glyph.value === "none" ? {} : PUNCH_PAINT[glyph.value]),
 }));
 
+// Fills the cell, so the hover target is the whole cell rather than the dot. The measured wrapper was
+// 130px inside a 161px cell, which leaves a strip on each side where a reader aiming at the column would
+// get nothing back.
 const cellStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
+  width: "100%",
   height: "100%",
 };
 
@@ -139,26 +143,72 @@ const EXPLANATION: Record<VerdictState, string> = {
     "no mark: this clonotype's cells were never offered this antigen, so there is nothing to answer",
 };
 
-const tooltip = computed(() => {
+const lines = computed<string[]>(() => {
   const p = punch.value;
-  if (p.kind !== "read") return "No readable verdict for this clonotype at this identity";
+  if (p.kind !== "read") return ["No readable verdict for this clonotype at this identity"];
 
-  const lines = [p.state.toUpperCase(), EXPLANATION[p.state]];
+  const out = [p.state.toUpperCase(), EXPLANATION[p.state]];
   if (p.state !== "never asked") {
-    lines.push(`${p.answered} of ${p.couldAnswer} cells answered`);
-    if (p.agreement !== undefined) {
-      lines.push(`${Math.round(p.agreement * 100)}% of them agreed`);
-    }
+    out.push(`${p.answered} of ${p.couldAnswer} cells answered`);
+    if (p.agreement !== undefined) out.push(`${Math.round(p.agreement * 100)}% of them agreed`);
   }
-  if (p.reason !== undefined) {
-    lines.push(WHY_UNSETTLED[p.reason] ?? p.reason);
-  }
-  return lines.join("\n");
+  if (p.reason !== undefined) out.push(WHY_UNSETTLED[p.reason] ?? p.reason);
+  return out;
 });
+
+// The panel is rendered by this component and teleported to <body>, rather than left to the browser's
+// native `title`. Three reasons, and the first is decisive: a `title` inside a virtualised grid cell did
+// not fire at all in the app, which is what a reader reported after the tooltip was "verified" by
+// inspecting attributes in the DOM. A title also cannot be styled or laid out - a five-line explanation
+// arrives as one run-together string - and it appears only after the OS hover delay, which for a grid a
+// reader is scanning is long enough to feel absent.
+//
+// Teleported because the cell clips: ag-grid gives each cell `overflow: hidden`, so a panel rendered in
+// place is cut to a 40px row.
+const hover = ref<{ x: number; y: number } | null>(null);
+
+// Positioned beside the cursor and flipped when it would leave the window, so a punch in the last column
+// or the bottom row still shows its whole explanation.
+const panelStyle = computed<CSSProperties>(() => {
+  const at = hover.value;
+  if (at === null) return { display: "none" };
+  const W = 320;
+  const flipX = at.x + W + 24 > window.innerWidth;
+  const flipY = at.y + 160 > window.innerHeight;
+  return {
+    position: "fixed",
+    left: `${flipX ? at.x - W - 16 : at.x + 16}px`,
+    top: `${flipY ? Math.max(8, at.y - 150) : at.y + 16}px`,
+    width: `${W}px`,
+    zIndex: "2000",
+    pointerEvents: "none",
+    background: "#1f2329",
+    color: "#f5f6f7",
+    borderRadius: "6px",
+    padding: "8px 10px",
+    fontSize: "12px",
+    lineHeight: "1.45",
+    boxShadow: "0 4px 16px rgba(0, 0, 0, 0.28)",
+  };
+});
+
+function show(e: MouseEvent) {
+  hover.value = { x: e.clientX, y: e.clientY };
+}
+function hide() {
+  hover.value = null;
+}
 </script>
 
 <template>
-  <div :style="cellStyle" :title="tooltip">
+  <div :style="cellStyle" @mouseenter="show" @mousemove="show" @mouseleave="hide">
     <span v-if="glyph !== 'none'" :style="punchStyle" />
+    <Teleport to="body">
+      <div v-if="hover" :style="panelStyle">
+        <div v-for="(line, i) in lines" :key="i" :style="i === 0 ? { fontWeight: 600 } : {}">
+          {{ line }}
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
