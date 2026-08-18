@@ -1,26 +1,29 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
-// One punch. The glyph vocabulary is the use case's own punch-card figure
-// (catalogue/discovery/antigen-barcode-binding-profiling/assets/punch-card.svg): a filled dot is bound and
-// a dashed grey ring is a position never offered to this clonotype.
+// One punch, in the operator's vocabulary rather than the use case figure's:
 //
-// The figure draws NOT BOUND as a blank cell, and this deviates from it: not-bound is a faint small dot.
-// Blank reads as "not bound" only when hits are common. A real card is mostly negative by construction —
-// a clonotype binds one antigen out of the panel, so a 74 x 13 grid is ~92% not-bound before anything goes
-// wrong — and at that density a blank-for-negative card is indistinguishable from one that failed to load.
-// The first reader of a live run asked why the punchcard was empty; it was not empty, it was answering.
-// The faint dot says "asked, and the answer was no" while leaving bound the only thing that reads as ink.
+//   bound        a GREEN dot
+//   not bound    a RED dot
+//   unreliable   a GREY dot
+//   never asked  nothing at all
 //
-// The figure has three glyphs because it predates the fourth state. `unreliable` — asked, and the data
-// cannot settle it — gets the one shape left that reads as neither an answer nor an absence: a solid ring.
-// It is deliberately not a faded dot, because `unreliable` is not a weak `bound`.
+// This departs from `assets/punch-card.svg`, which fills a dot for bound, leaves the cell blank for not
+// bound, and rings it for never-offered. Operator decision, taken after reading a live card: the figure's
+// blank-for-negative is unreadable at real density, because a clonotype binds one antigen out of the panel
+// and the grid is therefore ~92% negative before anything goes wrong. Here blank is reserved for the one
+// state that genuinely has no answer in it - a position the experiment never put to this clonotype.
 //
-// The dot's SIZE is this component's own addition, and it is not decoration.
-// `support-travels-with-the-reading` obliges the cells that could have answered and the cells that did to
-// travel with a verdict wherever it appears, and its reason is about the page rather than the artifact: a
-// reading resting on three cells must not look like one resting on forty. The figure shows every punch at
-// one size, which a static illustration can afford and a grid of real verdicts cannot.
+// The three states that ARE answers all read as dots of one family, so the card is a field of colour and a
+// reader is never asked to tell a shape from an absence.
+//
+// SIZE carries what the reading rests on, and it applies to bound and not bound alike.
+// `support-travels-with-the-reading` obliges both counts to travel with a verdict wherever it appears, and
+// its reason is confidence, not magnitude: a reading resting on three cells must not look like one resting
+// on forty, and that is as true of a negative as of a positive. An earlier revision of this file sized only
+// `bound`, arguing a negative carries no magnitude worth showing; that conflated how much was bound with
+// how much was measured, and the atom is about the second. `unreliable` and `never asked` stay fixed,
+// because neither asserts anything for evidence to support.
 //
 // The cell's value carries all three facts, `state|answered|couldAnswer`, because a grid pairs a cell with
 // another column's cell only by position and no import guarantees that. Anything that does not parse is
@@ -48,33 +51,32 @@ const punch = computed<Punch>(() => {
   return { kind: "read", state: known, answered: a, couldAnswer: c };
 });
 
-// Area rather than diameter tracks the support: doubling a diameter quadruples the ink, which reads as four
-// times the evidence, and the floor keeps a one-cell reading visible rather than shrinking it to nothing.
-// Only `bound` scales. A negative answer carries no magnitude worth showing, and sizing it would invite
-// reading a large pale dot as a strong negative — so not-bound is one fixed, deliberately small size.
 const diameter = computed(() => {
   const p = punch.value;
-  if (p.kind === "read" && p.state === "not bound") return 5;
-  if (p.kind !== "read" || p.state !== "bound" || p.couldAnswer <= 0) return 15;
+  if (p.kind !== "read") return 11;
+  // Neither of these rests on anything an evidence count could describe.
+  if (p.state === "unreliable" || p.state === "never asked") return 11;
+  if (p.couldAnswer <= 0) return 8;
+  // Area rather than diameter tracks the support: doubling a diameter quadruples the ink, which would read
+  // as four times the evidence. The floor keeps a one-cell reading visible instead of shrinking it away.
   const fraction = Math.min(1, Math.max(0, p.answered / p.couldAnswer));
   return 8 + Math.sqrt(fraction) * 7;
 });
 
-// A total map rather than a switch, so a fifth state would fail to compile rather than silently fall
-// through to whichever mark happened to be the default.
-type Glyph = "dot" | "faint" | "ring" | "undef" | "unknown";
+type Glyph = "bound" | "not-bound" | "unreliable" | "none" | "unknown";
 const GLYPH_OF: Record<VerdictState, Glyph> = {
-  bound: "dot",
-  "not bound": "faint",
-  unreliable: "ring",
-  "never asked": "undef",
+  bound: "bound",
+  "not bound": "not-bound",
+  unreliable: "unreliable",
+  "never asked": "none",
 };
 const glyph = computed<Glyph>(() =>
   punch.value.kind === "read" ? GLYPH_OF[punch.value.state] : "unknown",
 );
 
-// Every cell carries its reading in words. The faint and hollow marks are the ones a reader cannot resolve
-// by looking harder, so the sentence is where the counts and the state actually live.
+// Every cell carries its reading in words. Colour separates the three answers and size carries their
+// support, but neither says WHICH counts, and an empty cell says nothing by design - so the sentence is
+// where the state and the two numbers actually live.
 const tooltip = computed(() => {
   const p = punch.value;
   if (p.kind !== "read") return "No readable verdict for this clonotype at this identity";
@@ -87,6 +89,7 @@ const tooltip = computed(() => {
 <template>
   <div class="punch-cell" :title="tooltip">
     <span
+      v-if="glyph !== 'none'"
       class="punch"
       :class="`punch--${glyph}`"
       :style="{ width: `${diameter}px`, height: `${diameter}px` }"
@@ -108,28 +111,22 @@ const tooltip = computed(() => {
   box-sizing: border-box;
 }
 
-/* The figure's own marks and colours, plus the faint negative. */
-.punch--dot {
+/* Bound and not-bound are the two answers, so they are the two saturated colours. Unreliable is grey
+   because it asserts nothing, and never-asked draws nothing at all. */
+.punch--bound {
+  background: #1a7f37;
+}
+
+.punch--not-bound {
   background: #d94438;
 }
 
-/* Deliberately the smallest and palest mark: present enough that the grid reads as answered, quiet
-   enough that scanning a column still counts only the filled dots. */
-.punch--faint {
+.punch--unreliable {
   background: #9aa3ae;
-  opacity: 0.35;
 }
 
-.punch--undef {
-  border: 1.5px dashed #9aa3ae;
-}
-
-.punch--ring {
-  border: 1.5px solid #9aa3ae;
-}
-
-/* Not a state — a value this component could not read. Marked rather than blanked, because blank is an
-   answer here. */
+/* Not a state - a value this component could not read. Marked rather than blanked, because blank means
+   never asked here and an unreadable cell is not that. */
 .punch--unknown {
   border: 1.5px dotted #d94438;
   opacity: 0.7;
