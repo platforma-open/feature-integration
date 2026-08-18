@@ -211,11 +211,106 @@ def write_panel(path: str, seq: dict[str, str], controls: list[str]) -> None:
                 f.write(f"{sample},{CONTROL_NAMES[slot]},{seq[slot]},Control\n")
 
 
+# --- the two shapes real panel files arrive in --------------------------------------------------
+#
+# Projections of the same slots, samples and names as the panels above, so counts.csv and linker.csv
+# apply to them unchanged and the three panels differ only in the shape of the declaration. Both
+# shapes were observed in use at one account, at the same time, on two of its projects.
+#
+# NEITHER carries a value meaning "comparator", and that is the point of them. In both, the negative
+# control is one antigen the scientist points at by name in the interface -- so a run over either
+# resolves to the panel's own readings, and `--reference-values` has nothing correct to name. The
+# `Type` column of the wide shape declares what a member is TO THE QUESTION (a target, an off-target),
+# which is a different axis from what a count is read against. Naming `Off-Target` as the comparator
+# does not merely mis-set a baseline: reference tags are held out of the identity universe, so every
+# off-target stops being asked about at all -- the question an off-target exists to pose is deleted.
+
+# A per-slot catalogue id, 1:1 with the sequence. Real files carry both, and a reader who points the
+# barcode role at the catalogue id instead of the sequence joins to nothing.
+CATALOGUE_IDS = {slot: f"T{100 + i:04d}" for i, slot in enumerate(ANTIGEN_SLOTS + CONTROL_SLOTS)}
+
+# Four distinct values, two of which are one channel spelled two ways -- so grouping on this column
+# splits one channel in two.
+CHANNELS = {
+    "A0": "PE", "A1": "PE",
+    "A2": "APC", "A3": "APC",
+    "A4": "PE Dazzle", "A5": "PE Dazzle",
+    "A6": "PE-Dazzle 5120", "A7": "PE-Dazzle 5120",
+    "R0": "APC", "R1": "APC",
+}
+
+# One value on every row: a declared column that carries no information at all. Grouping on it puts
+# every tag in one identity, which is legal and useless.
+RESIDUES = "ECD protein"
+
+# What each member is to the question. No "Control" anywhere, deliberately.
+TYPES = {
+    "A0": "Target (Primary)", "A1": "Target (Primary)",
+    "A2": "Off-Target", "A3": "Target (Secondary)",
+    "A4": "Target (Secondary)", "A5": "Off-Target",
+    "A6": "Target (Primary)", "A7": "Target (Primary)",
+    "R0": "Off-Target", "R1": "Off-Target",
+}
+
+# Case variants, because the observed file carried six values that were three roles. Two failure
+# modes, kept separate so a test can tell them apart:
+#
+#   A0 reads "Target (Primary)" in S01/S03 and "Target (primary)" in S02/S04. One barcode, two
+#   values, so the property is dropped for that tag entirely -- it ends up with no role at all.
+#
+#   A5 reads "Off-target" everywhere it appears. Self-consistent, so it keeps its role, but it no
+#   longer matches A2's "Off-Target" -- so selecting one role value silently misses the other.
+LOWERCASED_IN = {"A0": {"S02", "S04"}}
+ALWAYS_LOWERCASED = {"A5"}
+
+
+def _typed(slot: str, sample: str) -> str:
+    role = TYPES[slot]
+    if slot in ALWAYS_LOWERCASED or sample in LOWERCASED_IN.get(slot, set()):
+        # Lowercase only the parenthesised qualifier or the word after the hyphen, which is how the
+        # observed variants differed -- not a blanket .lower().
+        return role.replace("(P", "(p").replace("(S", "(s").replace("-Target", "-target")
+    return role
+
+
+def write_panel_narrow(path: str, seq: dict[str, str]) -> None:
+    """Three columns and no fourth: sample, barcode, antigen name.
+
+    The declared control is present as an ordinary antigen row, exactly as it is in the observed file
+    -- nothing in the table says it is the control.
+    """
+    with open(path, "w") as f:
+        f.write("Sample,Sequence,Antigen\n")
+        for sample, name, slot in PANEL:
+            f.write(f"{sample},{seq[slot]},{name}\n")
+        for sample in SAMPLES:
+            f.write(f"{sample},{seq['R0']},{CONTROL_NAMES['R0']}\n")
+
+
+def write_panel_wide(path: str, seq: dict[str, str]) -> None:
+    """Seven columns: sample, name, catalogue id, barcode, channel, a constant, and the role."""
+    with open(path, "w") as f:
+        f.write("Samples,Name,Barcode,Sequence,Channel,Residues,Type\n")
+        for sample, name, slot in PANEL:
+            f.write(
+                f"{sample},{name},{CATALOGUE_IDS[slot]},{seq[slot]},"
+                f"{CHANNELS[slot]},{RESIDUES},{_typed(slot, sample)}\n"
+            )
+        for sample in SAMPLES:
+            slot = "R0"
+            f.write(
+                f"{sample},{CONTROL_NAMES[slot]},{CATALOGUE_IDS[slot]},{seq[slot]},"
+                f"{CHANNELS[slot]},{RESIDUES},{_typed(slot, sample)}\n"
+            )
+
+
 def main() -> None:
     seq = barcodes()
     write_panel("panel.csv", seq, [])
     write_panel("panel_with_reference.csv", seq, ["R0"])
     write_panel("panel_multi_reference.csv", seq, ["R0", "R1"])
+    write_panel_narrow("panel_narrow.csv", seq)
+    write_panel_wide("panel_wide.csv", seq)
 
     with open("counts.csv", "w") as f:
         f.write("sampleId,cellId,tag,umiCount\n")

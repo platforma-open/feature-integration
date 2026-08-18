@@ -15,6 +15,42 @@ samples are `SNN`, and no real sequence, antigen or sample identifier appears an
 | `panel.csv` | Four samples, panels of 3, 4, 4 and 5 tags. **No** comparator tag. |
 | `panel_with_reference.csv` | The same panels plus **one** comparator tag (`Ctrl1`) on every sample. |
 | `panel_multi_reference.csv` | The same panels plus **two** comparator tags (`Ctrl1`, `Ctrl2`) on every sample. |
+| `panel_narrow.csv` | The **three-column** shape: sample, barcode, antigen name, and no fourth column. No role column, so nothing can be named as a comparator and the panel's own readings serve. The control is an ordinary row nothing marks. |
+| `panel_wide.csv` | The **seven-column** shape: sample, name, catalogue id, barcode, channel, a constant column, role. The role column declares target vs off-target and carries **no** comparator value. Includes case-variant role values. |
+
+### The two customer shapes, and what they are for
+
+Both were observed in use at one account at the same time, on two of its projects — so neither is a
+legacy form of the other. They are projections of the same slots, samples and names as the three panels
+above, which is what lets `counts.csv` and `linker.csv` apply to all five unchanged: the panels differ
+only in the shape of the declaration.
+
+**Neither carries a value meaning "comparator."** In both, the negative control is one antigen the
+scientist points at by name in the interface. So a run over either resolves to the panel's own readings.
+
+`panel_narrow.csv` reproduces, on nine tags, what the observed file does on seventeen: four barcodes
+carry a different antigen name in different samples, so four identity labels fall back to the raw
+barcode. Run it with `--barcode-col Sequence --feature-col Antigen --sample-col Sample` and no
+`--role-column`.
+
+`panel_wide.csv` adds three things the narrow shape cannot show. A **catalogue id** 1:1 with the
+sequence, so pointing the barcode role at the wrong one of the two joins to nothing. A **channel**
+column holding four values that are three channels, one of them spelled two ways. A **constant**
+column, which is a declared property carrying no information — group on it and every tag becomes one
+identity.
+
+And its `Type` column carries **case variants**, deliberately, because the observed file held six values
+that were three roles. Two failure modes, kept separate so a test can tell them apart:
+
+- `A0`'s slot reads `Target (Primary)` in two samples and `Target (primary)` in the other two. One
+  barcode, two values, so the property is **dropped for that tag entirely** and it ends up with no role.
+- `A5`'s slot reads `Off-target` wherever it appears — self-consistent, so it keeps its role, but it no
+  longer matches the `Off-Target` written elsewhere. Selecting one value silently misses the other.
+
+**What running the wide panel with `--reference-values "Off-Target"` demonstrates** is why the role
+column is the wrong source for a comparator: reference tags are held out of the identity universe, so
+the identity count drops from nine to seven and **the off-targets stop being asked about at all**. The
+question an off-target exists to pose is deleted rather than answered.
 | `counts.csv` | Sparse per-(sample, cell, barcode) UMI counts for all eleven cells. |
 | `linker.csv` | Cell to clonotype set: `K01`, `K02`, `K03` (spanning two samples), `K04` (a singleton). |
 

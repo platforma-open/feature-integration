@@ -1,0 +1,21 @@
+Samples,Name,Barcode,Sequence,Channel,Residues,Type
+S01,Ag01,T0100,AGAACCCCCCTT,PE,ECD protein,Target (Primary)
+S01,Ag02,T0101,AGTTAAGAACAA,PE,ECD protein,Target (Primary)
+S01,Ag03,T0102,AAGCAACAATCT,APC,ECD protein,Off-Target
+S02,Ag11,T0100,AGAACCCCCCTT,PE,ECD protein,Target (primary)
+S02,Ag02,T0101,AGTTAAGAACAA,PE,ECD protein,Target (Primary)
+S02,Ag04,T0103,TCGTGGTCCTGG,APC,ECD protein,Target (Secondary)
+S02,Ag05,T0104,TCCGTGACTTTG,PE Dazzle,ECD protein,Target (Secondary)
+S03,Ag01,T0100,AGAACCCCCCTT,PE,ECD protein,Target (Primary)
+S03,Ag03,T0102,AAGCAACAATCT,APC,ECD protein,Off-Target
+S03,Ag14,T0103,TCGTGGTCCTGG,APC,ECD protein,Target (Secondary)
+S03,Ag06,T0105,ACCTTACGGGCT,PE Dazzle,ECD protein,Off-target
+S04,Ag11,T0100,AGAACCCCCCTT,PE,ECD protein,Target (primary)
+S04,Ag12,T0101,AGTTAAGAACAA,PE,ECD protein,Target (Primary)
+S04,Ag15,T0104,TCCGTGACTTTG,PE Dazzle,ECD protein,Target (Secondary)
+S04,Ag07,T0106,CTTTTTGCCGTT,PE-Dazzle 5120,ECD protein,Target (Primary)
+S04,Ag07,T0107,CATCTCTAGTCT,PE-Dazzle 5120,ECD protein,Target (Primary)
+S01,Ctrl1,T0108,TGTAGACGCATA,APC,ECD protein,Off-Target
+S02,Ctrl1,T0108,TGTAGACGCATA,APC,ECD protein,Off-Target
+S03,Ctrl1,T0108,TGTAGACGCATA,APC,ECD protein,Off-Target
+S04,Ctrl1,T0108,TGTAGACGCATA,APC,ECD protein,Off-Target

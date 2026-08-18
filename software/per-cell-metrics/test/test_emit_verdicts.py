@@ -602,7 +602,15 @@ def test_the_floor_runs_before_tags_combine(bed):
 # one comparator and two, and a barcode declared on one sample and read on another.
 
 VERDICT_BED = Path(__file__).resolve().parents[2] / "test-data" / "fixtures" / "verdicts"
-VERDICT_BED_FILES = ("counts.csv", "linker.csv", "panel.csv", "panel_with_reference.csv", "panel_multi_reference.csv")
+VERDICT_BED_FILES = (
+    "counts.csv",
+    "linker.csv",
+    "panel.csv",
+    "panel_with_reference.csv",
+    "panel_multi_reference.csv",
+    "panel_narrow.csv",
+    "panel_wide.csv",
+)
 
 NAME_GROUPING = ("--grouping", json.dumps({"by": "property", "column": "Name"}))
 
@@ -1037,3 +1045,121 @@ def test_the_label_fallback_is_caused_by_the_disagreement_and_nothing_else(bed):
         if identity == label
     ]
     assert fell_back == [], "no barcode disagrees here, so no label should fall back"
+
+
+# --- the two shapes, run against the committed bed ----------------------------------------------
+#
+# The three tests further up use an inline bed to fix what a role-less panel does. These two run the
+# committed bed's own projections of the same slots, so they can be compared against each other and
+# against the four-column panels — the only thing that varies is the shape of the declaration.
+
+NARROW_COLS = ["--barcode-col", "Sequence", "--feature-col", "Antigen", "--sample-col", "Sample"]
+WIDE_COLS = ["--barcode-col", "Sequence", "--feature-col", "Name", "--sample-col", "Samples"]
+
+
+def _wide_roles(bed):
+    """tag -> the set of Type values it is declared with, from the seven-column panel."""
+    panel = pl.read_csv(bed / "panel_wide.csv", infer_schema_length=0)
+    roles: dict[str, set[str]] = {}
+    for row in panel.iter_rows(named=True):
+        roles.setdefault(row["Sequence"], set()).add(row["Type"])
+    return roles
+
+
+def test_the_narrow_shape_loses_a_label_for_every_barcode_the_samples_name_differently(wide_bed):
+    # Nine tags and no role column: the panel's own readings serve, and every barcode two samples name
+    # differently has no agreed name to show. The count is derived from the bed rather than written
+    # down, so a bed regenerated under another seed still asserts the same shape.
+    shape = _bed_shape(wide_bed)
+    r = _run(
+        wide_bed, "counts.csv", "panel_narrow.csv", "--linker", "linker.csv", *NARROW_COLS, "--output-prefix", "result"
+    )
+    assert r.returncode == 0, r.stderr
+    meta = json.loads((wide_bed / "result_run_meta.json").read_text())
+    assert meta["referenceChoice"] == ReferenceChoice.PANEL.value
+
+    labels = pl.read_csv(wide_bed / "result_identity_labels.csv", infer_schema_length=0)
+    fell_back = {r["identity"] for r in labels.iter_rows(named=True) if r["identity"] == r["label"]}
+    # Exactly the renamed barcodes, and nothing else: the ones the samples agree on keep their names.
+    assert fell_back == shape["renamed"]
+    assert fell_back, "the bed must rename at least one barcode or this test asserts nothing"
+    assert len(fell_back) < labels.height, "and must not rename all of them"
+
+
+def test_naming_the_off_target_role_as_the_comparator_deletes_the_off_target_questions(wide_bed):
+    # The role column says what a member is TO THE QUESTION; the comparator is a different axis. Naming
+    # the off-target role as the comparator does not merely move a baseline — reference tags are held
+    # out of the identity universe, so the off-targets stop being asked about at all.
+    roles = _wide_roles(wide_bed)
+    off_target = {tag for tag, values in roles.items() if values == {"Off-Target"}}
+    assert off_target, "the bed must declare at least one off-target for this test to mean anything"
+
+    assert (
+        _run(
+            wide_bed, "counts.csv", "panel_wide.csv", "--linker", "linker.csv", *WIDE_COLS, "--output-prefix", "plain"
+        ).returncode
+        == 0
+    )
+    asked_without = {identity for _, identity in _states_prefix(wide_bed, "plain")}
+
+    assert (
+        _run(
+            wide_bed,
+            "counts.csv",
+            "panel_wide.csv",
+            "--linker",
+            "linker.csv",
+            *WIDE_COLS,
+            "--role-column",
+            "Type",
+            "--reference-values",
+            "Off-Target",
+            "--output-prefix",
+            "named",
+        ).returncode
+        == 0
+    )
+    asked_with = {identity for _, identity in _states_prefix(wide_bed, "named")}
+
+    # Without the naming they are questions; with it they are gone.
+    assert off_target <= asked_without, "an off-target is an identity when nothing names it a comparator"
+    assert not (off_target & asked_with), "naming the role deleted the off-target questions"
+    assert asked_with, "and must not delete every question, or the bed says nothing about which went"
+
+
+def test_a_role_value_differing_only_in_case_is_not_matched(wide_bed):
+    # The observed file held six Type values that were three roles. A tag whose role is spelled
+    # `Off-target` is not selected by `Off-Target`, silently — so it stays a question while its
+    # identically-roled siblings become comparators.
+    roles = _wide_roles(wide_bed)
+    variant = {
+        tag
+        for tag, values in roles.items()
+        if len(values) == 1 and (v := next(iter(values))) != "Off-Target" and v.lower() == "off-target"
+    }
+    assert variant, "the bed must carry a case variant of the off-target role"
+
+    assert (
+        _run(
+            wide_bed,
+            "counts.csv",
+            "panel_wide.csv",
+            "--linker",
+            "linker.csv",
+            *WIDE_COLS,
+            "--role-column",
+            "Type",
+            "--reference-values",
+            "Off-Target",
+            "--output-prefix",
+            "named",
+        ).returncode
+        == 0
+    )
+    asked = {identity for _, identity in _states_prefix(wide_bed, "named")}
+    assert variant <= asked, "the case-variant tag was silently left as a question"
+
+
+def _states_prefix(bed, prefix):
+    v = pl.read_csv(bed / f"{prefix}_verdicts.csv", infer_schema_length=0)
+    return {(r["setId"], r["identity"]) for r in v.iter_rows(named=True)}
