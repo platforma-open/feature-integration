@@ -10,12 +10,23 @@ import { FeatureIntegrationBlockPointer as myBlockSpec } from "this-block";
 import type { InferBlockState, PTableHandle } from "@platforma-sdk/model";
 import { createPlDataTableStateV2, wrapOutputs } from "@platforma-sdk/model";
 
-// Level-4 integration test (plan Task 7): a live end-to-end run emitting `pl7.app/feature/umiCount`.
+// Block tests for the Feature Barcode Profiling block.
+//
+// WHAT THIS FILE COVERS, and what it does not. The block has two halves and this file reaches only
+// one of them:
+//
+//   * the per-sample counting half — FASTQ in, per-cell UMI counts out — is exercised end to end by
+//     the second test below, when a backend can run it.
+//   * the ANTIGEN VERDICT half is not covered here at all. It needs a single-cell V(D)J dataset
+//     upstream to supply the clonotype sets, and the samples-and-data chain this file uses cannot
+//     produce one. The verdict logic is covered by the Python suite instead
+//     (software/per-cell-metrics/test/, 259 tests) and by the Tengo suite for the p-column specs
+//     (workflow/src/*.test.tengo). Neither substitutes for a live run, which is why the block is
+//     verified by hand against software/test-data/fixtures/verdicts/ before release.
 //
 // Upstream chain follows the proven samples-and-data FASTQ pattern (blocks/mixcr-amplicon-alignment).
-// The tag->feature CSV is a direct upload (M7 resolution): set as the block arg `tagFeatureCsvHandle`
-// via a local file handle; the workflow imports it with file.importFile and shares the blob across the
-// per-sample bodies.
+// The tag->feature CSV is a direct upload: set as the block arg `tagFeatureCsvHandle` via a local file
+// handle; the workflow imports it with file.importFile and shares the blob across the per-sample bodies.
 //
 // Golden (decoded from test/assets/fb_small_R{1,2}.fastq.gz; geometry CELL 16 + UMI 10 on R1, feature
 // 15 on R2; tags.csv: 15xG -> AGX, 15xC -> BGX):
@@ -37,9 +48,31 @@ blockTest("empty inputs", { timeout: 20000 }, async ({ rawPrj: project, expect }
     project.getBlockState(blockId),
     15000,
   )) as InferBlockState<typeof platforma>;
-  // With no upstream FASTQ column in the pool the option list is empty (args() throws, disabling Run,
-  // but outputs still resolve).
-  expect(stableState.outputs).toMatchObject({ fastqOptions: { ok: true, value: [] } });
+  // With no upstream FASTQ column in the pool the option lists are empty (args() throws, disabling
+  // Run, but outputs still resolve).
+  expect(stableState.outputs).toMatchObject({
+    fastqOptions: { ok: true, value: [] },
+    datasetOptions: { ok: true, value: [] },
+  });
+
+  // Every output a page reads must RESOLVE on a freshly added block, before anything has run. An
+  // output that throws here is not a failed computation — it breaks the page that reads it at the
+  // moment the block is created, which is the first thing a user sees. This block gained five table
+  // outputs and a run-record output on the verdict branch, each guarded by its own
+  // undefined-until-computed path, so the guards are what this asserts. Values are deliberately not
+  // asserted: `ok` with an undefined value is the correct empty-state answer for all of them.
+  const mustResolve = [
+    "perCellTable",
+    "qcSummaryTable",
+    "verdictTable",
+    "antigenQcTable",
+    "antigenPanelMismatchTable",
+    "verdictRunMeta",
+    "isRunning",
+    "started",
+  ] as const;
+  const unresolved = mustResolve.filter((name) => stableState.outputs?.[name]?.ok !== true);
+  expect(unresolved, "outputs that failed to resolve on an empty block").toEqual([]);
 });
 
 // Level-4 end-to-end run against the published mitool (software-mitool 2.3.1-129-main, carrying the
@@ -120,9 +153,16 @@ blockTest.skip(
 
     // Configure the block. update-block-data must carry EVERY BlockArgsValid field, else the backend
     // reports "currentArgs not set". controlFeature is optional (no negative-control marker here), and
-    // so is datasetRef — with no single-cell V(D)J dataset the block skips the verdict stage and still
-    // emits everything this test reads. The reading's numeric parameters are required and carry the
-    // shipped defaults, the same values a freshly created block starts with.
+    // so is datasetRef: this run has no single-cell V(D)J dataset, so it exercises the counting half
+    // alone. The reading's numeric parameters are required and carry the shipped defaults, the same
+    // values a freshly created block starts with.
+    //
+    // What a datasetless run emits BESIDES the per-cell table is deliberately not asserted. Today the
+    // whole antigen stage is skipped, so nothing antigen-related is produced; the spec's qc-measurement
+    // set requires the eight read-and-panel measurements and the panel mismatch report to survive a run
+    // with no cell list, marking the rest not-evaluated. That gap is open (decision log O-4). Asserting
+    // today's behaviour would have to be deleted to fix it, so this test asserts only what both
+    // readings agree on.
     await project.mutateBlockStorage(fiBlockId, {
       operation: "update-block-data",
       value: {
@@ -174,9 +214,24 @@ blockTest.skip(
     expect(maxUmiCounts).toEqual([1, 2]);
     expect(maxUmiCounts.reduce((a, b) => a + b, 0)).toBe(3);
 
-    // Consensus feature per cell: cellA dominant AGX (2 of 3 = 0.67 >= 0.6), cellB single-feature AGX.
-    // The consensusFeature String column is thus "AGX" for both cells.
+    // The cell's largest per-feature share of its own total: cellA 2/3, cellB 1/1. This is the
+    // surviving per-cell magnitude — it says how concentrated a cell's counts were, not which antigen
+    // it bound, so it is not a binding level and does not fall under the no-ordering prohibition.
+    const fractionColumns = data.filter((c) => c.type === "Double");
+    expect(fractionColumns).toHaveLength(1);
+    const maxFractions = [...fractionColumns[0].data].map(Number).sort((a, b) => a - b);
+    expect(maxFractions[0]).toBeCloseTo(2 / 3, 5);
+    expect(maxFractions[1]).toBeCloseTo(1, 5);
+
+    // The dominant-feature call is gone and must not come back through this table. It answered a
+    // different question from the four-state verdict — one antigen per cell, chosen by a share
+    // threshold — and reintroducing it beside a verdict would give a reader two disagreeing answers
+    // with no rule for which wins. `guardNoScore` in column-specs.lib.tengo refuses the score
+    // annotation at build time; this is the same claim checked against what actually reached a table.
     const stringColumnValues = data.filter((c) => c.type === "String").map((c) => [...c.data]);
-    expect(stringColumnValues.some((vals) => vals.every((v) => v === "AGX"))).toBe(true);
+    expect(
+      stringColumnValues.some((vals) => vals.every((v) => v === "AGX")),
+      "a per-cell column is calling one dominant feature — consensusFeature has returned",
+    ).toBe(false);
   },
 );
