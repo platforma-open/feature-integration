@@ -224,6 +224,34 @@ function removeContendingGroup(index: number) {
     </template>
   </PlNumberField>
 
+  <!--
+    DEFERRED — the contending-antigen editor is not offered.
+
+    Only the editor is deferred. `contendingGroups` stays in the block data, the args projection still
+    passes it, and the workflow still threads `--contending`, so a project that already carries groups
+    keeps its competitor notes and nothing about the emitted verdicts changes. Restoring the editor is
+    uncommenting this block.
+
+    Why it is not offered. `contending-grouping-chosen-at-annotation` holds that which members are
+    taken together as one contending group is chosen "over whatever properties the scientist's panel
+    file carries" — a declared property such as a binding-site column, chosen at annotation and never
+    frozen. What this editor offered instead was hand-entered lists, which is a different thing: it
+    asks the scientist to retype a grouping the panel file is supposed to carry.
+
+    It was also close to unusable at the default grouping, which the removed warning admitted in as
+    many words. Under one-identity-per-tag the identities ARE the barcodes, and the panel is read
+    column by column before the run, so no barcode-to-name pairing exists yet and the dropdown could
+    only offer 15-mers. A scientist would have been picking sequences out of a list.
+
+    What it should become: contention derived from a panel column, on the same footing as the grouping
+    dropdown above. That needs a column the panel file declares, which the files observed in the field
+    do not yet carry — the same gap that blocks reading a variant family as one identity. Both wait on
+    the same conversation about what the panel file should hold.
+
+    Nothing in the corpus is contradicted by deferring it: `contention-travels-with-the-negative`
+    requires the note to travel WITH the verdict where a group exists, and it still does. It does not
+    require this block to offer a way to type one in.
+
   <PlAccordionSection label="Contending antigens">
     <PlAlert type="info">
       Antigens declared to compete for one binding site. Where one of them reads bound for a
@@ -250,6 +278,7 @@ function removeContendingGroup(index: number) {
       Add a contending group
     </PlBtnGhost>
   </PlAccordionSection>
+  -->
 
   <PlAccordionSection label="Advanced verdict settings">
     <PlNumberField
