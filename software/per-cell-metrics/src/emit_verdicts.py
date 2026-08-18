@@ -671,10 +671,26 @@ def main() -> None:
         orient="row",
         schema={"sampleId": pl.String, "cellId": pl.String, "inCellList": pl.String},
     )
+
+    def _admissibility(key: CellKey) -> str:
+        reason = _cell_admissibility_reason(key, admissibility)
+        return "admissible" if reason is None else reason.value
+
+    # Admissibility is built HERE, in the same row as its own cell, and not attached to a later frame as a
+    # positional column. Polars does not promise a left frame's row order survives a join
+    # (`maintain_order` defaults to "none"), so a positional attach after the joins below can give cells
+    # each other's labels -- and `_write_sorted` then sorts the file, which hides it rather than repairing
+    # it. Carrying the value in the tuple makes the pairing a property of construction instead of a
+    # property of whatever polars did in between.
     reference_frame = pl.DataFrame(
-        [(s, c, reference.by_cell.get((s, c))) for s, c in analysed_cells],
+        [(s, c, reference.by_cell.get((s, c)), _admissibility((s, c))) for s, c in analysed_cells],
         orient="row",
-        schema={"sampleId": pl.String, "cellId": pl.String, "referenceCount": pl.Int64},
+        schema={
+            "sampleId": pl.String,
+            "cellId": pl.String,
+            "referenceCount": pl.Int64,
+            "admissibility": pl.String,
+        },
     )
     cell_counts = (
         non_reference.join(reference_frame, on=["sampleId", "cellId"], how="left")
@@ -687,18 +703,6 @@ def main() -> None:
     cell_scalars = (
         reference_frame.join(in_list, on=["sampleId", "cellId"], how="left")
         .with_columns(pl.col("inCellList").fill_null(unlisted_reads))
-        .with_columns(
-            pl.Series(
-                "admissibility",
-                [
-                    (lambda reason: "admissible" if reason is None else reason.value)(
-                        _cell_admissibility_reason(key, admissibility)
-                    )
-                    for key in analysed_cells
-                ],
-                dtype=pl.String,
-            )
-        )
         .select(["sampleId", "cellId", "referenceCount", "admissibility", "inCellList"])
     )
     _write_sorted(cell_scalars, f"{prefix}_cell_scalars.csv", ["sampleId", "cellId"])

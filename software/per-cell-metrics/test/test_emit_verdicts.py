@@ -1239,3 +1239,46 @@ def test_punch_state_is_the_state_the_long_frame_gives(wide_bed):
     for row in punch.iter_rows(named=True):
         for identity in [c for c in punch.columns if c != "setId"]:
             assert row[identity].split("|")[0] == by_key[(row["setId"], identity)]
+
+
+def test_cell_scalars_pairs_each_cell_with_its_own_admissibility(tmp_path):
+    """Every cell's admissibility must be ITS OWN, not the row next to it.
+
+    The frame this comes from is built in one order and then joined twice before
+    the admissibility column is attached. Polars does not promise a left frame's
+    row order survives a join (`maintain_order` defaults to "none"), so a
+    positional attach can hand cells each other's labels -- and because the file
+    is sorted on write, nothing downstream can tell. The keyed assertion below is
+    what makes the pairing observable at all: asserting the column's PRESENCE, or
+    the multiset of its values, passes just as happily when every label has moved
+    one row down.
+
+    Three distinct labels appear on purpose. A bed where every cell reads the
+    same label cannot tell a correct pairing from any permutation of it, and two
+    labels only catch permutations that cross the boundary between them.
+
+    `no comparator for this cell` is deliberately NOT among them: with a declared
+    comparator, `reference_by_cell` zero-fills every analysed cell it read
+    nothing for (verdict.py:212-221), so a cell missing its comparator row reads
+    THIN rather than NO_COMPARATOR. That reason needs a run with no comparator at
+    all, where it is the answer for every cell and so distinguishes nothing here.
+    """
+    (tmp_path / "counts.csv").write_text(
+        "sampleId,cellId,tag,umiCount\n"
+        "S1,ok1,AAAA,500\nS1,ok1,CTRL,6\n"  # comparable
+        "S1,ok2,AAAA,500\nS1,ok2,CTRL,6\n"  # comparable
+        "S1,thin,AAAA,500\nS1,thin,CTRL,1\n"  # comparator below the thin line of 2
+        "S1,hi,AAAA,500\nS1,hi,CTRL,400\n"  # comparator above the gate -> set aside
+    )
+    (tmp_path / "panel.csv").write_text("Samples,Name,Sequence,Type\nS1,AgA,AAAA,Target\nS1,Ctrl,CTRL,Control\n")
+    (tmp_path / "linker.csv").write_text("sampleId,cellId,setId\nS1,ok1,K1\nS1,ok2,K1\nS1,thin,K2\nS1,hi,K2\n")
+    _run(tmp_path, *BASE, "--gate-threshold", "100")
+
+    scalars = pl.read_csv(tmp_path / "result_cell_scalars.csv", infer_schema_length=0)
+    by_cell = {r["cellId"]: r["admissibility"] for r in scalars.iter_rows(named=True)}
+    assert by_cell == {
+        "ok1": "admissible",
+        "ok2": "admissible",
+        "thin": "the comparator rests on too little to compare against",
+        "hi": "cell set aside by the admissibility gate",
+    }
