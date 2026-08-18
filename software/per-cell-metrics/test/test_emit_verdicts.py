@@ -919,3 +919,121 @@ def test_no_qc_row_carries_a_null_panel_key(bed):
     panels = set(qc["panelId"].to_list())
     assert "" in panels, "sample and capture rows belong to no panel and must carry an empty key"
     assert any(p for p in panels), "tag and identity rows must carry a real panel id"
+
+
+# --- the shape a real panel file arrives in -----------------------------------------------------
+#
+# Every bed above declares a role column, so every bed above can name a comparator. A panel file
+# observed in the field carries three columns and no fourth: the sample, the barcode sequence, and the
+# antigen's name. There is no role column to point `--role-column` at, so the declared rung is not
+# reachable on it at all and the panel's own readings have to serve. It also reuses a barcode between
+# samples under a different antigen name, which is the tag-inventory reuse the per-sample keying of the
+# panel exists for.
+#
+# These tests fix what that file does today. They deliberately do NOT assert that a set spanning two
+# samples should carry one verdict for a barcode that names two different antigens -- that question is
+# open, and a test asserting today's answer would have to be deleted to settle it.
+
+CUSTOMER_TAGS = [f"SEQ{i:02d}" for i in range(1, 10)]  # nine, against a shipped minimum of eight
+
+
+def _customer_bed(root, *, renamed=2, span_samples=True):
+    """A three-column panel: sample, sequence, antigen. No role column, no grouping column.
+
+    `renamed` barcodes carry a different antigen name in the second sample. `span_samples` puts every
+    cell in one clonotype set, so the set's cells come from both panels.
+    """
+    rows = ["Sample,Sequence,Antigen"]
+    for sample, offset in (("SmpA", 0), ("SmpB", 100)):
+        for i, tag in enumerate(CUSTOMER_TAGS):
+            name = f"Ag{offset + i:03d}" if i < renamed else f"Ag{i:03d}"
+            rows.append(f"{sample},{tag},{name}")
+    (root / "panel.csv").write_text("\n".join(rows) + "\n")
+
+    # SEQ01 is strong; the rest sit at 10, above the shipped floor of 4 so nothing is floored away and
+    # the panel median stays a real number. A background of 3 would floor to zero, drag the median to
+    # zero, and make every identity unreliable for a reason unrelated to the comparator.
+    counts = ["sampleId,cellId,tag,umiCount"]
+    linker = ["sampleId,cellId,setId"]
+    for sample in ("SmpA", "SmpB"):
+        for cell in ("c1", "c2", "c3"):
+            counts.append(f"{sample},{cell},{CUSTOMER_TAGS[0]},900")
+            counts.extend(f"{sample},{cell},{t},10" for t in CUSTOMER_TAGS[1:])
+            linker.append(f"{sample},{cell},{'K1' if span_samples else 'K' + sample}")
+    (root / "counts.csv").write_text("\n".join(counts) + "\n")
+    (root / "linker.csv").write_text("\n".join(linker) + "\n")
+    return root
+
+
+CUSTOMER_ARGS = [
+    "counts.csv",
+    "panel.csv",
+    "--linker",
+    "linker.csv",
+    "--barcode-col",
+    "Sequence",
+    "--feature-col",
+    "Antigen",
+    "--sample-col",
+    "Sample",
+    "--output-prefix",
+    "result",
+]
+
+
+def test_a_panel_with_no_role_column_still_produces_verdicts(bed):
+    # No --role-column and no --reference-values, because the file has no column to name. The run must
+    # not fail and must not read unreliable throughout: nine tags clear the minimum of eight, so the
+    # panel's own readings serve.
+    _customer_bed(bed)
+    r = _run(bed, *CUSTOMER_ARGS)
+    assert r.returncode == 0, r.stderr
+
+    meta = json.loads((bed / "result_run_meta.json").read_text())
+    assert meta["referenceChoice"] == ReferenceChoice.PANEL.value
+    assert meta["referenceValues"] == [], "nothing can be declared without a role column"
+    # With no grouping column either, every barcode is its own identity.
+    assert meta["identities"] == CUSTOMER_TAGS
+
+    states = pl.read_csv(bed / "result_verdicts.csv", infer_schema_length=0)
+    assert set(states["state"].to_list()) != {"unreliable"}, "the panel could serve and was not asked to"
+    # The strong barcode reads bound and the background does not, or the bed cannot tell a working
+    # comparator from a broken one.
+    by_identity = dict(zip(states["identity"].to_list(), states["state"].to_list(), strict=True))
+    assert by_identity[CUSTOMER_TAGS[0]] == "bound"
+    assert {by_identity[t] for t in CUSTOMER_TAGS[1:]} == {"not bound"}
+
+
+def test_a_barcode_renamed_between_samples_falls_back_to_its_sequence_as_a_label(bed):
+    # A barcode the two samples name differently carries no agreed antigen name, so the label column
+    # has nothing to show and falls back to the barcode itself. A scientist then reads a raw 15-mer
+    # where every other row shows an antigen.
+    _customer_bed(bed, renamed=2)
+    assert _run(bed, *CUSTOMER_ARGS).returncode == 0
+
+    labels = pl.read_csv(bed / "result_identity_labels.csv", infer_schema_length=0)
+    by_identity = dict(zip(labels["identity"].to_list(), labels["label"].to_list(), strict=True))
+
+    renamed = CUSTOMER_TAGS[:2]
+    for tag in renamed:
+        assert by_identity[tag] == tag, f"{tag} disagrees across samples, so it has no name to show"
+    # The consistently-named barcodes DO keep their antigen name. Without this the assertion above
+    # would also pass on a build that had simply stopped emitting labels at all.
+    for i, tag in enumerate(CUSTOMER_TAGS[2:], start=2):
+        assert by_identity[tag] == f"Ag{i:03d}", f"{tag} agrees across samples and must show its name"
+
+
+def test_the_label_fallback_is_caused_by_the_disagreement_and_nothing_else(bed):
+    # Same bed with the renaming removed: every barcode now agrees across both samples, so no label
+    # falls back. This is what makes the previous test a statement about disagreement rather than about
+    # this bed's barcodes.
+    _customer_bed(bed, renamed=0)
+    assert _run(bed, *CUSTOMER_ARGS).returncode == 0
+
+    labels = pl.read_csv(bed / "result_identity_labels.csv", infer_schema_length=0)
+    fell_back = [
+        identity
+        for identity, label in zip(labels["identity"].to_list(), labels["label"].to_list(), strict=True)
+        if identity == label
+    ]
+    assert fell_back == [], "no barcode disagrees here, so no label should fall back"
