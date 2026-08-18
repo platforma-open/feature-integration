@@ -396,6 +396,11 @@ wf.body(func(args) {
 				verdictParams[key] = value
 			}
 		}
+		// Only meaningful alongside a sample column: with no per-sample keying the panel declares one
+		// panel for every sample and there is nothing to translate.
+		if !is_undefined(args.sampleColumn) && args.sampleColumn != "" {
+			setParam("sampleLabels", args.sampleLabels)
+		}
 		setParam("roleColumn", args.roleColumn)
 		setParam("referenceValues", args.referenceValues)
 		setParam("referenceSource", args.referenceSource)

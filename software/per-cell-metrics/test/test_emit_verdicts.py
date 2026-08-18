@@ -1299,3 +1299,64 @@ def test_cell_scalars_pairs_each_cell_with_its_own_admissibility(tmp_path):
         "thin": "the comparator rests on too little to compare against",
         "hi": "cell set aside by the admissibility gate",
     }
+
+
+# --- the panel's sample column is written in LABELS ---------------------------------
+#
+# Every other bed in this file uses one string on both sides: the panel's sample value
+# IS the counts' sampleId. That coincidence hid a defect that made every real run
+# answer *never asked* everywhere -- the panel file a scientist uploads names samples
+# the way they do ("donor01"), while counts, linker and every emitted axis are keyed by
+# the platform's opaque sampleId. Nothing joined, so nothing was offered to any sample
+# that existed, and a question nobody was asked is correctly answered *never asked*.
+#
+# The two beds below therefore differ from each other ONLY in whether the two sides
+# share a namespace, which is the one variable that was never varied.
+
+OPAQUE = "3CXWCXJ3RU3UQD22B72OYXWL"
+
+
+@pytest.fixture
+def labelled_bed(tmp_path):
+    (tmp_path / "counts.csv").write_text(
+        "sampleId,cellId,tag,umiCount\n"
+        f"{OPAQUE},c1,AAAA,500\n{OPAQUE},c1,CTRL,6\n"
+        f"{OPAQUE},c2,AAAA,500\n{OPAQUE},c2,CTRL,6\n"
+    )
+    (tmp_path / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type\ndonor01,AgA,AAAA,Target\ndonor01,Ctrl,CTRL,Control\n"
+    )
+    (tmp_path / "linker.csv").write_text(f"sampleId,cellId,setId\n{OPAQUE},c1,K1\n{OPAQUE},c2,K1\n")
+    return tmp_path
+
+
+def _distinct_states(bed):
+    """The set of states a run produced -- deliberately not named `_states`, which
+    already exists in this file and returns a per-key mapping."""
+    v = pl.read_csv(bed / "result_verdicts.csv", infer_schema_length=0)
+    return set(v["state"].to_list())
+
+
+def test_a_label_map_joins_the_panel_to_the_counts(labelled_bed):
+    # The fix: the run is told which sampleId each label belongs to, so the panel's
+    # declarations reach the cells they were written for.
+    _run(labelled_bed, *BASE, "--sample-labels", json.dumps({OPAQUE: "donor01"}))
+    assert _distinct_states(labelled_bed) == {"bound"}
+
+
+def test_without_the_map_a_labelled_panel_offers_nothing(labelled_bed):
+    # The defect, pinned so it cannot come back silently. This is not a claim that the
+    # behaviour is right -- it is the observable shape of the failure, and it is the
+    # reason a run can look finished and be empty of answers.
+    _run(labelled_bed, *BASE)
+    assert _distinct_states(labelled_bed) == {"never asked"}
+
+
+def test_a_panel_already_keyed_by_sample_id_is_unaffected(bed):
+    # The map must not become mandatory: a panel whose sample values already ARE
+    # sampleIds is the case every other bed here exercises, and it keeps working with
+    # no map and with an irrelevant one.
+    _run(bed, *BASE)
+    without = _distinct_states(bed)
+    _run(bed, *BASE, "--sample-labels", json.dumps({"someone-else": "unrelated"}))
+    assert _distinct_states(bed) == without

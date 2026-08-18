@@ -482,6 +482,11 @@ def main() -> None:
     p.add_argument("--contending", default=None, help="JSON: groups of identities that contend, as a list of lists")
     p.add_argument("--capture-map", default=None, help="JSON: sampleId -> captureId")
     p.add_argument(
+        "--sample-labels",
+        default=None,
+        help="JSON: sampleId -> the label the panel file writes for it, when the two differ",
+    )
+    p.add_argument(
         "--qc-summary", default=None, help="per-sample read QC CSV (sampleId, readsTotal, readsMatched, ...)"
     )
     p.add_argument("--output-prefix", default="result")
@@ -499,6 +504,32 @@ def main() -> None:
     if args.sample_col:
         roles["sample"] = args.sample_col
     panel, dropped_lines = read_panel(args.panel_csv, roles)
+
+    # The panel file names samples the way a scientist does -- "donor01" -- while the
+    # counts, the linker and every axis this run emits are keyed by the platform's
+    # sampleId. The two are different namespaces, and nothing else here bridges them:
+    # unbridged, `offered` ends up keyed by labels, no sample that exists is offered
+    # anything, and every verdict comes back *never asked* -- which is the correct
+    # answer to a question nobody was asked, and so raises nothing at all.
+    #
+    # Translation happens HERE, once, before the panel is used for anything. Everything
+    # downstream -- the identity universe, what each sample was offered, the
+    # panel-versus-reads check, the panel ids -- then works in one namespace.
+    #
+    # A value the map does not mention is left alone rather than dropped: a panel row
+    # naming a sample this run does not have is a real mismatch, and it should reach the
+    # mismatch report rather than disappear on the way.
+    label_of_sample: dict[str, str] = _json_arg(args.sample_labels, "--sample-labels") or {}
+    if label_of_sample and "sample" in panel.columns:
+        by_label: dict[str, str] = {}
+        for sample_id, label in sorted(label_of_sample.items()):
+            if label in by_label:
+                raise SystemExit(
+                    f"--sample-labels gives label {label!r} to both {by_label[label]!r} and "
+                    f"{sample_id!r}; a panel row naming it cannot be resolved to one sample"
+                )
+            by_label[label] = sample_id
+        panel = panel.with_columns(pl.col("sample").replace(by_label))
 
     prop_cols = property_columns(panel)
     properties, inconsistent = consistent_properties(panel, prop_cols)
@@ -743,9 +774,16 @@ def main() -> None:
     for sample in samples:
         samples_of_panel.setdefault(panel_of_sample[sample], []).append(sample)
 
+    # Named for a reader, so the sample is shown under the label the panel file used
+    # rather than the sampleId it was translated to. The KEY is the sampleId, because a
+    # key has to join; the label is the half a scientist recognises.
     panel_labels = pl.DataFrame(
         [
-            (panel_id, f"{len(tags_of_panel[panel_id])} tags: {', '.join(samples_of_panel[panel_id])}")
+            (
+                panel_id,
+                f"{len(tags_of_panel[panel_id])} tags: "
+                + ", ".join(label_of_sample.get(s, s) for s in samples_of_panel[panel_id]),
+            )
             for panel_id in sorted(tags_of_panel)
         ],
         orient="row",

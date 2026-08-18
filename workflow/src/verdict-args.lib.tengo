@@ -146,6 +146,13 @@ build := func(params) {
 	if !is_undefined(params.captureMap) {
 		add("--capture-map", canonical.encode(params.captureMap))
 	}
+	// The panel file names samples the way the scientist does; everything else here is keyed by sampleId.
+	// Without this map the two namespaces never meet, nothing is offered to any sample that exists, and
+	// every verdict comes back *never asked* — a correct answer to a question nobody was asked, which is
+	// why it raises nothing. Passed only when the block has a sample column to key the panel by.
+	if !is_undefined(params.sampleLabels) {
+		add("--sample-labels", canonical.encode(params.sampleLabels))
+	}
 
 	add("--output-prefix", OUTPUT_PREFIX)
 
