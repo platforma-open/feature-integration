@@ -16,6 +16,7 @@ import {
 import { computed, ref } from "vue";
 import { useApp } from "../app";
 import PunchCell from "../components/PunchCell.vue";
+import PunchLegend from "../components/PunchLegend.vue";
 import VerdictSettings from "../components/VerdictSettings.vue";
 
 const app = useApp();
@@ -143,6 +144,8 @@ const narrowed = computed(() => app.model.data.punchcardIdentities.length > 0);
             : `Antigens shown (all ${identityOptions.length})`
         "
       />
+
+      <PunchLegend />
 
       <PlAgDataTableV2
         v-if="app.model.outputs.punchcardTable"

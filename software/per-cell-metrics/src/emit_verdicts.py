@@ -315,9 +315,18 @@ def _pivot_identity_summary(verdicts: pl.DataFrame, universe: set[str]) -> tuple
     identity count: the pivot costs a column per identity and a large panel
     would turn one artifact into a thousand.
 
-    The second frame is the punchcard's, and its cell carries the state AND the
-    support in one value, `state|answered|couldAnswer`. Two reasons it is one
-    column rather than three:
+    The second frame is the punchcard's, and its cell carries everything a reader
+    needs to ask "why is this mark this colour":
+    `state|answered|couldAnswer|agreement|reason`. `agreement` and `reason` are
+    empty where they do not apply — a settled verdict has no reason, and a set
+    nobody could ask has no agreement.
+
+    No score, and no binding level. `binary-narrowing` forbids a reading of the
+    antigen counts as a level or an order from leaving this block, so the cell
+    explains a verdict by what it RESTS on — how many cells could answer, how many
+    did, how far they agreed — and never by how strongly anything bound.
+
+    Two reasons it is one column rather than five:
 
     `support-travels-with-the-reading` obliges both counts to travel with a
     verdict *wherever it appears*, and its reason is about the page rather than
@@ -340,12 +349,17 @@ def _pivot_identity_summary(verdicts: pl.DataFrame, universe: set[str]) -> tuple
         return sets, sets, False
     ordered = ["setId", *sorted(universe)]
     states = verdicts.pivot(on="identity", index="setId", values="state").select(ordered)
+    # Every part is cast and null-filled before joining: concat_str propagates a
+    # null through the whole value, so one absent agreement would blank the state
+    # beside it and the cell would render as unreadable rather than as its verdict.
     punch = verdicts.with_columns(
         pl.concat_str(
             [
                 pl.col("state"),
-                pl.col("cellsAnswered").cast(pl.String),
-                pl.col("cellsCouldAnswer").cast(pl.String),
+                pl.col("cellsAnswered").cast(pl.String).fill_null(""),
+                pl.col("cellsCouldAnswer").cast(pl.String).fill_null(""),
+                pl.col("agreement").cast(pl.String).fill_null(""),
+                pl.col("unreliableReason").cast(pl.String).fill_null(""),
             ],
             separator="|",
         ).alias("punch")

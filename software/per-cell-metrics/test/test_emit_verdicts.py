@@ -1227,7 +1227,15 @@ def test_punch_pivot_agrees_with_the_long_verdicts(wide_bed):
     assert punch.columns == ["setId", *identities]
 
     expected = {
-        (r["setId"], r["identity"]): f"{r['state']}|{r['cellsAnswered']}|{r['cellsCouldAnswer']}"
+        (r["setId"], r["identity"]): "|".join(
+            [
+                r["state"],
+                r["cellsAnswered"],
+                r["cellsCouldAnswer"],
+                r["agreement"] or "",
+                r["unreliableReason"] or "",
+            ]
+        )
         for r in verdicts.iter_rows(named=True)
     }
     for row in punch.iter_rows(named=True):

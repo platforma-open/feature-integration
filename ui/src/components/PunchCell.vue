@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { CSSProperties } from "vue";
 import { computed } from "vue";
+import { PUNCH_PAINT } from "./punchMarks";
 
 // One punch, in the operator's vocabulary rather than the use case figure's:
 //
@@ -26,30 +27,51 @@ import { computed } from "vue";
 // how much was measured, and the atom is about the second. `unreliable` and `never asked` stay fixed,
 // because neither asserts anything for evidence to support.
 //
-// The cell's value carries all three facts, `state|answered|couldAnswer`, because a grid pairs a cell with
-// another column's cell only by position and no import guarantees that. Anything that does not parse is
-// drawn as its own mark rather than guessed at, so an unreadable value cannot pass as an answer.
+// The cell's value carries everything needed to explain itself,
+// `state|answered|couldAnswer|agreement|reason`, in ONE value because a grid pairs a cell with another
+// column's cell only by position and no import guarantees that. Anything that does not parse is drawn as
+// its own mark rather than guessed at, so an unreadable value cannot pass as an answer.
+//
+// There is deliberately no score and no binding level here: `binary-narrowing` forbids one leaving the
+// block, so the tooltip explains a verdict by what it RESTS on and never by how strongly anything bound.
 const props = defineProps<{ params: { value: unknown } }>();
 
 const VERDICT_STATES = ["bound", "not bound", "unreliable", "never asked"] as const;
 type VerdictState = (typeof VERDICT_STATES)[number];
 
 type Punch =
-  | { kind: "read"; state: VerdictState; answered: number; couldAnswer: number }
+  | {
+      kind: "read";
+      state: VerdictState;
+      answered: number;
+      couldAnswer: number;
+      agreement?: number;
+      reason?: string;
+    }
   | { kind: "unparsed" };
 
 const punch = computed<Punch>(() => {
   const raw = props.params.value;
   if (typeof raw !== "string") return { kind: "unparsed" };
   const parts = raw.split("|");
-  if (parts.length !== 3) return { kind: "unparsed" };
-  const [state, answered, couldAnswer] = parts;
+  if (parts.length !== 5) return { kind: "unparsed" };
+  const [state, answered, couldAnswer, agreement, reason] = parts;
   const known = VERDICT_STATES.find((s) => s === state);
   const a = Number(answered);
   const c = Number(couldAnswer);
   if (known === undefined || !Number.isFinite(a) || !Number.isFinite(c))
     return { kind: "unparsed" };
-  return { kind: "read", state: known, answered: a, couldAnswer: c };
+  // Both are legitimately empty: a settled verdict has no reason, and a set nobody could ask has no
+  // agreement. Empty is carried as absent rather than as zero, which would read as total disagreement.
+  const ag = agreement === "" ? undefined : Number(agreement);
+  return {
+    kind: "read",
+    state: known,
+    answered: a,
+    couldAnswer: c,
+    agreement: ag !== undefined && Number.isFinite(ag) ? ag : undefined,
+    reason: reason === "" ? undefined : reason,
+  };
 });
 
 const diameter = computed(() => {
@@ -75,31 +97,15 @@ const glyph = computed<Glyph>(() =>
   punch.value.kind === "read" ? GLYPH_OF[punch.value.state] : "unknown",
 );
 
-// The colours are INLINE, and that is not a style preference.
-//
-// ag-grid instantiates a cell renderer outside the scope-id context, so the elements this component
-// renders carry no `data-v-...` attribute - while a scoped stylesheet emits every rule WITH one. A scoped
-// block therefore matched nothing here: the classes were on the elements, the rules were in the
-// stylesheet, and not one of them applied. The card rendered 314 not-bound punches on a transparent
-// background and looked blank, which is exactly what a reader reported. Inline styles cannot be defeated
-// that way.
-//
-// `unknown` is not a state - it is a value this component could not read - so it is marked rather than
-// left blank, because blank means never-asked here.
-const PAINT: Record<Exclude<Glyph, "none">, CSSProperties> = {
-  bound: { background: "#1a7f37" },
-  "not-bound": { background: "#d94438" },
-  unreliable: { background: "#9aa3ae" },
-  unknown: { border: "1.5px dotted #d94438", opacity: "0.7" },
-};
-
+// Painted from the shared map so the legend above the card cannot describe a colour the card does not
+// draw. See punchMarks.ts for why these are inline values rather than CSS classes.
 const punchStyle = computed<CSSProperties>(() => ({
   display: "inline-block",
   boxSizing: "border-box",
   borderRadius: "50%",
   width: `${diameter.value}px`,
   height: `${diameter.value}px`,
-  ...(glyph.value === "none" ? {} : PAINT[glyph.value]),
+  ...(glyph.value === "none" ? {} : PUNCH_PAINT[glyph.value]),
 }));
 
 const cellStyle: CSSProperties = {
@@ -109,15 +115,45 @@ const cellStyle: CSSProperties = {
   height: "100%",
 };
 
-// Every cell carries its reading in words. Colour separates the three answers and size carries their
-// support, but neither says WHICH counts, and an empty cell says nothing by design - so the sentence is
-// where the state and the two numbers actually live.
+// Why this mark is this colour, in the order a reader asks it: what the verdict is, what it rests on, and
+// - where the verdict is unsettled - which of the seven ways it failed to settle. The reason tokens are
+// machine values (`thin-comparator`, `tie`, ...), so each is expanded here rather than shown raw; a token
+// is a key, not a sentence.
+const WHY_UNSETTLED: Record<string, string> = {
+  "never-offered": "no sample holding these cells declared this antigen",
+  "no-comparator": "no comparator reading existed for these cells",
+  "thin-comparator": "the comparator rested on too little to compare against",
+  "all-cells-gated": "every cell was set aside by the admissibility gate",
+  tie: "the cells split evenly, so no majority settled it",
+  "below-agreement-floor": "the cells agreed less than the run required",
+  "too-few-voters": "fewer cells answered than the run required",
+};
+
+const EXPLANATION: Record<VerdictState, string> = {
+  bound:
+    "green: a majority of the cells that answered read this antigen as bound against the comparator that served",
+  "not bound":
+    "red: the cells that answered read this antigen as not bound against the comparator that served",
+  unreliable: "grey: the experiment asked, and the readings could not settle it",
+  "never asked":
+    "no mark: this clonotype's cells were never offered this antigen, so there is nothing to answer",
+};
+
 const tooltip = computed(() => {
   const p = punch.value;
   if (p.kind !== "read") return "No readable verdict for this clonotype at this identity";
-  if (p.state === "never asked")
-    return "never asked — this clonotype's cells were never offered it";
-  return `${p.state} — ${p.answered} of ${p.couldAnswer} cells answered`;
+
+  const lines = [p.state.toUpperCase(), EXPLANATION[p.state]];
+  if (p.state !== "never asked") {
+    lines.push(`${p.answered} of ${p.couldAnswer} cells answered`);
+    if (p.agreement !== undefined) {
+      lines.push(`${Math.round(p.agreement * 100)}% of them agreed`);
+    }
+  }
+  if (p.reason !== undefined) {
+    lines.push(WHY_UNSETTLED[p.reason] ?? p.reason);
+  }
+  return lines.join("\n");
 });
 </script>
 
