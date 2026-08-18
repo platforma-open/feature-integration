@@ -136,9 +136,20 @@ class ReferenceChoice(str, Enum):
     software cannot serve would put a crashing option in the dropdown.
     """
 
-    DECLARED = "declared reference tag"
-    PANEL = "the panel's own readings"
-    NONE = "no comparator available"
+    # Machine tokens, not prose, and deliberately identical to the model's
+    # `ReferenceSource` union. These values cross three boundaries -- the run-meta
+    # JSON, a p-column DOMAIN, and a UI branch -- and prose crossing a boundary
+    # makes rewording a sentence a breaking change: the "every reading is
+    # unreliable" banner was a `=== "no comparator available"` string match, so
+    # editing this line for readability would have silently removed the warning.
+    # Display wording lives in the model, which already owns the labels for these
+    # three choices in its `referenceSources` output.
+    #
+    # `UnreliableReason` deliberately does the opposite -- its value IS the prose a
+    # reader sees -- because nothing branches on it.
+    DECLARED = "declared"
+    PANEL = "panel"
+    NONE = "none"
 
 
 def resolve_default_source(

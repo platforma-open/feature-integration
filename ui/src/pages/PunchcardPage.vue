@@ -9,6 +9,7 @@ import {
   PlSlideModal,
   usePlDataTableSettingsV2,
 } from "@platforma-sdk/ui-vue";
+import { REFERENCE_SOURCE_LABELS } from "@platforma-open/milaboratories.feature-integration.model";
 import { computed, ref } from "vue";
 import { useApp } from "../app";
 import PunchCell from "../components/PunchCell.vue";
@@ -46,7 +47,18 @@ const noDataset = computed(() => app.model.data.datasetRef === undefined);
 // choice that SERVED is the only one worth stating: a reader meeting a grid of rings otherwise has nothing
 // telling them the comparator they asked for was never available.
 const runMeta = computed(() => app.model.outputs.verdictRunMeta);
-const noComparator = computed(() => runMeta.value?.referenceChoice === "no comparator available");
+// Compared against the machine token, not against a sentence. This branch used to string-match the
+// display prose the Python enum happened to carry, so rewording that sentence for readability would have
+// silently removed the warning below with nothing failing.
+const noComparator = computed(() => runMeta.value?.referenceChoice === "none");
+// Display wording comes from the model, which owns it for the pre-run dropdown too, so a comparator does
+// not change its name once it has served.
+const requestedLabel = computed(() =>
+  runMeta.value ? REFERENCE_SOURCE_LABELS[runMeta.value.referenceSourceRequested] : "",
+);
+const servedLabel = computed(() =>
+  runMeta.value ? REFERENCE_SOURCE_LABELS[runMeta.value.referenceChoice] : "",
+);
 const comparatorDegraded = computed(
   () =>
     runMeta.value !== undefined &&
@@ -58,13 +70,15 @@ const comparatorDegraded = computed(
 const ungroupedTags = computed(() => runMeta.value?.tagsWithoutGroupingValue ?? []);
 
 const identityOptions = computed(() => app.model.outputs.punchcardIdentityOptions ?? []);
-const picked = computed(() => app.model.data.punchcardIdentities);
 
 // The pivot is size-gated upstream: a panel above the limit emits no identity columns at all, so a run can
-// have produced verdicts and still offer nothing to draw. Told apart from "nothing picked yet" because the
-// two need opposite things from the reader — one is a panel too wide for this view, the other is one click.
+// have produced verdicts and still have nothing here to draw. That is a different thing from a narrowed
+// view, and it needs saying, because an empty grid looks the same either way.
 const nothingToOffer = computed(() => !noDataset.value && identityOptions.value.length === 0);
-const nothingPicked = computed(() => identityOptions.value.length > 0 && picked.value.length === 0);
+
+// Empty means every antigen, which is the default the page opens on. Stated because an empty multi-select
+// usually means the opposite, and a reader who assumes "none" will not trust a full grid.
+const narrowed = computed(() => app.model.data.punchcardIdentities.length > 0);
 </script>
 
 <template>
@@ -98,8 +112,8 @@ const nothingPicked = computed(() => identityOptions.value.length > 0 && picked.
       </PlAlert>
       <PlAlert v-else-if="comparatorDegraded" type="warn">
         The comparator that served was not the one requested: asked for
-        <b>{{ runMeta?.referenceSourceRequested }}</b
-        >, served <b>{{ runMeta?.referenceChoice }}</b
+        <b>{{ requestedLabel }}</b
+        >, served <b>{{ servedLabel }}</b
         >. Every punch below was read against what served.
       </PlAlert>
 
@@ -112,16 +126,15 @@ const nothingPicked = computed(() => identityOptions.value.length > 0 && picked.
       <PlDropdownMulti
         v-model="app.model.data.punchcardIdentities"
         :options="identityOptions"
-        label="Identities to show"
+        :label="
+          narrowed
+            ? `Antigens shown (${app.model.data.punchcardIdentities.length} of ${identityOptions.length})`
+            : `Antigens shown (all ${identityOptions.length})`
+        "
       />
 
-      <PlAlert v-if="nothingPicked" type="info">
-        Pick an identity above to draw its column. Every identity is already in the result, so
-        adding one costs a redraw rather than a run.
-      </PlAlert>
-
       <PlAgDataTableV2
-        v-else-if="app.model.outputs.punchcardTable"
+        v-if="app.model.outputs.punchcardTable"
         v-model="app.model.data.punchcardTableState"
         :settings="tableSettings"
         :cell-renderer-selector="cellRendererSelector"

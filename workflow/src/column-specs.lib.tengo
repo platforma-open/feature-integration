@@ -505,9 +505,15 @@ MISMATCH_DIRECTIONS := string(json.encode(["declared-never-seen", "undeclared-in
 // served by different comparators would otherwise emit columns of identical identity and be silently
 // unioned in a pool holding both — and a verdict compared against a declared reference tag is not the
 // same reading as one compared against the panel's own signal. `served` is what emit_verdicts.py
-// RESOLVED, not what was requested: it degrades to "no comparator available" where it cannot serve,
+// RESOLVED, not what was requested: it degrades to `none` where it cannot serve,
 // which is why it reaches this module from the run-meta JSON as a template input rather than from the
 // block's arguments.
+// The domain value is the MACHINE token (`declared` / `panel` / `none`), which is what the run-meta JSON
+// now carries. It was previously the same enum's display prose, so this changes column identity: a
+// verdict column emitted before this change and one emitted after do not union in a pool holding both.
+// That is the right trade rather than an accident — a domain value is a stable key that outlives any
+// wording, and a column whose identity moves whenever a sentence is reworded is worse than one that moves
+// once, on an unreleased branch, to stop being a sentence at all.
 servedDomain := func(served) {
 	return {
 		"pl7.app/antigen/referenceChoice": served.referenceChoice,

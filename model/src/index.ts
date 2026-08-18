@@ -40,13 +40,28 @@ const DEFAULT_HIGH_REFERENCE_LINE = 100;
 const IDENTITY_PUNCH_COLUMN = "pl7.app/antigen/identityPunch";
 const IDENTITY_ID_DOMAIN = "pl7.app/antigen/identityId";
 
+// How each comparator choice is written for a reader. The single place the wording lives: the Python
+// enum, the run-meta JSON and the p-column domain all carry the machine token, so rewording a sentence
+// here cannot break a branch anywhere. The three strings match the labels the `referenceSources` output
+// offers before a run, so the same choice does not change its name once it has served.
+export const REFERENCE_SOURCE_LABELS: Record<ReferenceSource, string> = {
+  declared: "Declared reference tag",
+  panel: "The panel's own readings",
+  none: "No comparator",
+};
+
 // The run record emit_verdicts.py writes (result_run_meta.json), read as content. Only the fields the UI
 // states back to the user are typed here; the file carries every parameter the reading used.
 export type VerdictRunMeta = {
-  /** The comparator that actually SERVED — a request the panel cannot honour degrades to none. */
-  referenceChoice: string;
+  /**
+   * The comparator that actually SERVED — a request the panel cannot honour degrades to none. A
+   * `ReferenceSource` rather than a bare string: the value crosses from the Python enum through the
+   * run-meta JSON into a UI branch, and typing it as `string` is what let a display sentence be used as
+   * a control-flow token.
+   */
+  referenceChoice: ReferenceSource;
   /** The comparator that was ASKED for, so a degraded run can say what it lost. */
-  referenceSourceRequested: string;
+  referenceSourceRequested: ReferenceSource;
   referenceTags: string[];
   identityCount: number;
   setCount: number;
@@ -992,9 +1007,9 @@ export const platforma = BlockModelV3.create(dataModel)
   // four-state verdict and the count of cells that answered it. The pivoted shape comes from the workflow
   // because a table cannot pivot a (set, identity) frame into columns.
   //
-  // Only the picked identities' columns are passed. Every identity is in the frame either way, so the
-  // picker costs a re-render rather than a run — and a panel of a thousand antigens would otherwise render
-  // a thousand columns nobody asked for.
+  // All of them by default, and the selection only narrows. Every identity is in the frame either way, so
+  // narrowing costs a re-render rather than a run — which is what makes it safe to open on the whole panel
+  // and let a reader cut it down, rather than the reverse.
   //
   // createPlDataTableV2 rather than V3 for the same reason as perCellTable above: V3's discovery walks the
   // whole result pool and hangs on the upstream Samples&Data File dataset. V2 takes the columns as given.
@@ -1005,11 +1020,16 @@ export const platforma = BlockModelV3.create(dataModel)
         ?.resolve({ field: "antigenPunchcardTable", allowPermanentAbsence: true })
         ?.getPColumns();
       if (pCols === undefined) return undefined;
+      // Every antigen gets a column. The selection NARROWS that, and an empty selection means "all" rather
+      // than "none": the punchcard's whole job is the full grid of clonotypes against the panel, so a page
+      // that opens empty and waits to be told which antigens matter has inverted its own purpose.
       const picked = new Set(ctx.data.punchcardIdentities);
-      const cols = pCols.filter((c) => {
-        const identity = c.spec.domain?.[IDENTITY_ID_DOMAIN];
-        return identity !== undefined && picked.has(identity);
-      });
+      const identityOf = (c: (typeof pCols)[number]) => c.spec.domain?.[IDENTITY_ID_DOMAIN];
+      const punchCols = pCols.filter((c) => identityOf(c) !== undefined);
+      const cols =
+        picked.size === 0
+          ? punchCols
+          : punchCols.filter((c) => picked.has(identityOf(c) as string));
       if (cols.length === 0) return undefined;
       return createPlDataTableV2(ctx, cols, ctx.data.punchcardTableState);
     },
