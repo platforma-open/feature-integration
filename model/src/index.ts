@@ -45,6 +45,13 @@ const DEFAULT_HIGH_REFERENCE_LINE = 100;
 // as `addTo(punchFb, "identityPunch", ...)`; the two must move together.
 export const PUNCH_COLUMN_KEY_PREFIX = "identityPunch/";
 
+// The prefix of an individual punch COLUMN's id inside that frame — `identityPunch_<identity>`, set as
+// `idPrefix` in identityPivotImportSpec. Deliberately separate from the frame key above: the two differ
+// by one character, they both appear in a column id, and using the frame key where the column id was
+// wanted matches every punch column and identifies none of them, which is a match that looks like it
+// works.
+export const PUNCH_COLUMN_ID_PREFIX = "identityPunch_";
+
 const IDENTITY_PUNCH_COLUMN = "pl7.app/antigen/identityPunch";
 const IDENTITY_ID_DOMAIN = "pl7.app/antigen/identityId";
 

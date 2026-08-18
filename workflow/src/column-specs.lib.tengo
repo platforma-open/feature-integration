@@ -684,6 +684,12 @@ setCountsImportSpec := func(setAxisSpec, served) {
 // asked is not the view. The exported state family stays optional, because lead selection picks the few
 // identities it ranks on out of a panel that may run to hundreds.
 identityPivotImportSpec := func(setAxisSpec, identities, groupingId, served, colName, valueType, basePriority, idPrefix, visibility, extra) {
+	// The column header is the identity's LABEL where the run record carries one, and the identity itself
+	// otherwise. They differ for exactly one kind of identity: a tag whose rows disagreed about the
+	// grouping column has no value to group on and stands alone under its raw barcode, which among antigen
+	// names is the least readable thing this can emit. The software labels those with the names they did
+	// declare, joined. The identity — the KEY — is untouched; only what a reader sees changes.
+	labels := is_undefined(served.identityLabels) ? {} : served.identityLabels
 	cols := []
 	for i, identity in identities {
 		cols = append(cols, {
@@ -696,7 +702,9 @@ identityPivotImportSpec := func(setAxisSpec, identities, groupingId, served, col
 					"pl7.app/antigen/identityId": identity,
 					"pl7.app/antigen/groupingId": groupingId
 				}),
-				annotations: a(basePriority - i, visibility, maps.merge({ "pl7.app/label": identity }, extra))
+				annotations: a(basePriority - i, visibility, maps.merge({
+					"pl7.app/label": is_undefined(labels[identity]) ? identity : labels[identity]
+				}, extra))
 			}
 		})
 	}

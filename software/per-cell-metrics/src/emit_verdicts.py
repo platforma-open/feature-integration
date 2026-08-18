@@ -252,7 +252,11 @@ def _build_grouping(
 
 
 def _identity_labels(
-    grouping: Grouping, properties: dict[str, dict[str, str]], feature_col: str, rule_id: str
+    grouping: Grouping,
+    properties: dict[str, dict[str, str]],
+    feature_col: str,
+    rule_id: str,
+    disagreed: dict[str, list[str]] | None = None,
 ) -> dict[str, str]:
     """A readable name per identity, never two identities under one name.
 
@@ -261,9 +265,19 @@ def _identity_labels(
     identity is a barcode, so the panel's feature name stands in -- and where
     two barcodes carry the same name the tag is appended, because two
     identities sharing a label are two rows a reader cannot tell apart.
+
+    `disagreed` is the exception inside a property grouping. A tag whose rows
+    disagree about the grouping column has no value to group on, so it stands
+    as its own identity under its raw barcode -- and a bare 15-mer among
+    antigen names is the least readable thing this can produce, at exactly the
+    moment a reader most needs to understand what happened. Such an identity is
+    labelled with the names it DID declare, joined: `SARS-TRI-S_WT /
+    SARS-TRI-S_WT__alt1`. The reagent stays recognisable and the conflict stays
+    visible, where the barcode alone hid both.
     """
     if rule_id != "per-tag":
-        return {identity: identity for identity in set(grouping.values())}
+        joined = {tag: " / ".join(values) for tag, values in (disagreed or {}).items() if values}
+        return {identity: joined.get(identity, identity) for identity in set(grouping.values())}
     names = {tag: (properties.get(tag, {}).get(feature_col) or tag) for tag in grouping}
     collisions = Counter(names.values())
     return {tag: (f"{name} ({tag})" if collisions[name] > 1 else name) for tag, name in names.items()}
@@ -547,6 +561,11 @@ def main() -> None:
 
     prop_cols = property_columns(panel)
     properties, inconsistent = consistent_properties(panel, prop_cols)
+    # Kept, not just reported: the values a tag disagreed about are what a fallback identity is
+    # labelled with, and `properties` cannot carry them - it holds only what a tag agreed on.
+    disagreed_by_column: dict[str, dict[str, list[str]]] = {}
+    for tag, column, values in inconsistent:
+        disagreed_by_column.setdefault(column, {})[tag] = sorted(values)
     for tag, column, values in inconsistent:
         print(
             f"[emit-verdicts] tag {tag!r} declares {column!r} as {values}; it carries no agreed value", file=sys.stderr
@@ -773,7 +792,16 @@ def main() -> None:
     )
     _write_sorted(linker_frame, f"{prefix}_tag_identity.csv", ["tag", "identity"])
 
-    labels = _identity_labels(grouping, properties, args.feature_col, grouping_id)
+    # Only the grouping column's disagreements matter here: a tag that disagrees about some other
+    # property still grouped normally and carries an ordinary name.
+    grouping_column = grouping_rule.get("column") if isinstance(grouping_rule, dict) else None
+    labels = _identity_labels(
+        grouping,
+        properties,
+        args.feature_col,
+        grouping_id,
+        disagreed_by_column.get(grouping_column or "", {}),
+    )
     identity_labels = pl.DataFrame(
         [(identity, labels.get(identity, identity)) for identity in sorted(universe)],
         orient="row",
@@ -1093,6 +1121,10 @@ def main() -> None:
         # pivoted summary imports as nothing and the only per-antigen state a clonotype-anchored reader
         # can see disappears with no error.
         "identities": sorted(universe),
+        # Read by the workflow to label the punchcard's columns. An identity whose grouping value was
+        # dropped is labelled with the names it did declare, so the card shows a reagent rather than a
+        # 15-mer; every other identity labels itself.
+        "identityLabels": {identity: labels.get(identity, identity) for identity in sorted(universe)},
         "identitySummaryEmitted": summary_emitted,
         "identitySummaryLimit": IDENTITY_SUMMARY_MAX_IDENTITIES,
         "readingsFloored": readings_floored,

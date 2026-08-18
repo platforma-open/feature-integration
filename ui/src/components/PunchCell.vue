@@ -34,7 +34,7 @@ import { PUNCH_PAINT } from "./punchMarks";
 //
 // There is deliberately no score and no binding level here: `binary-narrowing` forbids one leaving the
 // block, so the tooltip explains a verdict by what it RESTS on and never by how strongly anything bound.
-const props = defineProps<{ params: { value: unknown } }>();
+const props = defineProps<{ params: { value: unknown; mergedNote?: string } }>();
 
 const VERDICT_STATES = ["bound", "not bound", "unreliable", "never asked"] as const;
 type VerdictState = (typeof VERDICT_STATES)[number];
@@ -153,6 +153,9 @@ const lines = computed<string[]>(() => {
     if (p.agreement !== undefined) out.push(`${Math.round(p.agreement * 100)}% of them agreed`);
   }
   if (p.reason !== undefined) out.push(WHY_UNSETTLED[p.reason] ?? p.reason);
+  // Last, because it is about the COLUMN rather than this verdict: why this identity is one merged
+  // reagent while its neighbours are single antigens.
+  if (props.params.mergedNote !== undefined) out.push(props.params.mergedNote);
   return out;
 });
 

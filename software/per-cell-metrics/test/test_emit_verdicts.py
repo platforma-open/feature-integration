@@ -1368,3 +1368,46 @@ def test_a_panel_already_keyed_by_sample_id_is_unaffected(bed):
     without = _distinct_states(bed)
     _run(bed, *BASE, "--sample-labels", json.dumps({"someone-else": "unrelated"}))
     assert _distinct_states(bed) == without
+
+
+def test_an_identity_whose_grouping_value_was_dropped_is_labelled_with_the_names_it_declared(tmp_path):
+    """A fallback identity must show its reagent, not a bare barcode.
+
+    Grouping by a property makes the identity the property's value, so a tag whose
+    rows disagree about that property has nothing to group on and stands alone
+    under its raw sequence. Labelled with the sequence, it is the least readable
+    thing this block can emit -- a 15-mer sitting among antigen names, at exactly
+    the point a reader needs to understand what happened to it. Joining the names
+    it DID declare keeps the reagent recognisable and the conflict visible.
+
+    AAAA disagrees (two names across the two samples) and CCCC does not, so the
+    same run shows both the exception and the rule; a bed with only the exception
+    could not tell a joined label from a label applied to everything.
+    """
+    (tmp_path / "counts.csv").write_text(
+        "sampleId,cellId,tag,umiCount\n"
+        "S1,c1,AAAA,500\nS1,c1,CCCC,7\nS1,c1,CTRL,6\n"
+        "S2,c2,AAAA,500\nS2,c2,CCCC,7\nS2,c2,CTRL,6\n"
+    )
+    (tmp_path / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type\n"
+        "S1,SpikeWT,AAAA,Target\n"
+        "S2,SpikeWT__alt,AAAA,Target\n"  # same barcode, two names -> no agreed value
+        "S1,Lysozyme,CCCC,Target\n"
+        "S2,Lysozyme,CCCC,Target\n"  # agrees, so it groups normally
+        "S1,Ctrl,CTRL,Control\nS2,Ctrl,CTRL,Control\n"
+    )
+    (tmp_path / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS2,c2,K2\n")
+    _run(tmp_path, *BASE, *NAME_GROUPING)
+
+    labels = dict(
+        pl.read_csv(tmp_path / "result_identity_labels.csv", infer_schema_length=0)
+        .select("identity", "label")
+        .iter_rows()
+    )
+    assert labels["AAAA"] == "SpikeWT / SpikeWT__alt"
+    assert labels["Lysozyme"] == "Lysozyme"
+
+    meta = json.loads((tmp_path / "result_run_meta.json").read_text())
+    assert meta["identityLabels"]["AAAA"] == "SpikeWT / SpikeWT__alt"
+    assert meta["tagsWithoutGroupingValue"] == ["AAAA"]

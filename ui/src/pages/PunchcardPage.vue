@@ -10,6 +10,7 @@ import {
   usePlDataTableSettingsV2,
 } from "@platforma-sdk/ui-vue";
 import {
+  PUNCH_COLUMN_ID_PREFIX,
   PUNCH_COLUMN_KEY_PREFIX,
   REFERENCE_SOURCE_LABELS,
 } from "@platforma-open/milaboratories.feature-integration.model";
@@ -36,10 +37,29 @@ const tableSettings = usePlDataTableSettingsV2({
 //
 // Matched on the column id, because the grid layer sees ids rather than specs. The prefix is exported by
 // the model rather than written here, so the coupling to the workflow's p-frame key has one home.
-const cellRendererSelector = (params: { colDef?: { colId?: string } }) =>
-  String(params.colDef?.colId ?? "").includes(PUNCH_COLUMN_KEY_PREFIX)
-    ? { component: PunchCell }
-    : undefined;
+//
+// A merged identity also gets a note explaining ITSELF. Its column header reads as a joined label
+// (`SpikeWT / SpikeWT__alt`) where every other header is a single antigen, and nothing on the header
+// says why. The banner above the card says two barcodes lost their grouping value, but it sits far from
+// the column it is about and names barcodes rather than the label now shown. Attaching the note to the
+// column's cells puts the explanation where the reader's cursor already is.
+const mergedNote = (colId: string): string | undefined => {
+  const merged = ungroupedTags.value.find((tag) =>
+    colId.includes(`${PUNCH_COLUMN_ID_PREFIX}${tag}`),
+  );
+  if (merged === undefined) return undefined;
+  return (
+    `merged: the panel gives barcode ${merged} a different name in different samples, ` +
+    `so there is no single value to group it under — it stands alone, labelled with both names. ` +
+    `Every other column groups on one agreed name.`
+  );
+};
+
+const cellRendererSelector = (params: { colDef?: { colId?: string } }) => {
+  const colId = String(params.colDef?.colId ?? "");
+  if (!colId.includes(PUNCH_COLUMN_KEY_PREFIX)) return undefined;
+  return { component: PunchCell, params: { mergedNote: mergedNote(colId) } };
+};
 
 // The reading's own settings, reachable from the page they explain.
 const settingsOpen = ref(false);
