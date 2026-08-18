@@ -375,3 +375,48 @@ real BEAM-T run) — a non-regenerable fallback pool used only if the full list 
   that the `realistic` calibration targets.
 - `design-and-schemas.md` — design rationale, the join-spine axis contract, per-arm file schemas, and the
   biology/coherence model.
+
+## The Two Shapes A Real Panel File Arrives In
+
+`generate.py` emits one panel shape: `tag,feature,Type,Species,Class`, one panel for every sample, with
+the control carrying its own `Decoy` role. Two other shapes were observed in use at one account at the
+same time, on two of its projects, and neither looks like that. `reshape_panel.py` rewrites a generated
+run's `tags.csv` into both, **keeping every barcode unchanged** so either can be uploaded against the
+same FASTQs:
+
+```bash
+python3 generate.py tiny --arm antigen --panel-size 12 --offtarget-count 3
+python3 generate.py tiny --arm vdj --panel-size 12
+python3 reshape_panel.py runs/tiny
+```
+
+| File | Shape | What it exercises |
+|---|---|---|
+| `tags_narrow.csv` | `Sample,Sequence,Antigen` | No role column at all, so nothing can be named as the comparator and the panel's own readings serve. The control is an ordinary row nothing marks. |
+| `tags_wide.csv` | `Samples,Name,Barcode,Sequence,Channel,Residues,Type` | A role column that declares target vs off-target and carries **no** comparator value; a catalogue id 1:1 with the sequence; a channel column holding four values that are three channels; a constant column; and case-variant role values. |
+
+Both rename a barcode between samples (`--rename`, default 2), so the same sequence carries a different
+antigen name in different samples. Under the per-tag grouping the identity is the barcode, so those
+identities lose their label and show a raw 15-mer. `--drop-from-later N` makes a later sample declare
+fewer tags, which is what makes *never asked* reachable.
+
+**A panel below 8 tags cannot serve as its own comparator**, so generate at least that many
+(`--panel-size 12` gives 12 + 1 control). The script warns if you are under.
+
+### ⚠️ Set the count floor to 1 for these two shapes
+
+This bed plants background at 1–3 UMIs per barcode — **253 of 432 readings in a `tiny --panel-size 12`
+run sit below the shipped count floor of 4**. Neither shape declares a comparator, so the panel's own
+readings have to serve, and with the floor at 4 that background is zeroed, the panel median collapses to
+0, and 0 is below the reference thin line of 2. Every cell carrying signal then reads *impossible to
+compare*:
+
+```
+--floor 4   not bound 702, unreliable 260, bound 0      <- looks broken, is not
+--floor 1   not bound 909, bound 27, unreliable 26
+```
+
+So set **Advanced → count floor = 1** in the block when uploading either shape. The two numbers are each
+defensible and simply do not compose: the bed's background is calibrated to a real 5k BEAM-T library,
+and the floor of 4 comes from the antibody-side lineage. A declared comparator would sidestep it, which
+is exactly what neither of these shapes can supply.
