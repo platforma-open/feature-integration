@@ -698,10 +698,14 @@ identitySummaryImportSpec := func(setAxisSpec, identities, groupingId, served) {
 //
 // The block emits no dense per-cell-per-identity table: on a realistic run it is the largest artifact
 // the block would produce, and a pMHC panel does not fit at all. The sparse per-tag counts plus the
-// per-cell scalars reproduce every per-cell state exactly at a small fraction of the size — a reader
-// regrouping the panel re-takes the highest member, re-scores against the same reference and re-votes
-// without a re-run. Both are EXPORTS: outputs are visible only to this block's own model, so
-// re-derivation material returned as an output reaches nobody.
+// per-cell scalars carry every per-cell state at a small fraction of that size.
+//
+// Both stay INSIDE the block, as outputs rather than exports. Reading the same experiment under another
+// grouping is another execution of this block, not a re-derivation a reader performs, so no consumer
+// across the boundary wants them — labelling and lead selection read verdicts, never cells. What makes
+// re-execution cheap is where the grouping is consumed: it enters after the counting, so a second run
+// over unchanged reads and an unchanged panel file reuses the cached counts and pays for the verdicts
+// alone.
 
 // result_cell_counts.csv, keyed (sampleId, cellId, tag).
 // The CSV also repeats referenceCount and inCellList on every tag row. They are per-CELL facts and

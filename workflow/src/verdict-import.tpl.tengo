@@ -104,12 +104,18 @@ self.body(func(inputs) {
 			columnSpecs.identitySummaryImportSpec(setAxis, summaryIdentities, served.groupingId, served))
 	}
 
-	// The re-derivation material. Both are EXPORTS rather than outputs: an output is visible only to this
-	// block's own model, so material a reader needs in order to regroup the panel without a re-run would
-	// reach nobody.
-	addTo(exportFb, "cellCounts", inputs.cellCounts,
+	// The per-cell material stays INSIDE the block: outputs, never exports. Reading the same experiment
+	// under another grouping is another execution of this block, not a re-derivation performed by a
+	// reader, so nothing downstream needs the per-cell per-tag states — and nothing downstream ever asked
+	// for them. Labelling and lead selection read verdicts, never cells. Exporting the largest artifact
+	// here to a consumer that does not exist is the cost this avoids.
+	//
+	// The per-cell reference readings keep their place among the run's own measurements, which is where
+	// a reader checks why a cell could or could not be compared.
+	cellFb := pframes.pFrameBuilder()
+	addTo(cellFb, "cellCounts", inputs.cellCounts,
 		columnSpecs.cellTagCountsImportSpec(sampleAxis, cellAxis, tagAxis))
-	addTo(exportFb, "cellScalars", inputs.cellScalars,
+	addTo(cellFb, "cellScalars", inputs.cellScalars,
 		columnSpecs.cellScalarsImportSpec(sampleAxis, cellAxis, served))
 
 	// Which identities each sample was actually stained with — without it "never asked" is a claim a
@@ -151,6 +157,7 @@ self.body(func(inputs) {
 
 	return {
 		antigenVerdicts: exportFb.build(),
+		cellTable: cellFb.build(),
 		qcTable: qcFb.build(),
 		panelMismatchTable: mismatchFb.build()
 	}

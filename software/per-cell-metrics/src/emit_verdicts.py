@@ -624,11 +624,12 @@ def main() -> None:
     summary, summary_emitted = _pivot_identity_summary(verdicts, universe)
     _write_sorted(summary, f"{prefix}_identity_summary.csv", ["setId"])
 
-    # The re-derivation material: the sparse per-tag counts and the per-cell
-    # scalars together reproduce every per-cell state exactly, at a small
-    # fraction of the size a per-cell-per-identity table would take. A reader
-    # regrouping the panel re-takes the highest member, re-scores against the
-    # same reference, and re-votes, without a re-run.
+    # The sparse per-tag counts and the per-cell scalars together carry every
+    # per-cell state, at a small fraction of the size a per-cell-per-identity
+    # table would take. They stay inside the block: reading the same experiment
+    # under another grouping is another execution rather than a re-derivation a
+    # reader performs, and the grouping enters after the counting, so a second
+    # execution over unchanged inputs re-does the verdict step alone.
     # With no list, membership is unknown rather than false: a barcode nobody
     # classified is not a barcode classified as "not a cell". "false" would be
     # a claim the run cannot support.

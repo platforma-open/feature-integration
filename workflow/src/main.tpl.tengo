@@ -502,7 +502,12 @@ wf.body(func(args) {
 	if !is_undefined(verdictImport) {
 		// Everything a downstream block joins to: the verdicts, the set-keyed counts that are the only
 		// family lead selection can see, the pivoted per-identity summary, the offered scope, the
-		// re-derivation material, the tag -> identity linker and the label columns.
+		// tag -> identity linker and the label columns.
+		//
+		// The per-cell tables are deliberately NOT among them. Reading the same experiment under another
+		// grouping is another execution of this block rather than a re-derivation a reader performs, so
+		// the per-cell per-tag states have no consumer across the boundary: labelling and lead selection
+		// both read verdicts, never cells.
 		blockExports.antigenVerdicts = verdictImport.output("antigenVerdicts")
 		// The same frame as an OUTPUT, because a block's own exports are not in its own result pool: without
 		// this the block that produced the verdicts is the one place that cannot show them. The model reads
@@ -511,6 +516,10 @@ wf.body(func(args) {
 		// The run's own report. Outputs rather than exports: these are read by this block's model and UI.
 		blockOutputs.antigenQcTable = pframes.exportFrame(verdictImport.output("qcTable"))
 		blockOutputs.antigenPanelMismatchTable = pframes.exportFrame(verdictImport.output("panelMismatchTable"))
+		// The per-cell counts and reference readings, kept inside the block. The reference readings are part
+		// of what the run reports about itself -- they are where a reader checks why a cell could or could
+		// not be compared -- and the per-tag counts sit beside them at the grain they were read at.
+		blockOutputs.antigenCellTable = pframes.exportFrame(verdictImport.output("cellTable"))
 		// What the run was answered under, including the comparator and cell list that actually served and
 		// every parameter the reading used. Read as content by the model for the run summary.
 		blockOutputs.antigenRunMeta = verdictRun.output("runMeta")
