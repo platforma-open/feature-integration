@@ -3,6 +3,8 @@ import {
   BlockModelV3,
   createPlDataTableStateV2,
   createPlDataTableV2,
+  createPlDataTableV3,
+  DataColumn,
   DataModelBuilder,
   isPColumnSpec,
   parseResourceMap,
@@ -1011,8 +1013,24 @@ export const platforma = BlockModelV3.create(dataModel)
   // narrowing costs a re-render rather than a run — which is what makes it safe to open on the whole panel
   // and let a reader cut it down, rather than the reverse.
   //
-  // createPlDataTableV2 rather than V3 for the same reason as perCellTable above: V3's discovery walks the
-  // whole result pool and hangs on the upstream Samples&Data File dataset. V2 takes the columns as given.
+  // V3 here, and V2 everywhere else in this block, for a reason particular to this table.
+  //
+  // V2 could not build it at all: `Cannot produce a Vec1 with a length of zero`. These columns are keyed
+  // on ONE axis, `pl7.app/vdj/scClonotypeKey`, and the result pool holds a label column for exactly that
+  // axis (the clonotyping block publishes it). V2 discovers the label, the frame's only axis is consumed,
+  // and the engine is handed an empty key vector. Verified by instrumented build: a SINGLE punch column
+  // fails identically, so it is not the 13-way join or the shared column name. The flat verdict table this
+  // view replaced survived only because it carried a second axis that nothing labelled — one axis is
+  // inherent to a punchcard, so there was nothing to tune.
+  //
+  // V3's `primaryColumns` form is the explicit one: it takes the columns as given and runs NO data-column
+  // discovery, so it does not walk the result pool and cannot hang on the upstream Samples & Data FASTQ
+  // dataset — which is the hazard the other tables here chose V2 to avoid, and the reason this is not a
+  // blanket migration. V3 does still resolve label columns for the axes it was handed, which is wanted:
+  // a clonotype row reads better under its clonotype label than under a raw key.
+  //
+  // V2 is deprecated SDK-side in favour of this call, so the rest of this model's tables will follow
+  // eventually; each needs its own check against the discovery hazard first.
   .output(
     "punchcardTable",
     (ctx) => {
@@ -1031,7 +1049,11 @@ export const platforma = BlockModelV3.create(dataModel)
           ? punchCols
           : punchCols.filter((c) => picked.has(identityOf(c) as string));
       if (cols.length === 0) return undefined;
-      return createPlDataTableV2(ctx, cols, ctx.data.punchcardTableState);
+      return createPlDataTableV3(ctx, {
+        primaryColumns: cols.map((c) => DataColumn.fromColumn(c)),
+        columns: null,
+        tableState: ctx.data.punchcardTableState,
+      });
     },
     { retentive: true, withStatus: true },
   )

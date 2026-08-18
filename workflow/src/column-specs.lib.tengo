@@ -678,7 +678,12 @@ setCountsImportSpec := func(setAxisSpec, served) {
 // The id prefix differs between the two families because both frames name their columns after the same
 // identities, and the punchcard frame holds BOTH at once: one prefix would give a state column and its
 // support column the same id inside one frame, where one of the pair silently wins.
-identityPivotImportSpec := func(setAxisSpec, identities, groupingId, served, colName, valueType, basePriority, idPrefix, extra) {
+//
+// `visibility` differs too, and it is the difference between a punchcard and an empty grid. The punch
+// family is DEFAULT-visible: every antigen is a column of the card, and a table that hides them until
+// asked is not the view. The exported state family stays optional, because lead selection picks the few
+// identities it ranks on out of a panel that may run to hundreds.
+identityPivotImportSpec := func(setAxisSpec, identities, groupingId, served, colName, valueType, basePriority, idPrefix, visibility, extra) {
 	cols := []
 	for i, identity in identities {
 		cols = append(cols, {
@@ -691,7 +696,7 @@ identityPivotImportSpec := func(setAxisSpec, identities, groupingId, served, col
 					"pl7.app/antigen/identityId": identity,
 					"pl7.app/antigen/groupingId": groupingId
 				}),
-				annotations: a(basePriority - i, false, maps.merge({ "pl7.app/label": identity }, extra))
+				annotations: a(basePriority - i, visibility, maps.merge({ "pl7.app/label": identity }, extra))
 			}
 		})
 	}
@@ -716,12 +721,12 @@ identityPivotImportSpec := func(setAxisSpec, identities, groupingId, served, col
 // kept out of the exported frame: lead selection filters the state pivot, and a compound value would not.
 identityPunchImportSpec := func(setAxisSpec, identities, groupingId, served) {
 	return identityPivotImportSpec(setAxisSpec, identities, groupingId, served,
-		"pl7.app/antigen/identityPunch", "String", 92000, "identityPunch_", {})
+		"pl7.app/antigen/identityPunch", "String", 92000, "identityPunch_", true, {})
 }
 
 identitySummaryImportSpec := func(setAxisSpec, identities, groupingId, served) {
 	return identityPivotImportSpec(setAxisSpec, identities, groupingId, served,
-		"pl7.app/antigen/identityVerdict", "String", 92000, "identity_", {
+		"pl7.app/antigen/identityVerdict", "String", 92000, "identity_", false, {
 			"pl7.app/isDiscreteFilter": "true",
 			"pl7.app/discreteValues": VERDICT_STATES
 		})
