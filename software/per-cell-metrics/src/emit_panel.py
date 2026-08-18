@@ -25,7 +25,11 @@ def main() -> None:
             raise SystemExit(
                 f"column {args.tag_col!r} not found in {args.tag_feature_csv} (columns: {reader.fieldnames})"
             )
-        seqs = {row[args.tag_col].strip() for row in reader if row.get(args.tag_col, "").strip()}
+        # `or ""` rather than a get() default: a short row's missing columns are
+        # present-and-None in DictReader's output, not absent, so the default never
+        # fires and .strip() met None. One malformed line of a user-supplied CSV
+        # took the whole run down with a traceback.
+        seqs = {seq for seq in ((row.get(args.tag_col) or "").strip() for row in reader) if seq}
 
     if not seqs:
         raise SystemExit(f"no feature barcodes found in column {args.tag_col!r}")
