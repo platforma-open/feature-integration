@@ -4,6 +4,7 @@ import {
   PlAlert,
   PlBlockPage,
   PlBtnGhost,
+  PlCheckbox,
   PlDropdownMulti,
   PlMaskIcon24,
   PlSlideModal,
@@ -55,10 +56,28 @@ const mergedNote = (colId: string): string | undefined => {
   );
 };
 
+// Identity -> full label, from the picker's options (which carry the workflow's label).
+const labelOf = computed(() => {
+  const m: Record<string, string> = {};
+  for (const o of identityOptions.value) m[o.value] = o.label;
+  return m;
+});
+
 const cellRendererSelector = (params: { colDef?: { colId?: string } }) => {
   const colId = String(params.colDef?.colId ?? "");
   if (!colId.includes(PUNCH_COLUMN_KEY_PREFIX)) return undefined;
-  return { component: PunchCell, params: { mergedNote: mergedNote(colId) } };
+  // The full name travels to the cell because the header above it may be truncated, and a reader
+  // hovering a dot halfway down a long grid cannot see the header at all.
+  const identity = Object.keys(labelOf.value).find((id) =>
+    colId.includes(`${PUNCH_COLUMN_ID_PREFIX}${id}`),
+  );
+  return {
+    component: PunchCell,
+    params: {
+      antigen: identity === undefined ? undefined : labelOf.value[identity],
+      mergedNote: mergedNote(colId),
+    },
+  };
 };
 
 // The reading's own settings, reachable from the page they explain.
@@ -110,6 +129,16 @@ const nothingToOffer = computed(() => !noDataset.value && identityOptions.value.
 
 // Empty means every antigen, which is the default the page opens on. Stated because an empty multi-select
 // usually means the opposite, and a reader who assumes "none" will not trust a full grid.
+// Headers are cut to keep the columns narrow — the grid sizes every column to its contents and a block
+// cannot override that, so one joined label would otherwise push the rest of the card off screen. The
+// toggle rewrites a label annotation in the model, so it costs a re-render and never a run.
+const fullLabels = computed({
+  get: () => app.model.data.punchcardFullLabels === true,
+  set: (v: boolean) => {
+    app.model.data.punchcardFullLabels = v;
+  },
+});
+
 const narrowed = computed(() => app.model.data.punchcardIdentities.length > 0);
 </script>
 
@@ -164,6 +193,8 @@ const narrowed = computed(() => app.model.data.punchcardIdentities.length > 0);
             : `Antigens shown (all ${identityOptions.length})`
         "
       />
+
+      <PlCheckbox v-model="fullLabels">Full antigen names</PlCheckbox>
 
       <PunchLegend />
 

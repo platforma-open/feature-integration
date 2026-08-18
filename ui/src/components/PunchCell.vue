@@ -34,7 +34,7 @@ import { PUNCH_PAINT } from "./punchMarks";
 //
 // There is deliberately no score and no binding level here: `binary-narrowing` forbids one leaving the
 // block, so the tooltip explains a verdict by what it RESTS on and never by how strongly anything bound.
-const props = defineProps<{ params: { value: unknown; mergedNote?: string } }>();
+const props = defineProps<{ params: { value: unknown; antigen?: string; mergedNote?: string } }>();
 
 const VERDICT_STATES = ["bound", "not bound", "unreliable", "never asked"] as const;
 type VerdictState = (typeof VERDICT_STATES)[number];
@@ -147,7 +147,10 @@ const lines = computed<string[]>(() => {
   const p = punch.value;
   if (p.kind !== "read") return ["No readable verdict for this clonotype at this identity"];
 
-  const out = [p.state.toUpperCase(), EXPLANATION[p.state]];
+  // The antigen first: its header is truncated by default and may be scrolled out of view entirely, so
+  // the panel has to say which column this dot belongs to before it says anything about the verdict.
+  const out = props.params.antigen === undefined ? [] : [props.params.antigen];
+  out.push(p.state.toUpperCase(), EXPLANATION[p.state]);
   if (p.state !== "never asked") {
     out.push(`${p.answered} of ${p.couldAnswer} cells answered`);
     if (p.agreement !== undefined) out.push(`${Math.round(p.agreement * 100)}% of them agreed`);

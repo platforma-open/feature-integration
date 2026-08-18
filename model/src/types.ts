@@ -153,6 +153,14 @@ export type BlockData = {
    * write-on-read loop, and a write race between two open clients.
    */
   punchcardIdentities: string[];
+  /**
+   * Show antigen column headers in full rather than truncated. Optional so that projects stored before
+   * it existed need no migration: absent means truncated, which is the default the card opens on.
+   *
+   * A display choice and nothing more - it rewrites a label annotation in the model, so toggling it costs
+   * a re-render and never a run.
+   */
+  punchcardFullLabels?: boolean;
 
   presetId?: string;
   pattern?: string;

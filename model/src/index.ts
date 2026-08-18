@@ -52,6 +52,16 @@ export const PUNCH_COLUMN_KEY_PREFIX = "identityPunch/";
 // works.
 export const PUNCH_COLUMN_ID_PREFIX = "identityPunch_";
 
+// Longest antigen header drawn before it is cut. The grid auto-sizes every column to fit its contents
+// and a block cannot override that, so one joined label - "Anti-Hen_Egg_Lysozyme /
+// Anti-Hen_Egg_Lysozyme__alt1" - stretches its column wide enough to push the rest of the panel off
+// screen. A punch needs about eleven pixels; the header is the only thing asking for more.
+const MAX_HEADER_CHARS = 20;
+
+export function truncateHeader(label: string): string {
+  return label.length <= MAX_HEADER_CHARS ? label : `${label.slice(0, MAX_HEADER_CHARS - 1)}…`;
+}
+
 const IDENTITY_PUNCH_COLUMN = "pl7.app/antigen/identityPunch";
 const IDENTITY_ID_DOMAIN = "pl7.app/antigen/identityId";
 
@@ -1014,7 +1024,11 @@ export const platforma = BlockModelV3.create(dataModel)
       const identity = c.spec.domain?.[IDENTITY_ID_DOMAIN];
       if (identity === undefined || seen.has(identity)) continue;
       seen.add(identity);
-      options.push({ value: identity, label: identity });
+      // The label the workflow put on the column, which for a merged identity is the joined name rather
+      // than the barcode. The picker showed raw sequences while the card showed names, which is the same
+      // mismatch one control apart.
+      const label = c.spec.annotations?.["pl7.app/label"];
+      options.push({ value: identity, label: label ?? identity });
     }
     return options;
   })
@@ -1062,8 +1076,25 @@ export const platforma = BlockModelV3.create(dataModel)
           ? punchCols
           : punchCols.filter((c) => picked.has(identityOf(c) as string));
       if (cols.length === 0) return undefined;
+      // The header is rewritten HERE rather than emitted short by the workflow, so the full name survives
+      // in the data and the toggle costs a re-render instead of a run. Annotations do not affect column
+      // identity, so nothing downstream notices.
+      const display =
+        ctx.data.punchcardFullLabels === true
+          ? cols
+          : cols.map((c) => {
+              const label = c.spec.annotations?.["pl7.app/label"];
+              if (label === undefined) return c;
+              return {
+                ...c,
+                spec: {
+                  ...c.spec,
+                  annotations: { ...c.spec.annotations, "pl7.app/label": truncateHeader(label) },
+                },
+              };
+            });
       return createPlDataTableV3(ctx, {
-        primaryColumns: cols.map((c) => DataColumn.fromColumn(c)),
+        primaryColumns: display.map((c) => DataColumn.fromColumn(c)),
         columns: null,
         tableState: ctx.data.punchcardTableState,
       });
