@@ -9,7 +9,10 @@ import {
   PlSlideModal,
   usePlDataTableSettingsV2,
 } from "@platforma-sdk/ui-vue";
-import { REFERENCE_SOURCE_LABELS } from "@platforma-open/milaboratories.feature-integration.model";
+import {
+  PUNCH_COLUMN_KEY_PREFIX,
+  REFERENCE_SOURCE_LABELS,
+} from "@platforma-open/milaboratories.feature-integration.model";
 import { computed, ref } from "vue";
 import { useApp } from "../app";
 import PunchCell from "../components/PunchCell.vue";
@@ -24,10 +27,18 @@ const tableSettings = usePlDataTableSettingsV2({
   model: () => app.model.outputs.punchcardTable,
 });
 
-// Every cell in this table is a punch. The columns are identities and nothing else — the model passes only
-// the punch family — so the selector needs no per-column test, and an axis column (the clonotype set) is
-// not routed here by the grid.
-const cellRendererSelector = () => ({ component: PunchCell });
+// Only the antigen columns are punches. The grid applies a renderer through `defaultColDef`, so a selector
+// that answered unconditionally replaced EVERY cell — the row number and the clonotype label rendered as
+// "unreadable value" marks, because a clone id is not a verdict and never parses as one. The columns this
+// table carries are the punch family plus the clonotype axis and whatever label columns the pool supplies
+// for it, and only the first should be drawn.
+//
+// Matched on the column id, because the grid layer sees ids rather than specs. The prefix is exported by
+// the model rather than written here, so the coupling to the workflow's p-frame key has one home.
+const cellRendererSelector = (params: { colDef?: { colId?: string } }) =>
+  String(params.colDef?.colId ?? "").includes(PUNCH_COLUMN_KEY_PREFIX)
+    ? { component: PunchCell }
+    : undefined;
 
 // The reading's own settings, reachable from the page they explain.
 const settingsOpen = ref(false);

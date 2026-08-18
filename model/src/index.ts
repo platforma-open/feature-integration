@@ -39,6 +39,12 @@ const DEFAULT_HIGH_REFERENCE_LINE = 100;
 // One column per identity, its value carrying the state and both support counts together (see
 // identityPunchImportSpec). The pairing is inside the value because a grid pairs a cell with another
 // column's cell only by position, which no import guarantees.
+// The p-frame key every punch column is imported under, and therefore the prefix of its column id in the
+// table. Exported because the punchcard's cell renderer has to tell a verdict column from the axis and
+// label columns beside it, and the grid layer sees ids rather than specs. Set in verdict-import.tpl.tengo
+// as `addTo(punchFb, "identityPunch", ...)`; the two must move together.
+export const PUNCH_COLUMN_KEY_PREFIX = "identityPunch/";
+
 const IDENTITY_PUNCH_COLUMN = "pl7.app/antigen/identityPunch";
 const IDENTITY_ID_DOMAIN = "pl7.app/antigen/identityId";
 

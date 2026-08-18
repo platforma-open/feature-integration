@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { CSSProperties } from "vue";
 import { computed } from "vue";
 
 // One punch, in the operator's vocabulary rather than the use case figure's:
@@ -74,6 +75,40 @@ const glyph = computed<Glyph>(() =>
   punch.value.kind === "read" ? GLYPH_OF[punch.value.state] : "unknown",
 );
 
+// The colours are INLINE, and that is not a style preference.
+//
+// ag-grid instantiates a cell renderer outside the scope-id context, so the elements this component
+// renders carry no `data-v-...` attribute - while a scoped stylesheet emits every rule WITH one. A scoped
+// block therefore matched nothing here: the classes were on the elements, the rules were in the
+// stylesheet, and not one of them applied. The card rendered 314 not-bound punches on a transparent
+// background and looked blank, which is exactly what a reader reported. Inline styles cannot be defeated
+// that way.
+//
+// `unknown` is not a state - it is a value this component could not read - so it is marked rather than
+// left blank, because blank means never-asked here.
+const PAINT: Record<Exclude<Glyph, "none">, CSSProperties> = {
+  bound: { background: "#1a7f37" },
+  "not-bound": { background: "#d94438" },
+  unreliable: { background: "#9aa3ae" },
+  unknown: { border: "1.5px dotted #d94438", opacity: "0.7" },
+};
+
+const punchStyle = computed<CSSProperties>(() => ({
+  display: "inline-block",
+  boxSizing: "border-box",
+  borderRadius: "50%",
+  width: `${diameter.value}px`,
+  height: `${diameter.value}px`,
+  ...(glyph.value === "none" ? {} : PAINT[glyph.value]),
+}));
+
+const cellStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  height: "100%",
+};
+
 // Every cell carries its reading in words. Colour separates the three answers and size carries their
 // support, but neither says WHICH counts, and an empty cell says nothing by design - so the sentence is
 // where the state and the two numbers actually live.
@@ -87,48 +122,7 @@ const tooltip = computed(() => {
 </script>
 
 <template>
-  <div class="punch-cell" :title="tooltip">
-    <span
-      v-if="glyph !== 'none'"
-      class="punch"
-      :class="`punch--${glyph}`"
-      :style="{ width: `${diameter}px`, height: `${diameter}px` }"
-    />
+  <div :style="cellStyle" :title="tooltip">
+    <span v-if="glyph !== 'none'" :style="punchStyle" />
   </div>
 </template>
-
-<style scoped>
-.punch-cell {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-}
-
-.punch {
-  display: inline-block;
-  border-radius: 50%;
-  box-sizing: border-box;
-}
-
-/* Bound and not-bound are the two answers, so they are the two saturated colours. Unreliable is grey
-   because it asserts nothing, and never-asked draws nothing at all. */
-.punch--bound {
-  background: #1a7f37;
-}
-
-.punch--not-bound {
-  background: #d94438;
-}
-
-.punch--unreliable {
-  background: #9aa3ae;
-}
-
-/* Not a state - a value this component could not read. Marked rather than blanked, because blank means
-   never asked here and an unreadable cell is not that. */
-.punch--unknown {
-  border: 1.5px dotted #d94438;
-  opacity: 0.7;
-}
-</style>
