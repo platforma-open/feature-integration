@@ -37,6 +37,7 @@ RESULT_TABLES := [
 	{ out: "offered", file: "result_offered.csv" },
 	{ out: "tagIdentity", file: "result_tag_identity.csv" },
 	{ out: "identityLabels", file: "result_identity_labels.csv" },
+	{ out: "identityProperties", file: "result_identity_properties.csv" },
 	{ out: "panelLabels", file: "result_panel_labels.csv" },
 	{ out: "samplePanel", file: "result_sample_panel.csv" },
 	{ out: "panelMismatch", file: "result_panel_mismatch.csv" },

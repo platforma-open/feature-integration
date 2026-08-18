@@ -79,6 +79,8 @@ def test_writes_every_artifact(bed):
         "result_cell_counts.csv",
         "result_cell_scalars.csv",
         "result_offered.csv",
+        "result_identity_labels.csv",
+        "result_identity_properties.csv",
         "result_panel_mismatch.csv",
         "result_run_meta.json",
     ):
@@ -471,6 +473,101 @@ def test_property_grouping_normalises_and_excludes_the_reference(bed):
     identities = set(pl.read_csv(bed / "result_verdicts.csv")["identity"].to_list())
     assert identities == {"Spike"}  # one identity, not " Spike " and "Spike"
     assert "Reference" not in identities  # the comparator is never a candidate
+
+
+def test_the_declarations_that_hold_of_an_identity_travel_with_it(bed):
+    # `panel-file-authority`: whatever the panel says consistently about an identity's tags travels
+    # with that identity's verdicts. The bed puts every case in one run -- a property both member tags
+    # agree on, one they disagree about, and one that agrees for a single-tag identity while
+    # disagreeing for the merged one -- because a property tested alone cannot show that the
+    # disagreement is dropped per identity rather than per column.
+    (bed / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type,Family,Species,Carrier\n"
+        "S1,AgA,AAAA,Target,Spike,Human,Biotin\n"
+        "S1,AgB,CCCC,Target,Spike,Human,Streptavidin\n"
+        "S1,AgC,GGGG,Target,Nuc,Human,Biotin\n"
+        "S1,Ctrl,CTRL,Control,Reference,Cyno,Avidin\n"
+    )
+    (bed / "counts.csv").write_text((bed / "counts.csv").read_text() + "S1,c1,CCCC,40\nS1,c1,GGGG,40\n")
+    _run(bed, *BASE, "--grouping", json.dumps({"by": "property", "column": "Family"}))
+
+    held = {
+        row["identity"]: row
+        for row in pl.read_csv(bed / "result_identity_properties.csv", infer_schema_length=0).iter_rows(named=True)
+    }
+    assert set(held) == {"Spike", "Nuc"}, "one row per identity, and the comparator is not an identity"
+
+    # Agreed across both member tags, so it holds of the merged identity.
+    assert held["Spike"]["Species"] == "Human"
+    assert held["Spike"]["Type"] == "Target"
+    assert held["Spike"]["Family"] == "Spike"
+    # Disagreed between the member tags, so it holds of nothing -- neither tag's value wins.
+    assert held["Spike"]["Carrier"] == ""
+    assert held["Spike"]["Name"] == ""
+    # The same two columns still hold for the identity whose single tag settles them, which is what
+    # makes the omission above about the identity rather than about the column.
+    assert held["Nuc"]["Carrier"] == "Biotin"
+    assert held["Nuc"]["Name"] == "AgC"
+
+    # The reference tag declares Cyno and Avidin and is no identity, so neither value can reach the
+    # export -- a declaration travelling from a tag that gets no verdict would describe nothing.
+    meta = json.loads((bed / "result_run_meta.json").read_text())
+    assert meta["identityPropertyValues"]["Species"] == ["Human"]
+    assert meta["identityPropertyValues"]["Type"] == ["Target"]
+    assert "Avidin" not in meta["identityPropertyValues"]["Carrier"]
+    # The workflow builds one spec per name in this list, so a name here that is not a column of the
+    # CSV -- or the reverse -- is an import of nothing.
+    columns = pl.read_csv(bed / "result_identity_properties.csv", infer_schema_length=0).columns
+    assert meta["identityProperties"] == [c for c in columns if c != "identity"]
+
+
+def test_a_property_no_identity_agreed_on_is_left_out_rather_than_exported_blank(bed):
+    # One identity, and it disagrees about Carrier. An all-blank column would offer a reader a filter
+    # with no values in it, so the column does not ship at all.
+    (bed / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type,Family,Carrier\n"
+        "S1,AgA,AAAA,Target,Spike,Biotin\n"
+        "S1,AgB,CCCC,Target,Spike,Streptavidin\n"
+        "S1,Ctrl,CTRL,Control,Reference,Avidin\n"
+    )
+    (bed / "counts.csv").write_text((bed / "counts.csv").read_text() + "S1,c1,CCCC,40\n")
+    _run(bed, *BASE, "--grouping", json.dumps({"by": "property", "column": "Family"}))
+
+    columns = pl.read_csv(bed / "result_identity_properties.csv", infer_schema_length=0).columns
+    assert "Carrier" not in columns
+    assert "Family" in columns, "a column that does hold still ships"
+    meta = json.loads((bed / "result_run_meta.json").read_text())
+    assert "Carrier" not in meta["identityProperties"]
+
+
+def test_two_identities_that_disagree_the_same_way_do_not_share_a_label(bed):
+    # Both barcodes disagree about the grouping column across samples, so both fall back to their own
+    # identity and both are labelled with the values they declared, joined. Those joined strings are
+    # equal -- so the fallback that exists to make a conflict readable would put two identities under
+    # one name, which is the one thing the label map promises never to do.
+    (bed / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type,Family\n"
+        "S1,AgA,AAAA,Target,Spike\n"
+        "S2,AgA,AAAA,Target,Nuc\n"
+        "S1,AgB,CCCC,Target,Spike\n"
+        "S2,AgB,CCCC,Target,Nuc\n"
+        "S1,Ctrl,CTRL,Control,Reference\n"
+        "S2,Ctrl,CTRL,Control,Reference\n"
+    )
+    (bed / "counts.csv").write_text(
+        "sampleId,cellId,tag,umiCount\nS1,c1,AAAA,500\nS1,c1,CTRL,6\nS2,c2,CCCC,500\nS2,c2,CTRL,6\n"
+    )
+    (bed / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS2,c2,K2\n")
+    _run(bed, *BASE, "--grouping", json.dumps({"by": "property", "column": "Family"}))
+
+    labels = dict(pl.read_csv(bed / "result_identity_labels.csv", infer_schema_length=0).iter_rows())
+    assert set(labels) == {"AAAA", "CCCC"}
+    assert len(set(labels.values())) == 2, f"two identities under one label: {labels}"
+    # The conflict is still readable -- the barcode is appended to the joined names, not substituted
+    # for them, so nothing is traded away to make the label unique.
+    for identity, label in labels.items():
+        assert label.startswith("Nuc / Spike")
+        assert identity in label
 
 
 DECLARED_FLAGS = (

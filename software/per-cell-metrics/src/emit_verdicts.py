@@ -274,13 +274,72 @@ def _identity_labels(
     labelled with the names it DID declare, joined: `SARS-TRI-S_WT /
     SARS-TRI-S_WT__alt1`. The reagent stays recognisable and the conflict stays
     visible, where the barcode alone hid both.
+
+    The uniqueness rule applies to the joined names too. Two tags can disagree
+    about the grouping column while declaring the SAME pair of names, and they
+    then join to one string -- so the fallback that exists to make a conflict
+    readable would put two identities under one label, which is the one thing
+    this function promises never to do. Where any label repeats, joined or
+    plain, the identity is appended, exactly as the per-tag path does.
     """
     if rule_id != "per-tag":
         joined = {tag: " / ".join(values) for tag, values in (disagreed or {}).items() if values}
-        return {identity: joined.get(identity, identity) for identity in set(grouping.values())}
+        by_identity = {identity: joined.get(identity, identity) for identity in set(grouping.values())}
+        repeated = Counter(by_identity.values())
+        return {
+            identity: (f"{label} ({identity})" if repeated[label] > 1 else label)
+            for identity, label in by_identity.items()
+        }
     names = {tag: (properties.get(tag, {}).get(feature_col) or tag) for tag in grouping}
     collisions = Counter(names.values())
     return {tag: (f"{name} ({tag})" if collisions[name] > 1 else name) for tag, name in names.items()}
+
+
+# The key column of result_identity_properties.csv. A panel column of the same
+# name would collapse into the key when the frame is built -- the property would
+# not be dropped, it would silently BECOME the identity -- so such a column is
+# excluded from the export and reported, never merged.
+IDENTITY_KEY_COLUMN = "identity"
+
+
+def _identity_properties(
+    grouping: Grouping,
+    properties: dict[str, dict[str, str]],
+    columns: list[str],
+) -> dict[str, dict[str, str]]:
+    """Per identity, the panel declarations that hold across all of its tags.
+
+    `panel-file-authority` requires whatever the panel file says consistently
+    about an identity's tags to travel with that identity's verdicts, so a
+    reader sees the declaration wherever the reading appears. Without this a
+    downstream reader can see that an identity was bound and cannot see what
+    the scientist declared it to be -- and cannot state anything about a
+    declared group, such as binding the target and nothing in the control set.
+
+    The rule is `consistent_properties`' own rule, lifted one grain: there it
+    holds across a tag's ROWS, here across an identity's TAGS. A property whose
+    value differs between member tags does not hold of the identity and is
+    omitted -- not blanked and not resolved to a winner, because an identity
+    read as one thing whose members disagree about what that thing is has no
+    declaration to travel. A tag that simply declares nothing does not block
+    its neighbours, again as the row-grain rule has it.
+
+    Reference tags need no exclusion here: `_build_grouping` keeps them out of
+    the grouping, so no identity has one as a member.
+    """
+    tags_of: dict[str, list[str]] = {}
+    for tag, identity in sorted(grouping.items()):
+        tags_of.setdefault(identity, []).append(tag)
+
+    held: dict[str, dict[str, str]] = {}
+    for identity, tags in tags_of.items():
+        agreed: dict[str, str] = {}
+        for column in columns:
+            values = {v for v in (properties.get(tag, {}).get(column, "") for tag in tags) if v}
+            if len(values) == 1:
+                agreed[column] = next(iter(values))
+        held[identity] = agreed
+    return held
 
 
 def _panel_id(tags: frozenset[str]) -> str:
@@ -809,6 +868,40 @@ def main() -> None:
     )
     _write_sorted(identity_labels, f"{prefix}_identity_labels.csv", ["identity"])
 
+    # The declarations, keyed the same way the verdicts are. Wide -- one column
+    # per property -- because the workflow turns each into its own p-column with
+    # the property name in the DOMAIN, which is what makes two properties two
+    # distinct columns rather than one column a reader has to unstack.
+    #
+    # A property no identity agreed on is left out rather than exported empty: an
+    # all-blank filterable column offers a reader a filter with nothing to filter
+    # by. The names that survive are recorded in the run meta, because the
+    # workflow builds one spec per column and the headers are panel data, unknown
+    # until this runs.
+    exportable = [c for c in prop_cols if c != IDENTITY_KEY_COLUMN]
+    if len(exportable) < len(prop_cols):
+        print(
+            f"[emit-verdicts] panel column {IDENTITY_KEY_COLUMN!r} is the key of the identity-property "
+            "table and cannot also be one of its properties; it is left out of that export and reaches "
+            "no consumer. Rename it in the panel file to have it travel with the verdicts.",
+            file=sys.stderr,
+        )
+    identity_properties = _identity_properties(grouping, properties, exportable)
+    property_values = {
+        column: sorted({held[column] for held in identity_properties.values() if column in held})
+        for column in exportable
+    }
+    emitted_properties = [c for c in exportable if property_values[c]]
+    identity_property_frame = pl.DataFrame(
+        [
+            tuple([identity] + [identity_properties.get(identity, {}).get(c, "") for c in emitted_properties])
+            for identity in sorted(universe)
+        ],
+        orient="row",
+        schema={IDENTITY_KEY_COLUMN: pl.String} | {c: pl.String for c in emitted_properties},
+    )
+    _write_sorted(identity_property_frame, f"{prefix}_identity_properties.csv", ["identity"])
+
     declared = _declared_by_sample(panel, samples)
     panel_of_sample = {sample: _panel_id(tags) for sample, tags in declared.items()}
     tags_of_panel: dict[str, frozenset[str]] = {panel_of_sample[s]: declared[s] for s in samples}
@@ -1125,6 +1218,11 @@ def main() -> None:
         # dropped is labelled with the names it did declare, so the card shows a reagent rather than a
         # 15-mer; every other identity labels itself.
         "identityLabels": {identity: labels.get(identity, identity) for identity in sorted(universe)},
+        # The declaration columns that reached result_identity_properties.csv, and the distinct values
+        # each carries. Both are panel data: the workflow builds one p-column per name and annotates it
+        # with its own value set, so without these the declarations import as nothing.
+        "identityProperties": emitted_properties,
+        "identityPropertyValues": {c: property_values[c] for c in emitted_properties},
         "identitySummaryEmitted": summary_emitted,
         "identitySummaryLimit": IDENTITY_SUMMARY_MAX_IDENTITIES,
         "readingsFloored": readings_floored,

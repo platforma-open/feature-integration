@@ -450,6 +450,7 @@ wf.body(func(args) {
 			offered: verdictRun.output("offered"),
 			tagIdentity: verdictRun.output("tagIdentity"),
 			identityLabels: verdictRun.output("identityLabels"),
+			identityProperties: verdictRun.output("identityProperties"),
 			panelLabels: verdictRun.output("panelLabels"),
 			samplePanel: verdictRun.output("samplePanel"),
 			panelMismatch: verdictRun.output("panelMismatch"),

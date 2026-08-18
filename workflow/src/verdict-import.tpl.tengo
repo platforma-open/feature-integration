@@ -150,6 +150,19 @@ self.body(func(inputs) {
 	// cannot be used while these specs are built.
 	addTo(exportFb, "identityLabels", inputs.identityLabels,
 		columnSpecs.identityLabelsImportSpec(identityAxis))
+
+	// The declarations that hold of each identity, keyed the way its verdicts are. `panel-file-authority`
+	// requires them to travel with the reading, and a downstream reader has no other route to them: the
+	// per-feature property columns key on the feature NAME axis, which no verdict-stage column carries.
+	//
+	// The column names are panel data, so they come from the run record. A panel declaring nothing beyond
+	// the barcode and the name emits none, and the CSV is then key-only — imported with no value columns it
+	// would be an import of nothing, so it is skipped rather than built empty.
+	if !is_undefined(served.identityProperties) && len(served.identityProperties) > 0 {
+		addTo(exportFb, "identityProperties", inputs.identityProperties,
+			columnSpecs.identityPropertyImportSpec(
+				identityAxis, served.identityProperties, served.identityPropertyValues))
+	}
 	addTo(exportFb, "panelLabels", inputs.panelLabels,
 		columnSpecs.panelLabelsImportSpec(panelAxis))
 
