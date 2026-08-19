@@ -14,8 +14,16 @@ import { computed } from "vue";
 import { useApp } from "../app";
 
 // The settings for the binding reading. Rendered in the Main page's Settings drawer and again in the
-// Verdicts page's own — one component, one set of controls, both writing the same data. A scientist who
-// meets an all-unreliable table can change the rule that produced it without leaving the page.
+// Punchcard page's own — one component, one set of controls, both writing the same data. A scientist who
+// meets a card of grey punches can change the rule that produced it without leaving the page.
+//
+// Everything this component EDITS is below the "binding reading" line in BlockArgs, so a change here
+// recovers every per-sample mitool body from cache and re-runs the verdict stage alone. That is what
+// makes it safe to offer from a results page. It also READS three fields it must never edit —
+// tagFeatureCsvHandle, barcodeSeqColumn, sampleColumn — to tell whether the panel has loaded and to keep
+// a role or grouping setting from naming a column the panel reader consumes as a key. Those three force
+// the whole per-sample fan-out to re-run, and they belong to the Main page alone; adding a control for
+// one of them here would make the punchcard's drawer silently expensive.
 const app = useApp();
 
 // The panel-derived dropdowns have nothing to offer until the panel file is uploaded and staging has read

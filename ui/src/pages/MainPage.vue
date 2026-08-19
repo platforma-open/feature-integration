@@ -477,8 +477,17 @@ const gridOptions = {
       <PlAlert v-if="sampleMappingWarning?.length" type="warn">
         <div v-for="(line, i) in sampleMappingWarning" :key="i">{{ line }}</div>
       </PlAlert>
-      <!-- The binding reading's own settings. The same component is mounted in the Verdicts page's
-           Settings drawer, so the rule that produced a table can be changed from the table. -->
+      <!-- The binding reading's own settings. The same component is mounted in the Punchcard page's
+           Settings drawer, so the rule that produced the card can be changed from the card — which is
+           where a reader sees what the rule did, as a wall of red or a column of grey.
+
+           Safe to offer there because everything this component EDITS sits below the "binding reading"
+           line in BlockArgs: a change recovers every per-sample mitool body from cache and re-runs the
+           verdict stage alone. The three input fields it reads (tagFeatureCsvHandle, barcodeSeqColumn,
+           sampleColumn) are read-only here — used to tell whether the panel has loaded and to keep a
+           role or grouping setting from naming a column the panel reader consumes as a key. They are
+           edited on THIS page only, and they do force the whole fan-out to re-run, so keep it that way:
+           putting one of them in this component would make a results-page drawer silently expensive. -->
       <VerdictSettings />
       <!-- Less-common params. -->
       <PlAccordionSection label="Advanced Settings">
