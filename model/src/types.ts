@@ -143,16 +143,12 @@ export type BlockData = {
    */
   contendingGroups?: string[][];
   punchcardTableState: PlDataTableStateV2; // punchcard grid state (UI-only, never projected to args)
-  /**
-   * The identities whose columns the punchcard shows, picked one at a time. A view filter and nothing
-   * more: every identity is already in the pivoted frame, so adding one costs a column render rather
-   * than a run, and an empty list means "none picked yet" rather than "all".
-   *
-   * Written on a user gesture only. The choices come from the punchcardIdentityOptions output, and a
-   * watcher copying that output into data would make the output depend on the data feeding it — a
-   * write-on-read loop, and a write race between two open clients.
-   */
-  punchcardIdentities: string[];
+  // A `punchcardIdentities` list used to sit here, holding the identities whose columns the punchcard
+  // showed, driven by an "Antigens shown" multi-select on the card. Removed: PlAgDataTableV2 ships a
+  // columns panel and a filters panel, so the control re-implemented in block state something the grid
+  // already did — and two narrowing mechanisms can disagree, where the grid's own cannot disagree with
+  // itself. Every identity column is rendered now. A stored list in an older project is simply ignored.
+
   // A `punchcardFullLabels` flag used to sit here, toggling the header truncation from a checkbox on the
   // card. Removed: the punch cell's hover already carries the untruncated name, so the control duplicated
   // a mechanism the page had anyway, and a checkbox that rewrites headers is not how this block's other

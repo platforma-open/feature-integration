@@ -177,7 +177,6 @@ blockTest.skip(
         tableState: createPlDataTableStateV2(),
         qcSummaryTableState: createPlDataTableStateV2(),
         punchcardTableState: createPlDataTableStateV2(),
-        punchcardIdentities: [],
       } satisfies BlockData,
     });
 

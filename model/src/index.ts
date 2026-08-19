@@ -293,7 +293,9 @@ function suggestSampleColumn(ctx: BlockRenderCtx<BlockArgs, BlockData>): string 
 }
 
 // v3 data shape: the reading's parameters, with the three grid states the two removed result views owned.
-// v4 replaces them with the punchcard's own state and its identity picker.
+// v4 replaced them with the punchcard's own state. `punchcardIdentities` is named in the Omit for history:
+// v4 introduced it and a later change removed it from BlockData, so the key is dead on the right-hand side
+// and harmless on the left.
 type BlockDataV3 = Omit<BlockData, "punchcardTableState" | "punchcardIdentities"> & {
   verdictTableState: PlDataTableStateV2;
   antigenQcTableState: PlDataTableStateV2;
@@ -380,8 +382,8 @@ const dataModel = new DataModelBuilder()
   // v3 -> v4: the flat verdict table and the quality-report tables are gone as VIEWS, and the punchcard
   // takes their place. The three grid states go with them rather than being carried: a saved column set or
   // filter is meaningful only against the frame it was saved on, and none of these three frames is on
-  // screen any more. The punchcard's own state starts fresh, and its identity picker starts empty — the
-  // page fills the first columns itself rather than a migration guessing which antigens matter.
+  // screen any more. The punchcard's own state starts fresh, on the whole panel — every identity column the
+  // pivot produced is drawn, and a reader hides or filters columns in the grid's own panels.
   //
   // What the removed pages showed is still EMITTED: the verdicts and the run's measurements are both
   // artifacts `verdict-block-interface` obliges this block to produce, and dropping a view does not
@@ -391,7 +393,6 @@ const dataModel = new DataModelBuilder()
     ({ verdictTableState: _v, antigenQcTableState: _q, panelMismatchTableState: _m, ...rest }) => ({
       ...rest,
       punchcardTableState: createPlDataTableStateV2(),
-      punchcardIdentities: [],
     }),
   )
   .init(() => ({
@@ -411,7 +412,6 @@ const dataModel = new DataModelBuilder()
     tableState: createPlDataTableStateV2(),
     qcSummaryTableState: createPlDataTableStateV2(),
     punchcardTableState: createPlDataTableStateV2(),
-    punchcardIdentities: [],
   }));
 
 export const platforma = BlockModelV3.create(dataModel)
@@ -1077,14 +1077,16 @@ export const platforma = BlockModelV3.create(dataModel)
     },
     { retentive: true, withStatus: true },
   )
-  // Every combined identity the punchcard could show, in the order the workflow gave them. Options for the
-  // picker, and the source of the page's own fallback: with nothing picked the page opens on the first few
-  // of these rather than on an empty grid.
+  // Every combined identity the punchcard could show, in the order the workflow gave them, each with the
+  // label the workflow put on its column. Two things on the card read this, and neither of them narrows
+  // anything: the punch hover, which needs the UNTRUNCATED antigen name because the header above it is cut
+  // to keep the columns narrow; and the card's empty state, which needs to tell "the pivot emitted no
+  // identity columns" apart from "this run has no rows at all".
   //
   // Read from the pivot's own columns rather than from the run record's identity list, because the two can
   // disagree in exactly one way that matters — the pivot is size-gated upstream, so a run over a large
-  // panel names its identities in the record and emits no columns at all. Reading the columns means the
-  // picker offers what the punchcard can actually draw.
+  // panel names its identities in the record and emits no columns at all. Reading the columns means this
+  // lists what the punchcard can actually draw, which is what makes the empty state trustworthy.
   .retentiveOutput("punchcardIdentityOptions", (ctx): { value: string; label: string }[] => {
     const pCols = ctx.outputs
       ?.resolve({ field: "antigenPunchcardTable", allowPermanentAbsence: true })
@@ -1098,20 +1100,19 @@ export const platforma = BlockModelV3.create(dataModel)
       if (identity === undefined || seen.has(identity)) continue;
       seen.add(identity);
       // The label the workflow put on the column, which for a merged identity is the joined name rather
-      // than the barcode. The picker showed raw sequences while the card showed names, which is the same
-      // mismatch one control apart.
+      // than the barcode. The identity itself is a raw sequence under the per-tag grouping, so carrying the
+      // label is what keeps the punch hover naming an antigen the reader recognises.
       const label = c.spec.annotations?.["pl7.app/label"];
       options.push({ value: identity, label: label ?? identity });
     }
     return options;
   })
-  // The punchcard: one row per clonotype set, one column per picked identity, each cell carrying the
-  // four-state verdict and the count of cells that answered it. The pivoted shape comes from the workflow
-  // because a table cannot pivot a (set, identity) frame into columns.
+  // The punchcard: one row per clonotype set, one column per identity, each cell carrying the four-state
+  // verdict and the count of cells that answered it. The pivoted shape comes from the workflow because a
+  // table cannot pivot a (set, identity) frame into columns.
   //
-  // All of them by default, and the selection only narrows. Every identity is in the frame either way, so
-  // narrowing costs a re-render rather than a run — which is what makes it safe to open on the whole panel
-  // and let a reader cut it down, rather than the reverse.
+  // The whole panel, every time. A reader who wants fewer columns hides them in the grid's columns panel or
+  // filters in its filters panel; this output does not second-guess either.
   //
   // V3 here, and V2 everywhere else in this block, for a reason particular to this table.
   //
@@ -1138,33 +1139,11 @@ export const platforma = BlockModelV3.create(dataModel)
         ?.resolve({ field: "antigenPunchcardTable", allowPermanentAbsence: true })
         ?.getPColumns();
       if (pCols === undefined) return undefined;
-      // Every antigen gets a column. The selection NARROWS that, and an empty selection means "all" rather
-      // than "none": the punchcard's whole job is the full grid of clonotypes against the panel, so a page
-      // that opens empty and waits to be told which antigens matter has inverted its own purpose.
-      //
-      // A selection matching NOTHING means "all" for the same reason. The identity vocabulary is panel data
-      // and it changes under the selection's feet: switching the grouping from per-tag to per-property turns
-      // every identity from a barcode into a property value, so a stale pick intersects the new columns
-      // nowhere. Filtering to nothing then returns no table, and the page's empty-state alert does not fire
-      // — it asks whether any identity EXISTS, and they all do — so a valid card silently becomes blank
-      // space. Falling back to the whole panel shows something true instead of nothing.
-      //
-      // Self-healing HERE rather than by clearing the selection on each gesture that invalidates it: the
-      // gestures are several (a new panel file, a new barcode or sample column, a new grouping, a new role
-      // column) and a missed one reintroduces the blank card. Those gestures do also clear the selection, so
-      // the picker shows no ghosts, but correctness does not depend on their doing so.
-      //
-      // The stale picks are NOT pruned out of `data` here. An output that wrote back the data feeding it is
-      // the write-on-read loop this model refuses everywhere else, and with two clients open it is a write
-      // race as well.
       const identityOf = (c: (typeof pCols)[number]) => c.spec.domain?.[PUNCH_IDENTITY_DOMAIN];
-      const punchCols = pCols.filter((c) => identityOf(c) !== undefined);
-      const picked = new Set(ctx.data.punchcardIdentities);
-      const narrowed =
-        picked.size === 0
-          ? punchCols
-          : punchCols.filter((c) => picked.has(identityOf(c) as string));
-      const cols = narrowed.length > 0 ? narrowed : punchCols;
+      // Every identity the pivot produced, always. Narrowing is the grid's job: PlAgDataTableV2 ships a
+      // columns panel and a filters panel, so a stored server-side filter cannot disagree with what the
+      // column chooser shows.
+      const cols = pCols.filter((c) => identityOf(c) !== undefined);
       if (cols.length === 0) return undefined;
       // Alphabetical by the name a READER sees. The workflow emits these sorted by identity, which under
       // the per-tag grouping is the barcode — and a panel's names never sort the same as its sequences, so

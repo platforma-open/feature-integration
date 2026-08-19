@@ -4,7 +4,6 @@ import {
   PlAlert,
   PlBlockPage,
   PlBtnGhost,
-  PlDropdownMulti,
   PlMaskIcon24,
   PlSlideModal,
   usePlDataTableSettingsV2,
@@ -80,7 +79,7 @@ const mergedNote = (identity: string | undefined): string | undefined => {
   );
 };
 
-// Identity -> full label, from the picker's options (which carry the workflow's label).
+// Identity -> full label, from the identity options output (which carries the workflow's label).
 const labelOf = computed(() => {
   const m: Record<string, string> = {};
   for (const o of identityOptions.value) m[o.value] = o.label;
@@ -94,8 +93,8 @@ const cellRendererSelector = (params: { colDef?: { context?: PunchColumnContext 
     component: PunchCell,
     params: {
       // The full name travels to the cell because the header above it may be truncated, and a reader
-      // hovering a dot halfway down a long grid cannot see the header at all. The picker's label is
-      // preferred over the column's, which the model truncates for display.
+      // hovering a dot halfway down a long grid cannot see the header at all. The options output's label
+      // is preferred over the column's, which the model truncates for display.
       antigen: labelOf.value[identity] ?? identity,
       mergedNote: mergedNote(identity),
     },
@@ -154,30 +153,12 @@ const nothingToOffer = computed(() => !noDataset.value && identityOptions.value.
 // card off screen. There is no control for it: every column IS resizable, and the hover below carries the
 // untruncated name, so both halves of "show me the whole thing" already exist without a checkbox.
 
-// Every antigen shows as SELECTED when nothing has been narrowed, rather than the picker sitting empty.
-// An empty multi-select reads as "none", which is the opposite of what it did — and the old label said
-// "(all 13)" to compensate, which is a label apologising for a control that lies.
-//
-// `[]` still means ALL in data, and that is deliberate on two counts. Nothing writes the full list into
-// data on load: the choices come from an OUTPUT, and a watcher copying it into data would make that output
-// depend on the data feeding it — a write-on-read loop, and a write race between two open clients. And
-// keeping "all" as the empty list keeps it TRACKING: a panel that later declares another antigen shows it,
-// where a pinned list of thirteen names silently would not.
-//
-// So selecting every option normalises back to `[]`. Deselecting the last one does too, which snaps the
-// card back to all — there is no useful "show nothing" state for a punchcard, and a blank grid is not one.
-const allIdentityValues = computed(() => identityOptions.value.map((o) => o.value));
-
-const shownIdentities = computed<string[]>(() => {
-  const picked = app.model.data.punchcardIdentities;
-  return picked.length > 0 ? picked : allIdentityValues.value;
-});
-
-function setShownIdentities(values: string[]) {
-  const all = allIdentityValues.value;
-  app.model.data.punchcardIdentities =
-    values.length === 0 || values.length === all.length ? [] : values;
-}
+// An "Antigens shown" multi-select used to sit above the legend, narrowing the card to the identities it
+// had picked and holding that pick in block data. Removed: PlAgDataTableV2 ships a columns panel and a
+// filters panel, both live on this table, so the control re-implemented in block state something the grid
+// already did — and two narrowing mechanisms can disagree with each other, where the grid's own cannot
+// disagree with itself. Every identity column the pivot produced renders now, and narrowing is done in the
+// grid. The options output stays, because the card reads two other things off it.
 </script>
 
 <template>
@@ -221,13 +202,6 @@ function setShownIdentities(values: string[]) {
         {{ ungroupedTags.length === 1 ? "barcode carries" : "barcodes carry" }} no value in the
         grouping column, so each stands as its own identity under its raw sequence.
       </PlAlert>
-
-      <PlDropdownMulti
-        :model-value="shownIdentities"
-        :options="identityOptions"
-        :label="`Antigens shown (${shownIdentities.length} of ${identityOptions.length})`"
-        @update:model-value="setShownIdentities"
-      />
 
       <PunchLegend />
 
