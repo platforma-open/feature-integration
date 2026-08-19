@@ -445,7 +445,11 @@ wf.body(func(args) {
 			setCounts: verdictRun.output("setCounts"),
 			identitySummary: verdictRun.output("identitySummary"),
 			identityPunch: verdictRun.output("identityPunch"),
-			cellCounts: verdictRun.output("cellCounts"),
+			// cellCounts is deliberately NOT passed. The per-cell per-tag counts are the run's largest table
+			// and no reader exists for them on either side of the block boundary, so the import template does
+			// not build them into columns — and an input it would ignore is worse than no input, because it
+			// reads as a consumer that is not there. The reasoning is written out where the frame is built,
+			// in verdict-import.tpl.tengo.
 			cellScalars: verdictRun.output("cellScalars"),
 			offered: verdictRun.output("offered"),
 			tagIdentity: verdictRun.output("tagIdentity"),
@@ -511,10 +515,11 @@ wf.body(func(args) {
 		// family lead selection can see, the pivoted per-identity summary, the offered scope, the
 		// tag -> identity linker and the label columns.
 		//
-		// The per-cell tables are deliberately NOT among them. Reading the same experiment under another
-		// grouping is another execution of this block rather than a re-derivation a reader performs, so
-		// the per-cell per-tag states have no consumer across the boundary: labelling and lead selection
-		// both read verdicts, never cells.
+		// No per-cell material is among them. Reading the same experiment under another grouping is another
+		// execution of this block rather than a re-derivation a reader performs, so per-cell state has no
+		// consumer across the boundary: labelling and lead selection both read verdicts, never cells. The
+		// per-cell reference readings are still reported, as an OUTPUT below, because they are part of what
+		// this run says about itself; the per-cell per-tag counts are not built at any grain.
 		blockExports.antigenVerdicts = verdictImport.output("antigenVerdicts")
 		// The same frame as an OUTPUT, because a block's own exports are not in its own result pool: without
 		// this the block that produced the verdicts is the one place that cannot show them. The model reads
@@ -527,10 +532,16 @@ wf.body(func(args) {
 		// The run's own report. Outputs rather than exports: these are read by this block's model and UI.
 		blockOutputs.antigenQcTable = pframes.exportFrame(verdictImport.output("qcTable"))
 		blockOutputs.antigenPanelMismatchTable = pframes.exportFrame(verdictImport.output("panelMismatchTable"))
-		// The per-cell counts and reference readings, kept inside the block. The reference readings are part
-		// of what the run reports about itself -- they are where a reader checks why a cell could or could
-		// not be compared -- and the per-tag counts sit beside them at the grain they were read at.
-		blockOutputs.antigenCellTable = pframes.exportFrame(verdictImport.output("cellTable"))
+		// The per-cell reference readings, kept inside the block. One row per cell: the reading itself, and
+		// whether a declared gate set the cell aside. They are part of what the run reports about itself --
+		// they are where a reader checks why a cell could or could not be compared, and they are how the
+		// block reports the cells carrying a high reference reading whether or not a gate was declared.
+		//
+		// Named for what it holds rather than for its grain: it is not a table of cells. The per-cell
+		// per-tag counts that used to travel in this frame are no longer built at all, because no reader
+		// exists for them on either side of the boundary and they are the run's largest table -- see
+		// verdict-import.tpl.tengo, where that frame is assembled.
+		blockOutputs.antigenCellReference = pframes.exportFrame(verdictImport.output("cellReference"))
 		// What the run was answered under, including the comparator and cell list that actually served and
 		// every parameter the reading used. Read as content by the model for the run summary.
 		blockOutputs.antigenRunMeta = verdictRun.output("runMeta")

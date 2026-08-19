@@ -24,8 +24,9 @@ verdictLinker := import(":verdict-linker")
 
 json := import("json")
 
-// Returns five frames: antigenVerdicts (exported), and punchcard, cellTable, qcTable and
-// panelMismatchTable (this block's own).
+// Returns five frames: antigenVerdicts (exported), and punchcard, cellReference, qcTable and
+// panelMismatchTable (this block's own). cellReference holds one row per cell — the reference reading and
+// the gate outcome — and deliberately not the per-cell per-tag counts; see where it is built below.
 // defineOutputs is deliberately absent — an ephemeral template takes its output names from what the body
 // returns and never checks a declared list, so declaring one here would be inert.
 self.awaitState("columns", "PColumnBundle")
@@ -122,18 +123,35 @@ self.body(func(inputs) {
 			columnSpecs.identityPunchImportSpec(setAxis, summaryIdentities, served.groupingId, served))
 	}
 
-	// The per-cell material stays INSIDE the block: outputs, never exports. Reading the same experiment
-	// under another grouping is another execution of this block, not a re-derivation performed by a
-	// reader, so nothing downstream needs the per-cell per-tag states — and nothing downstream ever asked
-	// for them. Labelling and lead selection read verdicts, never cells. Exporting the largest artifact
-	// here to a consumer that does not exist is the cost this avoids.
+	// The per-cell material stays INSIDE the block: an output, never an export. Reading the same experiment
+	// under another grouping is another execution of this block, not a re-derivation performed by a reader,
+	// so nothing downstream needs per-cell state — and nothing downstream ever asked for it. Labelling and
+	// lead selection read verdicts, never cells.
 	//
-	// The per-cell reference readings keep their place among the run's own measurements, which is where
-	// a reader checks why a cell could or could not be compared.
-	cellFb := pframes.pFrameBuilder()
-	addTo(cellFb, "cellCounts", inputs.cellCounts,
-		columnSpecs.cellTagCountsImportSpec(sampleAxis, cellAxis, tagAxis))
-	addTo(cellFb, "cellScalars", inputs.cellScalars,
+	// What this frame carries is one row per cell: the reference reading, and whether a declared gate set
+	// the cell aside. Those keep their place among the run's own measurements, because they are where a
+	// reader checks why a cell could or could not be compared — and the block must report the cells
+	// carrying a high reference reading whether or not a gate was declared, which this is the source for.
+	//
+	// The per-cell per-TAG counts are deliberately NOT imported, so they are not built as columns and never
+	// reach the block boundary. Two reasons, and the second is the one that removes the import rather than
+	// merely the export:
+	//
+	//  1. They are the largest table the run produces. Their grain is cell x tag, which on a realistic
+	//     panel is 11-20x the rows of the sparse reads they were derived from — the same ratio the Python
+	//     avoids materializing for, in emit_verdicts.py and verdict.py.
+	//  2. Nothing reads them, at either side of the boundary. Not this block's model, not its UI, not
+	//     another template here, and no downstream block. Importing them would build the run's biggest
+	//     p-frame for no reader on every verdict run.
+	//
+	// This is a choice, not an oversight, and it is not a claim that the states are unwanted: emit_verdicts
+	// writes result_cell_counts.csv and verdict-run.tpl.tengo still collects it, so the per-cell per-tag
+	// states are computed and exist within the run. What stops here is turning them into p-columns.
+	// cellTagCountsImportSpec is kept in column-specs.lib.tengo for the same reason — it is the spec to
+	// reuse if a consumer at that grain ever appears, and rebuilding it from scratch would risk a lookalike
+	// tag axis that joins to nothing.
+	cellRefFb := pframes.pFrameBuilder()
+	addTo(cellRefFb, "cellScalars", inputs.cellScalars,
 		columnSpecs.cellScalarsImportSpec(sampleAxis, cellAxis, served))
 
 	// Which identities each sample was actually stained with — without it "never asked" is a claim a
@@ -189,7 +207,7 @@ self.body(func(inputs) {
 	return {
 		antigenVerdicts: exportFb.build(),
 		punchcard: punchFb.build(),
-		cellTable: cellFb.build(),
+		cellReference: cellRefFb.build(),
 		qcTable: qcFb.build(),
 		panelMismatchTable: mismatchFb.build()
 	}
