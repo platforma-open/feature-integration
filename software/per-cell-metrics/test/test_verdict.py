@@ -343,13 +343,13 @@ def test_densify_does_not_invent_unoffered_identities():
 
 def test_identity_reading_is_the_highest_not_the_sum():
     df = _counts([("S1", "c1", "AAAA", 10), ("S1", "c1", "CCCC", 7)])
-    out = combine_tags_to_identities(df, {"AAAA": "A", "CCCC": "A"})
+    out = combine_tags_to_identities(df, {("AAAA", "S1"): "A", ("CCCC", "S1"): "A"})
     assert out["umiCount"].to_list() == [10]
 
 
 def test_combine_keeps_sample_id():
     df = _counts([("S1", "c1", "AAAA", 5), ("S2", "c1", "AAAA", 9)])
-    out = combine_tags_to_identities(df, {"AAAA": "A"})
+    out = combine_tags_to_identities(df, {("AAAA", "S1"): "A", ("AAAA", "S2"): "A"})
     assert out.height == 2 and set(out["sampleId"].to_list()) == {"S1", "S2"}
 
 
@@ -766,3 +766,35 @@ def test_a_group_spanning_two_panels_does_not_inflate_silent_unreliable():
     assert row_a["asked"] == 1  # only S1's cell, not S2's
     assert row_a["silentUnreliable"] == 0  # S2's gated cell must not count against A
     assert row_a["silentNotBound"] == 1  # S1's silent, admissible cell votes not bound
+
+
+def test_same_barcode_combines_into_different_identities_by_sample():
+    # The cell's own sample decides which antigen its barcode counted toward. Keyed by tag alone this
+    # put both cells under whichever identity the dataset-wide map happened to hold.
+    df = _counts([("S1", "c1", "AAAA", 10), ("S2", "c2", "AAAA", 20)])
+    out = combine_tags_to_identities(df, {("AAAA", "S1"): "A", ("AAAA", "S2"): "B"}).sort("sampleId")
+    assert out["identity"].to_list() == ["A", "B"]
+    assert out["umiCount"].to_list() == [10, 20]
+
+
+def test_combine_is_still_the_max_within_one_sample():
+    # tags-combine-by-the-highest is unchanged by the keying: two tags of one identity in one cell
+    # still combine to the highest, never the sum.
+    df = _counts([("S1", "c1", "AAAA", 3), ("S1", "c1", "CCCC", 7)])
+    out = combine_tags_to_identities(df, {("AAAA", "S1"): "A", ("CCCC", "S1"): "A"})
+    assert out["umiCount"].to_list() == [7]
+
+
+def test_a_global_panel_entry_applies_to_every_sample_when_combining():
+    df = _counts([("S1", "c1", "AAAA", 4), ("S2", "c2", "AAAA", 9)])
+    out = combine_tags_to_identities(df, {("AAAA", "*"): "A"}).sort("sampleId")
+    assert out["identity"].to_list() == ["A", "A"]
+    assert out["umiCount"].to_list() == [4, 9]
+
+
+def test_an_explicit_per_sample_declaration_beats_the_global_one():
+    # A panel mixing "*" with named rows is refused by the reader, but the fill order is pinned here
+    # so a caller building a frame directly cannot silently get the global answer for a named sample.
+    df = _counts([("S1", "c1", "AAAA", 5)])
+    out = combine_tags_to_identities(df, {("AAAA", "*"): "GLOBAL", ("AAAA", "S1"): "MINE"})
+    assert out["identity"].to_list() == ["MINE"]

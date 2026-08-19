@@ -6,6 +6,8 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from emit_verdicts import _linker_frame
+from panel import ANY_SAMPLE
 from verdict import DEFAULT_PANEL_MIN_MEMBERS, ReferenceChoice
 
 SRC = Path(__file__).resolve().parents[1] / "src"
@@ -277,7 +279,12 @@ def test_the_key_only_frames_carry_a_value_column_so_they_can_become_columns(bed
     assert set(offered["offered"].to_list()) == {"true"}
 
     linker = pl.read_csv(bed / "result_tag_identity.csv", infer_schema_length=0)
+    # (tag, identity), with the sample computed and dropped at the write site. The third axis is the
+    # shape a reused barcode needs, and emitting it breaks this block's own punchcard --
+    # `createPlDataTableV3`'s label discovery fails to build a spec frame over it. Pinned here so the
+    # gap is visible in the test rather than only in a comment.
     assert linker.columns == ["tag", "identity", "1"]
+    assert linker.height == linker.unique().height, "duplicate axis keys break a grid silently"
     assert set(linker["1"].to_list()) == {"1"}
 
 
@@ -590,10 +597,15 @@ def test_a_property_no_identity_agreed_on_is_left_out_rather_than_exported_blank
 
 
 def test_two_identities_that_disagree_the_same_way_do_not_share_a_label(bed):
-    # Both barcodes disagree about the grouping column across samples, so both fall back to their own
-    # identity and both are labelled with the values they declared, joined. Those joined strings are
-    # equal -- so the fallback that exists to make a conflict readable would put two identities under
-    # one name, which is the one thing the label map promises never to do.
+    # Both barcodes carry Family=Spike in S1 and Family=Nuc in S2. Under `panel-file-authority@3.0`
+    # the panel declares per tag AND sample, so that is not a disagreement to fall back from -- it is
+    # two declarations, and each barcode joins the family its own sample named. The identities are the
+    # two families, and neither barcode stands alone under its raw sequence.
+    #
+    # This expectation INVERTED with per-sample keying. It previously asserted that both barcodes fell
+    # back to their own identity, labelled with the values they declared joined ("Nuc / Spike"), and
+    # that the two joined strings had to be kept apart by appending the barcode. That fallback existed
+    # only because a dataset-wide map could not hold both declarations at once.
     (bed / "panel.csv").write_text(
         "Samples,Name,Sequence,Type,Family\n"
         "S1,AgA,AAAA,Target,Spike\n"
@@ -610,13 +622,14 @@ def test_two_identities_that_disagree_the_same_way_do_not_share_a_label(bed):
     _run(bed, *BASE, "--grouping", json.dumps({"by": "property", "column": "Family"}))
 
     labels = dict(pl.read_csv(bed / "result_identity_labels.csv", infer_schema_length=0).iter_rows())
-    assert set(labels) == {"AAAA", "CCCC"}
+    assert set(labels) == {"Spike", "Nuc"}, "each barcode joins the family its own sample declared"
     assert len(set(labels.values())) == 2, f"two identities under one label: {labels}"
-    # The conflict is still readable -- the barcode is appended to the joined names, not substituted
-    # for them, so nothing is traded away to make the label unique.
-    for identity, label in labels.items():
-        assert label.startswith("Nuc / Spike")
-        assert identity in label
+    # A property grouping makes the identity the property's value, which is already the name a reader
+    # recognises, so no barcode is appended and no name is joined.
+    assert labels == {"Spike": "Spike", "Nuc": "Nuc"}
+
+    meta = json.loads((bed / "result_run_meta.json").read_text())
+    assert meta["tagsWithoutGroupingValue"] == [], "nothing fell back: every pair carried a value"
 
 
 def test_a_flat_contending_list_is_refused_rather_than_read_as_characters(bed):
@@ -922,12 +935,20 @@ def test_the_bed_keys_identity_by_barcode_where_the_names_would_split(wide_bed):
     assert set(labels) == shape["antigens"]
     assert len(set(labels.values())) == len(labels)
 
-    # And from the other side: asked to group by the name, the run cannot place exactly the renamed
-    # barcodes, because no one name holds for them. It says so rather than dropping them.
+    # And from the other side: asked to group by the name, the run now PLACES the renamed barcodes,
+    # one identity per name the panel declared. Nothing is left unplaced.
+    #
+    # This expectation INVERTED with per-sample keying, and the inversion is the point of the change.
+    # A barcode named differently in two samples used to have "no one name that holds", so it was
+    # reported in `tagsWithoutGroupingValue` and stood alone under its raw sequence. Under
+    # `panel-file-authority@3.0` those are two declarations -- the same reagent identifier carrying a
+    # different antigen in each sample -- so each is placed under the name its own sample gave it.
     r = _run(wide_bed, *_bed_args("panel_with_reference.csv", *NAME_GROUPING))
     assert r.returncode == 0, r.stderr
     meta = json.loads((wide_bed / "result_run_meta.json").read_text())
-    assert set(meta["tagsWithoutGroupingValue"]) == shape["renamed"]
+    assert meta["tagsWithoutGroupingValue"] == [], "a renamed barcode is placed, not left unplaceable"
+    named = set(pl.read_csv(wide_bed / "result_verdicts.csv", infer_schema_length=0)["identity"].to_list())
+    assert named == shape["names"], "one identity per declared name, across every sample"
 
 
 def test_the_bed_reaches_all_four_states_in_one_run(wide_bed):
@@ -1591,19 +1612,23 @@ def test_a_panel_already_keyed_by_sample_id_is_unaffected(bed):
     assert _distinct_states(bed) == without
 
 
-def test_an_identity_whose_grouping_value_was_dropped_is_labelled_with_the_names_it_declared(tmp_path):
-    """A fallback identity must show its reagent, not a bare barcode.
+def test_a_barcode_named_differently_per_sample_becomes_one_identity_per_name(tmp_path):
+    """A reused barcode is placed under each name its own sample declared.
 
-    Grouping by a property makes the identity the property's value, so a tag whose
-    rows disagree about that property has nothing to group on and stands alone
-    under its raw sequence. Labelled with the sequence, it is the least readable
-    thing this block can emit -- a 15-mer sitting among antigen names, at exactly
-    the point a reader needs to understand what happened to it. Joining the names
-    it DID declare keeps the reagent recognisable and the conflict visible.
+    Grouping by a property makes the identity the property's value. Under
+    `panel-file-authority@3.0` the panel declares per tag AND sample, so a barcode
+    carrying one name here and another there is not a tag that 'has nothing to
+    group on' -- it is a reagent identifier reused to cover more antigens than the
+    study has tags, and each declaration places it in that sample.
 
-    AAAA disagrees (two names across the two samples) and CCCC does not, so the
-    same run shows both the exception and the rule; a bed with only the exception
-    could not tell a joined label from a label applied to everything.
+    AAAA is named differently across the two samples and CCCC is not, so the same
+    run shows both the reuse case and the ordinary one.
+
+    THIS TEST INVERTED. It previously asserted AAAA stood alone under its raw
+    sequence, labelled with the two names joined ('SpikeWT / SpikeWT__alt'), and
+    that it was reported in `tagsWithoutGroupingValue`. That behaviour existed
+    only because a dataset-wide tag->identity map could not hold two declarations
+    for one barcode.
     """
     (tmp_path / "counts.csv").write_text(
         "sampleId,cellId,tag,umiCount\n"
@@ -1613,7 +1638,7 @@ def test_an_identity_whose_grouping_value_was_dropped_is_labelled_with_the_names
     (tmp_path / "panel.csv").write_text(
         "Samples,Name,Sequence,Type\n"
         "S1,SpikeWT,AAAA,Target\n"
-        "S2,SpikeWT__alt,AAAA,Target\n"  # same barcode, two names -> no agreed value
+        "S2,SpikeWT__alt,AAAA,Target\n"  # same barcode, two names -> two declarations, one per sample
         "S1,Lysozyme,CCCC,Target\n"
         "S2,Lysozyme,CCCC,Target\n"  # agrees, so it groups normally
         "S1,Ctrl,CTRL,Control\nS2,Ctrl,CTRL,Control\n"
@@ -1626,9 +1651,45 @@ def test_an_identity_whose_grouping_value_was_dropped_is_labelled_with_the_names
         .select("identity", "label")
         .iter_rows()
     )
-    assert labels["AAAA"] == "SpikeWT / SpikeWT__alt"
+    assert set(labels) == {"SpikeWT", "SpikeWT__alt", "Lysozyme"}
+    assert labels["SpikeWT"] == "SpikeWT"
+    assert labels["SpikeWT__alt"] == "SpikeWT__alt"
     assert labels["Lysozyme"] == "Lysozyme"
+    # No bare 15-mer anywhere: the barcode is no longer an identity under this grouping.
+    assert "AAAA" not in labels
 
     meta = json.loads((tmp_path / "result_run_meta.json").read_text())
-    assert meta["identityLabels"]["AAAA"] == "SpikeWT / SpikeWT__alt"
-    assert meta["tagsWithoutGroupingValue"] == ["AAAA"]
+    assert meta["identityLabels"]["SpikeWT"] == "SpikeWT"
+    assert meta["tagsWithoutGroupingValue"] == [], "nothing was left unplaceable"
+
+
+# --- the exported tag -> identity linker, keyed by sample -----------------------------------
+
+
+def test_the_linker_carries_the_sample_and_never_repeats_a_key():
+    # The linker is EXPORTED, so its axes are a cross-block contract. Without the sample a reader
+    # joining a tag's count to a verdict can pair one sample's count with another sample's identity —
+    # the conflation the (tag, sample) keying exists to prevent.
+    grouping = {("T1", "s1"): "A", ("T1", "s2"): "B", ("T2", "s1"): "A", ("T2", "s2"): "A"}
+    frame = _linker_frame(grouping, samples=["s1", "s2"])
+    rows = sorted(zip(frame["tag"].to_list(), frame["sample"].to_list(), frame["identity"].to_list()))
+    assert rows == [("T1", "s1", "A"), ("T1", "s2", "B"), ("T2", "s1", "A"), ("T2", "s2", "A")]
+    # Duplicate axis keys break a grid silently — one row and an ellipsis, no error anywhere.
+    assert len(rows) == len(set(rows))
+    assert set(frame["1"].to_list()) == {1}
+
+
+def test_the_linker_expands_a_global_panel_to_every_real_sample():
+    # "*" is not a sample id — the panel reader writes it where the file declares no sample dimension
+    # at all — so a reader joining on it would match nothing.
+    frame = _linker_frame({("T1", ANY_SAMPLE): "A"}, samples=["s1", "s2"])
+    rows = sorted(zip(frame["tag"].to_list(), frame["sample"].to_list(), frame["identity"].to_list()))
+    assert rows == [("T1", "s1", "A"), ("T1", "s2", "A")]
+    assert ANY_SAMPLE not in frame["sample"].to_list()
+
+
+def test_two_tags_of_one_identity_in_one_sample_emit_one_row_each_not_a_duplicate_key():
+    frame = _linker_frame({("T1", "s1"): "A", ("T2", "s1"): "A"}, samples=["s1"])
+    rows = sorted(zip(frame["tag"].to_list(), frame["sample"].to_list(), frame["identity"].to_list()))
+    assert rows == [("T1", "s1", "A"), ("T2", "s1", "A")]
+    assert len(rows) == len(set(rows))

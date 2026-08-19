@@ -201,16 +201,29 @@ def consistent_properties(
     return props, inconsistent
 
 
-# tag -> the identity that tag belongs to. Many tags may share one identity.
-# A tag absent from the mapping gets no verdict row, which is why every builder
+# (tag, sample) -> the identity that pair belongs to. Many pairs may share one
+# identity, and one tag may belong to DIFFERENT identities in different samples.
+#
+# Keyed by both because the panel file is: `panel-file-authority@3.0` declares per
+# tag and sample, since a barcode is a reagent identifier drawn from a small fixed
+# pool and the same barcode carries a different antigen wherever a study reuses that
+# pool to cover more antigens than it has tags. A map keyed by tag alone cannot say
+# what a reused barcode is, and collapses those declarations into a disagreement.
+#
+# A pair absent from the mapping gets no verdict row, which is why every builder
 # must leave the reference tags out: the comparator has nothing to be compared
 # against. identity_universe() takes no reference_tags of its own, deliberately —
 # one place decides, so the two cannot drift.
-Grouping = dict[str, str]
+Grouping = dict[tuple[str, str], str]
 
 
 def default_grouping(panel: pl.DataFrame, reference_tags: set[str]) -> Grouping:
-    """One identity per tag, over non-reference tags.
+    """One identity per tag, over non-reference tags, at every sample declaring it.
+
+    The identity is still the tag: under the per-tag grouping a barcode names
+    itself in every sample it appears in, so the pairs collapse to one identity
+    per tag and this grouping carries no per-sample information. It is keyed
+    anyway so every consumer reads one shape.
 
     The feature name cannot key an identity: the same barcode carries a
     different name in a different sample's panel, so name-keying splits one
@@ -218,17 +231,25 @@ def default_grouping(panel: pl.DataFrame, reference_tags: set[str]) -> Grouping:
     identity — a verdict is a reading against the reference, so asking one of
     the reference would compare it with itself.
     """
-    return {t: t for t in panel["tag"].unique().to_list() if t not in reference_tags}
+    return {
+        (tag, sample): tag
+        for tag, sample in zip(panel["tag"].to_list(), panel["sample"].to_list())
+        if tag not in reference_tags
+    }
 
 
 def identity_universe(panel: pl.DataFrame, grouping: Grouping) -> set[str]:
     """Every identity a question is asked at — the row set for every set's verdicts.
 
+    The union across every sample, because an identity declared in one sample's
+    panel and not another's is still an identity the run asks at — it reads
+    *never asked* for sets drawn from the samples that never offered it.
+
     A verdict exists at every identity, including ones a given set was never
     offered: that is precisely where *never asked* lives. Using the offered set
     as the row set instead makes an unoffered identity vanish from the answer.
     """
-    return {grouping[t] for t in panel["tag"].unique().to_list() if t in grouping}
+    return set(grouping.values())
 
 
 def offered_identities(panel: pl.DataFrame, grouping: Grouping, samples: list[str]) -> set[str]:
@@ -238,13 +259,17 @@ def offered_identities(panel: pl.DataFrame, grouping: Grouping, samples: list[st
     samples' panels. The `any` is deliberate: an identity is a group of tags,
     and that group can span several panels.
 
+    The identity is read from the (tag, sample) pair itself rather than through a
+    dataset-wide map, so a barcode carrying one antigen here and another there is
+    not conflated: only what THIS sample declared that barcode to be is offered.
+
     A sample the panel never mentions is offered nothing, so every identity
     reads *never asked* for a set drawn from it. That is the honest reading of
     a panel that does not cover the run, and the panel-versus-reads check is
     what makes the gap visible rather than leaving it to be inferred.
     """
-    rows = panel.filter((pl.col("sample") == ANY_SAMPLE) | pl.col("sample").is_in(samples))
-    return {grouping[t] for t in rows["tag"].unique().to_list() if t in grouping}
+    wanted = set(samples)
+    return {identity for (_tag, sample), identity in grouping.items() if sample == ANY_SAMPLE or sample in wanted}
 
 
 def panel_read_mismatch(panel: pl.DataFrame, seen: pl.DataFrame) -> pl.DataFrame:

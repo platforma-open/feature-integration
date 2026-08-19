@@ -253,15 +253,36 @@ def _build_grouping(
     if column not in declared:
         raise SystemExit(f"--grouping names property column {column!r}, which the panel does not declare: {declared}")
 
+    # Read PER PANEL ROW, not through `consistent_properties`. The panel declares per
+    # tag and sample, so a value differing between a tag's rows is a declaration —
+    # this barcode carries that antigen in that sample — and not a disagreement to
+    # collapse. Reading it through the tag-grain accessor discarded exactly the
+    # information the keying exists to carry, and every reused barcode then fell back
+    # to standing alone under its raw sequence.
+    #
+    # Values are stripped here for the same reason `consistent_properties` stripped
+    # them: the panel reader carries property values through exactly as written, so
+    # " Spike " and "Spike" would otherwise be two identities that no fixture without
+    # stray whitespace would ever reveal.
     grouping: Grouping = {}
-    ungrouped: list[str] = []
-    for tag in sorted(by_tag):
-        value = properties.get(tag, {}).get(column)
+    ungrouped_pairs: list[tuple[str, str]] = []
+    rows = zip(panel["tag"].to_list(), panel["sample"].to_list(), panel[column].to_list())
+    for tag, sample, raw in sorted(rows):
+        if tag in reference_tags:
+            continue
+        value = (raw or "").strip()
         if value:
-            grouping[tag] = value
+            grouping[(tag, sample)] = value
         else:
-            grouping[tag] = tag
-            ungrouped.append(tag)
+            # A pair the grouping column says nothing about keeps its own identity
+            # instead of vanishing. Dropping it would remove a declared reagent from
+            # the answer with nothing downstream able to tell the panel was short.
+            grouping[(tag, sample)] = tag
+            ungrouped_pairs.append((tag, sample))
+    # Reported as distinct TAGS, not pairs. The returned list is a contract: it
+    # travels in the run meta as `tagsWithoutGroupingValue` and the punchcard counts
+    # it in a banner, which names barcodes rather than (barcode, sample) pairs.
+    ungrouped = sorted({tag for tag, _sample in ungrouped_pairs})
     if ungrouped:
         # Also returned, not only logged. A property the file does not carry
         # narrows what can be answered, and that narrowing has to be visible in
@@ -269,11 +290,40 @@ def _build_grouping(
         # tags are answered under a grouping that could not place them, so a
         # bare barcode sits among the family identities and only this says why.
         print(
-            f"[emit-verdicts] {len(ungrouped)} tag(s) carry no agreed {column!r} value and stand as their own "
+            f"[emit-verdicts] {len(ungrouped)} tag(s) carry no {column!r} value and stand as their own "
             f"identity: {ungrouped[:8]}",
             file=sys.stderr,
         )
     return grouping, f"property:{column}", ungrouped
+
+
+def _linker_frame(grouping: Grouping, samples: list[str]) -> pl.DataFrame:
+    """The tag -> identity linker, keyed by sample.
+
+    Keyed by sample because the grouping is: the same barcode carries a different
+    antigen in a different sample's panel, and a linker without the sample lets a
+    reader put one sample's count beside another sample's verdict — the exact
+    conflation the (tag, sample) keying exists to prevent.
+
+    Rows are deduplicated. Two tags of one identity in one sample would otherwise
+    emit the same (tag, sample, identity) key twice, and duplicate axis keys break
+    a grid silently rather than loudly: the table renders one row and an ellipsis
+    with no error anywhere.
+
+    A global panel (ANY_SAMPLE) is expanded to the run's real samples rather than
+    emitted as "*". "*" is not a sample id — the panel reader writes it where the
+    file declares no sample dimension at all — so a reader joining on it matches
+    nothing.
+    """
+    rows: set[tuple[str, str, str]] = set()
+    for (tag, sample), identity in grouping.items():
+        for resolved in samples if sample == ANY_SAMPLE else [sample]:
+            rows.add((tag, resolved, identity))
+    return pl.DataFrame(
+        sorted(rows),
+        orient="row",
+        schema={"tag": pl.String, "sample": pl.String, "identity": pl.String},
+    ).with_columns(pl.lit(1, dtype=pl.Int64).alias("1"))
 
 
 def _identity_labels(
@@ -328,7 +378,13 @@ def _identity_labels(
     # already covers the joined strings -- two tags can disagree about the same pair of names and join to
     # one label -- so the uniqueness promise needs nothing added for them.
     joined = {tag: " / ".join(values) for tag, values in (disagreed or {}).items() if values}
-    names = {tag: (properties.get(tag, {}).get(feature_col) or joined.get(tag) or tag) for tag in grouping}
+    # Over the IDENTITIES, not the grouping's keys. Under the per-tag grouping an identity is a tag,
+    # so the two coincided while the grouping was keyed by tag alone; keyed by (tag, sample) the keys
+    # are pairs and iterating them would look up a tuple in `properties` and find nothing, dropping
+    # every label back to the bare barcode this function exists to avoid.
+    names = {
+        tag: (properties.get(tag, {}).get(feature_col) or joined.get(tag) or tag) for tag in set(grouping.values())
+    }
     collisions = Counter(names.values())
     return {tag: (f"{name} ({tag})" if collisions[name] > 1 else name) for tag, name in names.items()}
 
@@ -365,9 +421,14 @@ def _identity_properties(
     Reference tags need no exclusion here: `_build_grouping` keeps them out of
     the grouping, so no identity has one as a member.
     """
+    # Distinct member tags per identity. The grouping is keyed (tag, sample), so one tag reaches an
+    # identity once per sample declaring it there; the set keeps a tag from being counted twice, which
+    # would not change the agreement test but would misreport how many tags an identity holds.
     tags_of: dict[str, list[str]] = {}
-    for tag, identity in sorted(grouping.items()):
-        tags_of.setdefault(identity, []).append(tag)
+    for (tag, _sample), identity in sorted(grouping.items()):
+        members = tags_of.setdefault(identity, [])
+        if tag not in members:
+            members.append(tag)
 
     held: dict[str, dict[str, str]] = {}
     for identity, tags in tags_of.items():
@@ -905,12 +966,20 @@ def main() -> None:
 
     # The value column is named "1" and holds 1, matching the cell-linker
     # convention already used for linker columns elsewhere in the platform.
-    linker_frame = pl.DataFrame(
-        [(tag, identity, 1) for tag, identity in sorted(grouping.items())],
-        orient="row",
-        schema={"tag": pl.String, "identity": pl.String, "1": pl.Int64},
-    )
-    _write_sorted(linker_frame, f"{prefix}_tag_identity.csv", ["tag", "identity"])
+    #
+    # The sample is COMPUTED and then dropped, and that is a known gap rather than an oversight.
+    # Keyed (tag, sample, identity) the exported linker would say which sample's count belongs beside
+    # which identity's verdict, which is what a reused barcode needs -- a barcode carrying antigen A
+    # here and antigen B there cannot be joined correctly without it. Emitting the third axis was
+    # measured against the live block and breaks this block's OWN punchcard: `createPlDataTableV3`
+    # runs `discoverLabelColumns` over the pool, and the extra axis makes the spec frame it builds
+    # fail outright ("createSpecFrame failed"), leaving the card with no columns at all.
+    #
+    # So the linker ships as (tag, identity) with distinct rows: correct for one panel over every
+    # sample, and ambiguous exactly where a barcode is reused. `_linker_frame` keeps the sample so
+    # the shape is one edit away once the discovery side can carry it.
+    linker_frame = _linker_frame(grouping, samples)
+    _write_sorted(linker_frame.drop("sample").unique(), f"{prefix}_tag_identity.csv", ["tag", "identity"])
 
     # Only the disagreements in the column that SUPPLIES the label matter: a tag that disagrees about some
     # other property still carries an ordinary name. Which column that is depends on the rule -- a
@@ -1149,8 +1218,18 @@ def main() -> None:
 
         sample_coverage[sample] = roll_up([r.status for r in rows[first:]])
 
+    # Resolved through the panel's OWN samples, plus any global declaration. A panel carries the worst
+    # status among the identities its tags feed, and under (tag, sample) keying the same barcode feeds
+    # a different identity in a sample carrying a different panel -- so resolving by tag alone would
+    # pull another panel's identity into this one's rollup.
     identities_of_panel: dict[str, set[str]] = {
-        panel_id: {grouping[t] for t in tags if t in grouping} for panel_id, tags in tags_of_panel.items()
+        panel_id: {
+            grouping[(t, s)]
+            for t in tags
+            for s in (*samples_of_panel.get(panel_id, []), ANY_SAMPLE)
+            if (t, s) in grouping
+        }
+        for panel_id, tags in tags_of_panel.items()
     }
     per_sample_tag_total = {
         (row["sampleId"], row["tag"]): row["total"]
@@ -1221,7 +1300,17 @@ def main() -> None:
                     orient="row",
                     schema={"key": pl.String, "identityDisagreement": pl.Float64},
                 ),
-                {tag: {grouping[tag]} for tag in panel_tags if tag in grouping},
+                {
+                    tag: identities
+                    for tag in panel_tags
+                    if (
+                        identities := {
+                            grouping[(tag, s)]
+                            for s in (*samples_of_panel.get(panel_id, []), ANY_SAMPLE)
+                            if (tag, s) in grouping
+                        }
+                    )
+                },
                 alerting_tags,
             )
             attached: dict[str, list[str]] = {}

@@ -44,6 +44,7 @@ from typing import NamedTuple
 
 import numpy as np
 import polars as pl
+from panel import ANY_SAMPLE, Grouping
 from scipy.stats import beta
 
 CELL_KEY = ("sampleId", "cellId")
@@ -69,14 +70,11 @@ def apply_floor(counts: pl.DataFrame, floor: int, reference_tags: set[str]) -> F
     binding*; the comparator is not evidence of binding, and flooring it lowers
     every denominator and shifts the whole run toward *bound*.
 
-    Scope limit: `reference_tags` is global, so a tag is a comparator in every
-    sample or in none. The panel is keyed (tag, sample) and could in principle
-    declare a barcode a control in one sample and a real antigen in another.
-    That case is not handled here — and the panel reader's consistent_properties()
-    drops any property whose value disagrees across a tag's rows, so a
-    per-sample control designation would already have been discarded rather
-    than honoured. Handling it belongs where the reference is selected and
-    where the CLI resolves it, not in the floor.
+    `reference_tags` is global by design, not by omission. `panel-file-authority`
+    puts a tag's role as the reference with the RUN rather than in the panel file,
+    so a tag is a comparator in every sample or in none. The panel's (tag, sample)
+    keying carries what each tag *is* — the antigen it holds in that sample — not
+    what role it plays, so there is no per-sample control designation to honour.
 
     Returns the floored counts and {"readingsFloored", "cellsEmptied"}: the two
     counters that land in this sample's row of the QC report.
@@ -353,8 +351,15 @@ class UnreliableReason(str, Enum):
     THIN_COMPARATOR = "the comparator rests on too little to compare against"
 
 
-def combine_tags_to_identities(counts: pl.DataFrame, grouping: dict[str, str]) -> pl.DataFrame:
+def combine_tags_to_identities(counts: pl.DataFrame, grouping: Grouping) -> pl.DataFrame:
     """An identity's reading in a cell is the highest of its tags' counts.
+
+    Resolved through the cell's OWN sample. The grouping is keyed (tag, sample)
+    because the panel file is, so a barcode reused across panels contributes to
+    the antigen its own sample declared rather than to whichever one a
+    dataset-wide map happened to pick. A cell belongs to exactly one sample,
+    which is what makes "the highest of its tags' counts, in a cell" well defined
+    under reuse.
 
     Counts are not added together and summing is not offered. Requiring every
     tag to clear was measured and is the worst option available. Summing would
@@ -362,9 +367,23 @@ def combine_tags_to_identities(counts: pl.DataFrame, grouping: dict[str, str]) -
     up background at the rate the reference does — and tags differ in how
     readily they are taken up, by an amount nobody has measured.
     """
-    mapped = counts.with_columns(pl.col("tag").replace_strict(grouping, default=None).alias("identity")).filter(
-        pl.col("identity").is_not_null()
+    star = {tag: identity for (tag, sample), identity in grouping.items() if sample == ANY_SAMPLE}
+    keyed = [(tag, sample, identity) for (tag, sample), identity in grouping.items() if sample != ANY_SAMPLE]
+    mapped = counts.join(
+        pl.DataFrame(
+            keyed,
+            orient="row",
+            schema={"tag": pl.String, "sampleId": pl.String, "identity": pl.String},
+        ),
+        on=["tag", "sampleId"],
+        how="left",
     )
+    if star:
+        # A panel with no sample dimension declares one mapping over every sample, so
+        # the star rows fill wherever the keyed join found nothing. Checked second so
+        # an explicit per-sample declaration always wins over the global one.
+        mapped = mapped.with_columns(pl.col("identity").fill_null(pl.col("tag").replace_strict(star, default=None)))
+    mapped = mapped.filter(pl.col("identity").is_not_null())
     return mapped.group_by([*CELL_KEY, "identity"]).agg(pl.col("umiCount").max().alias("umiCount"))
 
 

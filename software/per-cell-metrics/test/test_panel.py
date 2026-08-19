@@ -225,20 +225,20 @@ def test_barcode_is_stripped(tmp_path):
 
 def test_universe_is_every_identity_not_a_per_set_subset():
     panel = pl.DataFrame({"tag": ["AAAA", "CCCC", "GGGG"], "sample": ["S1", "S2", "S2"], "Name": ["a", "c", "g"]})
-    g = {"AAAA": "A", "CCCC": "C", "GGGG": "G"}
+    g = {("AAAA", "S1"): "A", ("CCCC", "S2"): "C", ("GGGG", "S2"): "G"}
     assert identity_universe(panel, g) == {"A", "C", "G"}
 
 
 def test_reference_tags_never_enter_the_universe():
     panel = pl.DataFrame({"tag": ["AAAA", "CTRL"], "sample": ["S1", "S1"], "Name": ["a", "ctrl"]})
     g = default_grouping(panel, reference_tags={"CTRL"})
-    assert g == {"AAAA": "AAAA"}
+    assert g == {("AAAA", "S1"): "AAAA"}
     assert identity_universe(panel, g) == {"AAAA"}
 
 
 def test_offered_is_the_union_over_the_sets_samples():
     panel = pl.DataFrame({"tag": ["AAAA", "CCCC", "GGGG"], "sample": ["S1", "S2", "S2"], "Name": ["a", "c", "g"]})
-    g = {"AAAA": "A", "CCCC": "C", "GGGG": "G"}
+    g = {("AAAA", "S1"): "A", ("CCCC", "S2"): "C", ("GGGG", "S2"): "G"}
     assert offered_identities(panel, g, ["S1"]) == {"A"}
     assert offered_identities(panel, g, ["S2"]) == {"C", "G"}
     assert offered_identities(panel, g, ["S1", "S2"]) == {"A", "C", "G"}
@@ -246,14 +246,14 @@ def test_offered_is_the_union_over_the_sets_samples():
 
 def test_offered_needs_only_one_member_tag():
     panel = pl.DataFrame({"tag": ["AAAA", "CCCC"], "sample": ["S1", "S2"], "Name": ["a1", "a2"]})
-    g = {"AAAA": "A", "CCCC": "A"}
+    g = {("AAAA", "S1"): "A", ("CCCC", "S2"): "A"}
     assert offered_identities(panel, g, ["S1"]) == {"A"}
     assert offered_identities(panel, g, ["S2"]) == {"A"}
 
 
 def test_star_sample_offers_everything():
     panel = pl.DataFrame({"tag": ["AAAA", "CCCC"], "sample": ["*", "*"], "Name": ["a", "c"]})
-    g = {"AAAA": "A", "CCCC": "C"}
+    g = {("AAAA", "*"): "A", ("CCCC", "*"): "C"}
     assert offered_identities(panel, g, ["anything"]) == {"A", "C"}
 
 
@@ -262,7 +262,7 @@ def test_an_identity_not_offered_is_still_in_the_universe():
     # used `offered` as the row set, so a never-offered identity vanished
     # instead of reading "never asked".
     panel = pl.DataFrame({"tag": ["AAAA", "CCCC"], "sample": ["S1", "S2"], "Name": ["a", "c"]})
-    g = {"AAAA": "A", "CCCC": "C"}
+    g = {("AAAA", "S1"): "A", ("CCCC", "S2"): "C"}
     assert "C" in identity_universe(panel, g)
     assert "C" not in offered_identities(panel, g, ["S1"])
 
@@ -273,7 +273,7 @@ def test_a_sample_absent_from_the_panel_is_offered_nothing():
     # the honest answer, not a bug — but it is a big claim from a silent
     # lookup, so it is pinned here and reported by the panel/reads check.
     panel = pl.DataFrame({"tag": ["AAAA"], "sample": ["S1"], "Name": ["a"]})
-    g = {"AAAA": "A"}
+    g = {("AAAA", "S1"): "A"}
     assert offered_identities(panel, g, ["S9"]) == set()
 
 
@@ -287,16 +287,16 @@ def test_a_panel_of_only_references_has_an_empty_universe():
 def test_no_samples_offers_nothing_but_the_star():
     # An empty sample list must not accidentally mean "all samples".
     panel = pl.DataFrame({"tag": ["AAAA"], "sample": ["S1"], "Name": ["a"]})
-    assert offered_identities(panel, {"AAAA": "A"}, []) == set()
+    assert offered_identities(panel, {("AAAA", "S1"): "A"}, []) == set()
     star = pl.DataFrame({"tag": ["AAAA"], "sample": ["*"], "Name": ["a"]})
-    assert offered_identities(star, {"AAAA": "A"}, []) == {"A"}
+    assert offered_identities(star, {("AAAA", "*"): "A"}, []) == {"A"}
 
 
 def test_a_tag_outside_the_grouping_is_skipped_not_an_error():
     # The reference is the ordinary case of this: it is on the panel and
     # deliberately absent from the grouping.
     panel = pl.DataFrame({"tag": ["AAAA", "ZZZZ"], "sample": ["S1", "S1"], "Name": ["a", "z"]})
-    g = {"AAAA": "A"}
+    g = {("AAAA", "S1"): "A"}
     assert identity_universe(panel, g) == {"A"}
     assert offered_identities(panel, g, ["S1"]) == {"A"}
 
@@ -436,3 +436,40 @@ def test_null_keys_on_either_side_do_not_raise():
     assert out.height == 0
     assert None not in out["sample"].to_list()
     assert None not in out["tag"].to_list()
+
+
+# --- per-sample grouping (panel-file-authority@3.0) ----------------------------------------
+
+
+def test_default_grouping_is_keyed_by_tag_and_sample():
+    # The identity is still the tag under the per-tag grouping, but the map is keyed by the pair so
+    # every consumer reads one shape whichever grouping is in force.
+    panel = pl.DataFrame({"tag": ["AAAA", "AAAA"], "sample": ["S1", "S2"], "Name": ["a", "a"]})
+    g = default_grouping(panel, reference_tags=set())
+    assert g == {("AAAA", "S1"): "AAAA", ("AAAA", "S2"): "AAAA"}
+
+
+def test_identity_universe_is_the_union_across_samples():
+    # One barcode carrying a different antigen in each sample yields TWO identities, not a conflict.
+    # This is the case panel-file-authority@3.0 keys the panel for.
+    panel = pl.DataFrame({"tag": ["AAAA", "AAAA"], "sample": ["S1", "S2"], "Name": ["a", "b"]})
+    g = {("AAAA", "S1"): "A", ("AAAA", "S2"): "B"}
+    assert identity_universe(panel, g) == {"A", "B"}
+
+
+def test_offered_reads_the_identity_the_sample_itself_declared():
+    # A set drawn from S1 was offered what S1's panel said that barcode was, and nothing S2 said.
+    panel = pl.DataFrame({"tag": ["AAAA", "AAAA"], "sample": ["S1", "S2"], "Name": ["a", "b"]})
+    g = {("AAAA", "S1"): "A", ("AAAA", "S2"): "B"}
+    assert offered_identities(panel, g, ["S1"]) == {"A"}
+    assert offered_identities(panel, g, ["S2"]) == {"B"}
+    assert offered_identities(panel, g, ["S1", "S2"]) == {"A", "B"}
+
+
+def test_a_global_panel_row_is_offered_to_every_sample():
+    # "*" is what the reader writes where the file declares no sample dimension at all, so it applies
+    # everywhere rather than naming a sample.
+    panel = pl.DataFrame({"tag": ["AAAA"], "sample": ["*"], "Name": ["a"]})
+    g = {("AAAA", "*"): "A"}
+    assert offered_identities(panel, g, ["S1"]) == {"A"}
+    assert offered_identities(panel, g, ["anything"]) == {"A"}

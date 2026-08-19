@@ -382,3 +382,58 @@ def test_a_set_whose_every_cell_was_gated_reads_unreliable_and_never_not_bound(g
     # *unreliable* reading says nothing about the gate.
     assert _run(gated_bed, *BASE).returncode == 0
     assert _row(gated_bed, "K1", "AGA")["state"] == "bound"
+
+
+def test_420_an_unasked_off_target_is_reachable_only_because_the_panel_is_keyed_by_sample():
+    """`420-unasked-off-target`, at the grain the keying decides.
+
+    A clonotype whose cells came from a sample whose panel omitted an off-target must read
+    *never asked* there — neither satisfied nor violated. That state is only reachable because
+    what a sample offered is worked out per sample (`242`), and under a reused panel it is only
+    CORRECT because the identity a barcode carries is read from that sample's own declaration.
+
+    The second half is the other side of `420`: the identity is still in the universe, so the
+    unasked position has a row to sit in rather than vanishing from the answer (`205`).
+    """
+    from emit_verdicts import _build_grouping
+    from panel import identity_universe, offered_identities
+
+    panel = pl.DataFrame(
+        {
+            "tag": ["T1", "T2", "T1", "T2", "T3"],
+            "sample": ["s1", "s1", "s2", "s2", "s2"],
+            "Identity": ["target", "offA", "target", "offA", "offB"],
+        }
+    )
+    grouping, rule_id, ungrouped = _build_grouping(
+        {"by": "property", "column": "Identity"}, panel, properties={}, reference_tags=set()
+    )
+    assert rule_id == "property:Identity"
+    assert ungrouped == []
+
+    # s1's panel omits offB entirely, so a set drawn only from s1 was never asked there.
+    assert offered_identities(panel, grouping, ["s1"]) == {"target", "offA"}
+    assert offered_identities(panel, grouping, ["s2"]) == {"target", "offA", "offB"}
+
+    # ...and offB is still in the universe, so that position exists to hold *never asked*.
+    assert identity_universe(panel, grouping) == {"target", "offA", "offB"}
+
+
+def test_a_reused_barcode_is_read_as_what_its_own_sample_declared():
+    """`260-panel-file-authority@3.0` — the case the keying exists for.
+
+    One barcode drawn from a small fixed pool carries a different antigen in each sample, which is
+    how a study covers more antigens than it has tags. Each sample's cells must be read against the
+    antigen that sample declared, and the identity universe holds both.
+    """
+    from emit_verdicts import _build_grouping
+    from panel import identity_universe
+
+    panel = pl.DataFrame({"tag": ["T1", "T1"], "sample": ["s1", "s2"], "Identity": ["antigenA", "antigenB"]})
+    grouping, _, ungrouped = _build_grouping(
+        {"by": "property", "column": "Identity"}, panel, properties={}, reference_tags=set()
+    )
+    assert grouping == {("T1", "s1"): "antigenA", ("T1", "s2"): "antigenB"}
+    assert identity_universe(panel, grouping) == {"antigenA", "antigenB"}
+    # Nothing fell back: neither declaration is a "disagreement" under a per-sample panel.
+    assert ungrouped == []

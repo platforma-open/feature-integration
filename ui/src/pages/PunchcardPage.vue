@@ -62,20 +62,24 @@ const identityOfColumn = (params: {
   return spec.domain?.[PUNCH_IDENTITY_DOMAIN];
 };
 
-// A merged identity gets a note explaining ITSELF. Its column header reads as a joined label
-// (`SpikeWT / SpikeWT__alt`) where every other header is a single antigen, and nothing on the header
-// says why. The banner above the card says two barcodes lost their grouping value, but it sits far from
-// the column it is about and names barcodes rather than the label now shown. Attaching the note to the
-// column's cells puts the explanation where the reader's cursor already is.
+// An unplaced identity gets a note explaining ITSELF. Its column header reads as a bare barcode where
+// every other header is an antigen, and nothing on the header says why. The banner above the card says
+// some barcodes carry no grouping value, but it sits far from the column it is about. Attaching the note
+// to the column's cells puts the explanation where the reader's cursor already is.
 //
-// A merged identity IS its barcode — the tag that lost its grouping value stands as its own identity —
-// so this is an exact set membership rather than a search.
+// An unplaced identity IS its barcode — a tag the grouping column said nothing about stands as its own
+// identity — so this is an exact set membership rather than a search.
+//
+// It does NOT cover a barcode the panel names differently in different samples. That used to land here,
+// because a dataset-wide map could hold only one value per tag and a second one read as a conflict. The
+// panel is now read per tag AND sample, so such a barcode is placed under each name its own sample
+// declared and never reaches this note.
 const mergedNote = (identity: string | undefined): string | undefined => {
   if (identity === undefined || !ungroupedTags.value.includes(identity)) return undefined;
   return (
-    `Merged: the panel gives barcode ${identity} a different name in different samples, ` +
-    `so there is no single value to group it under — it stands alone, labelled with both names. ` +
-    `Every other column groups on one agreed name.`
+    `Unplaced: the panel gives barcode ${identity} no value in the grouping column, ` +
+    `so there is nothing to group it under — it stands alone under its own sequence. ` +
+    `Every other column is an antigen the panel named.`
   );
 };
 

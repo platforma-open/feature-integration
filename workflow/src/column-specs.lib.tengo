@@ -870,10 +870,16 @@ offeredImportSpec := func(sampleAxisSpec, identityAxisSpec) {
 
 // --- tag -> identity linker: result_tag_identity.csv --------------------------------------
 //
-// One row per tag. This is what lets a reader put a tag's count next to its verdict without either
-// layer knowing about the other: the linker carries both axes and its value is irrelevant, so it is
-// a constant column, matching pl7.app/sc/cellLinker's shape. Order priority 0 and no default
-// visibility: it is infrastructure and is hidden in tables.
+// One row per (tag, sample, identity). This is what lets a reader put a tag's count next to its
+// verdict without either layer knowing about the other: the linker carries the axes and its value is
+// irrelevant, so it is a constant column, matching pl7.app/sc/cellLinker's shape. Order priority 0 and
+// no default visibility: it is infrastructure and is hidden in tables.
+//
+// The sample is an axis because the panel file declares per tag AND sample: one barcode carries a
+// different antigen in a different sample's panel wherever a study reuses a limited tag pool. Keyed by
+// tag alone, the linker would pair one sample's count with another sample's verdict, which is the
+// conflation the keying exists to prevent — and a tag feeding two identities would emit two rows a
+// reader could not tell apart.
 //
 // The value column is named "1" and holds 1, matching the cell-linker convention used elsewhere in the
 // platform, and it exists for the same reason the offered frame's does: a key-only file imports as no

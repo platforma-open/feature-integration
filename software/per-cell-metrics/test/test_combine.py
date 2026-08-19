@@ -200,7 +200,7 @@ def test_set_with_every_cell_set_aside_is_unreliable_through_the_real_pipeline()
         orient="row",
         schema={"sampleId": pl.String, "cellId": pl.String, "tag": pl.String, "umiCount": pl.Int64},
     )
-    identities = combine_tags_to_identities(counts, {"TAG": "A"})
+    identities = combine_tags_to_identities(counts, {("TAG", "S1"): "A"})
     reference = {("S1", "c1"): 900, ("S1", "c2"): 900}
     gated, _ = gate_cells(reference, threshold=800)
     admissibility = Admissibility(reference, 2, gated)
