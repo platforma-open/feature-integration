@@ -4,7 +4,6 @@ import {
   PlAlert,
   PlBlockPage,
   PlBtnGhost,
-  PlCheckbox,
   PlDropdownMulti,
   PlMaskIcon24,
   PlSlideModal,
@@ -75,7 +74,7 @@ const identityOfColumn = (params: {
 const mergedNote = (identity: string | undefined): string | undefined => {
   if (identity === undefined || !ungroupedTags.value.includes(identity)) return undefined;
   return (
-    `merged: the panel gives barcode ${identity} a different name in different samples, ` +
+    `Merged: the panel gives barcode ${identity} a different name in different samples, ` +
     `so there is no single value to group it under — it stands alone, labelled with both names. ` +
     `Every other column groups on one agreed name.`
   );
@@ -150,17 +149,10 @@ const identityOptions = computed(() => app.model.outputs.punchcardIdentityOption
 // view, and it needs saying, because an empty grid looks the same either way.
 const nothingToOffer = computed(() => !noDataset.value && identityOptions.value.length === 0);
 
-// Empty means every antigen, which is the default the page opens on. Stated because an empty multi-select
-// usually means the opposite, and a reader who assumes "none" will not trust a full grid.
-// Headers are cut to keep the columns narrow — the grid sizes every column to its contents and a block
-// cannot override that, so one joined label would otherwise push the rest of the card off screen. The
-// toggle rewrites a label annotation in the model, so it costs a re-render and never a run.
-const fullLabels = computed({
-  get: () => app.model.data.punchcardFullLabels === true,
-  set: (v: boolean) => {
-    app.model.data.punchcardFullLabels = v;
-  },
-});
+// Headers are cut to keep the columns narrow — the grid auto-sizes every column to fit its contents and
+// exposes no width or maxWidth a block could set, so one joined label would otherwise push the rest of the
+// card off screen. There is no control for it: every column IS resizable, and the hover below carries the
+// untruncated name, so both halves of "show me the whole thing" already exist without a checkbox.
 
 // Every antigen shows as SELECTED when nothing has been narrowed, rather than the picker sitting empty.
 // An empty multi-select reads as "none", which is the opposite of what it did — and the old label said
@@ -236,8 +228,6 @@ function setShownIdentities(values: string[]) {
         :label="`Antigens shown (${shownIdentities.length} of ${identityOptions.length})`"
         @update:model-value="setShownIdentities"
       />
-
-      <PlCheckbox v-model="fullLabels">Full antigen names</PlCheckbox>
 
       <PunchLegend />
 

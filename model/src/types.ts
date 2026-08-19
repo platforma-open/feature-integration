@@ -153,14 +153,12 @@ export type BlockData = {
    * write-on-read loop, and a write race between two open clients.
    */
   punchcardIdentities: string[];
-  /**
-   * Show antigen column headers in full rather than truncated. Optional so that projects stored before
-   * it existed need no migration: absent means truncated, which is the default the card opens on.
-   *
-   * A display choice and nothing more - it rewrites a label annotation in the model, so toggling it costs
-   * a re-render and never a run.
-   */
-  punchcardFullLabels?: boolean;
+  // A `punchcardFullLabels` flag used to sit here, toggling the header truncation from a checkbox on the
+  // card. Removed: the punch cell's hover already carries the untruncated name, so the control duplicated
+  // a mechanism the page had anyway, and a checkbox that rewrites headers is not how this block's other
+  // pages read. Headers are truncated unconditionally now, and every column is resizable, so a reader who
+  // wants a long name in full can widen the column or hover any dot in it. A stored `true` in an older
+  // project is simply ignored.
 
   presetId?: string;
   pattern?: string;

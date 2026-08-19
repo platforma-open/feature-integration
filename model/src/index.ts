@@ -1112,23 +1112,31 @@ export const platforma = BlockModelV3.create(dataModel)
           : punchCols.filter((c) => picked.has(identityOf(c) as string));
       const cols = narrowed.length > 0 ? narrowed : punchCols;
       if (cols.length === 0) return undefined;
+      // Alphabetical by the name a READER sees. The workflow emits these sorted by identity, which under
+      // the per-tag grouping is the barcode — and a panel's names never sort the same as its sequences, so
+      // the card opened in an order that looked arbitrary to the only person reading it. Numeric collation
+      // so `antigen_9` precedes `antigen_10` rather than following it. The clonotype column is not among
+      // these (`columns: null` brings it in separately), so it keeps its place at the front.
+      const labelOf = (c: (typeof cols)[number]) =>
+        c.spec.annotations?.["pl7.app/label"] ?? (identityOf(c) as string);
+      const ordered = [...cols].sort((a, b) =>
+        labelOf(a).localeCompare(labelOf(b), undefined, { sensitivity: "base", numeric: true }),
+      );
       // The header is rewritten HERE rather than emitted short by the workflow, so the full name survives
-      // in the data and the toggle costs a re-render instead of a run. Annotations do not affect column
-      // identity, so nothing downstream notices.
-      const display =
-        ctx.data.punchcardFullLabels === true
-          ? cols
-          : cols.map((c) => {
-              const label = c.spec.annotations?.["pl7.app/label"];
-              if (label === undefined) return c;
-              return {
-                ...c,
-                spec: {
-                  ...c.spec,
-                  annotations: { ...c.spec.annotations, "pl7.app/label": truncateHeader(label) },
-                },
-              };
-            });
+      // in the data — the punch cell reads it back to show what a cut header hides. Annotations do not
+      // affect column identity, so nothing downstream notices. Unconditional: the checkbox that used to
+      // turn this off duplicated the cell hover, which carries the full name already.
+      const display = ordered.map((c) => {
+        const label = c.spec.annotations?.["pl7.app/label"];
+        if (label === undefined) return c;
+        return {
+          ...c,
+          spec: {
+            ...c.spec,
+            annotations: { ...c.spec.annotations, "pl7.app/label": truncateHeader(label) },
+          },
+        };
+      });
       return createPlDataTableV3(ctx, {
         primaryColumns: display.map((c) => DataColumn.fromColumn(c)),
         columns: null,

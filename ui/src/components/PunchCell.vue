@@ -123,24 +123,27 @@ const cellStyle: CSSProperties = {
 // - where the verdict is unsettled - which of the seven ways it failed to settle. The reason tokens are
 // machine values (`thin-comparator`, `tie`, ...), so each is expanded here rather than shown raw; a token
 // is a key, not a sentence.
+// Each line reads as its own sentence, so each is capitalised at the source rather than by a transform
+// over `lines`. A blanket transform would also capitalise the antigen name, which is panel data — the
+// panel says `gp120`, and a tooltip is not the place to start editing what the scientist declared.
 const WHY_UNSETTLED: Record<string, string> = {
-  "never-offered": "no sample holding these cells declared this antigen",
-  "no-comparator": "no baseline reading existed for these cells",
-  "thin-comparator": "the baseline rested on too little to judge against",
-  "all-cells-gated": "every cell was set aside by the admissibility gate",
-  tie: "the cells split evenly, so no majority settled it",
-  "below-agreement-floor": "the cells agreed less than the run required",
-  "too-few-voters": "fewer cells answered than the run required",
+  "never-offered": "No sample holding these cells declared this antigen",
+  "no-comparator": "No baseline reading existed for these cells",
+  "thin-comparator": "The baseline rested on too little to judge against",
+  "all-cells-gated": "Every cell was set aside by the admissibility gate",
+  tie: "The cells split evenly, so no majority settled it",
+  "below-agreement-floor": "The cells agreed less than the run required",
+  "too-few-voters": "Fewer cells answered than the run required",
 };
 
 const EXPLANATION: Record<VerdictState, string> = {
   bound:
-    "green: a majority of the cells that answered read this antigen as bound against the baseline that served",
+    "Green: a majority of the cells that answered read this antigen as bound against the baseline that served",
   "not bound":
-    "red: the cells that answered read this antigen as not bound against the baseline that served",
-  unreliable: "grey: the experiment asked, and the readings could not settle it",
+    "Red: the cells that answered read this antigen as not bound against the baseline that served",
+  unreliable: "Grey: the experiment asked, and the readings could not settle it",
   "never asked":
-    "no mark: this clonotype's cells were never offered this antigen, so there is nothing to answer",
+    "No mark: this clonotype's cells were never offered this antigen, so there is nothing to answer",
 };
 
 const lines = computed<string[]>(() => {
