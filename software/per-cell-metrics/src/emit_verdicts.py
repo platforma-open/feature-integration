@@ -123,6 +123,9 @@ IDENTITY_SUMMARY_MAX_IDENTITIES = 100
 # value here, so a level's summary costs a row rather than a column.
 ROLLUP = "rollup"
 ROLLUP_COUNTS = "The worst status among this level's measurements, and how much of it was checked."
+# The rollup has no declaration to borrow a readable name from, and a row reading `rollup` beside rows
+# reading `readsPerCell` leaves the reader to guess which is a measurement and which is a summary.
+ROLLUP_LABEL = "Worst status at this level"
 
 MEASUREMENT_BY_ID = {m.id: m for m in MEASUREMENTS}
 
@@ -523,6 +526,10 @@ def _qc_frame(rows: list[QcRow]) -> pl.DataFrame:
                 "entity": row.entity,
                 "panelId": row.panel_id,  # "" not None: this is an AXIS key, and a null is not a usable one
                 "measurement": row.measurement,
+                # The readable name, carried beside the id rather than instead of it. The id is a p-column
+                # axis value and must stay stable; the label is what a reader who never opened this module
+                # sees, and without it the page shows `antigenCountDistribution` to a scientist.
+                "label": ROLLUP_LABEL if declared is None else declared.label,
                 "value": row.value,
                 "detail": row.detail or None,
                 "status": row.status.value,
@@ -541,6 +548,7 @@ def _qc_frame(rows: list[QcRow]) -> pl.DataFrame:
             "entity": pl.String,
             "panelId": pl.String,
             "measurement": pl.String,
+            "label": pl.String,
             "value": pl.Float64,
             "detail": pl.String,
             "status": pl.String,

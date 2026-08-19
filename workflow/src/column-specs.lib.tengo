@@ -1096,6 +1096,11 @@ qcImportSpec := func(levelAxisSpec, entityAxisSpec, measurementAxisSpec, panelAx
 			{ column: "measurement", spec: measurementAxisSpec }
 		],
 		columns: [
+			// The measurement's readable name, ordered ahead of the value so a row reads as a sentence:
+			// what was measured, then what it came to. The `measurement` AXIS carries the id, which has to
+			// stay stable because it is part of column identity; this carries the name a reader recognises.
+			// Without it the page showed `antigenCountDistribution` to a scientist.
+			col("label", "pl7.app/antigen/qcLabel", "String", "Measurement name", 73000, true, {}),
 			col("value", "pl7.app/antigen/qcValue", "Double", "Value", 72000, true, {}),
 			col("detail", "pl7.app/antigen/qcDetail", "String", "Detail", 71000, true, {}),
 			col("status", "pl7.app/antigen/qcStatus", "String", "Status", 70000, true, {
@@ -1110,8 +1115,14 @@ qcImportSpec := func(levelAxisSpec, entityAxisSpec, measurementAxisSpec, panelAx
 			col("judged", "pl7.app/antigen/qcJudged", "Int", "Judged", 69000, true, { "pl7.app/min": "0" }),
 			col("unjudged", "pl7.app/antigen/qcUnjudged", "Int", "Unjudged", 68000, true, { "pl7.app/min": "0" }),
 			col("notEvaluated", "pl7.app/antigen/qcNotEvaluated", "Int", "Not evaluated", 67000, true, { "pl7.app/min": "0" }),
-			col("counts", "pl7.app/antigen/qcCounts", "String", "What it counts", 66000, false, {}),
-			col("implies", "pl7.app/antigen/qcImplies", "String", "What a bad value means", 65000, false, {}),
+			// Shown by default, both of them. Every measurement is obliged to carry what it counts and, where
+			// a line exists, what a bad value means -- and the stated reason that text exists is that the
+			// reader who meets a row is not the person who built the run. Hiding it behind the column chooser
+			// satisfied the obligation in the data and defeated it on the page: a reader met
+			// `antigenCountDistribution 637.5 0:13.0|10:75.4|...` with no way to learn that those are deciles
+			// of the total antigen count per cell barcode, which is written right here and was not shown.
+			col("counts", "pl7.app/antigen/qcCounts", "String", "What it counts", 66000, true, {}),
+			col("implies", "pl7.app/antigen/qcImplies", "String", "What a bad value means", 65000, true, {}),
 			// Also shown by default. A row reading "not evaluated" carries the reason nothing computed it,
 			// and a deferral whose reason is one click away is a blank cell to everyone who does not click —
 			// which reads as "checked, and fine", the one thing this vocabulary exists to prevent.
