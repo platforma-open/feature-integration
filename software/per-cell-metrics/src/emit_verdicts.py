@@ -297,32 +297,30 @@ def _build_grouping(
     return grouping, f"property:{column}", ungrouped
 
 
-def _linker_frame(grouping: Grouping, samples: list[str]) -> pl.DataFrame:
-    """The tag -> identity linker, keyed by sample.
+def _linker_frame(grouping: Grouping) -> pl.DataFrame:
+    """Which identities each tag feeds — one row per distinct (tag, identity).
 
-    Keyed by sample because the grouping is: the same barcode carries a different
-    antigen in a different sample's panel, and a linker without the sample lets a
-    reader put one sample's count beside another sample's verdict — the exact
-    conflation the (tag, sample) keying exists to prevent.
+    Not keyed by sample. The linker's job is to let a tag-keyed figure sit beside
+    an identity-keyed verdict, and neither side carries a sample: verdicts are
+    (set, identity) over clonotypes that span samples, and the per-tag figures are
+    run-level. An axis no joined table has does not disambiguate anything; it makes
+    the join malformed.
 
-    Rows are deduplicated. Two tags of one identity in one sample would otherwise
-    emit the same (tag, sample, identity) key twice, and duplicate axis keys break
-    a grid silently rather than loudly: the table renders one row and an ellipsis
-    with no error anywhere.
+    Many-to-many by construction: under (tag, sample) grouping one tag can feed a
+    different identity in each sample, and every one of them is a pair this must
+    carry. Distinct rows matter — two tags of one identity would otherwise emit the
+    same key twice, and duplicate axis keys break a grid silently rather than
+    loudly, rendering one row and an ellipsis with no error anywhere.
 
-    A global panel (ANY_SAMPLE) is expanded to the run's real samples rather than
-    emitted as "*". "*" is not a sample id — the panel reader writes it where the
-    file declares no sample dimension at all — so a reader joining on it matches
-    nothing.
+    The sample component of the key is therefore read and discarded here, including
+    ANY_SAMPLE: a global declaration feeds the same identity everywhere, so it adds
+    no pair the per-sample rows do not already give.
     """
-    rows: set[tuple[str, str, str]] = set()
-    for (tag, sample), identity in grouping.items():
-        for resolved in samples if sample == ANY_SAMPLE else [sample]:
-            rows.add((tag, resolved, identity))
+    rows = {(tag, identity) for (tag, _sample), identity in grouping.items()}
     return pl.DataFrame(
         sorted(rows),
         orient="row",
-        schema={"tag": pl.String, "sample": pl.String, "identity": pl.String},
+        schema={"tag": pl.String, "identity": pl.String},
     ).with_columns(pl.lit(1, dtype=pl.Int64).alias("1"))
 
 
@@ -967,19 +965,20 @@ def main() -> None:
     # The value column is named "1" and holds 1, matching the cell-linker
     # convention already used for linker columns elsewhere in the platform.
     #
-    # The sample is COMPUTED and then dropped, and that is a known gap rather than an oversight.
-    # Keyed (tag, sample, identity) the exported linker would say which sample's count belongs beside
-    # which identity's verdict, which is what a reused barcode needs -- a barcode carrying antigen A
-    # here and antigen B there cannot be joined correctly without it. Emitting the third axis was
-    # measured against the live block and breaks this block's OWN punchcard: `createPlDataTableV3`
-    # runs `discoverLabelColumns` over the pool, and the extra axis makes the spec frame it builds
-    # fail outright ("createSpecFrame failed"), leaving the card with no columns at all.
+    # Deliberately NOT keyed by sample, and the reason is the join rather than the declaration. This
+    # linker exists to put a tag-keyed figure beside an identity-keyed verdict, and neither side
+    # carries a sample: the verdicts are (set, identity), where a set is a clonotype spanning whatever
+    # samples its cells came from, and the per-tag figures are run-level. A sample axis here would add
+    # one no participating table has -- which is not merely useless, it makes the join malformed, and
+    # `createPlDataTableV3`'s label discovery rejects the resulting spec frame outright.
     #
-    # So the linker ships as (tag, identity) with distinct rows: correct for one panel over every
-    # sample, and ambiguous exactly where a barcode is reused. `_linker_frame` keeps the sample so
-    # the shape is one edit away once the discovery side can carry it.
-    linker_frame = _linker_frame(grouping, samples)
-    _write_sorted(linker_frame.drop("sample").unique(), f"{prefix}_tag_identity.csv", ["tag", "identity"])
+    # Under (tag, sample) grouping a tag can feed several identities, so this is many-to-many and
+    # carries one row per pair. That is the shape `qc-measurement-set` asks for when it says the
+    # identity figures for the identities a tag feeds are shown beside it -- plural. Distinct rows
+    # matter: two tags of one identity would otherwise emit the same key twice, and duplicate axis
+    # keys break a grid silently rather than loudly.
+    linker_frame = _linker_frame(grouping)
+    _write_sorted(linker_frame, f"{prefix}_tag_identity.csv", ["tag", "identity"])
 
     # Only the disagreements in the column that SUPPLIES the label matter: a tag that disagrees about some
     # other property still carries an ordinary name. Which column that is depends on the rule -- a

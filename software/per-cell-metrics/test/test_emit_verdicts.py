@@ -1666,30 +1666,24 @@ def test_a_barcode_named_differently_per_sample_becomes_one_identity_per_name(tm
 # --- the exported tag -> identity linker, keyed by sample -----------------------------------
 
 
-def test_the_linker_carries_the_sample_and_never_repeats_a_key():
-    # The linker is EXPORTED, so its axes are a cross-block contract. Without the sample a reader
-    # joining a tag's count to a verdict can pair one sample's count with another sample's identity —
-    # the conflation the (tag, sample) keying exists to prevent.
+def test_the_linker_carries_every_identity_a_tag_feeds_exactly_once():
+    # Many-to-many by design: under (tag, sample) grouping T1 feeds A in one sample and B in another,
+    # and both pairs are real. Deliberately NOT keyed by sample — the linker joins a tag-keyed figure
+    # to an identity-keyed verdict, and neither side has a sample axis (verdicts are (set, identity)
+    # over clonotypes spanning samples; the per-tag figures are run-level). An axis no joined table
+    # has makes the join malformed rather than more precise, and label discovery rejects it.
     grouping = {("T1", "s1"): "A", ("T1", "s2"): "B", ("T2", "s1"): "A", ("T2", "s2"): "A"}
-    frame = _linker_frame(grouping, samples=["s1", "s2"])
-    rows = sorted(zip(frame["tag"].to_list(), frame["sample"].to_list(), frame["identity"].to_list()))
-    assert rows == [("T1", "s1", "A"), ("T1", "s2", "B"), ("T2", "s1", "A"), ("T2", "s2", "A")]
-    # Duplicate axis keys break a grid silently — one row and an ellipsis, no error anywhere.
+    frame = _linker_frame(grouping)
+    rows = sorted(zip(frame["tag"].to_list(), frame["identity"].to_list()))
+    assert rows == [("T1", "A"), ("T1", "B"), ("T2", "A")]
+    # T2 feeds A in both samples and appears once. Duplicate axis keys break a grid silently —
+    # one row and an ellipsis, no error anywhere.
     assert len(rows) == len(set(rows))
     assert set(frame["1"].to_list()) == {1}
+    assert "sample" not in frame.columns
 
 
-def test_the_linker_expands_a_global_panel_to_every_real_sample():
-    # "*" is not a sample id — the panel reader writes it where the file declares no sample dimension
-    # at all — so a reader joining on it would match nothing.
-    frame = _linker_frame({("T1", ANY_SAMPLE): "A"}, samples=["s1", "s2"])
-    rows = sorted(zip(frame["tag"].to_list(), frame["sample"].to_list(), frame["identity"].to_list()))
-    assert rows == [("T1", "s1", "A"), ("T1", "s2", "A")]
-    assert ANY_SAMPLE not in frame["sample"].to_list()
-
-
-def test_two_tags_of_one_identity_in_one_sample_emit_one_row_each_not_a_duplicate_key():
-    frame = _linker_frame({("T1", "s1"): "A", ("T2", "s1"): "A"}, samples=["s1"])
-    rows = sorted(zip(frame["tag"].to_list(), frame["sample"].to_list(), frame["identity"].to_list()))
-    assert rows == [("T1", "s1", "A"), ("T2", "s1", "A")]
-    assert len(rows) == len(set(rows))
+def test_a_global_declaration_adds_no_pair_of_its_own():
+    # ANY_SAMPLE feeds the same identity everywhere, so it contributes that one pair and nothing more.
+    frame = _linker_frame({("T1", ANY_SAMPLE): "A"})
+    assert sorted(zip(frame["tag"].to_list(), frame["identity"].to_list())) == [("T1", "A")]
