@@ -67,8 +67,8 @@ const identityOfColumn = (params: {
 // some barcodes carry no grouping value, but it sits far from the column it is about. Attaching the note
 // to the column's cells puts the explanation where the reader's cursor already is.
 //
-// An unplaced identity IS its barcode — a tag the grouping column said nothing about stands as its own
-// identity — so this is an exact set membership rather than a search.
+// An unplaced identity IS its barcode. A tag the grouping column says nothing about becomes its own
+// identity. This is therefore an exact set membership test, not a search.
 //
 // It does NOT cover a barcode the panel names differently in different samples. That used to land here,
 // because a dataset-wide map could hold only one value per tag and a second one read as a conflict. The
@@ -96,9 +96,8 @@ const cellRendererSelector = (params: { colDef?: { context?: PunchColumnContext 
   return {
     component: PunchCell,
     params: {
-      // The full name travels to the cell because the header above it may be truncated, and a reader
-      // hovering a dot halfway down a long grid cannot see the header at all. The options output's label
-      // is preferred over the column's, which the model truncates for display.
+      // The full name travels to the cell because a reader who hovers a dot far down a long grid cannot
+      // see the header row at all. The options output supplies the label.
       antigen: labelOf.value[identity] ?? identity,
       mergedNote: mergedNote(identity),
     },
@@ -152,10 +151,11 @@ const identityOptions = computed(() => app.model.outputs.punchcardIdentityOption
 // view, and it needs saying, because an empty grid looks the same either way.
 const nothingToOffer = computed(() => !noDataset.value && identityOptions.value.length === 0);
 
-// Headers are cut to keep the columns narrow — the grid auto-sizes every column to fit its contents and
-// exposes no width or maxWidth a block could set, so one joined label would otherwise push the rest of the
-// card off screen. There is no control for it: every column IS resizable, and the hover below carries the
-// untruncated name, so both halves of "show me the whole thing" already exist without a checkbox.
+// Headers carry the identity's full name. A cut to 20 characters was applied here before. It removed the
+// one thing a reader needs from a header, which is the identity the column holds.
+//
+// The grid auto-sizes every column to its contents and exposes no width a block can set, so a long label
+// does make its column wide. Every column is resizable, and the hover below names the identity as well.
 
 // An "Antigens shown" multi-select used to sit above the legend, narrowing the card to the identities it
 // had picked and holding that pick in block data. Removed: PlAgDataTableV2 ships a columns panel and a

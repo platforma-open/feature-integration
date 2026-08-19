@@ -279,10 +279,9 @@ def test_the_key_only_frames_carry_a_value_column_so_they_can_become_columns(bed
     assert set(offered["offered"].to_list()) == {"true"}
 
     linker = pl.read_csv(bed / "result_tag_identity.csv", infer_schema_length=0)
-    # (tag, identity), with the sample computed and dropped at the write site. The third axis is the
-    # shape a reused barcode needs, and emitting it breaks this block's own punchcard --
-    # `createPlDataTableV3`'s label discovery fails to build a spec frame over it. Pinned here so the
-    # gap is visible in the test rather than only in a comment.
+    # (tag, identity). The linker has no sample axis, because neither side of its join has one.
+    # A third axis would make the join malformed. Label discovery then refuses to build a spec frame,
+    # and the punchcard renders no columns.
     assert linker.columns == ["tag", "identity", "1"]
     assert linker.height == linker.unique().height, "duplicate axis keys break a grid silently"
     assert set(linker["1"].to_list()) == {"1"}
@@ -1663,15 +1662,15 @@ def test_a_barcode_named_differently_per_sample_becomes_one_identity_per_name(tm
     assert meta["tagsWithoutGroupingValue"] == [], "nothing was left unplaceable"
 
 
-# --- the exported tag -> identity linker, keyed by sample -----------------------------------
+# --- the exported tag -> identity linker ----------------------------------------------------
 
 
 def test_the_linker_carries_every_identity_a_tag_feeds_exactly_once():
     # Many-to-many by design: under (tag, sample) grouping T1 feeds A in one sample and B in another,
     # and both pairs are real. Deliberately NOT keyed by sample — the linker joins a tag-keyed figure
-    # to an identity-keyed verdict, and neither side has a sample axis (verdicts are (set, identity)
-    # over clonotypes spanning samples; the per-tag figures are run-level). An axis no joined table
-    # has makes the join malformed rather than more precise, and label discovery rejects it.
+    # to an identity-keyed verdict, and neither side has a sample axis. Verdicts are (set, identity)
+    # over clonotypes that span samples. The per-tag figures are run-level. An axis no joined table has
+    # makes the join malformed rather than more precise, and label discovery rejects it.
     grouping = {("T1", "s1"): "A", ("T1", "s2"): "B", ("T2", "s1"): "A", ("T2", "s2"): "A"}
     frame = _linker_frame(grouping)
     rows = sorted(zip(frame["tag"].to_list(), frame["identity"].to_list()))

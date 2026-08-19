@@ -159,9 +159,9 @@ self.body(func(inputs) {
 	addTo(exportFb, "offered", inputs.offered,
 		columnSpecs.offeredImportSpec(sampleAxis, identityAxis))
 
-	// The tag -> identity linker: what lets a reader put a tag's count beside its verdict without either
-	// layer knowing about the other. Carries the sample, because one barcode feeds a different identity
-	// in a different sample's panel and the join is ambiguous without it.
+	// The tag -> identity linker. It lets a reader put a tag's count beside its verdict, and neither
+	// layer needs to know about the other. It carries no sample axis. Neither side of the join has one.
+	// See tagIdentityLinkerImportSpec for why.
 	addTo(exportFb, "tagIdentity", inputs.tagIdentity,
 		columnSpecs.tagIdentityLinkerImportSpec(tagAxis, identityAxis))
 

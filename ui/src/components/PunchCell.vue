@@ -150,8 +150,8 @@ const lines = computed<string[]>(() => {
   const p = punch.value;
   if (p.kind !== "read") return ["No readable verdict for this clonotype at this identity"];
 
-  // The antigen first: its header is truncated by default and may be scrolled out of view entirely, so
-  // the panel has to say which column this dot belongs to before it says anything about the verdict.
+  // The antigen first. The header row scrolls out of view on a long grid, so the panel must say which
+  // column this dot belongs to before it says anything about the verdict.
   const out = props.params.antigen === undefined ? [] : [props.params.antigen];
   out.push(p.state.toUpperCase(), EXPLANATION[p.state]);
   if (p.state !== "never asked") {

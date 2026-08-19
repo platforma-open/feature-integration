@@ -149,12 +149,11 @@ export type BlockData = {
   // already did — and two narrowing mechanisms can disagree, where the grid's own cannot disagree with
   // itself. Every identity column is rendered now. A stored list in an older project is simply ignored.
 
-  // A `punchcardFullLabels` flag used to sit here, toggling the header truncation from a checkbox on the
-  // card. Removed: the punch cell's hover already carries the untruncated name, so the control duplicated
-  // a mechanism the page had anyway, and a checkbox that rewrites headers is not how this block's other
-  // pages read. Headers are truncated unconditionally now, and every column is resizable, so a reader who
-  // wants a long name in full can widen the column or hover any dot in it. A stored `true` in an older
-  // project is simply ignored.
+  // A `punchcardFullLabels` flag used to sit here. It toggled the header truncation from a checkbox on
+  // the card. The flag is removed, and so is the truncation: headers now carry the identity's full name.
+  // A cut header hid which identity a column is, which is what a reader needs from it most. Every column
+  // is also resizable, and the punch hover carries the name as well. A stored `true` in an older project
+  // is simply ignored.
 
   // Snapshotted on the gesture that picks the barcode column, so args() can refuse a mapping that is
   // certain to fail without reading an output — args is data-only, and readCsvMeta lives on ctx.prerun.

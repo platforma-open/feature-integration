@@ -376,9 +376,9 @@ def _identity_labels(
     # already covers the joined strings -- two tags can disagree about the same pair of names and join to
     # one label -- so the uniqueness promise needs nothing added for them.
     joined = {tag: " / ".join(values) for tag, values in (disagreed or {}).items() if values}
-    # Over the IDENTITIES, not the grouping's keys. Under the per-tag grouping an identity is a tag,
-    # so the two coincided while the grouping was keyed by tag alone; keyed by (tag, sample) the keys
-    # are pairs and iterating them would look up a tuple in `properties` and find nothing, dropping
+    # Over the IDENTITIES, not the grouping's keys. Under the per-tag grouping an identity is a tag.
+    # The two therefore coincided while the grouping was keyed by tag alone. Keyed by (tag, sample) the
+    # keys are pairs. Iterating them looks up a tuple in `properties` and finds nothing, which drops
     # every label back to the bare barcode this function exists to avoid.
     names = {
         tag: (properties.get(tag, {}).get(feature_col) or joined.get(tag) or tag) for tag in set(grouping.values())
@@ -420,8 +420,9 @@ def _identity_properties(
     the grouping, so no identity has one as a member.
     """
     # Distinct member tags per identity. The grouping is keyed (tag, sample), so one tag reaches an
-    # identity once per sample declaring it there; the set keeps a tag from being counted twice, which
-    # would not change the agreement test but would misreport how many tags an identity holds.
+    # identity once per sample that declares it there. The membership test keeps a tag from counting
+    # twice. A repeat would not change the agreement test, but it would misreport how many tags an
+    # identity holds.
     tags_of: dict[str, list[str]] = {}
     for (tag, _sample), identity in sorted(grouping.items()):
         members = tags_of.setdefault(identity, [])
@@ -965,18 +966,19 @@ def main() -> None:
     # The value column is named "1" and holds 1, matching the cell-linker
     # convention already used for linker columns elsewhere in the platform.
     #
-    # Deliberately NOT keyed by sample, and the reason is the join rather than the declaration. This
-    # linker exists to put a tag-keyed figure beside an identity-keyed verdict, and neither side
-    # carries a sample: the verdicts are (set, identity), where a set is a clonotype spanning whatever
-    # samples its cells came from, and the per-tag figures are run-level. A sample axis here would add
-    # one no participating table has -- which is not merely useless, it makes the join malformed, and
-    # `createPlDataTableV3`'s label discovery rejects the resulting spec frame outright.
+    # Deliberately NOT keyed by sample. The reason is the join, not the declaration.
     #
-    # Under (tag, sample) grouping a tag can feed several identities, so this is many-to-many and
-    # carries one row per pair. That is the shape `qc-measurement-set` asks for when it says the
-    # identity figures for the identities a tag feeds are shown beside it -- plural. Distinct rows
-    # matter: two tags of one identity would otherwise emit the same key twice, and duplicate axis
-    # keys break a grid silently rather than loudly.
+    # This linker puts a tag-keyed figure beside an identity-keyed verdict. Neither side carries a
+    # sample. The verdicts are (set, identity), and a set is a clonotype that spans whatever samples
+    # its cells came from. The per-tag figures are run-level. A sample axis here is an axis no
+    # participating table has. It does not sharpen the join. It makes the join malformed, and
+    # `createPlDataTableV3` label discovery then rejects the spec frame.
+    #
+    # Under (tag, sample) grouping one tag can feed several identities. This frame is therefore
+    # many-to-many and carries one row per pair. `qc-measurement-set` asks for that shape: it shows
+    # the identity figures for the identities a tag feeds, plural. Distinct rows matter. Two tags of
+    # one identity would otherwise emit the same key twice, and duplicate axis keys break a grid
+    # silently.
     linker_frame = _linker_frame(grouping)
     _write_sorted(linker_frame, f"{prefix}_tag_identity.csv", ["tag", "identity"])
 
@@ -1218,9 +1220,9 @@ def main() -> None:
         sample_coverage[sample] = roll_up([r.status for r in rows[first:]])
 
     # Resolved through the panel's OWN samples, plus any global declaration. A panel carries the worst
-    # status among the identities its tags feed, and under (tag, sample) keying the same barcode feeds
-    # a different identity in a sample carrying a different panel -- so resolving by tag alone would
-    # pull another panel's identity into this one's rollup.
+    # status among the identities its tags feed. Under (tag, sample) keying the same barcode feeds a
+    # different identity in a sample that carries a different panel. Resolution by tag alone would
+    # therefore bring another panel's identity into this rollup.
     identities_of_panel: dict[str, set[str]] = {
         panel_id: {
             grouping[(t, s)]

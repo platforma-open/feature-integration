@@ -877,16 +877,17 @@ offeredImportSpec := func(sampleAxisSpec, identityAxisSpec) {
 // pl7.app/sc/cellLinker's shape. Order priority 0 and no default visibility: it is infrastructure and
 // is hidden in tables.
 //
-// Deliberately NOT keyed by sample, and the reason is the join rather than the declaration. Neither
-// side of this join carries a sample: verdicts are (set, identity) over clonotypes that span whatever
-// samples their cells came from, and the tag-keyed figures are run-level. A sample axis here would be
-// one no participating table has — which does not sharpen the join, it makes it malformed, and the
-// SDK's label discovery refuses to build a spec frame over it. Where a sample-level distinction is
-// genuinely wanted it already exists: panelMismatch is keyed by PANEL, which is a declared tag set.
+// Deliberately NOT keyed by sample. The reason is the join, not the declaration.
 //
-// Several rows per tag are therefore expected, and `qc-measurement-set` asks for exactly that — the
-// identity figures for the identities a tag feeds, plural. What must not happen is the SAME pair twice:
-// duplicate axis keys break a grid silently, so the emitter writes distinct pairs.
+// Neither side of this join carries a sample. Verdicts are (set, identity) over clonotypes that span
+// whatever samples their cells came from. The tag-keyed figures are run-level. A sample axis here is
+// an axis no participating table has. It does not sharpen the join. It makes the join malformed, and
+// the SDK label discovery then refuses to build a spec frame over it. A sample-level distinction
+// already exists where one is wanted: panelMismatch keys by PANEL, which is a declared tag set.
+//
+// Several rows per tag are therefore expected. `qc-measurement-set` asks for that shape: it shows the
+// identity figures for the identities a tag feeds, plural. The SAME pair must not appear twice.
+// Duplicate axis keys break a grid silently, so the emitter writes distinct pairs.
 //
 // The value column is named "1" and holds 1, matching the cell-linker convention used elsewhere in the
 // platform, and it exists for the same reason the offered frame's does: a key-only file imports as no

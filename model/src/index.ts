@@ -806,16 +806,19 @@ export const platforma = BlockModelV3.create(dataModel)
   // gesture that snapshots the sample map into data); this output never writes data. Excludes the columns
   // already bound to the barcode / feature roles. See suggestSampleColumn for the superset/equality rule.
   .retentiveOutput("suggestedSampleColumn", (ctx): string | undefined => suggestSampleColumn(ctx))
-  // Alphabet check on the chosen barcode-sequence column (UI warning only; mitool guards it
-  // authoritatively, but only by failing refine-tags mid-run). A panel CSV commonly carries BOTH an
-  // identifier column and the nucleotide column — "Barcode" holding T0100 next to "Sequence" holding
-  // CGATGCCGGACGATC — and the identifier is the one whose name invites the click. Picking it writes a
-  // panel.txt of non-nucleotide strings, and the run dies several stages later inside barcode correction
-  // with "Error while loading sequence set from ./panel.txt" over an obfuscated Java stack trace, long
-  // after the reads have been parsed. The args guard cannot catch this: it sees only `data`, and the
-  // values live in the prerun CSV meta. So it fires here at config time, exactly as barcodeMappingIssue
-  // does for duplicate barcodes. Deliberately not gated on sampleColumn — a per-sample filter narrows
-  // which rows reach the panel, it never turns an identifier into a sequence.
+  // Alphabet check on the chosen barcode-sequence column. This is a UI warning only. mitool guards the
+  // same condition, but it guards it by failing refine-tags in the middle of the run.
+  //
+  // A panel CSV often carries BOTH an identifier column and the nucleotide column. "Barcode" holds
+  // T0100 and "Sequence" holds CGATGCCGGACGATC. The identifier column has the name a user is more
+  // likely to select. That choice writes a panel.txt of non-nucleotide strings. The run then fails
+  // several stages later, inside barcode correction, with "Error while loading sequence set from
+  // ./panel.txt" and a Java stack trace. The reads are already parsed by then.
+  //
+  // The args guard cannot catch this. It sees only `data`, and the values live in the prerun CSV meta.
+  // The check therefore fires here, at config time, as barcodeMappingIssue does for duplicate
+  // barcodes. It is deliberately not gated on sampleColumn. A per-sample filter narrows which rows
+  // reach the panel. It never turns an identifier into a sequence.
   .retentiveOutput("barcodeAlphabetIssue", (ctx): string | undefined => {
     const problem = barcodeAlphabetProblem(ctx);
     if (problem === undefined) return undefined;
@@ -841,8 +844,8 @@ export const platforma = BlockModelV3.create(dataModel)
     const barcodeCol = ctx.data.barcodeSeqColumn;
     if (!barcodeCol) return undefined;
     if (ctx.data.sampleColumn) return undefined; // already sample-aware — the per-sample filter fixes it
-    // Silent while the column isn't sequences at all: "some barcode sits on two rows" would send the
-    // reader to the sample column when the mistake is one rung up, in the barcode column itself.
+    // Silent while the column holds no sequences at all. "Some barcode sits on two rows" would direct
+    // the reader to the sample column. The mistake is in the barcode column itself.
     if (barcodeAlphabetProblem(ctx) !== undefined) return undefined;
     const meta = readCsvMeta(ctx);
     if (!meta || meta.rowCount === undefined) return undefined;
@@ -1140,10 +1143,10 @@ export const platforma = BlockModelV3.create(dataModel)
     { retentive: true, withStatus: true },
   )
   // Every combined identity the punchcard could show, in the order the workflow gave them, each with the
-  // label the workflow put on its column. Two things on the card read this, and neither of them narrows
-  // anything: the punch hover, which needs the UNTRUNCATED antigen name because the header above it is cut
-  // to keep the columns narrow; and the card's empty state, which needs to tell "the pivot emitted no
-  // identity columns" apart from "this run has no rows at all".
+  // label the workflow put on its column. Two things on the card read this, and neither narrows anything.
+  // The punch hover reads it because a reader who hovers a dot far down a long grid cannot see the header
+  // row at all. The card's empty state reads it to tell "the pivot emitted no identity columns" apart
+  // from "this run has no rows at all".
   //
   // Read from the pivot's own columns rather than from the run record's identity list, because the two can
   // disagree in exactly one way that matters — the pivot is size-gated upstream, so a run over a large
@@ -1217,11 +1220,12 @@ export const platforma = BlockModelV3.create(dataModel)
       const ordered = [...cols].sort((a, b) =>
         labelOf(a).localeCompare(labelOf(b), undefined, { sensitivity: "base", numeric: true }),
       );
-      // Headers carry the identity's full name. They used to be cut to 20 characters here, so that one
-      // long label could not auto-size its column wide enough to push the rest of the card off screen.
-      // That traded away the one thing a reader needs from a header — which identity the column is — and
-      // it only ever bit on the joined labels a tag receives when its rows disagree about the grouping
-      // column. Those are worth fixing where they are produced, not hiding behind an ellipsis.
+      // Headers carry the identity's full name. A cut to 20 characters was applied here before, so that
+      // one long label could not auto-size its column and move the rest of the card off screen.
+      //
+      // That cut removed the one thing a reader needs from a header: which identity the column is. It
+      // also applied only to the joined labels a tag receives when its rows disagree about the grouping
+      // column. Correct those labels where they are produced. Do not hide them behind an ellipsis.
       return createPlDataTableV3(ctx, {
         primaryColumns: ordered.map((c) => DataColumn.fromColumn(c)),
         columns: null,
