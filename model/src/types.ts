@@ -160,6 +160,14 @@ export type BlockData = {
   // wants a long name in full can widen the column or hover any dot in it. A stored `true` in an older
   // project is simply ignored.
 
+  // Snapshotted on the gesture that picks the barcode column, so args() can refuse a mapping that is
+  // certain to fail without reading an output — args is data-only, and readCsvMeta lives on ctx.prerun.
+  // Same device as sampleColumnValues, for the same reason. Absent when the CSV meta had not resolved at
+  // pick time (or predates rowCount), and then the gate simply does not fire and python's guard catches
+  // it at the end of the run, which is where this used to be caught every time.
+  panelRowCount?: number;
+  panelBarcodeDistinct?: number;
+
   presetId?: string;
   pattern?: string;
   cellWhitelist?: string; // optional (defaults to "" = de-novo); see BlockArgs.cellWhitelist

@@ -488,6 +488,23 @@ export const platforma = BlockModelV3.create(dataModel)
         );
     }
 
+    // A barcode on more than one row with no sample column is not a warning, it is a run that will stop:
+    // per_cell_metrics.py refuses to map one barcode to two antigens, and it refuses at the END, after
+    // every sample has been parsed. Blocking Run here spends the user a second instead of the whole run.
+    // Both numbers are snapshots taken when the barcode column was picked; absent means the meta had not
+    // resolved then, and the gate stays out of the way rather than guessing.
+    if (
+      !sampleAware &&
+      data.panelRowCount !== undefined &&
+      data.panelBarcodeDistinct !== undefined &&
+      data.panelBarcodeDistinct < data.panelRowCount
+    )
+      throw new Error(
+        `The tag CSV has ${data.panelRowCount} rows but only ${data.panelBarcodeDistinct} distinct ` +
+          `barcodes, so one barcode maps to more than one antigen. Set the sample column if the CSV ` +
+          `lists each barcode once per sample, or remove the duplicate rows.`,
+      );
+
     // The reading's own parameters. The single-cell V(D)J dataset is deliberately NOT required: without
     // it the block still emits the tag counts, the per-cell scalars, the panel-versus-reads check and the
     // per-sample QC, none of which need a clonotype set. A missing input narrows what can be answered
@@ -741,11 +758,11 @@ export const platforma = BlockModelV3.create(dataModel)
     const lines: string[] = [];
     if (missing.length > 0)
       lines.push(
-        `${missing.length} dataset sample(s) have no rows in the CSV — Run is blocked until every sample is mapped (or the sample column is cleared): ${fmt(missing)}.`,
+        `${missing.length} sample(s) in your dataset have no rows in the CSV: ${fmt(missing)}. Run is blocked until every sample has rows, or until you clear the sample column.`,
       );
     if (extra.length > 0)
       lines.push(
-        `${extra.length} CSV sample value(s) match no dataset sample (ignored): ${fmt(extra)}.`,
+        `${extra.length} sample value(s) in the CSV match no sample in your dataset: ${fmt(extra)}. The block ignores those rows.`,
       );
     return lines.length > 0 ? lines : undefined;
   })
@@ -771,9 +788,10 @@ export const platforma = BlockModelV3.create(dataModel)
     if (distinct >= meta.rowCount) return undefined; // no duplicate barcodes
     const suggested = suggestSampleColumn(ctx);
     return (
-      "Some feature barcodes appear on multiple rows, so a single mapping is ambiguous. " +
-      `If this CSV is sample-specific, set the Sample column${suggested ? ` (looks like "${suggested}")` : ""}; ` +
-      "otherwise remove the duplicate rows."
+      `The CSV has ${meta.rowCount} rows but only ${distinct} distinct barcodes. ` +
+      "The block cannot map one barcode to two antigens, so the run will stop. " +
+      `If the CSV lists each barcode once per sample, set the Sample column${suggested ? ` ("${suggested}")` : ""}. ` +
+      "If it does not, remove the duplicate rows."
     );
   })
   // The case the two checks either side of this one cannot see: a panel CSV that IS sample-keyed, with no
@@ -802,15 +820,19 @@ export const platforma = BlockModelV3.create(dataModel)
     const suggested = suggestSampleColumn(ctx);
     if (!suggested) return undefined;
     return (
-      `This CSV has a column naming your samples ("${suggested}"), but no sample column is set. ` +
-      "The block then reads one panel for all samples. An antigen a sample was never stained with " +
-      'reads as "not bound" instead of "never asked". ' +
+      `The CSV has a column that names your samples ("${suggested}"), and no sample column is set. ` +
+      "The block then reads one panel for every sample. Every sample is then judged on antigens it " +
+      'was never stained with. Those antigens come back as "not bound" instead of "never asked". ' +
       "If the CSV is sample-specific, set the Sample column."
     );
   })
   // True while the uploaded CSV is still being parsed by staging (handle set, but emit-csv-meta hasn't
   // produced csvMeta yet) — lets the UI show a "reading columns…" state instead of silent empty
   // dropdowns. NOT retentive: it must report the live loading state, including on a CSV swap.
+  // Total data rows in the uploaded CSV, so the UI can snapshot it alongside the barcode column's
+  // distinct count. Those two numbers are what args() needs to refuse a duplicate mapping, and args()
+  // cannot reach the prerun meta itself.
+  .retentiveOutput("csvRowCount", (ctx): number | undefined => readCsvMeta(ctx)?.rowCount)
   .output(
     "csvColumnsLoading",
     (ctx): boolean => !!ctx.data.tagFeatureCsvHandle && readCsvMeta(ctx) === undefined,
@@ -1262,7 +1284,7 @@ export const platforma = BlockModelV3.create(dataModel)
         ? "You marked a control feature, but no tag is the baseline. The control feature marker only " +
           "labels that feature in the output. It does not set the level a count must exceed. This run " +
           `judges counts against ${fallback} instead. To use your control as the baseline, select the ` +
-          "panel column that declares it, then the value that marks it."
+          "panel column that declares it. Then select the value that marks it."
         : undefined;
     return { options, unavailable, fallback, controlNotBaseline };
   })

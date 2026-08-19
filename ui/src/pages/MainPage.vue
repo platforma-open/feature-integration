@@ -211,6 +211,19 @@ function onFastqRefChanged(next: unknown) {
   clearSampleAwareState();
 }
 
+// Picking the barcode column is what makes a duplicate mapping knowable, so it is where the two numbers
+// args() needs get snapshotted. args() is data-only and the CSV meta lives on ctx.prerun, so without this
+// the model can see the problem and still not refuse the run.
+const seenBarcodeColumn = ref(keyOf(app.model.data.barcodeSeqColumn));
+function onBarcodeColumnChanged(next: unknown) {
+  if (!changed(seenBarcodeColumn, next)) return;
+  const col = app.model.data.barcodeSeqColumn;
+  app.model.data.panelRowCount = col ? app.model.outputs.csvRowCount : undefined;
+  app.model.data.panelBarcodeDistinct = col
+    ? (app.model.outputs.csvValuesByColumn?.[col]?.length ?? undefined)
+    : undefined;
+}
+
 function onFeatureColumnChanged(next: unknown) {
   if (!changed(seenFeatureColumn, next)) return;
   clearControlOnInputChange();
@@ -231,6 +244,9 @@ function onCsvChanged(next: unknown) {
 
 function clearOnCsvChange() {
   app.model.data.barcodeSeqColumn = undefined;
+  app.model.data.panelRowCount = undefined;
+  app.model.data.panelBarcodeDistinct = undefined;
+  seenBarcodeColumn.value = "";
   app.model.data.featureNameColumn = undefined;
   app.model.data.combineColumn = undefined;
   app.model.data.roleColumn = undefined;
@@ -440,6 +456,7 @@ const gridOptions = {
         v-model="app.model.data.barcodeSeqColumn"
         :options="app.model.outputs.csvColumnOptions"
         label="Barcode sequence column"
+        @update:model-value="onBarcodeColumnChanged"
         :disabled="tagMappingDisabled"
         required
       >
