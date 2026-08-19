@@ -173,4 +173,11 @@ export type BlockData = {
   defaultBlockLabel?: string; // UI-only: sidebar subtitle, mirrored from the suggestedBlockLabel output
   tableState: PlDataTableStateV2; // per-cell results grid state (UI-only, never projected to args)
   qcSummaryTableState: PlDataTableStateV2; // per-sample QC summary grid state (UI-only)
+  // The Run quality page's two grids (UI-only). Deliberately NOT named `antigenQcTableState` /
+  // `panelMismatchTableState`: those exact keys existed on the v3 data shape for two views that were
+  // removed, and the v3 -> v4 migration strips them. Reusing the names would either fight that strip or
+  // silently resurrect a column set and filter saved against a frame nobody has looked at since — a
+  // stored grid state only means anything against the frame it was saved on.
+  runQualityTableState: PlDataTableStateV2; // run-level quality measurements grid state
+  runQualityMismatchTableState: PlDataTableStateV2; // panel-versus-reads mismatch grid state
 };

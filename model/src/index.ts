@@ -388,6 +388,12 @@ const dataModel = new DataModelBuilder()
   // What the removed pages showed is still EMITTED: the verdicts and the run's measurements are both
   // artifacts `verdict-block-interface` obliges this block to produce, and dropping a view does not
   // release it from producing them.
+  //
+  // The run's measurements and the panel-versus-reads check now have a page again (Run quality), and its
+  // two grid states are `runQualityTableState` / `runQualityMismatchTableState` — NOT the two keys stripped
+  // here. That is deliberate: this strip is what the names below mean, so reusing them would make a saved
+  // column set and filter from a view removed several versions ago reappear under a grid it was never saved
+  // against, and would make this destructure read as if it were removing the live page's state.
   .migrate<BlockData>(
     "v4",
     ({ verdictTableState: _v, antigenQcTableState: _q, panelMismatchTableState: _m, ...rest }) => ({
@@ -412,6 +418,11 @@ const dataModel = new DataModelBuilder()
     tableState: createPlDataTableStateV2(),
     qcSummaryTableState: createPlDataTableStateV2(),
     punchcardTableState: createPlDataTableStateV2(),
+    // No migration adds these two, and none is needed: a field absent from an older project's stored data
+    // is filled from these defaults on load, which is how qcSummaryTableState arrived as well. Their names
+    // avoid the two keys the v3 -> v4 migration strips — see the comment on those fields in types.ts.
+    runQualityTableState: createPlDataTableStateV2(),
+    runQualityMismatchTableState: createPlDataTableStateV2(),
   }));
 
 export const platforma = BlockModelV3.create(dataModel)
@@ -1178,12 +1189,48 @@ export const platforma = BlockModelV3.create(dataModel)
     },
     { retentive: true, withStatus: true },
   )
-  // The run's quality report and the panel-versus-reads check have no model output. Both are still emitted
-  // by the workflow — `verdict-block-interface` names the run-level measurements as one of this block's two
-  // artifacts, and a removed view does not release it from producing them — but nothing in this block reads
-  // them any more, because the tables that did were removed as the wrong way to deliver the quality
-  // end-goal. Whether they should instead cross the boundary as exports is an open question, not something
-  // to settle by leaving an unread output behind.
+  // The run's own quality report: every declared measurement with its status, the coverage triple behind
+  // it, and — where nothing computed it — the reason it was deferred. This block is obliged to produce the
+  // run-level measurements, and the obligation is that every measurement that CAN be computed is computed
+  // and SHOWN; a measurement computed on every run and read by nobody satisfies half of that. Read from
+  // `outputs` rather than from the exports, because a block's own exports are not in its own result pool.
+  //
+  // `allowPermanentAbsence` for the same reason punchcardTable needs it: the whole verdict stage is gated
+  // on a V(D)J dataset being picked, so on a run without one this field never appears at all, and a resolve
+  // that treats a permanent absence as a pending one leaves the output waiting forever instead of returning
+  // undefined for the page to explain.
+  //
+  // A frame with no rows is deliberately NOT folded into undefined here. Absent means the verdict stage did
+  // not run; empty means it ran and had nothing to report, which for the mismatch check is the good
+  // outcome. Collapsing the two would make the page unable to tell them apart, so the distinction is kept
+  // and the page says which it is meeting.
+  .output(
+    "runQualityTable",
+    (ctx) => {
+      const pCols = ctx.outputs
+        ?.resolve({ field: "antigenQcTable", allowPermanentAbsence: true })
+        ?.getPColumns();
+      if (pCols === undefined) return undefined;
+      return createPlDataTableV2(ctx, pCols, ctx.data.runQualityTableState);
+    },
+    { retentive: true, withStatus: true },
+  )
+  // The panel-versus-reads check: every barcode the panel declared that no read carried, and every barcode
+  // the reads carried that the panel never declared. Both directions are in the one frame, told apart by
+  // the direction column, which carries a discrete filter so either half is reachable on its own. A
+  // mismatch report the user cannot see defeats its purpose — that is the whole reason the workflow emits
+  // it into `outputs` and not only into the exports.
+  .output(
+    "runQualityMismatchTable",
+    (ctx) => {
+      const pCols = ctx.outputs
+        ?.resolve({ field: "antigenPanelMismatchTable", allowPermanentAbsence: true })
+        ?.getPColumns();
+      if (pCols === undefined) return undefined;
+      return createPlDataTableV2(ctx, pCols, ctx.data.runQualityMismatchTableState);
+    },
+    { retentive: true, withStatus: true },
+  )
   // What the reading was actually answered under. The page states the comparator that SERVED rather than
   // the one that was requested, because the software degrades a request it cannot honour and a reader
   // meeting an all-unreliable table otherwise has no way to learn that happened. Absent until a run with a
@@ -1297,6 +1344,11 @@ export const platforma = BlockModelV3.create(dataModel)
             // columns at all, and the page saying so is the only place a user learns why — hiding the
             // tab would leave the absence unexplained.
             { type: "link" as const, href: "/punchcard" as const, label: "Punchcard" },
+            // Shown for every run too, and for the same reason as the punchcard: a run with no V(D)J
+            // dataset computes no quality report, and this page saying so is the only place a user
+            // learns why. Labelled "Run quality" and not "QC" so it cannot be read as another view of
+            // the per-sample mitool stats above — that page is per sample, this one is per run.
+            { type: "link" as const, href: "/antigen-qc" as const, label: "Run quality" },
           ]
         : []),
     ];
