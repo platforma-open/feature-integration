@@ -457,11 +457,10 @@ const gridOptions = {
       >
         <template #tooltip>
           The CSV that declares your panel: which feature barcode is which antigen. One row per
-          barcode, or one row per barcode and sample when you set a sample column below.<br /><br />
+          barcode — or one row per barcode and sample, when you set a sample column below.
+          <br /><br />
           This file is also the authority on what each sample was offered. An antigen it does not
-          declare for a sample is never asked about there.<br /><br />
-          Use the two columns below to say which column holds the barcode sequence and which holds
-          the antigen name.
+          declare for a sample is never asked about there.
         </template>
       </PlFileInput>
       <PlAlert v-if="csvProcessing" type="info"> Reading columns from the uploaded CSV… </PlAlert>
@@ -474,8 +473,9 @@ const gridOptions = {
         required
       >
         <template #tooltip>
-          CSV column holding the feature-barcode nucleotide sequence. Matched against the
-          <code>FEATURE</code> capture on Read 2.
+          CSV column holding the feature-barcode nucleotide sequence. The block matches these
+          sequences against the barcode that the <code>FEATURE</code> tag captures on Read 2 — the
+          second read of each pair.
         </template>
       </PlDropdown>
       <PlDropdown
