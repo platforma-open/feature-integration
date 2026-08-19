@@ -68,7 +68,7 @@ def make_junction(rng, n_codons):
 
 def make_bcr(rng, heavy_only=False):
     """One rearrangement's sequences: paired heavy+light by default, heavy-only (IGH, no light chain
-    — the customer's VHH single-domain antibody) when heavy_only is set."""
+    — the shape a VHH single-domain antibody library produces) when heavy_only is set."""
     bcr = {
         "IGH": {
             "v": rng.choice(HEAVY_V), "j": rng.choice(HEAVY_J), "c": rng.choice(HEAVY_C),
@@ -160,8 +160,8 @@ def build(tags_csv, consensus_tsv, out_dir, truth_dir, seed=VDJ_SEED, heavy_only
     shared sampleId across all three arms — a per-library suffix would fork the donor into separate
     samples and the convergence [sampleId,cellId] join would then match nothing.
 
-    heavy_only=True emits HEAVY-CHAIN-ONLY (IGH, no IGK) rearrangements — the customer's VHH
-    single-domain antibody — so the heavy-only end-to-end path is reproducible synthetically. Each cell
+    heavy_only=True emits HEAVY-CHAIN-ONLY (IGH, no IGK) rearrangements — the shape a VHH single-domain
+    antibody library produces — so the heavy-only end-to-end path is reproducible synthetically. Each cell
     keeps the SAME bare-16nt cell_id it carries in the antigen arm (the convergence join key)."""
     os.makedirs(out_dir, exist_ok=True)
     os.makedirs(truth_dir, exist_ok=True)

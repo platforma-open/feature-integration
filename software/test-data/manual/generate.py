@@ -215,8 +215,8 @@ def main():
     ap.add_argument(
         "--heavy-only",
         action="store_true",
-        help="emit a HEAVY-CHAIN-ONLY (IGH, no IGK) VDJ arm — the customer's VHH single-domain "
-        "antibody — so the heavy-only end-to-end path is reproducible; applies to the vdj and all "
+        help="emit a HEAVY-CHAIN-ONLY (IGH, no IGK) VDJ arm — the shape a VHH single-domain antibody "
+        "library produces — so the heavy-only end-to-end path is reproducible; applies to the vdj and all "
         "arms. Each cell keeps its shared bare-16nt cell_id. Off by default (paired IGH+IGK)",
     )
     ap.add_argument(
@@ -230,9 +230,9 @@ def main():
     ap.add_argument(
         "--messy-metadata",
         action="store_true",
-        help="inject the real customer panel's inconsistent casing/whitespace into the EMITTED panel "
+        help="inject the inconsistent casing/whitespace real panels carry into the EMITTED panel "
         "metadata: the Type column carries a mixed-case off-target set (both 'Off-Target' and "
-        "'Off-target') and one antigen name gains a stray double space. Reproduces the B043 problem so a "
+        "'Off-target') and one antigen name gains a stray double space. Reproduces that problem so a "
         "mixed-case panel is available to exercise the block's case-sensitive off-target matching — the "
         "user must select each casing present (whitespace is trimmed, casing is not folded). Messy LABELS "
         "only — the barcode joins and truth tables stay coherent. Applies to the full-run panel; off by "

@@ -21,7 +21,7 @@ REAL_ANTIGENS = [
 ]
 CONTROL_BC = "CTATCTACCGGCTCG"
 
-# Per-antigen "Class" vocabulary, matching the real customer panel's Class column. The real anchors
+# Per-antigen "Class" vocabulary, matching the Class column a real panel carries. The real anchors
 # carry a biologically meaningful class; synthetic antigens default to "synthetic"; the negative
 # control is "control".
 ANCHOR_CLASS = {
@@ -35,8 +35,8 @@ SPECIES_CYCLE = ("Human", "Cyno")
 
 
 def classify_antigens(names, offtarget_count):
-    """Classify an ORDERED list of non-control antigen names into the real customer panel's per-antigen
-    Type / Species / Class. The first `offtarget_count` -> Off-Target; the rest -> Target; species
+    """Classify an ORDERED list of non-control antigen names into the per-antigen Type / Species /
+    Class a real panel declares. The first `offtarget_count` -> Off-Target; the rest -> Target; species
     alternate Human/Cyno; class from ANCHOR_CLASS (real anchors) else "synthetic".
 
     Single source of the classification + offtarget-count validation rule, shared by `build_panel` and
@@ -61,7 +61,7 @@ class Panel:
     negative control. Replaces the old module-level ANTIGEN_NAMES / FEATURES globals so a generator
     run is fully described by its arguments.
 
-    Carries the real customer panel's per-antigen metadata — `types` (Target/Off-Target/Decoy),
+    Carries the per-antigen metadata a real panel declares — `types` (Target/Off-Target/Decoy),
     `species` (Human/Cyno/""), `classes` (viral/enzyme/synthetic/control) — each a dict keyed by
     feature name and INCLUDING the control. They default to sensible values so `Panel(names, feats)`
     stays valid for any legacy construction.
@@ -93,8 +93,8 @@ class Panel:
 
 
 def _double_space_name(name):
-    """Return `name` with a stray INTERNAL double space, reproducing the real customer panel's
-    `Human OT1  Biotin`. Replaces the first separator ("_" / "-" / " ") with two spaces; if the name has
+    """Return `name` with a stray INTERNAL double space, reproducing a quirk real panels carry in
+    antigen names. Replaces the first separator ("_" / "-" / " ") with two spaces; if the name has
     none, injects "  " near the middle. Injected at the panel SOURCE (so the name is used consistently
     across tags.csv, feature_reference.csv, the truth tables and the VDJ/GEX name joins) — a messy
     *label*, not broken data: nothing in generation is left mismatched, and the block's
@@ -112,7 +112,7 @@ def build_panel(panel_size, seed=common.ANTIGEN_SEED, offtarget_count=0, multiba
     the real 10x anchors; the rest are synthetic 15-mers (Hamming >= 3 from each other and the anchors
     + control). Uses an independent RNG so the panel is identical regardless of sample/cell scale.
 
-    Per-antigen Type/Species/Class match the real customer panel shape: the control -> Decoy/control;
+    Per-antigen Type/Species/Class match the shape a real panel carries: the control -> Decoy/control;
     the first `offtarget_count` antigens -> Off-Target; the rest -> Target; species alternate
     Human/Cyno; class from ANCHOR_CLASS (real anchors) else "synthetic".
 
@@ -124,7 +124,7 @@ def build_panel(panel_size, seed=common.ANTIGEN_SEED, offtarget_count=0, multiba
     so a default (single-barcode) panel is byte-identical to before.
 
     With `messy=True` (from --messy-metadata) the first antigen NAME gets a stray double space, so the
-    emitted metadata reproduces the customer panel's whitespace inconsistency for the normalization
+    emitted metadata reproduces the whitespace inconsistency real panels carry for the normalization
     tasks. Off by default (byte-identical)."""
     if panel_size < 1:
         raise SystemExit("panel size must be >= 1")

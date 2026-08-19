@@ -1,5 +1,5 @@
-"""Panel-metadata tests: the generated tags.csv must carry the real customer panel's per-antigen
-Type / Species / Class columns (alongside the backward-compatible tag,feature role mapping), the
+"""Panel-metadata tests: the generated tags.csv must carry the per-antigen Type / Species / Class
+columns a real panel declares (alongside the backward-compatible tag,feature role mapping), the
 --offtarget-count flag must designate exactly N non-control antigens as Off-Target, and out-of-range
 counts must be rejected on BOTH the full-run and the --beam paths."""
 

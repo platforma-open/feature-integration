@@ -106,7 +106,7 @@ def build(
     """Generate the BEAM-exact run under run_dir: antigen FASTQs (offset-10 R2), a sample-aware tag CSV,
     the coherent AIRR VDJ arm, and truth tables.
 
-    The tag CSV also carries the real customer panel's Type/Species columns: the control -> Decoy; the
+    The tag CSV also carries the Type/Species columns a real panel declares: the control -> Decoy; the
     first `offtarget_count` antigens of each sample's panel -> Off-Target; the rest -> Target; species
     alternate Human/Cyno.
 
@@ -234,7 +234,7 @@ def build(
     tags_csv = os.path.join(run_dir, "tags.csv")
     with open(tags_csv, "w", newline="") as f:
         w = csv.writer(f)
-        # Type/Species mirror the real customer panel; Class is intentionally omitted here (beam-exact
+        # Type/Species mirror a real panel; Class is intentionally omitted here (beam-exact
         # antigens are all synthetic -> uniform class), so the full-run tags.csv is the Class exemplar.
         # --multibarcode inserts a `combine` column after Protein (one row per member barcode).
         if multibarcode:
