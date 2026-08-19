@@ -259,16 +259,21 @@ function removeContendingGroup(index: number) {
     @update:model-value="setGrouping"
   >
     <template #tooltip>
-      A verdict is about an antigen identity. By default every tag is its own identity; naming a
-      panel column instead reads all the tags sharing a value of it as one antigen — which is how a
-      dual-barcoded antigen becomes one row rather than two.
+      A verdict is about an antigen, not a barcode. By default each tag is its own antigen. Name a
+      panel column instead, and every tag sharing a value of it becomes one antigen. That is how a
+      dual-barcoded antigen gives one row rather than two.<br /><br />
+      An antigen's reading in a cell is the highest of its tags, never their sum. Tags differ in how
+      readily they are taken up, so summing them would need the baseline scaled to match.
     </template>
   </PlDropdown>
 
   <PlNumberField v-model="app.model.data.countFloor" :min-value="0" :step="1" label="Count floor">
     <template #tooltip>
-      Counts below this are not evidence of binding: they are read as zero rather than as a small
-      signal. Shipped at 4, a declared default rather than a calibrated line.
+      Counts below this are not evidence of binding. They are read as zero rather than as a small
+      signal.<br /><br />
+      The baseline tag is exempt. Flooring it would lower the level every count is judged against,
+      and push the whole run toward bound.<br /><br />
+      Shipped at 4, a declared default rather than a calibrated line.
     </template>
   </PlNumberField>
   <PlNumberField
@@ -279,8 +284,9 @@ function removeContendingGroup(index: number) {
     label="Bound cutoff (0–100)"
   >
     <template #tooltip>
-      The score at or above which one cell reads as bound. Inherited from the dominant tool's cutoff
-      rather than justified independently.
+      The specificity score at or above which one cell reads that antigen as bound. This is a
+      per-cell reading. The clonotype's verdict is the majority of its cells.<br /><br />
+      Inherited from the dominant tool's cutoff rather than justified independently.
     </template>
   </PlNumberField>
   <PlNumberField
@@ -290,8 +296,10 @@ function removeContendingGroup(index: number) {
     label="Minimum voting cells"
   >
     <template #tooltip>
-      How many cells must answer before their majority settles a verdict. At 1 a verdict may rest on
-      a single cell and says so — the answering-cell count travels in the table.
+      How many cells must answer before their majority settles a verdict. Below it the verdict reads
+      unreliable, and gives too few voters as the reason.<br /><br />
+      At 1 a verdict may rest on a single cell, and says so — the answering-cell count travels in
+      the table.
     </template>
   </PlNumberField>
 
