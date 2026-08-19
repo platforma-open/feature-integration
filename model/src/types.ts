@@ -37,7 +37,7 @@ export type BlockArgs = {
   // Cell-barcode whitelist for refine-tags CELL correction. "" = de-novo (default; non-10x/synthetic).
   // A 10x built-in name (e.g. 737K-august-2016) makes cellIds match the VDJ producer by construction.
   cellWhitelist: string;
-  // Optional mitool resource overrides (Advanced Settings). Undefined -> workflow defaults (4 CPUs; RAM
+  // Optional mitool resource overrides (Advanced Settings). Undefined -> workflow defaults (8 CPUs; RAM
   // sized by the input-blob formula). When set, perProcessMemGB is a hard fixed RAM request per sample.
   perProcessCPUs?: number;
   perProcessMemGB?: number;

@@ -631,9 +631,8 @@ const gridOptions = {
           label="mitool CPUs per sample"
         >
           <template #tooltip>
-            <b>Performance tuning</b> — leave empty unless a large sample is slow. CPUs given to
-            each per-sample mitool step (parse / refine / tag-stat); raising it can speed up big
-            samples. Default 8.
+            Leave empty unless a large sample runs slowly. CPUs given to each per-sample step:
+            parse, refine tags, and tag statistics. Default 8.
           </template>
         </PlNumberField>
         <PlNumberField
@@ -644,8 +643,11 @@ const gridOptions = {
           label="mitool memory per sample (GiB)"
         >
           <template #tooltip>
-            <b>Performance tuning</b> — leave empty to size RAM automatically from read volume. Set
-            a fixed GiB per per-sample mitool step only if a sample runs out of memory.
+            Leave empty to size memory from the reads. The block then asks for 16 GiB plus four
+            times the read volume, between 16 and 256 GiB.<br /><br />
+            Set a number only if a sample runs out of memory. That number becomes a fixed request
+            for every sample, so a value chosen for your largest sample is demanded for the smallest
+            one too.
           </template>
         </PlNumberField>
       </PlAccordionSection>
