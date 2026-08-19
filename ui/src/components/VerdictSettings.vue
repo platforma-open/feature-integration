@@ -359,8 +359,9 @@ function removeContendingGroup(index: number) {
       label="Minimum panel size to serve as baseline"
     >
       <template #tooltip>
-        How many tags a panel needs before its own readings can stand in as the baseline. Below it,
-        that source is not offered.
+        How many tags the panel needs before its own readings can serve as the baseline. Below this,
+        that source is not offered.<br /><br />
+        No published work sets this line. The default of 8 is this block's choice, not a standard.
       </template>
     </PlNumberField>
     <PlNumberField
@@ -370,8 +371,8 @@ function removeContendingGroup(index: number) {
       label="Minimum usable baseline reading"
     >
       <template #tooltip>
-        Below this the baseline rests on too little to judge against, and the reading is left
-        unreliable rather than called not bound.
+        The lowest baseline count this block will judge against, in UMIs. Below it, the cell reads
+        unreliable and gives the reason. It is not called not bound.
       </template>
     </PlNumberField>
     <PlNumberField
@@ -381,8 +382,9 @@ function removeContendingGroup(index: number) {
       label="High baseline reading"
     >
       <template #tooltip>
-        With the gate off, where a baseline reading counts as high. Cells above it are reported,
-        never silently dropped.
+        The baseline count, in UMIs, at which a cell counts as sitting in high background. This is a
+        measurement, not a filter. The block counts these cells whether or not the gate below is on,
+        so you can see the run's exposure even when no gate is set.
       </template>
     </PlNumberField>
     <PlNumberField
@@ -393,8 +395,11 @@ function removeContendingGroup(index: number) {
       label="Admissibility gate (baseline UMIs)"
     >
       <template #tooltip>
-        Off when empty. When set, a cell whose baseline reading reaches this is set aside instead of
-        being read — its counts are background, not binding.
+        Off when empty. When set, a cell whose baseline reading reaches this is set aside. That cell
+        reads unreliable at every antigen and gives no verdict anywhere.<br /><br />
+        Off is a deliberate default, and a contested one. Published practice gates. The dominant
+        tool does not. Off matches the tool, so first-run numbers stay recognisable. The cost is
+        that a sticky cell stays in and returns a confident "not bound".
       </template>
     </PlNumberField>
   </PlAccordionSection>
