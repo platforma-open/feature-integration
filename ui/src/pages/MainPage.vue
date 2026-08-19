@@ -482,9 +482,10 @@ const gridOptions = {
       </PlDropdown>
       <PlBtnGroup v-model="app.model.data.runMode" :options="runModeOptions" label="Run mode">
         <template #tooltip>
-          Preview — processes only the first N reads per sample. Use it to check that settings (read
-          geometry, tag CSV, negative control) are correct and results look reasonable before
-          launching a full run, which may take much longer.
+          Preview reads only the first reads of each sample, up to the limit below. Use it to check
+          your settings before a full run, which takes much longer.<br /><br />
+          Preview still produces counts and verdicts. They rest on fewer cells than a full run
+          gives, so more antigens read unreliable. Do not compare a Preview card with a full run.
         </template>
       </PlBtnGroup>
       <template v-if="app.model.data.runMode === 'dry'">
@@ -500,8 +501,10 @@ const gridOptions = {
           "
         >
           <template #tooltip>
-            Number of reads to use per sample in the dry run. Feature-barcode libraries are shallow
-            per cell; 500,000 gives a representative slice.
+            How many reads to use from each sample in Preview. The block takes the first reads of
+            the file, not a random sample.<br /><br />
+            Feature-barcode libraries are shallow per cell. 500,000 reads is enough to check that
+            settings work.
           </template>
         </PlNumberField>
       </template>
