@@ -776,6 +776,38 @@ export const platforma = BlockModelV3.create(dataModel)
       "otherwise remove the duplicate rows."
     );
   })
+  // The case the two checks either side of this one cannot see: a panel CSV that IS sample-keyed, with no
+  // sample column set, and no barcode repeated to give it away. `barcodeMappingIssue` needs a duplicate
+  // barcode, which a partly-overlapping panel supplies but a fully disjoint one — sample A stained with
+  // one set, sample B with another — never does. `sampleMappingWarning` validates a column that has been
+  // chosen and returns nothing when none has. So the one arrangement that fails silently is exactly the
+  // one where the panels share no barcode at all.
+  //
+  // The tell is a column whose values cover every dataset sample, which is what `suggestSampleColumn`
+  // already looks for. Guarded against `barcodeMappingIssue`'s condition so the two never fire together:
+  // that one is the louder problem (an ambiguous mapping fans the per-cell join) and it already names
+  // this fix.
+  //
+  // Why it is worth a warning rather than a line of tooltip: read as one panel, every sample is offered
+  // every antigen, so an antigen a sample was never stained with comes back NOT BOUND instead of NEVER
+  // ASKED. That is the collapse of a non-answer into a negative that the four-state verdict exists to
+  // prevent, and nothing else on the page would say it happened.
+  .retentiveOutput("unkeyedSamplePanel", (ctx): string | undefined => {
+    if (!ctx.data.tagFeatureCsvHandle || !ctx.data.barcodeSeqColumn) return undefined;
+    if (ctx.data.sampleColumn) return undefined;
+    const meta = readCsvMeta(ctx);
+    if (!meta || meta.rowCount === undefined) return undefined;
+    const distinct = meta.valuesByColumn?.[ctx.data.barcodeSeqColumn]?.length ?? 0;
+    if (distinct < meta.rowCount) return undefined; // barcodeMappingIssue owns this one
+    const suggested = suggestSampleColumn(ctx);
+    if (!suggested) return undefined;
+    return (
+      `This CSV has a column naming your samples ("${suggested}"), but no sample column is set. ` +
+      "The block then reads one panel for all samples. An antigen a sample was never stained with " +
+      'reads as "not bound" instead of "never asked". ' +
+      "If the CSV is sample-specific, set the Sample column."
+    );
+  })
   // True while the uploaded CSV is still being parsed by staging (handle set, but emit-csv-meta hasn't
   // produced csvMeta yet) — lets the UI show a "reading columns…" state instead of silent empty
   // dropdowns. NOT retentive: it must report the live loading state, including on a CSV swap.

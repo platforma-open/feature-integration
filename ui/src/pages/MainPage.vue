@@ -470,10 +470,15 @@ const gridOptions = {
           @update:model-value="setSampleColumn"
         >
           <template #tooltip>
-            <b>When the same barcode means different antigens in different samples</b> — leave blank
-            otherwise. Names the Tag-feature CSV column giving each row's sample (values must match
-            the dataset's sample names); the block then builds a separate barcode→antigen mapping
-            per sample. Auto-selected when a matching column is detected.
+            <b>Set this when your panel CSV has more than one row per barcode</b> — normally because
+            it lists each barcode once per sample. Leave it blank when the CSV has exactly one row
+            per barcode.<br /><br />
+            Names the CSV column holding each row's sample. Every sample in your dataset must appear
+            in it. Extra values are allowed.<br /><br />
+            The block then reads a separate panel for each sample. Each sample is asked only about
+            the antigens its own rows declare. One barcode can also name different antigens in
+            different samples.<br /><br />
+            Auto-selected when a matching column is detected.
           </template>
         </PlDropdown>
       </PlRow>
@@ -490,6 +495,11 @@ const gridOptions = {
       </PlAlert>
       <PlAlert v-if="sampleMappingWarning?.length" type="warn">
         <div v-for="(line, i) in sampleMappingWarning" :key="i">{{ line }}</div>
+      </PlAlert>
+      <!-- Beside its two siblings rather than under the Sample column control: all three are about the
+           same CSV, and a reader scanning for what is wrong should find them in one place. -->
+      <PlAlert v-if="app.model.outputs.unkeyedSamplePanel" type="warn">
+        {{ app.model.outputs.unkeyedSamplePanel }}
       </PlAlert>
       <!-- The binding reading's own settings. The same component is mounted in the Punchcard page's
            Settings drawer, so the rule that produced the card can be changed from the card — which is
