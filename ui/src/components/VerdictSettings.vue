@@ -86,6 +86,12 @@ function setGrouping(column: string | undefined) {
   // The identities ARE the values of the grouping column, so groups declared under the previous rule name
   // things that no longer exist. Cleared on the gesture that invalidates them rather than left to fail.
   app.model.data.contendingGroups = undefined;
+  // The punchcard's narrowing is the same kind of state and was missed here. Going from per-tag to
+  // per-property turns every identity from a barcode into a property value, so the old picks match no
+  // column at all — and this control is one drawer away from the card it would blank. The model falls back
+  // to the whole panel in that case, so clearing is what keeps the PICKER from listing antigens that are
+  // gone; the card is safe either way.
+  app.model.data.punchcardIdentities = [];
   snapshotPanelColumns();
 }
 

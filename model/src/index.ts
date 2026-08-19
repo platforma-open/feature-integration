@@ -1065,13 +1065,30 @@ export const platforma = BlockModelV3.create(dataModel)
       // Every antigen gets a column. The selection NARROWS that, and an empty selection means "all" rather
       // than "none": the punchcard's whole job is the full grid of clonotypes against the panel, so a page
       // that opens empty and waits to be told which antigens matter has inverted its own purpose.
-      const picked = new Set(ctx.data.punchcardIdentities);
+      //
+      // A selection matching NOTHING means "all" for the same reason. The identity vocabulary is panel data
+      // and it changes under the selection's feet: switching the grouping from per-tag to per-property turns
+      // every identity from a barcode into a property value, so a stale pick intersects the new columns
+      // nowhere. Filtering to nothing then returns no table, and the page's empty-state alert does not fire
+      // — it asks whether any identity EXISTS, and they all do — so a valid card silently becomes blank
+      // space. Falling back to the whole panel shows something true instead of nothing.
+      //
+      // Self-healing HERE rather than by clearing the selection on each gesture that invalidates it: the
+      // gestures are several (a new panel file, a new barcode or sample column, a new grouping, a new role
+      // column) and a missed one reintroduces the blank card. Those gestures do also clear the selection, so
+      // the picker shows no ghosts, but correctness does not depend on their doing so.
+      //
+      // The stale picks are NOT pruned out of `data` here. An output that wrote back the data feeding it is
+      // the write-on-read loop this model refuses everywhere else, and with two clients open it is a write
+      // race as well.
       const identityOf = (c: (typeof pCols)[number]) => c.spec.domain?.[PUNCH_IDENTITY_DOMAIN];
       const punchCols = pCols.filter((c) => identityOf(c) !== undefined);
-      const cols =
+      const picked = new Set(ctx.data.punchcardIdentities);
+      const narrowed =
         picked.size === 0
           ? punchCols
           : punchCols.filter((c) => picked.has(identityOf(c) as string));
+      const cols = narrowed.length > 0 ? narrowed : punchCols;
       if (cols.length === 0) return undefined;
       // The header is rewritten HERE rather than emitted short by the workflow, so the full name survives
       // in the data and the toggle costs a re-render instead of a run. Annotations do not affect column

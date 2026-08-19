@@ -190,6 +190,11 @@ function clearOnCsvChange() {
   app.model.data.grouping = undefined;
   app.model.data.contendingGroups = undefined;
   app.model.data.panelColumnSnapshot = undefined;
+  // A new panel declares new antigens, so the punchcard's narrowing names things that may not exist in it.
+  // Empty means every antigen, which is the card's default. The model also falls back to the whole panel
+  // when a selection matches nothing, so this is about the PICKER — without it the chips list antigens the
+  // new panel never declared.
+  app.model.data.punchcardIdentities = [];
   clearControlOnInputChange();
   clearSampleAwareOnInputChange();
 }
