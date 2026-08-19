@@ -162,7 +162,30 @@ const fullLabels = computed({
   },
 });
 
-const narrowed = computed(() => app.model.data.punchcardIdentities.length > 0);
+// Every antigen shows as SELECTED when nothing has been narrowed, rather than the picker sitting empty.
+// An empty multi-select reads as "none", which is the opposite of what it did — and the old label said
+// "(all 13)" to compensate, which is a label apologising for a control that lies.
+//
+// `[]` still means ALL in data, and that is deliberate on two counts. Nothing writes the full list into
+// data on load: the choices come from an OUTPUT, and a watcher copying it into data would make that output
+// depend on the data feeding it — a write-on-read loop, and a write race between two open clients. And
+// keeping "all" as the empty list keeps it TRACKING: a panel that later declares another antigen shows it,
+// where a pinned list of thirteen names silently would not.
+//
+// So selecting every option normalises back to `[]`. Deselecting the last one does too, which snaps the
+// card back to all — there is no useful "show nothing" state for a punchcard, and a blank grid is not one.
+const allIdentityValues = computed(() => identityOptions.value.map((o) => o.value));
+
+const shownIdentities = computed<string[]>(() => {
+  const picked = app.model.data.punchcardIdentities;
+  return picked.length > 0 ? picked : allIdentityValues.value;
+});
+
+function setShownIdentities(values: string[]) {
+  const all = allIdentityValues.value;
+  app.model.data.punchcardIdentities =
+    values.length === 0 || values.length === all.length ? [] : values;
+}
 </script>
 
 <template>
@@ -208,13 +231,10 @@ const narrowed = computed(() => app.model.data.punchcardIdentities.length > 0);
       </PlAlert>
 
       <PlDropdownMulti
-        v-model="app.model.data.punchcardIdentities"
+        :model-value="shownIdentities"
         :options="identityOptions"
-        :label="
-          narrowed
-            ? `Antigens shown (${app.model.data.punchcardIdentities.length} of ${identityOptions.length})`
-            : `Antigens shown (all ${identityOptions.length})`
-        "
+        :label="`Antigens shown (${shownIdentities.length} of ${identityOptions.length})`"
+        @update:model-value="setShownIdentities"
       />
 
       <PlCheckbox v-model="fullLabels">Full antigen names</PlCheckbox>

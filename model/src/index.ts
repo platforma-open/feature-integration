@@ -1187,12 +1187,13 @@ export const platforma = BlockModelV3.create(dataModel)
           `least ${minMembers}. Lower "Minimum panel size to serve as baseline" under "Baseline ` +
           `thresholds", or declare a baseline tag.`,
       );
-    options.push({
-      value: "none",
-      label: "No baseline",
-      description:
-        "Every reading is left unreliable rather than judged against something that cannot serve.",
-    });
+    // `none` is deliberately NOT offered. It is what the run REPORTS when neither rung can serve — the
+    // third rung of `292-no-declared-reference`'s ordering — and never something a scientist asks for:
+    // requesting it guarantees a run with no answers at all, every position unreliable. It was on this
+    // list only because `ReferenceSource` (what is requested) and `ReferenceChoice` (what served) happen
+    // to share their three tokens, and the giveaway was its own description, which explained the software
+    // degrading rather than a choice anyone would make. The served case is still surfaced: the punchcard
+    // says so in a banner, and `unavailable` below says why neither rung could serve.
 
     // The three-rung default, restated from verdict.py resolve_default_source.
     const fallback =

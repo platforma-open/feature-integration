@@ -223,6 +223,7 @@ function removeContendingGroup(index: number) {
     :model-value="shownSource"
     :options="serviceableSources"
     label="What sets the baseline"
+    :disabled="serviceableSources.length === 0"
     @update:model-value="setBaselineSource"
   >
     <template #tooltip>
@@ -231,8 +232,8 @@ function removeContendingGroup(index: number) {
       <b>Declared baseline tag</b> — the tag your panel marks as bound by nothing.<br />
       <b>The panel's own readings</b> — the median of each cell's own counts. Verdicts read this way
       are local to this run and do not compare with another run.<br />
-      <b>No baseline</b> — each count is judged against nothing, so every verdict is left
-      unreliable.<br /><br />
+      Where neither can serve, the run reports no baseline and every verdict is left unreliable.
+      That is an outcome, not a setting, so it is not on this list.<br /><br />
       Selected, never inferred: two runs answered against different baselines produce numbers that
       do not compare, and a scientist who did not choose the rule cannot know that happened.
     </template>
