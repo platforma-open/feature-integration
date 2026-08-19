@@ -581,6 +581,13 @@ const gridOptions = {
            time, that a barcode sat on several rows and knew which column fixed it — and said so to no
            one. What a user got instead was a QuickJS stack trace at the end of a run, from
            per_cell_metrics.py's own guard, minutes after the gesture that caused it. -->
+      <!-- Same lesson as the note above, one rung earlier: this fires when the chosen column holds no
+           sequences at all, so the panel the run is built on is not barcodes. First of the two, and the
+           model suppresses the duplicate-barcode warning while it is showing — that warning would send
+           a reader chasing the sample column when the actual mistake is the barcode column itself. -->
+      <PlAlert v-if="app.model.outputs.barcodeAlphabetIssue" type="warn">
+        {{ app.model.outputs.barcodeAlphabetIssue }}
+      </PlAlert>
       <PlAlert v-if="app.model.outputs.barcodeMappingIssue" type="warn">
         {{ app.model.outputs.barcodeMappingIssue }}
       </PlAlert>

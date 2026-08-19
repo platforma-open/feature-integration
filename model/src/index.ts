@@ -250,6 +250,40 @@ function readCsvMeta(ctx: BlockRenderCtx<BlockArgs, BlockData>): CsvMeta | undef
     ?.getDataAsJsonOrUndefined<CsvMeta>();
 }
 
+// A/C/G/T plus N (ambiguous base), case-insensitive.
+const isDnaValue = (v: string) => /^[ACGTN]+$/i.test(v);
+
+// Evidence that the chosen barcode-sequence column does NOT hold nucleotide sequences, or undefined when
+// it does (or when the CSV meta hasn't resolved and the question can't be answered yet). Blank cells are
+// ignored rather than counted against the column — a trailing empty row is a CSV artefact, not evidence
+// about the contents. Kept a module helper because a block output cannot read another output, and two
+// need this: barcodeAlphabetIssue reports it, and barcodeMappingIssue stays silent while it holds so the
+// two never hand the reader contradictory fixes.
+function barcodeAlphabetProblem(
+  ctx: BlockRenderCtx<BlockArgs, BlockData>,
+): { offenders: string[]; checked: number; alternative: string | undefined } | undefined {
+  if (!ctx.data.tagFeatureCsvHandle) return undefined;
+  const barcodeCol = ctx.data.barcodeSeqColumn;
+  if (!barcodeCol) return undefined;
+  const meta = readCsvMeta(ctx);
+  if (!meta) return undefined;
+  const values = meta.valuesByColumn?.[barcodeCol];
+  if (values === undefined) return undefined;
+  const clean = (xs: string[]) => xs.map((v) => v.trim()).filter((v) => v !== "");
+  const checked = clean(values);
+  if (checked.length === 0) return undefined;
+  const offenders = checked.filter((v) => !isDnaValue(v));
+  if (offenders.length === 0) return undefined;
+  // Name a column that would work, if the CSV has one. The mistake is nearly always "picked the ID
+  // column when the sequences are one over", so naming the alternative saves the user a guess.
+  const alternative = meta.columns.find((c) => {
+    if (c === barcodeCol || c === ctx.data.featureNameColumn) return false;
+    const candidate = clean(meta.valuesByColumn?.[c] ?? []);
+    return candidate.length > 0 && candidate.every(isDnaValue);
+  });
+  return { offenders, checked: checked.length, alternative };
+}
+
 // The tag CSV column that looks like it names the dataset's samples, or undefined. A CSV is sample-aware
 // when the same barcode maps to different features per sample; the tell is a column whose distinct values
 // cover the dataset's sample names. Return the column whose distinct values are a SUPERSET of the dataset
@@ -782,6 +816,30 @@ export const platforma = BlockModelV3.create(dataModel)
   // gesture that snapshots the sample map into data); this output never writes data. Excludes the columns
   // already bound to the barcode / feature roles. See suggestSampleColumn for the superset/equality rule.
   .retentiveOutput("suggestedSampleColumn", (ctx): string | undefined => suggestSampleColumn(ctx))
+  // Alphabet check on the chosen barcode-sequence column (UI warning only; mitool guards it
+  // authoritatively, but only by failing refine-tags mid-run). A panel CSV commonly carries BOTH an
+  // identifier column and the nucleotide column — "Barcode" holding T0100 next to "Sequence" holding
+  // CGATGCCGGACGATC — and the identifier is the one whose name invites the click. Picking it writes a
+  // panel.txt of non-nucleotide strings, and the run dies several stages later inside barcode correction
+  // with "Error while loading sequence set from ./panel.txt" over an obfuscated Java stack trace, long
+  // after the reads have been parsed. The args guard cannot catch this: it sees only `data`, and the
+  // values live in the prerun CSV meta. So it fires here at config time, exactly as barcodeMappingIssue
+  // does for duplicate barcodes. Deliberately not gated on sampleColumn — a per-sample filter narrows
+  // which rows reach the panel, it never turns an identifier into a sequence.
+  .retentiveOutput("barcodeAlphabetIssue", (ctx): string | undefined => {
+    const problem = barcodeAlphabetProblem(ctx);
+    if (problem === undefined) return undefined;
+    const { offenders, checked, alternative } = problem;
+    return (
+      `Column "${ctx.data.barcodeSeqColumn}" does not hold nucleotide sequences: ${offenders.length} ` +
+      `of ${checked} distinct values contain characters outside A/C/G/T/N (for example ` +
+      `"${offenders[0]}"). The block builds the feature-barcode panel from this column, so the run ` +
+      "would fail during barcode correction. " +
+      (alternative !== undefined
+        ? `Column "${alternative}" holds sequences — pick that one.`
+        : "Pick the column holding the barcode nucleotide sequences.")
+    );
+  })
   // Duplicate-barcode detection at config time (UI warning only; the Python guards it authoritatively at
   // the end of the run). Fires when a CSV is uploaded, the barcode column is chosen, no sample column is
   // set, and that barcode column has fewer distinct values than the CSV has data rows — i.e. some barcode
@@ -793,6 +851,9 @@ export const platforma = BlockModelV3.create(dataModel)
     const barcodeCol = ctx.data.barcodeSeqColumn;
     if (!barcodeCol) return undefined;
     if (ctx.data.sampleColumn) return undefined; // already sample-aware — the per-sample filter fixes it
+    // Silent while the column isn't sequences at all: "some barcode sits on two rows" would send the
+    // reader to the sample column when the mistake is one rung up, in the barcode column itself.
+    if (barcodeAlphabetProblem(ctx) !== undefined) return undefined;
     const meta = readCsvMeta(ctx);
     if (!meta || meta.rowCount === undefined) return undefined;
     const distinct = meta.valuesByColumn?.[barcodeCol]?.length ?? 0;
