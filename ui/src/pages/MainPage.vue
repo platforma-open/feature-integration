@@ -193,6 +193,9 @@ function setSampleColumn(col: string | undefined) {
   app.model.data.sampleColumnValues = col
     ? (app.model.outputs.csvValuesByColumn?.[col] ?? [])
     : undefined;
+  // Clearing the sample column is what makes a duplicate barcode illegal again, so the numbers args()
+  // gates on have to be refreshed here rather than assumed to be present from an earlier gesture.
+  snapshotPanelCounts();
 }
 
 // The snapshot goes stale if the dataset changes (different sampleId→name) or the CSV changes (different
@@ -215,13 +218,23 @@ function onFastqRefChanged(next: unknown) {
 // args() needs get snapshotted. args() is data-only and the CSV meta lives on ctx.prerun, so without this
 // the model can see the problem and still not refuse the run.
 const seenBarcodeColumn = ref(keyOf(app.model.data.barcodeSeqColumn));
-function onBarcodeColumnChanged(next: unknown) {
-  if (!changed(seenBarcodeColumn, next)) return;
+
+// Called from every gesture that can make a duplicate mapping RELEVANT, not just from the one that makes
+// it knowable. Taking it on the barcode-column pick alone left the gate inert in the case that actually
+// happens: the barcode column was picked long ago, and what changes now is the SAMPLE column being
+// cleared — which is precisely what turns a legal sample-keyed panel into an illegal duplicate one.
+// Idempotent, so calling it from three places costs nothing.
+function snapshotPanelCounts() {
   const col = app.model.data.barcodeSeqColumn;
   app.model.data.panelRowCount = col ? app.model.outputs.csvRowCount : undefined;
   app.model.data.panelBarcodeDistinct = col
     ? (app.model.outputs.csvValuesByColumn?.[col]?.length ?? undefined)
     : undefined;
+}
+
+function onBarcodeColumnChanged(next: unknown) {
+  if (!changed(seenBarcodeColumn, next)) return;
+  snapshotPanelCounts();
 }
 
 function onFeatureColumnChanged(next: unknown) {
