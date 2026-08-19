@@ -503,7 +503,7 @@ export const platforma = BlockModelV3.create(dataModel)
     const panelColumns = data.panelColumnSnapshot;
     if (panelColumns?.length) {
       for (const [role, column] of [
-        ["Reference role", data.roleColumn],
+        ["Baseline role", data.roleColumn],
         ["Grouping", data.grouping?.by === "property" ? data.grouping.column : undefined],
       ] as const) {
         if (column && !panelColumns.includes(column))
@@ -550,7 +550,17 @@ export const platforma = BlockModelV3.create(dataModel)
       referenceValues: data.referenceValues?.length
         ? [...new Set(data.referenceValues)].sort()
         : undefined,
-      referenceSource: data.referenceSource,
+      // Resolved here rather than sent absent, so the run records the rule it actually read under and the
+      // settings field can always show a concrete one. This reproduces verdict.py's `resolve_default_source`
+      // from data alone: a declared baseline tag where values mark one, otherwise the panel's own readings.
+      // The third rung needs the panel SIZE, which is panel metadata rather than data — and it needs no
+      // help here, because `served_source` already degrades a panel request to none when the panel is too
+      // short. So the two agree without this reaching outside data.
+      //
+      // A value the user chose explicitly wins: `served_source` never substitutes a different rung for one
+      // that was asked for, only drops it to none.
+      referenceSource:
+        data.referenceSource ?? (data.referenceValues?.length ? "declared" : "panel"),
       panelReferenceMinMembers: Math.round(data.panelReferenceMinMembers),
       referenceThinLine: Math.round(data.referenceThinLine),
       countFloor: Math.round(data.countFloor),
@@ -1154,7 +1164,9 @@ export const platforma = BlockModelV3.create(dataModel)
       options.push({
         value: "declared",
         label: "Declared baseline tag",
-        description: "Each count is judged against the tag the panel marks as bound by nothing.",
+        description:
+          "Each count is judged against the tag the panel marks as bound by nothing, read in the " +
+          "same cell. Verdicts read this way compare across runs.",
       });
     else
       unavailable.push(
@@ -1165,7 +1177,9 @@ export const platforma = BlockModelV3.create(dataModel)
       options.push({
         value: "panel",
         label: "The panel's own readings",
-        description: `Each count is judged against the rest of the panel (${panelSize} tags).`,
+        description:
+          `Each count is judged against the rest of the panel (${panelSize} tags) — ` +
+          `even if a baseline tag is declared. Pick this to ignore one deliberately.`,
       });
     else
       unavailable.push(

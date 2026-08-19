@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import type { GroupingRule } from "@platforma-open/milaboratories.feature-integration.model";
+import type {
+  GroupingRule,
+  ReferenceSource,
+} from "@platforma-open/milaboratories.feature-integration.model";
 import {
   PlAccordionSection,
   PlAlert,
@@ -111,13 +114,36 @@ function setGrouping(column: string | undefined) {
 // would make the output depend on the data it feeds.
 const referenceSources = computed(() => app.model.outputs.referenceSources);
 
-// Only while the source is unset: an unset source is not "no comparator", it is the panel's default, and
-// a scientist who leaves it blank should be able to read which one that is without running.
-const defaultSourceHelper = computed(() =>
-  app.model.data.referenceSource === undefined && referenceSources.value !== undefined
-    ? `Left blank, this panel would use ${referenceSources.value.fallback}.`
-    : undefined,
-);
+// The source the field SHOWS. There is no "automatic" row: it would have named the same rule as one of
+// the rows beside it — the panel's own readings today, the declared tag as soon as one is marked — and two
+// rows meaning one thing reads as a duplicate rather than a choice.
+//
+// Instead the rule is DERIVED, the same way `args()` derives what it sends: a declared baseline tag where
+// values mark one, otherwise the panel's own readings. So declaring a tag moves this field visibly, which
+// beats an invisible rule that followed the panel silently. The derivation lives in `args()` too, and the
+// two must agree — that is the one thing to keep in step if either changes.
+//
+// An explicit pick wins and sticks, because `served_source` never swaps a requested rung for a different
+// one. A pick that has stopped being serviceable (declared, after its values were cleared) falls back to
+// the derived rule here so the dropdown still shows something real; `args()` refuses that combination
+// loudly, which is where the user learns about it.
+const serviceableSources = computed(() => referenceSources.value?.options ?? []);
+
+const derivedSource = computed<string>(() => {
+  const offered = serviceableSources.value.map((o) => o.value as string);
+  const wanted = (app.model.data.referenceValues?.length ?? 0) > 0 ? "declared" : "panel";
+  return offered.includes(wanted) ? wanted : (offered[0] ?? "none");
+});
+
+const shownSource = computed<string>(() => {
+  const chosen = app.model.data.referenceSource;
+  const offered = serviceableSources.value.map((o) => o.value as string);
+  return chosen !== undefined && offered.includes(chosen) ? chosen : derivedSource.value;
+});
+
+function setBaselineSource(value: string | undefined) {
+  app.model.data.referenceSource = value === undefined ? undefined : (value as ReferenceSource);
+}
 
 // The identities the contending-groups editor picks from, live from the uploaded panel.
 const identityOptions = computed(() => app.model.outputs.identityOptions ?? []);
@@ -194,17 +220,19 @@ function removeContendingGroup(index: number) {
   </PlDropdownMulti>
 
   <PlDropdown
-    v-model="app.model.data.referenceSource"
-    :options="referenceSources?.options ?? []"
+    :model-value="shownSource"
+    :options="serviceableSources"
     label="What sets the baseline"
-    :helper="defaultSourceHelper"
-    clearable
+    @update:model-value="setBaselineSource"
   >
     <template #tooltip>
+      Set from what you declared above, and you can override it. Marking a baseline tag selects that
+      tag; with none marked, the panel's own readings serve.<br /><br />
       <b>Declared baseline tag</b> — the tag your panel marks as bound by nothing.<br />
       <b>The panel's own readings</b> — the median of each cell's own counts. Verdicts read this way
       are local to this run and do not compare with another run.<br />
-      <b>No baseline</b> — each count is judged against nothing.<br /><br />
+      <b>No baseline</b> — each count is judged against nothing, so every verdict is left
+      unreliable.<br /><br />
       Selected, never inferred: two runs answered against different baselines produce numbers that
       do not compare, and a scientist who did not choose the rule cannot know that happened.
     </template>
