@@ -1211,23 +1211,49 @@ def test_a_panel_with_no_role_column_still_produces_verdicts(bed):
     assert {by_identity[t] for t in CUSTOMER_TAGS[1:]} == {"not bound"}
 
 
-def test_a_barcode_renamed_between_samples_falls_back_to_its_sequence_as_a_label(bed):
-    # A barcode the two samples name differently carries no agreed antigen name, so the label column
-    # has nothing to show and falls back to the barcode itself. A scientist then reads a raw 15-mer
-    # where every other row shows an antigen.
+def test_a_barcode_renamed_between_samples_is_labelled_with_both_names(bed):
+    # A barcode the two samples name differently carries no agreed antigen name. Rather than stand under
+    # the raw 15-mer -- which tells a scientist nothing about what happened, at the moment they most need
+    # to know -- it carries the names it DID declare, joined. The reagent stays recognisable and the
+    # conflict stays visible. This is the per-tag grouping: the panel has no grouping column at all.
     _customer_bed(bed, renamed=2)
     assert _run(bed, *CUSTOMER_ARGS).returncode == 0
 
     labels = pl.read_csv(bed / "result_identity_labels.csv", infer_schema_length=0)
     by_identity = dict(zip(labels["identity"].to_list(), labels["label"].to_list(), strict=True))
 
-    renamed = CUSTOMER_TAGS[:2]
-    for tag in renamed:
-        assert by_identity[tag] == tag, f"{tag} disagrees across samples, so it has no name to show"
-    # The consistently-named barcodes DO keep their antigen name. Without this the assertion above
-    # would also pass on a build that had simply stopped emitting labels at all.
+    # The bed names tag i "Ag00i" in the first sample and "Ag10i" in the second, for the first two of
+    # them, so the joined label carries both in sorted order.
+    for i, tag in enumerate(CUSTOMER_TAGS[:2]):
+        assert by_identity[tag] == f"Ag{i:03d} / Ag{100 + i:03d}", f"{tag} disagrees across samples"
+    # The consistently-named barcodes keep their plain antigen name. Without this the assertion above
+    # would also pass on a build that had started joining names for every identity.
     for i, tag in enumerate(CUSTOMER_TAGS[2:], start=2):
         assert by_identity[tag] == f"Ag{i:03d}", f"{tag} agrees across samples and must show its name"
+
+
+def test_two_barcodes_disagreeing_about_the_same_pair_of_names_stay_tellable_apart(bed):
+    # The uniqueness promise applies to the joined labels too. Two barcodes can disagree about the SAME
+    # pair of names, which joins to one string -- so the rescue that exists to make a conflict readable
+    # would put two identities under one label, the one thing the labeller promises never to do. The
+    # per-tag path needs nothing added for this: its existing collision rule appends the barcode to any
+    # label that repeats, joined or plain. This test is what keeps that true.
+    _customer_bed(bed, renamed=0)
+    rows = ["Sample,Sequence,Antigen"]
+    for sample, name in (("SmpA", "Shared"), ("SmpB", "Conflict")):
+        # The first two barcodes carry the identical pair; the rest agree, as the bed built them.
+        rows.extend(f"{sample},{tag},{name}" for tag in CUSTOMER_TAGS[:2])
+        rows.extend(f"{sample},{tag},Ag{i:03d}" for i, tag in enumerate(CUSTOMER_TAGS[2:], start=2))
+    (bed / "panel.csv").write_text("\n".join(rows) + "\n")
+
+    assert _run(bed, *CUSTOMER_ARGS).returncode == 0
+    labels = pl.read_csv(bed / "result_identity_labels.csv", infer_schema_length=0)
+    by_identity = dict(zip(labels["identity"].to_list(), labels["label"].to_list(), strict=True))
+
+    for tag in CUSTOMER_TAGS[:2]:
+        assert by_identity[tag] == f"Conflict / Shared ({tag})", tag
+    # The point of the appending, stated as the property it protects rather than as the strings above.
+    assert len(set(by_identity.values())) == len(by_identity), "two identities share a label"
 
 
 def test_the_label_fallback_is_caused_by_the_disagreement_and_nothing_else(bed):
@@ -1265,24 +1291,37 @@ def _wide_roles(bed):
     return roles
 
 
-def test_the_narrow_shape_loses_a_label_for_every_barcode_the_samples_name_differently(wide_bed):
-    # Nine tags and no role column: the panel's own readings serve, and every barcode two samples name
-    # differently has no agreed name to show. The count is derived from the bed rather than written
-    # down, so a bed regenerated under another seed still asserts the same shape.
-    shape = _bed_shape(wide_bed)
+def test_the_narrow_shape_labels_every_barcode_the_samples_name_differently_with_both_names(wide_bed):
+    # Nine tags and no role column: the panel's own readings serve, and the grouping is the per-tag one.
+    # A barcode two samples name differently has no agreed name, and the label used to fall through to
+    # the raw 15-mer -- the conflict recorded on stderr and shown nowhere a reader would look. It carries
+    # the names it DID declare instead, joined, exactly as a property grouping does.
     r = _run(
         wide_bed, "counts.csv", "panel_narrow.csv", "--linker", "linker.csv", *NARROW_COLS, "--output-prefix", "result"
     )
     assert r.returncode == 0, r.stderr
     meta = json.loads((wide_bed / "result_run_meta.json").read_text())
     assert meta["referenceChoice"] == ReferenceChoice.PANEL.value
+    assert meta["groupingId"] == "per-tag", "this test is about the per-tag label path"
 
-    labels = pl.read_csv(wide_bed / "result_identity_labels.csv", infer_schema_length=0)
-    fell_back = {r["identity"] for r in labels.iter_rows(named=True) if r["identity"] == r["label"]}
-    # Exactly the renamed barcodes, and nothing else: the ones the samples agree on keep their names.
-    assert fell_back == shape["renamed"]
-    assert fell_back, "the bed must rename at least one barcode or this test asserts nothing"
-    assert len(fell_back) < labels.height, "and must not rename all of them"
+    # Read from the narrow panel itself rather than from the bed helper: its OWN feature column is what
+    # supplies the label here, and deriving keeps a bed regenerated under another seed asserting the same
+    # shape instead of the same sequences.
+    narrow = pl.read_csv(wide_bed / "panel_narrow.csv", infer_schema_length=0)
+    declared: dict[str, set[str]] = {}
+    for row in narrow.iter_rows(named=True):
+        if row["Antigen"] and row["Antigen"].strip():
+            declared.setdefault(row["Sequence"], set()).add(row["Antigen"].strip())
+    renamed = {t for t, names in declared.items() if len(names) > 1}
+    assert renamed, "the bed must rename at least one barcode or this test asserts nothing"
+
+    labels = dict(pl.read_csv(wide_bed / "result_identity_labels.csv", infer_schema_length=0).iter_rows())
+    assert len(renamed) < len(labels), "and must not rename all of them"
+    for tag in renamed:
+        assert labels[tag] == " / ".join(sorted(declared[tag])), tag
+    # And nothing is left standing under a bare barcode, which is the whole point: every identity here
+    # was named by the panel, whether the samples agreed about the name or not.
+    assert {i for i, label in labels.items() if i == label} == set()
 
 
 def test_naming_the_off_target_role_as_the_comparator_deletes_the_off_target_questions(wide_bed):

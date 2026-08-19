@@ -288,14 +288,22 @@ def _identity_labels(
     two barcodes carry the same name the tag is appended, because two
     identities sharing a label are two rows a reader cannot tell apart.
 
-    `disagreed` is the exception inside a property grouping. A tag whose rows
-    disagree about the grouping column has no value to group on, so it stands
-    as its own identity under its raw barcode -- and a bare 15-mer among
+    `disagreed` is the exception, and it applies to BOTH branches, because both
+    lose a label the same way. `consistent_properties` drops a property a tag's
+    rows disagree about, so under a property grouping the tag has no value to
+    group on, and under the per-tag grouping it has no feature name to borrow.
+    Either way it stands under its raw barcode -- and a bare 15-mer among
     antigen names is the least readable thing this can produce, at exactly the
     moment a reader most needs to understand what happened. Such an identity is
     labelled with the names it DID declare, joined: `SARS-TRI-S_WT /
     SARS-TRI-S_WT__alt1`. The reagent stays recognisable and the conflict stays
     visible, where the barcode alone hid both.
+
+    Which column's disagreements arrive here therefore depends on the rule -- the
+    grouping column for a property grouping, the feature-name column for per-tag
+    -- and the caller resolves that before calling. The per-tag branch had this
+    rescue withheld for no reason the argument supports: the reasoning above is
+    about a label lost, not about how the grouping was chosen.
 
     The uniqueness rule applies to the joined names too. Two tags can disagree
     about the grouping column while declaring the SAME pair of names, and they
@@ -312,7 +320,12 @@ def _identity_labels(
             identity: (f"{label} ({identity})" if repeated[label] > 1 else label)
             for identity, label in by_identity.items()
         }
-    names = {tag: (properties.get(tag, {}).get(feature_col) or tag) for tag in grouping}
+    # Three rungs, in this order: the name the samples agreed on, else the names they disagreed about
+    # joined, else the bare barcode for a tag the panel named nowhere at all. The collision rule below
+    # already covers the joined strings -- two tags can disagree about the same pair of names and join to
+    # one label -- so the uniqueness promise needs nothing added for them.
+    joined = {tag: " / ".join(values) for tag, values in (disagreed or {}).items() if values}
+    names = {tag: (properties.get(tag, {}).get(feature_col) or joined.get(tag) or tag) for tag in grouping}
     collisions = Counter(names.values())
     return {tag: (f"{name} ({tag})" if collisions[name] > 1 else name) for tag, name in names.items()}
 
@@ -891,15 +904,20 @@ def main() -> None:
     )
     _write_sorted(linker_frame, f"{prefix}_tag_identity.csv", ["tag", "identity"])
 
-    # Only the grouping column's disagreements matter here: a tag that disagrees about some other
-    # property still grouped normally and carries an ordinary name.
+    # Only the disagreements in the column that SUPPLIES the label matter: a tag that disagrees about some
+    # other property still carries an ordinary name. Which column that is depends on the rule -- a
+    # property grouping labels by the value it grouped on, while the per-tag grouping has no grouping
+    # column at all and borrows the feature name. Passing the grouping column either way made every
+    # per-tag run look up "", so a barcode two samples named differently fell through to its raw 15-mer
+    # with the conflict recorded in stderr and shown nowhere a reader would look.
     grouping_column = grouping_rule.get("column") if isinstance(grouping_rule, dict) else None
+    label_column = args.feature_col if grouping_id == "per-tag" else grouping_column
     labels = _identity_labels(
         grouping,
         properties,
         args.feature_col,
         grouping_id,
-        disagreed_by_column.get(grouping_column or "", {}),
+        disagreed_by_column.get(label_column or "", {}),
     )
     identity_labels = pl.DataFrame(
         [(identity, labels.get(identity, identity)) for identity in sorted(universe)],
