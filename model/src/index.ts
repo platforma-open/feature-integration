@@ -1229,6 +1229,14 @@ export const platforma = BlockModelV3.create(dataModel)
     const roleValues = new Set(roleColumn ? (meta?.valuesByColumn?.[roleColumn] ?? []) : []);
     const declaredTags = (ctx.data.referenceValues ?? []).filter((v) => roleValues.has(v));
 
+    // The two messages this output feeds used to both fire in one state, saying the same thing. Whenever a
+    // control feature is marked and no tag is the baseline, `controlNotBaseline` below fires AND the
+    // "Declared baseline tag" line here fires, because both test declaredTags being empty — so a reader saw
+    // a warning and an info block one above the other, each telling them to set the role column and its
+    // values. The warning wins that overlap: it says the same fix plus what is serving instead and that the
+    // marker does not set the baseline. This line stands down rather than repeating it.
+    const markerWithoutBaseline = !!ctx.data.controlFeature && declaredTags.length === 0;
+
     const options: ReferenceSourceChoices["options"] = [];
     const unavailable: string[] = [];
     if (declaredTags.length > 0)
@@ -1239,7 +1247,7 @@ export const platforma = BlockModelV3.create(dataModel)
           "Each count is judged against the tag the panel marks as bound by nothing, read in the " +
           "same cell. Verdicts read this way compare across runs.",
       });
-    else
+    else if (!markerWithoutBaseline)
       unavailable.push(
         "Declared baseline tag — no tag is marked as the baseline yet. Choose the panel column that " +
           "declares each tag's role, then the values of it that mark the baseline tag.",
@@ -1279,13 +1287,12 @@ export const platforma = BlockModelV3.create(dataModel)
     // median served. A warning and never a block — atom `292-no-declared-reference` serves an
     // undeclared baseline as a legitimate configuration, so this flags a likely mistake, not an
     // invalid state.
-    const controlNotBaseline =
-      ctx.data.controlFeature && declaredTags.length === 0
-        ? "You marked a control feature, but no tag is the baseline. The control feature marker only " +
-          "labels that feature in the output. It does not set the level a count must exceed. This run " +
-          `judges counts against ${fallback} instead. To use your control as the baseline, select the ` +
-          "panel column that declares it. Then select the value that marks it."
-        : undefined;
+    const controlNotBaseline = markerWithoutBaseline
+      ? "You marked a control feature, but no tag is the baseline. The control feature marker only " +
+        "labels that feature in the output. It does not set the level a count must exceed. This run " +
+        `judges counts against ${fallback} instead. To use your control as the baseline, select the ` +
+        "panel column that declares it. Then select the value that marks it."
+      : undefined;
     return { options, unavailable, fallback, controlNotBaseline };
   })
   .title(() => "Feature Barcode Profiling")
