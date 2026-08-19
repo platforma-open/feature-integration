@@ -63,10 +63,13 @@ export function truncateHeader(label: string): string {
 // enum, the run-meta JSON and the p-column domain all carry the machine token, so rewording a sentence
 // here cannot break a branch anywhere. The three strings match the labels the `referenceSources` output
 // offers before a run, so the same choice does not change its name once it has served.
+// User-facing names only. The DATA layer keeps `declared`/`panel`/`none` — those tokens are the
+// p-column domain values, and domain is part of column identity, so renaming them would change what
+// every emitted column IS. Labels are free to say "baseline" where the data says "reference".
 export const REFERENCE_SOURCE_LABELS: Record<ReferenceSource, string> = {
-  declared: "Declared reference tag",
+  declared: "Declared baseline tag",
   panel: "The panel's own readings",
-  none: "No comparator",
+  none: "No baseline",
 };
 
 // The run record emit_verdicts.py writes (result_run_meta.json), read as content. Only the fields the UI
@@ -489,8 +492,8 @@ export const platforma = BlockModelV3.create(dataModel)
     // the choice is recorded but the user never sees they lost it.
     if (data.referenceSource === "declared" && !data.referenceValues?.length)
       throw new Error(
-        'Under "Values marking the reference", choose at least one value, or choose a ' +
-          'different option for "What counts are read against".',
+        'Under "Values that mark the baseline tag", choose at least one value, or choose a ' +
+          'different option for "What sets the baseline".',
       );
     // A role column or a grouping column the panel does not carry ends the whole run at the exec
     // (emit_verdicts.py exits rather than degrading), and the user meets that as a dead run with no hint
@@ -1150,40 +1153,40 @@ export const platforma = BlockModelV3.create(dataModel)
     if (declaredTags.length > 0)
       options.push({
         value: "declared",
-        label: "Declared reference tag",
-        description: "Counts are read against the tags the panel marks as the comparator.",
+        label: "Declared baseline tag",
+        description: "Each count is judged against the tag the panel marks as bound by nothing.",
       });
     else
       unavailable.push(
-        "Declared reference tag — no tag is marked as the comparator yet. Choose the panel column " +
-          "that declares each tag's role, then the values of it that mark the comparator.",
+        "Declared baseline tag — no tag is marked as the baseline yet. Choose the panel column that " +
+          "declares each tag's role, then the values of it that mark the baseline tag.",
       );
     if (panelSize >= minMembers)
       options.push({
         value: "panel",
         label: "The panel's own readings",
-        description: `Counts are read against the rest of the panel (${panelSize} tags).`,
+        description: `Each count is judged against the rest of the panel (${panelSize} tags).`,
       });
     else
       unavailable.push(
         `The panel's own readings — the panel declares ${panelSize} tag(s) and this source needs at ` +
-          `least ${minMembers}. Lower "Panel minimum for self-comparison" under "Advanced verdict settings", ` +
-          `or declare a reference tag.`,
+          `least ${minMembers}. Lower "Minimum panel size to serve as baseline" under "Baseline ` +
+          `thresholds", or declare a baseline tag.`,
       );
     options.push({
       value: "none",
-      label: "No comparator",
+      label: "No baseline",
       description:
-        "Every reading is left unreliable rather than compared against something that cannot serve.",
+        "Every reading is left unreliable rather than judged against something that cannot serve.",
     });
 
     // The three-rung default, restated from verdict.py resolve_default_source.
     const fallback =
       declaredTags.length > 0
-        ? "the declared reference tags"
+        ? "the declared baseline tags"
         : panelSize >= minMembers
           ? "the panel's own readings"
-          : "no comparator — every reading would be unreliable";
+          : "no baseline — every reading would be unreliable";
     return { options, unavailable, fallback };
   })
   .title(() => "Feature Barcode Profiling")

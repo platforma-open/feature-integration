@@ -125,8 +125,8 @@ const cellStyle: CSSProperties = {
 // is a key, not a sentence.
 const WHY_UNSETTLED: Record<string, string> = {
   "never-offered": "no sample holding these cells declared this antigen",
-  "no-comparator": "no comparator reading existed for these cells",
-  "thin-comparator": "the comparator rested on too little to compare against",
+  "no-comparator": "no baseline reading existed for these cells",
+  "thin-comparator": "the baseline rested on too little to judge against",
   "all-cells-gated": "every cell was set aside by the admissibility gate",
   tie: "the cells split evenly, so no majority settled it",
   "below-agreement-floor": "the cells agreed less than the run required",
@@ -135,9 +135,9 @@ const WHY_UNSETTLED: Record<string, string> = {
 
 const EXPLANATION: Record<VerdictState, string> = {
   bound:
-    "green: a majority of the cells that answered read this antigen as bound against the comparator that served",
+    "green: a majority of the cells that answered read this antigen as bound against the baseline that served",
   "not bound":
-    "red: the cells that answered read this antigen as not bound against the comparator that served",
+    "red: the cells that answered read this antigen as not bound against the baseline that served",
   unreliable: "grey: the experiment asked, and the readings could not settle it",
   "never asked":
     "no mark: this clonotype's cells were never offered this antigen, so there is nothing to answer",

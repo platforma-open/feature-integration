@@ -133,7 +133,7 @@ const requestedLabel = computed(() =>
 const servedLabel = computed(() =>
   runMeta.value ? REFERENCE_SOURCE_LABELS[runMeta.value.referenceChoice] : "",
 );
-const comparatorDegraded = computed(
+const baselineDegraded = computed(
   () =>
     runMeta.value !== undefined &&
     runMeta.value.referenceSourceRequested !== runMeta.value.referenceChoice,
@@ -191,11 +191,11 @@ const narrowed = computed(() => app.model.data.punchcardIdentities.length > 0);
 
     <template v-else>
       <PlAlert v-if="noComparator" type="warn">
-        No comparator served this run, so every reading was taken against nothing and each punch is
+        No baseline served this run, so every reading was taken against nothing and each punch is
         drawn from a count alone. Treat the whole grid as unsettled.
       </PlAlert>
-      <PlAlert v-else-if="comparatorDegraded" type="warn">
-        The comparator that served was not the one requested: asked for
+      <PlAlert v-else-if="baselineDegraded" type="warn">
+        The baseline that served was not the one requested: asked for
         <b>{{ requestedLabel }}</b
         >, served <b>{{ servedLabel }}</b
         >. Every punch below was read against what served.

@@ -24,6 +24,17 @@ import { useApp } from "../app";
 // a role or grouping setting from naming a column the panel reader consumes as a key. Those three force
 // the whole per-sample fan-out to re-run, and they belong to the Main page alone; adding a control for
 // one of them here would make the punchcard's drawer silently expensive.
+//
+// VOCABULARY, and the split is deliberate. Everything a USER reads says "baseline": the level a count
+// must exceed, measured in the same cell from a tag declared to bind nothing. The DATA layer keeps
+// `reference` — `ReferenceSource`, the run-meta keys, and the p-column domain values — and those cannot
+// follow, because domain is part of column identity and renaming one would change what every emitted
+// column IS. Code comments here describe the data layer, so they still say reference and comparator.
+//
+// The UI used four words for this one thing (reference, comparator, "read against", self-comparison),
+// and none of them was the word a scientist reaches for, which is "control". That collided with the
+// separate `controlFeature` field on the Main page — a marker for downstream readers that changes no
+// number and no verdict. So "control" now belongs to that field alone and never appears here.
 const app = useApp();
 
 // The panel-derived dropdowns have nothing to offer until the panel file is uploaded and staging has read
@@ -143,8 +154,10 @@ function removeContendingGroup(index: number) {
     clearable
   >
     <template #tooltip>
-      The clonotype sets each verdict is about. Leave it blank to run the block without verdicts —
-      the antigen counts, the per-cell values and the QC are produced either way.
+      The clonotype sets each verdict is about. Leave it blank to run the block without verdicts.
+      The antigen counts, the per-cell values and the per-sample QC are produced either way. The
+      fifteen quality measurements and the panel-versus-reads check belong to the verdict stage.
+      They need a dataset.
     </template>
   </PlDropdownRef>
   <PlAlert v-if="!app.model.data.datasetRef" type="info">
@@ -152,28 +165,30 @@ function removeContendingGroup(index: number) {
     columns and no panel check are produced. Everything not keyed by a clonotype still is.
   </PlAlert>
 
+  <PlSectionSeparator compact> Baseline (background) level </PlSectionSeparator>
   <PlDropdown
     :model-value="app.model.data.roleColumn"
     :options="panelPropertyOptions"
-    label="Reference role column"
+    label="Panel column naming the baseline tag"
     :disabled="panelUnread"
     clearable
     @update:model-value="setRoleColumn"
   >
     <template #tooltip>
-      The panel column declaring what each tag is for — the one whose value marks a tag as the
-      comparator every other count is read against. Leave blank if the panel declares no such role.
+      The panel column declaring each tag's role — the one whose value marks a tag as the baseline
+      every other count in the same cell is judged against. Leave blank if the panel declares no
+      such role.
     </template>
   </PlDropdown>
   <PlDropdownMulti
     :model-value="app.model.data.referenceValues ?? []"
     :options="roleValueOptions"
-    label="Values marking the reference"
+    label="Values that mark the baseline tag"
     :disabled="panelUnread || !app.model.data.roleColumn"
     @update:model-value="app.model.data.referenceValues = $event.length > 0 ? $event : undefined"
   >
     <template #tooltip>
-      Which values of the role column designate a comparator tag. A tag is a comparator in every
+      Which values of the role column designate the baseline tag. A tag is the baseline in every
       sample or in none.
     </template>
   </PlDropdownMulti>
@@ -181,12 +196,16 @@ function removeContendingGroup(index: number) {
   <PlDropdown
     v-model="app.model.data.referenceSource"
     :options="referenceSources?.options ?? []"
-    label="What counts are read against"
+    label="What sets the baseline"
     :helper="defaultSourceHelper"
     clearable
   >
     <template #tooltip>
-      Selected, never inferred: two runs answered against different comparators produce numbers that
+      <b>Declared baseline tag</b> — the tag your panel marks as bound by nothing.<br />
+      <b>The panel's own readings</b> — the median of each cell's own counts. Verdicts read this way
+      are local to this run and do not compare with another run.<br />
+      <b>No baseline</b> — each count is judged against nothing.<br /><br />
+      Selected, never inferred: two runs answered against different baselines produce numbers that
       do not compare, and a scientist who did not choose the rule cannot know that happened.
     </template>
   </PlDropdown>
@@ -194,6 +213,7 @@ function removeContendingGroup(index: number) {
     <div v-for="(line, i) in referenceSources.unavailable" :key="i">{{ line }}</div>
   </PlAlert>
 
+  <PlSectionSeparator compact> The binding reading </PlSectionSeparator>
   <PlDropdown
     :model-value="groupingColumn"
     :options="groupingOptions"
@@ -294,52 +314,55 @@ function removeContendingGroup(index: number) {
   </PlAccordionSection>
   -->
 
-  <PlAccordionSection label="Advanced verdict settings">
-    <PlNumberField
-      v-model="app.model.data.gateThreshold"
-      :min-value="1"
-      :step="1"
-      clearable
-      label="Admissibility gate (comparator UMIs)"
-    >
-      <template #tooltip>
-        Off when empty. When set, a cell whose comparator reading reaches this is set aside instead
-        of being read — its counts are background, not binding.
-      </template>
-    </PlNumberField>
-    <PlNumberField
-      v-model="app.model.data.highReferenceLine"
-      :min-value="1"
-      :step="1"
-      label="High reference reading"
-    >
-      <template #tooltip>
-        With the gate off, where a comparator reading counts as high. Cells above it are reported,
-        never silently dropped.
-      </template>
-    </PlNumberField>
+  <PlAccordionSection label="Baseline thresholds">
     <PlNumberField
       v-model="app.model.data.panelReferenceMinMembers"
       :min-value="1"
       :step="1"
-      label="Panel minimum for self-comparison"
+      label="Minimum panel size to serve as baseline"
     >
       <template #tooltip>
-        How many tags a panel needs before its own readings can stand in as the comparator. Below
-        it, that source is not offered.
+        How many tags a panel needs before its own readings can stand in as the baseline. Below it,
+        that source is not offered.
       </template>
     </PlNumberField>
     <PlNumberField
       v-model="app.model.data.referenceThinLine"
       :min-value="0"
       :step="1"
-      label="Thin-comparator line"
+      label="Minimum usable baseline reading"
     >
       <template #tooltip>
-        Below this the comparator rests on too little to compare against, and the reading is left
+        Below this the baseline rests on too little to judge against, and the reading is left
         unreliable rather than called not bound.
       </template>
     </PlNumberField>
+    <PlNumberField
+      v-model="app.model.data.highReferenceLine"
+      :min-value="1"
+      :step="1"
+      label="High baseline reading"
+    >
+      <template #tooltip>
+        With the gate off, where a baseline reading counts as high. Cells above it are reported,
+        never silently dropped.
+      </template>
+    </PlNumberField>
+    <PlNumberField
+      v-model="app.model.data.gateThreshold"
+      :min-value="1"
+      :step="1"
+      clearable
+      label="Admissibility gate (baseline UMIs)"
+    >
+      <template #tooltip>
+        Off when empty. When set, a cell whose baseline reading reaches this is set aside instead of
+        being read — its counts are background, not binding.
+      </template>
+    </PlNumberField>
+  </PlAccordionSection>
+
+  <PlAccordionSection label="Advanced reading settings">
     <PlNumberField
       v-model="app.model.data.minAgreement"
       :min-value="0"

@@ -357,7 +357,7 @@ const gridOptions = {
       <PlDropdownRef
         v-model="app.model.data.fbFastqRef"
         :options="app.model.outputs.fastqOptions"
-        label="Select dataset"
+        label="Feature-barcode FASTQ dataset"
         @update:model-value="clearSampleAwareOnInputChange"
       >
         <template #tooltip>
@@ -438,7 +438,7 @@ const gridOptions = {
         <PlDropdown
           v-model="app.model.data.controlFeature"
           :options="app.model.outputs.controlOptions"
-          label="Negative control feature"
+          label="Control feature marker (output only)"
           :disabled="tagMappingDisabled"
           clearable
           :style="{ flex: 1 }"
@@ -495,7 +495,11 @@ const gridOptions = {
            putting one of them in this component would make a results-page drawer silently expensive. -->
       <VerdictSettings />
       <!-- Less-common params. -->
-      <PlAccordionSection label="Advanced Settings">
+      <PlAccordionSection label="Compute resources">
+        <!-- Hidden with the control it belongs to. This is the AND-combine per-barcode floor, and the
+             Combine-mode column selector is not offered, so every antigen uses "sum" and this value can
+             never take effect. A setting a user can change that cannot do anything is worse than an
+             absent one. Restore both together.
         <PlNumberField
           v-model="app.model.data.minUmi"
           :min-value="1"
@@ -510,6 +514,7 @@ const gridOptions = {
             empty for the default (1).
           </template>
         </PlNumberField>
+        -->
         <PlNumberField
           v-model="app.model.data.perProcessCPUs"
           :min-value="1"
