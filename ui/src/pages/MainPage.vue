@@ -155,6 +155,33 @@ function clearControlOnInputChange() {
   app.model.data.controlFeature = undefined;
 }
 
+// A GESTURE IS NOT A CHANGE, and every clear below used to treat the two as the same thing. Each ran on
+// `@update:model-value` with no argument and no comparison, so a control re-emitting the value it already
+// held — a user re-picking the dataset they had picked, or a re-render after the block pack was
+// updated — silently discarded configuration nobody had touched.
+//
+// That is not hypothetical. Re-emitting an UNCHANGED FASTQ ref wiped `sampleColumn`, and the run then
+// reached per_cell_metrics.py with no `--sample-col`, where its duplicate-barcode guard refused a
+// sample-keyed panel. The user met that as a QuickJS stack trace minutes after a gesture that had
+// changed nothing. `clearOnCsvChange` is the same shape over nine more fields, including the whole
+// binding reading, so the same re-emit there would cost far more.
+//
+// The previous value has to be remembered HERE: `v-model` writes the new one into data before the
+// handler runs, so data holds the "after" on both sides of any comparison made inside it. Keyed by
+// JSON so a ref object and a file handle compare the same way.
+const keyOf = (v: unknown) => (v === undefined || v === null ? "" : JSON.stringify(v));
+const seenFastqRef = ref(keyOf(app.model.data.fbFastqRef));
+const seenCsvHandle = ref(keyOf(app.model.data.tagFeatureCsvHandle));
+const seenFeatureColumn = ref(keyOf(app.model.data.featureNameColumn));
+
+// Returns true only when the gesture carried a genuinely new value, and records it.
+function changed(seen: { value: string }, next: unknown): boolean {
+  const key = keyOf(next);
+  if (key === seen.value) return false;
+  seen.value = key;
+  return true;
+}
+
 // Sample-aware mapping (optional). Picking the sample column snapshots the CURRENT dataset's
 // sampleId→name map into data, so the args projection stays pure (model.md) and the per-sample workflow
 // body can translate its iteration key.
@@ -170,10 +197,23 @@ function setSampleColumn(col: string | undefined) {
 
 // The snapshot goes stale if the dataset changes (different sampleId→name) or the CSV changes (different
 // columns/values), so clear the sample-aware selection on those gestures — the user re-picks.
-function clearSampleAwareOnInputChange() {
+//
+// Split from its gesture handler because `clearOnCsvChange` calls it too, and THAT path must clear
+// unconditionally: a new panel file invalidates the sample selection whatever the FASTQ ref is doing.
+function clearSampleAwareState() {
   app.model.data.sampleColumn = undefined;
   app.model.data.sampleLabelSnapshot = undefined;
   app.model.data.sampleColumnValues = undefined;
+}
+
+function onFastqRefChanged(next: unknown) {
+  if (!changed(seenFastqRef, next)) return;
+  clearSampleAwareState();
+}
+
+function onFeatureColumnChanged(next: unknown) {
+  if (!changed(seenFeatureColumn, next)) return;
+  clearControlOnInputChange();
 }
 
 // CSV swap invalidates every CSV-derived selection: the barcode / feature-name columns (the new file's
@@ -181,6 +221,14 @@ function clearSampleAwareOnInputChange() {
 // setting of the binding reading that names a panel column or a panel value. The last group matters most:
 // emit_verdicts.py ends the whole run when the role column or the grouping column is not one the panel
 // carries, so a stale pick left behind here costs a run and reports it where the user never looks.
+function onCsvChanged(next: unknown) {
+  if (!changed(seenCsvHandle, next)) return;
+  // The feature-name column is about to be cleared, so its own guard must not later read a stale key and
+  // decide the user's re-pick was a no-op.
+  seenFeatureColumn.value = "";
+  clearOnCsvChange();
+}
+
 function clearOnCsvChange() {
   app.model.data.barcodeSeqColumn = undefined;
   app.model.data.featureNameColumn = undefined;
@@ -196,7 +244,7 @@ function clearOnCsvChange() {
   // new panel never declared.
   app.model.data.punchcardIdentities = [];
   clearControlOnInputChange();
-  clearSampleAwareOnInputChange();
+  clearSampleAwareState();
 }
 
 // Sample-aware mapping sanity warning from the model (dataset samples missing from the CSV / CSV sample
@@ -358,7 +406,7 @@ const gridOptions = {
         v-model="app.model.data.fbFastqRef"
         :options="app.model.outputs.fastqOptions"
         label="Feature-barcode FASTQ dataset"
-        @update:model-value="clearSampleAwareOnInputChange"
+        @update:model-value="onFastqRefChanged"
       >
         <template #tooltip>
           The feature-barcode FASTQ dataset to analyse. Its reads give the UMI count for each
@@ -376,7 +424,7 @@ const gridOptions = {
         placeholder="tags.csv"
         :extensions="['csv']"
         required
-        @update:model-value="clearOnCsvChange"
+        @update:model-value="onCsvChanged"
       >
         <template #tooltip>
           The CSV that declares your panel: which feature barcode is which antigen. One row per
@@ -406,7 +454,7 @@ const gridOptions = {
         label="Feature name column"
         :disabled="tagMappingDisabled"
         required
-        @update:model-value="clearControlOnInputChange"
+        @update:model-value="onFeatureColumnChanged"
       >
         <template #tooltip>
           The CSV column holding the antigen name each barcode maps to. These names label the
@@ -496,8 +544,16 @@ const gridOptions = {
       <PlAlert v-if="sampleMappingWarning?.length" type="warn">
         <div v-for="(line, i) in sampleMappingWarning" :key="i">{{ line }}</div>
       </PlAlert>
-      <!-- Beside its two siblings rather than under the Sample column control: all three are about the
-           same CSV, and a reader scanning for what is wrong should find them in one place. -->
+      <!-- Beside its siblings rather than under the Sample column control: all three are about the same
+           CSV, and a reader scanning for what is wrong should find them in one place.
+
+           barcodeMappingIssue was computed by the model and rendered NOWHERE. The block knew, at config
+           time, that a barcode sat on several rows and knew which column fixed it — and said so to no
+           one. What a user got instead was a QuickJS stack trace at the end of a run, from
+           per_cell_metrics.py's own guard, minutes after the gesture that caused it. -->
+      <PlAlert v-if="app.model.outputs.barcodeMappingIssue" type="warn">
+        {{ app.model.outputs.barcodeMappingIssue }}
+      </PlAlert>
       <PlAlert v-if="app.model.outputs.unkeyedSamplePanel" type="warn">
         {{ app.model.outputs.unkeyedSamplePanel }}
       </PlAlert>
