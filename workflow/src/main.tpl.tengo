@@ -522,8 +522,15 @@ wf.body(func(args) {
 		// this run says about itself; the per-cell per-tag counts are not built at any grain.
 		blockExports.antigenVerdicts = verdictImport.output("antigenVerdicts")
 		// The same frame as an OUTPUT, because a block's own exports are not in its own result pool: without
-		// this the block that produced the verdicts is the one place that cannot show them. The model reads
-		// it, keeps the columns keyed (clonotype set, identity) plus the identity label, and drops the rest.
+		// this the block that produced the verdicts would be the one place that cannot read them.
+		//
+		// NOTHING READS IT TODAY, and that is worth stating rather than implying. The punchcard is the
+		// block's own view of the verdicts and it reads the pivoted frame below instead, because a table
+		// cannot turn a (set, identity) frame into one column per identity. So this output is a capability
+		// held open, not a wire in use: the first page that wants the verdicts unpivoted -- a per-identity
+		// list, say -- reads it without a workflow change. If no such page ever arrives, this line is the
+		// one to remove, and removing it costs nothing outside this block, since the EXPORT above is what
+		// carries the verdicts to labelling and lead selection.
 		blockOutputs.antigenVerdictsTable = pframes.exportFrame(verdictImport.output("antigenVerdicts"))
 		// The punchcard's source: the same verdicts pivoted onto the clonotype set, one column per identity
 		// for the state and one for the support behind it. A table cannot pivot a (set, identity) frame into
