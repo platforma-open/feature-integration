@@ -361,8 +361,10 @@ const gridOptions = {
         @update:model-value="clearSampleAwareOnInputChange"
       >
         <template #tooltip>
-          Feature-barcode FASTQ dataset to analyze. Its reads are parsed to identify which antigen
-          (feature) each cell bound.
+          The feature-barcode FASTQ dataset to analyse. Its reads give the UMI count for each
+          antigen barcode in each cell.<br /><br />
+          Counts are not verdicts. Whether a cell bound an antigen is decided later, against the
+          baseline, and only when you also give a V(D)J dataset.
         </template>
       </PlDropdownRef>
       <!-- Read layout: preset dropdown + pattern builder/string (mitool tag pattern). Replaces the
@@ -377,9 +379,12 @@ const gridOptions = {
         @update:model-value="clearOnCsvChange"
       >
         <template #tooltip>
-          CSV mapping each feature barcode to its feature (antigen) name — one row per barcode. Use
-          the columns below to tell the block which column holds the barcode sequence and which
-          holds the feature name.
+          The CSV that declares your panel: which feature barcode is which antigen. One row per
+          barcode, or one row per barcode and sample when you set a sample column below.<br /><br />
+          This file is also the authority on what each sample was offered. An antigen it does not
+          declare for a sample is never asked about there.<br /><br />
+          Use the two columns below to say which column holds the barcode sequence and which holds
+          the antigen name.
         </template>
       </PlFileInput>
       <PlAlert v-if="csvProcessing" type="info"> Reading columns from the uploaded CSV… </PlAlert>
@@ -404,8 +409,10 @@ const gridOptions = {
         @update:model-value="clearControlOnInputChange"
       >
         <template #tooltip>
-          CSV column holding the feature (antigen) name each barcode maps to. These names label the
-          per-cell antigen assignments.
+          The CSV column holding the antigen name each barcode maps to. These names label the
+          antigens everywhere the block reports them.<br /><br />
+          Where two samples give one barcode different names, the antigen carries both names,
+          joined.
         </template>
       </PlDropdown>
       <PlBtnGroup v-model="app.model.data.runMode" :options="runModeOptions" label="Run mode">
