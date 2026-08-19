@@ -49,16 +49,6 @@ const DEFAULT_HIGH_REFERENCE_LINE = 100;
 export const PUNCH_COLUMN_NAME = "pl7.app/antigen/identityPunch";
 export const PUNCH_IDENTITY_DOMAIN = "pl7.app/antigen/identityId";
 
-// Longest antigen header drawn before it is cut. The grid auto-sizes every column to fit its contents
-// and a block cannot override that, so one joined label - "Anti-Hen_Egg_Lysozyme /
-// Anti-Hen_Egg_Lysozyme__alt1" - stretches its column wide enough to push the rest of the panel off
-// screen. A punch needs about eleven pixels; the header is the only thing asking for more.
-const MAX_HEADER_CHARS = 20;
-
-export function truncateHeader(label: string): string {
-  return label.length <= MAX_HEADER_CHARS ? label : `${label.slice(0, MAX_HEADER_CHARS - 1)}…`;
-}
-
 // How each comparator choice is written for a reader. The single place the wording lives: the Python
 // enum, the run-meta JSON and the p-column domain all carry the machine token, so rewording a sentence
 // here cannot break a branch anywhere. The three strings match the labels the `referenceSources` output
@@ -1227,23 +1217,13 @@ export const platforma = BlockModelV3.create(dataModel)
       const ordered = [...cols].sort((a, b) =>
         labelOf(a).localeCompare(labelOf(b), undefined, { sensitivity: "base", numeric: true }),
       );
-      // The header is rewritten HERE rather than emitted short by the workflow, so the full name survives
-      // in the data — the punch cell reads it back to show what a cut header hides. Annotations do not
-      // affect column identity, so nothing downstream notices. Unconditional: the checkbox that used to
-      // turn this off duplicated the cell hover, which carries the full name already.
-      const display = ordered.map((c) => {
-        const label = c.spec.annotations?.["pl7.app/label"];
-        if (label === undefined) return c;
-        return {
-          ...c,
-          spec: {
-            ...c.spec,
-            annotations: { ...c.spec.annotations, "pl7.app/label": truncateHeader(label) },
-          },
-        };
-      });
+      // Headers carry the identity's full name. They used to be cut to 20 characters here, so that one
+      // long label could not auto-size its column wide enough to push the rest of the card off screen.
+      // That traded away the one thing a reader needs from a header — which identity the column is — and
+      // it only ever bit on the joined labels a tag receives when its rows disagree about the grouping
+      // column. Those are worth fixing where they are produced, not hiding behind an ellipsis.
       return createPlDataTableV3(ctx, {
-        primaryColumns: display.map((c) => DataColumn.fromColumn(c)),
+        primaryColumns: ordered.map((c) => DataColumn.fromColumn(c)),
         columns: null,
         tableState: ctx.data.punchcardTableState,
       });
