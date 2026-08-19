@@ -330,7 +330,9 @@ const columnDefs: ColDef<SampleResult>[] = [
     headerName: "Progress",
     headerComponentParams: {
       type: "Progress",
-      info: "Double-click a sample to open its per-step logs (parse, refine tags, count UMIs).",
+      info:
+        "Double-click a sample to open its report: read recovery, the individual quality checks, " +
+        "and the per-step logs (parse, refine tags, count UMIs).",
     } satisfies PlAgHeaderComponentParams,
     flex: 2,
     // results.ts already produces the cell config (status / percent / text / suffix); pass it through.
@@ -654,7 +656,7 @@ const gridOptions = {
     </PlSlideModal>
 
     <PlSlideModal v-model="sampleReportOpen" width="60%">
-      <template #title>{{ selectedSampleLabel }} — step logs</template>
+      <template #title>{{ selectedSampleLabel }}</template>
       <SampleReportPanel v-model="selectedSample" />
     </PlSlideModal>
   </PlBlockPage>
