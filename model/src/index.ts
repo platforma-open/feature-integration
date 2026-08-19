@@ -101,6 +101,15 @@ export type ReferenceSourceChoices = {
   unavailable: string[];
   /** What an unset source resolves to for this panel, as a sentence. */
   fallback: string;
+  /**
+   * Set only for the one combination a user is likely to have got wrong: a control feature marked on
+   * the Main page while no tag is declared the baseline. `unavailable` already says a baseline is
+   * undeclared, but it cannot tell the benign case (no control in the panel at all) from this one,
+   * where the user has DEMONSTRATED they have a background control and still wired none of it to the
+   * arithmetic. Undefined -> nothing to warn about; the two fields are independent by design and
+   * neither is required.
+   */
+  controlNotBaseline?: string;
 };
 
 // Ordinal step key -> the step a sample is CURRENTLY on once that report has settled. A stepReports entry
@@ -1202,7 +1211,20 @@ export const platforma = BlockModelV3.create(dataModel)
         : panelSize >= minMembers
           ? "the panel's own readings"
           : "no baseline — every reading would be unreliable";
-    return { options, unavailable, fallback };
+
+    // Built from `fallback` rather than naming a rung, so the sentence stays true where the panel is
+    // also too small to serve as its own baseline: that case reads "no baseline" instead of claiming a
+    // median served. A warning and never a block — atom `292-no-declared-reference` serves an
+    // undeclared baseline as a legitimate configuration, so this flags a likely mistake, not an
+    // invalid state.
+    const controlNotBaseline =
+      ctx.data.controlFeature && declaredTags.length === 0
+        ? "You marked a control feature, but no tag is the baseline. The control feature marker only " +
+          "labels that feature in the output. It does not set the level a count must exceed. This run " +
+          `judges counts against ${fallback} instead. To use your control as the baseline, select the ` +
+          "panel column that declares it, then the value that marks it."
+        : undefined;
+    return { options, unavailable, fallback, controlNotBaseline };
   })
   .title(() => "Feature Barcode Profiling")
   // Standard block-label subtitle. The subtitle render context is args-only (no result pool / outputs

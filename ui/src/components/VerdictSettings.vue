@@ -201,9 +201,11 @@ function removeContendingGroup(index: number) {
     @update:model-value="setRoleColumn"
   >
     <template #tooltip>
-      The panel column declaring each tag's role — the one whose value marks a tag as the baseline
-      every other count in the same cell is judged against. Leave blank if the panel declares no
-      such role.
+      Name the panel column that declares each tag's role. One value of that column marks a tag as
+      the baseline. The block then judges every other count in the same cell against that tag.<br /><br />
+      <b>This setting changes the numbers.</b> "Control feature marker" on the Main page only labels
+      a feature in the output.<br /><br />
+      Leave blank if your panel declares no role.
     </template>
   </PlDropdown>
   <PlDropdownMulti
@@ -214,8 +216,8 @@ function removeContendingGroup(index: number) {
     @update:model-value="app.model.data.referenceValues = $event.length > 0 ? $event : undefined"
   >
     <template #tooltip>
-      Which values of the role column designate the baseline tag. A tag is the baseline in every
-      sample or in none.
+      Select which values of the role column mark the baseline tag. A tag is the baseline in every
+      sample, or in none. You cannot give some samples a different baseline.
     </template>
   </PlDropdownMulti>
 
@@ -228,7 +230,7 @@ function removeContendingGroup(index: number) {
   >
     <template #tooltip>
       Set from what you declared above, and you can override it. Marking a baseline tag selects that
-      tag; with none marked, the panel's own readings serve.<br /><br />
+      tag. With none marked, the panel's own readings serve.<br /><br />
       <b>Declared baseline tag</b> — the tag your panel marks as bound by nothing.<br />
       <b>The panel's own readings</b> — the median of each cell's own counts. Verdicts read this way
       are local to this run and do not compare with another run.<br />
@@ -238,6 +240,12 @@ function removeContendingGroup(index: number) {
       do not compare, and a scientist who did not choose the rule cannot know that happened.
     </template>
   </PlDropdown>
+  <!-- Above the info alert, and warn rather than info: this is the one case the user has shown us is
+       a mistake rather than a configuration. It sits in this section instead of beside the control
+       field on the Main page because the fix — the two dropdowns above — is here. -->
+  <PlAlert v-if="referenceSources?.controlNotBaseline" type="warn">
+    {{ referenceSources.controlNotBaseline }}
+  </PlAlert>
   <PlAlert v-if="referenceSources?.unavailable.length" type="info">
     <div v-for="(line, i) in referenceSources.unavailable" :key="i">{{ line }}</div>
   </PlAlert>

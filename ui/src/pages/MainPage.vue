@@ -444,10 +444,12 @@ const gridOptions = {
           :style="{ flex: 1 }"
         >
           <template #tooltip>
-            <b>If your panel includes a non-binding background control</b>, pick it here. The block
-            marks that feature in its output, so a downstream reader can tell the background control
-            apart from the antigens. It changes no per-cell number and no verdict. Leave blank if
-            you have no control.
+            <b>Pick your non-binding background control here, if the panel has one.</b><br /><br />
+            This setting only labels that feature in the block output. A downstream reader can then
+            tell the control apart from the antigens. It changes no count and no verdict.<br /><br />
+            <b>It does not make the control your baseline.</b> To do that, declare the same feature
+            under "Baseline (background) level" below.<br /><br />
+            Leave blank if you have no control.
           </template>
         </PlDropdown>
 
