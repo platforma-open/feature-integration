@@ -1389,27 +1389,30 @@ export const platforma = BlockModelV3.create(dataModel)
         value: "declared",
         label: "Declared baseline tag",
         description:
-          "Each count is judged against the tag the panel marks as bound by nothing, read in the " +
+          "The block judges each count against the tag your panel marks as the baseline, in the " +
           "same cell. Verdicts read this way compare across runs.",
       });
     else if (!markerWithoutBaseline)
       unavailable.push(
-        "Declared baseline tag — no tag is marked as the baseline yet. Choose the panel column that " +
-          "declares each tag's role, then the values of it that mark the baseline tag.",
+        "Declared baseline tag — you have not marked a tag as the baseline yet. Choose the panel " +
+          "column that declares each tag's role. Then choose the values of that column that mark " +
+          "the baseline tag.",
       );
     if (panelSize >= minMembers)
       options.push({
         value: "panel",
         label: "The panel's own readings",
         description:
-          `Each count is judged against the rest of the panel (${panelSize} tags) — ` +
-          `even if a baseline tag is declared. Pick this to ignore one deliberately.`,
+          `The block judges each count against the rest of the panel (${panelSize} tags). This ` +
+          `holds even where your panel declares a baseline tag. Pick this source to ignore that ` +
+          `tag deliberately.`,
       });
     else
       unavailable.push(
-        `The panel's own readings — the panel declares ${panelSize} tag(s) and this source needs at ` +
-          `least ${minMembers}. Lower "Minimum panel size to serve as baseline" under "Baseline ` +
-          `thresholds", or declare a baseline tag.`,
+        `The panel's own readings — your panel declares ${panelSize} ` +
+          `${panelSize === 1 ? "tag" : "tags"}, and this source needs at least ${minMembers}. ` +
+          `Lower "Minimum panel size to serve as baseline" under "Baseline thresholds". You can ` +
+          `also declare a baseline tag.`,
       );
     // `none` is deliberately NOT offered. It is what the run REPORTS when neither rung can serve — the
     // third rung of `292-no-declared-reference`'s ordering — and never something a scientist asks for:
