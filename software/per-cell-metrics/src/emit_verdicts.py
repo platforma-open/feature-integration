@@ -1513,6 +1513,13 @@ def main() -> None:
         "panelLinesDropped": dropped_lines,
         "samples": samples,
         "setCount": len(cells_by_set),
+        # How many DISTINCT panels the run carried. One means every sample was stained with the same
+        # tags, and then how many of a clonotype's cells could answer is the same at every identity --
+        # its own cell count, which the grid already shows beside its name. The readout uses this to
+        # decide whether the per-identity figure says anything: repeated down a column it teaches a
+        # reader to ignore it, and the whole reason for carrying it is that a verdict from three cells
+        # and one from forty print the same word.
+        "samplePanelCount": len(set(panel_of_sample.values())),
     }
     with open(f"{prefix}_run_meta.json", "w") as out:
         json.dump(meta, out, indent=2, sort_keys=True)

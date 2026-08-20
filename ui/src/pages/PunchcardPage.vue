@@ -100,6 +100,7 @@ const cellRendererSelector = (params: { colDef?: { context?: PunchColumnContext 
       // see the header row at all. The options output supplies the label.
       antigen: labelOf.value[identity] ?? identity,
       mergedNote: mergedNote(identity),
+      showCouldAnswer: panelsDiffer.value,
     },
   };
 };
@@ -126,6 +127,11 @@ const runMeta = computed(() => app.model.outputs.verdictRunMeta);
 // display prose the Python enum happened to carry, so rewording that sentence for readability would have
 // silently removed the warning below with nothing failing.
 const noComparator = computed(() => runMeta.value?.referenceChoice === "none");
+// Whether the run carried panels that differ. `the-explore-readout` shows the per-identity
+// could-answer count only then, because only then does it vary: under one panel it is the clonotype's
+// own cell count at every identity, and the grid already carries that beside the name. Taken from the
+// run record rather than guessed in the UI — what panels a run carried is the run's fact.
+const panelsDiffer = computed(() => (runMeta.value?.samplePanelCount ?? 1) > 1);
 // Display wording comes from the model, which owns it for the pre-run dropdown too, so a comparator does
 // not change its name once it has served.
 const requestedLabel = computed(() =>

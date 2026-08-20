@@ -78,8 +78,15 @@ export type VerdictRunMeta = {
   identityCount: number;
   setCount: number;
   cellsAnalysed: number;
-  /** Tags the grouping column said nothing about; each stands as its own identity, under a bare barcode. */
+  /** Tags the grouping column said nothing about. Each stands as its own identity, under a bare barcode. */
   tagsWithoutGroupingValue: string[];
+  /**
+   * How many DISTINCT panels the run carried. One means every sample was stained with the same tags,
+   * and then how many of a clonotype's cells could answer does not vary by identity — it is the
+   * clonotype's own cell count, which the grid carries beside its name. Optional because a run record
+   * written before this field existed does not have it, and a reader treats absent as one.
+   */
+  samplePanelCount?: number;
 };
 
 // What the software resolves an unset reference source to, restated so the dropdown can say it. Mirrors

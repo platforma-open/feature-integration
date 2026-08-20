@@ -34,7 +34,9 @@ import { PUNCH_PAINT } from "./punchMarks";
 //
 // There is deliberately no score and no binding level here: `binary-narrowing` forbids one leaving the
 // block, so the tooltip explains a verdict by what it RESTS on and never by how strongly anything bound.
-const props = defineProps<{ params: { value: unknown; antigen?: string; mergedNote?: string } }>();
+const props = defineProps<{
+  params: { value: unknown; antigen?: string; mergedNote?: string; showCouldAnswer?: boolean };
+}>();
 
 const VERDICT_STATES = ["bound", "not bound", "unreliable", "never asked"] as const;
 type VerdictState = (typeof VERDICT_STATES)[number];
@@ -155,7 +157,15 @@ const lines = computed<string[]>(() => {
   const out = props.params.antigen === undefined ? [] : [props.params.antigen];
   out.push(p.state.toUpperCase(), EXPLANATION[p.state]);
   if (p.state !== "never asked") {
-    out.push(`${p.answered} of ${p.couldAnswer} cells answered`);
+    // How many COULD answer is shown only where the run carried panels that differ, which is where
+    // it varies. Under one panel it is the clonotype's own cell count at every identity, already
+    // beside its name in the grid, and repeating it here would teach a reader to skip the line that
+    // separates a verdict resting on three cells from one resting on forty.
+    out.push(
+      props.params.showCouldAnswer
+        ? `${p.answered} of ${p.couldAnswer} cells answered`
+        : `${p.answered} cells answered`,
+    );
     if (p.agreement !== undefined) out.push(`${Math.round(p.agreement * 100)}% of them agreed`);
   }
   if (p.reason !== undefined) out.push(WHY_UNSETTLED[p.reason] ?? p.reason);
