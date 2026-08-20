@@ -6,8 +6,8 @@ from pathlib import Path
 
 import polars as pl
 import pytest
-from emit_verdicts import _linker_frame
-from panel import ANY_SAMPLE
+from emit_verdicts import _build_grouping, _identity_properties, _linker_frame
+from panel import ANY_SAMPLE, consistent_properties, property_columns
 from verdict import DEFAULT_PANEL_MIN_MEMBERS, ReferenceChoice
 
 SRC = Path(__file__).resolve().parents[1] / "src"
@@ -1686,3 +1686,61 @@ def test_a_global_declaration_adds_no_pair_of_its_own():
     # ANY_SAMPLE feeds the same identity everywhere, so it contributes that one pair and nothing more.
     frame = _linker_frame({("T1", ANY_SAMPLE): "A"})
     assert sorted(zip(frame["tag"].to_list(), frame["identity"].to_list())) == [("T1", "A")]
+
+
+# --- a grouped-on column is a declaration by construction ------------------------------------
+
+
+def test_a_grouped_on_column_travels_even_when_a_member_tag_is_reused():
+    # `panel-file-authority`: "The columns the scientist grouped on are declarations of it, unique by
+    # construction." Identity B exists only because T1 is reused with a different Identity per sample,
+    # so tag-grain agreement drops Identity for T1 — and B carried no declaration of the very thing it
+    # was grouped on. A passed only because T2 happens to agree across its samples, which is luck.
+    panel = pl.DataFrame(
+        {
+            "tag": ["T1", "T1", "T2", "T2"],
+            "sample": ["s1", "s2", "s1", "s2"],
+            "Identity": ["A", "B", "A", "A"],
+            "Channel": ["PE", "PE", "APC", "APC"],
+        }
+    )
+    cols = property_columns(panel)
+    props, _ = consistent_properties(panel, cols)
+    grouping, _, _, declared = _build_grouping(
+        {"by": "property", "column": "Identity"}, panel, props, reference_tags=set()
+    )
+    held = _identity_properties(grouping, props, cols, declared)
+    assert held["A"]["Identity"] == "A"
+    assert held["B"]["Identity"] == "B"
+
+
+def test_a_column_not_grouped_on_still_needs_agreement_across_the_identity_tags():
+    panel = pl.DataFrame(
+        {
+            "tag": ["T1", "T2"],
+            "sample": ["s1", "s1"],
+            "Identity": ["A", "A"],
+            "Channel": ["PE", "APC"],
+        }
+    )
+    cols = property_columns(panel)
+    props, _ = consistent_properties(panel, cols)
+    grouping, _, _, declared = _build_grouping(
+        {"by": "property", "column": "Identity"}, panel, props, reference_tags=set()
+    )
+    held = _identity_properties(grouping, props, cols, declared)
+    assert held["A"]["Identity"] == "A"
+    assert "Channel" not in held["A"], "the two member tags disagree, so Channel does not hold"
+
+
+def test_the_per_tag_grouping_declares_nothing_of_its_identities():
+    # It groups on no column, so there is nothing to take by construction. Every property still
+    # travels by the agreement rule.
+    panel = pl.DataFrame({"tag": ["T1"], "sample": ["s1"], "Channel": ["PE"]})
+    cols = property_columns(panel)
+    props, _ = consistent_properties(panel, cols)
+    grouping, rule_id, _, declared = _build_grouping(None, panel, props, reference_tags=set())
+    assert rule_id == "per-tag"
+    assert declared == {}
+    held = _identity_properties(grouping, props, cols, declared)
+    assert held["T1"]["Channel"] == "PE"

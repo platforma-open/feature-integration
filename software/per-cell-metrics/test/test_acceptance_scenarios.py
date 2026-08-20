@@ -405,7 +405,7 @@ def test_420_an_unasked_off_target_is_reachable_only_because_the_panel_is_keyed_
             "Identity": ["target", "offA", "target", "offA", "offB"],
         }
     )
-    grouping, rule_id, ungrouped = _build_grouping(
+    grouping, rule_id, ungrouped, _declared = _build_grouping(
         {"by": "property", "column": "Identity"}, panel, properties={}, reference_tags=set()
     )
     assert rule_id == "property:Identity"
@@ -430,7 +430,7 @@ def test_a_reused_barcode_is_read_as_what_its_own_sample_declared():
     from panel import identity_universe
 
     panel = pl.DataFrame({"tag": ["T1", "T1"], "sample": ["s1", "s2"], "Identity": ["antigenA", "antigenB"]})
-    grouping, _, ungrouped = _build_grouping(
+    grouping, _, ungrouped, _declared = _build_grouping(
         {"by": "property", "column": "Identity"}, panel, properties={}, reference_tags=set()
     )
     assert grouping == {("T1", "s1"): "antigenA", ("T1", "s2"): "antigenB"}

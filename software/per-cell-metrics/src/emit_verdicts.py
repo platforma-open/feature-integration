@@ -244,7 +244,8 @@ def _build_grouping(
             f"--grouping must be a JSON object, {{'by':'tag'}} or {{'by':'property','column':...}}; got {rule!r}"
         )
     if rule is None or rule.get("by") == "tag":
-        return by_tag, "per-tag", []
+        # The per-tag grouping groups on no column, so it declares nothing of its identities.
+        return by_tag, "per-tag", [], {}
     if rule.get("by") != "property":
         raise SystemExit(f"--grouping must be {{'by':'tag'}} or {{'by':'property','column':...}}; got {rule!r}")
 
@@ -266,6 +267,12 @@ def _build_grouping(
     # stray whitespace would ever reveal.
     grouping: Grouping = {}
     ungrouped_pairs: list[tuple[str, str]] = []
+    # What each identity was grouped ON, recorded here because this is the one place that knows both
+    # the column and the row's value. `panel-file-authority` makes a grouped-on column a declaration of
+    # the identity "unique by construction": every member carries the same value, because that value is
+    # what put it there. It cannot be recovered later from tag-grain agreement — a reused barcode has
+    # none, so the identity it forms would carry no declaration of the very thing it was grouped on.
+    declared: dict[str, dict[str, str]] = {}
     rows = zip(panel["tag"].to_list(), panel["sample"].to_list(), panel[column].to_list())
     for tag, sample, raw in sorted(rows):
         if tag in reference_tags:
@@ -273,6 +280,7 @@ def _build_grouping(
         value = (raw or "").strip()
         if value:
             grouping[(tag, sample)] = value
+            declared.setdefault(value, {})[column] = value
         else:
             # A pair the grouping column says nothing about keeps its own identity
             # instead of vanishing. Dropping it would remove a declared reagent from
@@ -294,7 +302,7 @@ def _build_grouping(
             f"identity: {ungrouped[:8]}",
             file=sys.stderr,
         )
-    return grouping, f"property:{column}", ungrouped
+    return grouping, f"property:{column}", ungrouped, declared
 
 
 def _linker_frame(grouping: Grouping) -> pl.DataFrame:
@@ -398,8 +406,20 @@ def _identity_properties(
     grouping: Grouping,
     properties: dict[str, dict[str, str]],
     columns: list[str],
+    declared: dict[str, dict[str, str]],
 ) -> dict[str, dict[str, str]]:
-    """Per identity, the panel declarations that hold across all of its tags.
+    """Per identity, the panel declarations that hold of it.
+
+    A declaration reaches an identity two ways, and `panel-file-authority` fixes both.
+
+    The columns the scientist GROUPED ON arrive in `declared`, from the builder that formed the
+    identities. They are declarations by construction: every member of an identity carries the same
+    value for them, because that value is what put it there. They are therefore taken rather than
+    tested, and they must be — a reused barcode has no tag-grain agreement to test, so an identity
+    formed from one would otherwise carry no declaration of the very thing it was grouped on.
+
+    Every OTHER column holds only where all of the identity's member tags agree, which is the rule
+    below.
 
     `panel-file-authority` requires whatever the panel file says consistently
     about an identity's tags to travel with that identity's verdicts, so a
@@ -431,8 +451,12 @@ def _identity_properties(
 
     held: dict[str, dict[str, str]] = {}
     for identity, tags in tags_of.items():
-        agreed: dict[str, str] = {}
+        # Seeded with what the identity was grouped on. Those columns are settled, so the agreement
+        # test below skips them rather than re-deciding them from a grain that cannot answer.
+        agreed: dict[str, str] = dict(declared.get(identity, {}))
         for column in columns:
+            if column in agreed:
+                continue
             values = {v for v in (properties.get(tag, {}).get(column, "") for tag in tags) if v}
             if len(values) == 1:
                 agreed[column] = next(iter(values))
@@ -746,7 +770,9 @@ def main() -> None:
         reference_tags = {t for t, props in properties.items() if props.get(args.role_column) in reference_values}
 
     grouping_rule = _json_arg(args.grouping, "--grouping")
-    grouping, grouping_id, ungrouped_tags = _build_grouping(grouping_rule, panel, properties, reference_tags)
+    grouping, grouping_id, ungrouped_tags, grouped_on = _build_grouping(
+        grouping_rule, panel, properties, reference_tags
+    )
     universe = identity_universe(panel, grouping)
     by_tag_grouping = default_grouping(panel, reference_tags)
     tag_universe = identity_universe(panel, by_tag_grouping)
@@ -1022,7 +1048,7 @@ def main() -> None:
             "no consumer. Rename it in the panel file to have it travel with the verdicts.",
             file=sys.stderr,
         )
-    identity_properties = _identity_properties(grouping, properties, exportable)
+    identity_properties = _identity_properties(grouping, properties, exportable, grouped_on)
     property_values = {
         column: sorted({held[column] for held in identity_properties.values() if column in held})
         for column in exportable
