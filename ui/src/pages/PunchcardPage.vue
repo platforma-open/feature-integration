@@ -6,6 +6,7 @@ import {
   PlBtnGhost,
   PlMaskIcon24,
   PlSlideModal,
+  PlTabs,
   usePlDataTableSettingsV2,
 } from "@platforma-sdk/ui-vue";
 import type { PTableKey } from "@platforma-open/milaboratories.feature-integration.model";
@@ -139,9 +140,24 @@ const expansionOpen = computed({
   },
 });
 
+// Which face of the expansion is showing. Two readings of one clonotype: `identity` is one row per
+// identity with the clonotype's verdict on it, `cell` is one row per cell with that cell's own reading at
+// every identity -- the same card, one clonotype deep.
+//
+// Local state rather than block data, and reset on every open. A tab is a glance, not a setting: nothing
+// downstream reads it, no other client needs to see it, and reopening on whichever face was last used
+// would answer a question the reader did not ask. Block data would also make it a migration.
+const EXPANSION_TABS = [
+  { label: "By identity", value: "identity" as const },
+  { label: "By cell", value: "cell" as const },
+];
+type ExpansionTab = (typeof EXPANSION_TABS)[number]["value"];
+const expansionTab = ref<ExpansionTab>("identity");
+
 function openExpansion(key?: PTableKey) {
   if (key === undefined) return;
   app.model.data.expandedSet = key as (string | number)[];
+  expansionTab.value = "identity";
 }
 
 // Seeded on first use rather than required in block data: a required field would need every stored
@@ -335,14 +351,26 @@ const nothingToOffer = computed(() => !noDataset.value && identityOptions.value.
       <VerdictSettings />
     </PlSlideModal>
 
-    <PlSlideModal v-model="expansionOpen" width="720px">
+    <!-- Full width, where the settings drawer beside it stays narrow. The by-cell face is a matrix as wide
+         as the panel, and a 720px drawer showed a handful of its columns with the rest behind a scrollbar
+         -- the shape of a punchcard is the thing being read, so cutting it off removes the reading. -->
+    <PlSlideModal v-model="expansionOpen" width="100vw">
       <template #title>{{ expansionTitle }}</template>
-      <PlAlert v-if="setAsideLine" type="info">{{ setAsideLine }}</PlAlert>
-      <PlAgDataTableV2
-        v-if="app.model.outputs.expansionTable"
-        v-model="expansionTableState"
-        :settings="expansionSettings"
-      />
+      <PlTabs v-model="expansionTab" :options="EXPANSION_TABS" />
+
+      <template v-if="expansionTab === 'identity'">
+        <PlAlert v-if="setAsideLine" type="info">{{ setAsideLine }}</PlAlert>
+        <PlAgDataTableV2
+          v-if="app.model.outputs.expansionTable"
+          v-model="expansionTableState"
+          :settings="expansionSettings"
+        />
+      </template>
+
+      <PlAlert v-else type="info">
+        One row per cell, one column per identity, is not built yet. It reads the per-cell states
+        the verdict stage already computes, which need exporting first.
+      </PlAlert>
     </PlSlideModal>
   </PlBlockPage>
 </template>
