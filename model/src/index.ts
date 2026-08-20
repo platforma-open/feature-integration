@@ -102,6 +102,22 @@ export type VerdictRunMeta = {
    * written before this field existed does not have it, and a reader treats absent as one.
    */
   samplePanelCount?: number;
+  /**
+   * The read limit the run applied, or absent/null where none was declared. Present here because it is
+   * the one signal for "a gate was declared" — `the-explore-readout` shows set-aside cells only then,
+   * and a gate that set nothing aside must still say so rather than look like no gate at all.
+   */
+  gateThreshold?: number | null;
+  /**
+   * How many of each clonotype's cells the gate set aside, keyed by set id. Absent when no gate was
+   * declared, and SPARSE — a clonotype that lost nothing carries no entry, so an absent key reads as
+   * zero. Sparse because this record is parsed on every render.
+   *
+   * Set grain, deliberately, and not a column of the expansion table: a set-aside cell answers nothing
+   * at any identity, so repeating the subtraction at every position would imply a per-identity failure
+   * that did not happen.
+   */
+  cellsSetAsideBySet?: Record<string, number>;
 };
 
 // What the software resolves an unset reference source to, restated so the dropdown can say it. Mirrors

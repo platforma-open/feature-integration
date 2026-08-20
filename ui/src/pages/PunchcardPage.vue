@@ -171,6 +171,25 @@ const expansionSettings = usePlDataTableSettingsV2({
 // Columns picker, and the reader reached this panel by clicking that clonotype in the first place.
 const expansionTitle = "Clonotype";
 
+// How many of this clonotype's cells the gate set aside, stated ONCE for the clonotype. 206 puts it
+// here rather than at every identity: a set-aside cell answers nothing anywhere, so a number repeated
+// down the identity column would read as a per-identity failure that did not happen.
+//
+// Read from the run record, which is the only route available — a Parquet p-column's values cannot be
+// read in the model, so a set-grain number reaches the UI either through a table (which would put it on
+// every row) or through this file.
+//
+// Undefined unless a gate was declared, which is the atom's condition. An absent entry under a declared
+// gate is a real zero: the map is sparse.
+const setAsideLine = computed(() => {
+  const meta = runMeta.value;
+  const key = app.model.data.expandedSet;
+  if (meta === undefined || key === undefined) return undefined;
+  if (meta.gateThreshold === undefined || meta.gateThreshold === null) return undefined;
+  const count = meta.cellsSetAsideBySet?.[String(key[0])] ?? 0;
+  return `Cells set aside: ${count}. A set-aside cell answers nothing at any identity.`;
+});
+
 // A missing V(D)J dataset is a legitimate state rather than a half-filled form: the block runs, and the
 // verdict stage alone is skipped. Read from data rather than from an output, because the point is what the
 // user has chosen — including before the next run.
@@ -295,6 +314,7 @@ const nothingToOffer = computed(() => !noDataset.value && identityOptions.value.
 
     <PlSlideModal v-model="expansionOpen" width="720px">
       <template #title>{{ expansionTitle }}</template>
+      <PlAlert v-if="setAsideLine" type="info">{{ setAsideLine }}</PlAlert>
       <PlAgDataTableV2
         v-if="app.model.outputs.expansionTable"
         v-model="expansionTableState"

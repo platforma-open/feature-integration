@@ -546,6 +546,17 @@ def _cells_by_set(linker: pl.DataFrame) -> dict[str, list[CellKey]]:
     return {set_id: sorted(keys) for set_id, keys in sorted(members.items())}
 
 
+def set_aside_by_set(cells_by_set: dict[str, list], gated: set) -> dict[str, int]:
+    """How many of each clonotype's cells the gate set aside.
+
+    One helper for two renderings. The CSV carries every clonotype including the zeros, because a
+    reader of a table must not have to tell "no gate" apart from "column missing". The run record
+    carries only the non-zeros, because it is parsed on every render and a dense map would cost one
+    entry per clonotype on every run.
+    """
+    return {set_id: sum(1 for key in cells if key in gated) for set_id, cells in sorted(cells_by_set.items())}
+
+
 def _pivot_identity_summary(verdicts: pl.DataFrame, universe: set[str]) -> tuple[pl.DataFrame, pl.DataFrame, bool]:
     """The per-set verdict row and its support, one column per identity in each.
 
@@ -993,7 +1004,7 @@ def main() -> None:
     # `cells_by_set` maps a set to its members, so this is a membership count over cells already read
     # rather than a second pass over the reference frame.
     per_set_gated = pl.DataFrame(
-        [(set_id, sum(1 for key in cells if key in gated)) for set_id, cells in sorted(cells_by_set.items())],
+        list(set_aside_by_set(cells_by_set, gated).items()),
         orient="row",
         schema={"setId": pl.String, "cellsSetAside": pl.Int64},
     )
@@ -1539,6 +1550,15 @@ def main() -> None:
         "cellsEmptied": cells_emptied,
         "cellsHighReference": cells_high_reference,
         "cellsSetAside": len(gated),
+        # The same tally per clonotype, for the expansion, and present only when a gate was declared:
+        # 206 shows this only where a gate is, so an absent key is the UI's whole condition. Sparse --
+        # a clonotype that lost nothing carries no entry, and an absent key reads as zero -- because
+        # this file is parsed on every render.
+        **(
+            {"cellsSetAsideBySet": {k: v for k, v in set_aside_by_set(cells_by_set, gated).items() if v > 0}}
+            if args.gate_threshold
+            else {}
+        ),
         "panelLinesDropped": dropped_lines,
         "samples": samples,
         "setCount": len(cells_by_set),

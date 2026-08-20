@@ -1875,3 +1875,34 @@ def test_set_counts_report_no_set_aside_cells_when_no_gate_is_declared(bed):
     _run(bed, *BASE)
     counts = pl.read_csv(bed / "result_set_counts.csv")
     assert counts["cellsSetAside"].to_list() == [0] * len(counts)
+
+
+def test_run_meta_carries_set_aside_cells_per_clonotype(bed):
+    # 206 states set-aside cells once for the clonotype, and the expansion reads them from the run
+    # record rather than from a p-column: a Parquet column's values cannot be read in the model, and a
+    # set-grain number joined into the per-identity table would repeat down every row -- which the atom
+    # forbids, because it implies a per-identity failure that did not happen.
+    #
+    # The bed's baseline is CTRL at 6 UMIs in every cell, so a gate of 5 sets every cell aside and the
+    # assertion has a real non-zero to bite on.
+    _run(bed, *BASE, "--gate-threshold", "5")
+    meta = json.loads((bed / "result_run_meta.json").read_text())
+    by_set = meta["cellsSetAsideBySet"]
+    assert sum(by_set.values()) == meta["cellsSetAside"]
+    assert meta["cellsSetAside"] > 0, "the gate set nothing aside, so this proves nothing"
+    # Sparse: the run record is parsed on every render, so a clonotype that lost nothing carries no
+    # entry. A reader takes an absent key as zero.
+    assert all(n > 0 for n in by_set.values())
+    # The CSV keeps its own dense rendering, and the two cannot disagree -- one helper produces both.
+    counts = pl.read_csv(bed / "result_set_counts.csv")
+    dense = dict(zip(counts["setId"].to_list(), counts["cellsSetAside"].to_list()))
+    assert by_set == {k: v for k, v in dense.items() if v > 0}
+
+
+def test_run_meta_omits_set_aside_cells_per_clonotype_when_no_gate_is_declared(bed):
+    # 206 shows the count only where a gate is declared. The key is ABSENT rather than an empty object,
+    # so the UI branches on one thing -- was a gate declared -- and never has to tell "no gate" apart
+    # from "a gate that took nothing".
+    _run(bed, *BASE)
+    meta = json.loads((bed / "result_run_meta.json").read_text())
+    assert "cellsSetAsideBySet" not in meta
