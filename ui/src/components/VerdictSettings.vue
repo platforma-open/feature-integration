@@ -87,10 +87,10 @@ function setRoleColumn(column: string | undefined) {
 
 // One control for the whole rule, and it takes SEVERAL columns: an identity is the distinct
 // combination of the named columns' values, so naming antigen and concentration together makes the
-// same antigen at two concentrations two antigens.
+// same antigen at two concentrations two identities.
 //
 // The barcode column sits in the same list as the property columns, because naming it IS a grouping —
-// the finest one available, one antigen per barcode — rather than a mode beside grouping. It cannot be
+// the finest one available, one identity per barcode — rather than a mode beside grouping. It cannot be
 // offered as a property column: the panel reader consumes it as the `tag` key, so it never appears in
 // the panel's property columns. It therefore maps to the `tag` rule, which produces exactly that
 // reading. A sentinel value stands for it, prefixed with a space so no real column name can collide.
@@ -106,7 +106,7 @@ const groupingSelection = computed<string[]>(() => {
 const groupingOptions = computed(() => [
   {
     value: TAG_GROUPING_VALUE,
-    label: `${app.model.data.barcodeSeqColumn || "Barcode"} — one antigen per barcode`,
+    label: `${app.model.data.barcodeSeqColumn || "Barcode"} — one identity per barcode`,
   },
   ...panelPropertyOptions.value,
 ]);
@@ -114,7 +114,7 @@ const groupingOptions = computed(() => [
 function setGrouping(selected: string[] | undefined) {
   const picked = (selected ?? []).filter((c) => c !== "");
   // The barcode column is the finest grouping there is, so it does not combine with a coarser one: a
-  // combination that includes it is already one antigen per barcode. Picking it therefore wins alone.
+  // combination that includes it is already one identity per barcode. Picking it therefore wins alone.
   // Picking nothing leaves the rule absent, which reads the same way.
   const rule: GroupingRule | undefined = picked.includes(TAG_GROUPING_VALUE)
     ? { by: "tag" }
@@ -167,10 +167,10 @@ function setBaselineSource(value: string | undefined) {
 
 // The identities the contending-groups editor picks from, live from the uploaded panel.
 const identityOptions = computed(() => app.model.outputs.identityOptions ?? []);
-// Under the default rule an identity id IS a feature barcode. The panel metadata staging emits is
-// column-wise — each column's distinct values, with no pairing between a barcode and the name beside it —
-// so the antigen names cannot be offered here. Said in the editor rather than left for the user to
-// discover from a list of 15-mers.
+// Grouped on the barcode column, an identity id IS a feature barcode. The panel metadata staging emits
+// is column-wise — each column's distinct values, with no pairing between a barcode and the name beside
+// it — so the identity names cannot be offered here. Said in the editor rather than left for the user
+// to discover from a list of 15-mers.
 const identitiesAreBarcodes = computed(() => app.model.data.grouping?.by !== "property");
 
 const contendingGroups = computed(() => app.model.data.contendingGroups ?? []);
@@ -201,14 +201,14 @@ function removeContendingGroup(index: number) {
   >
     <template #tooltip>
       The clonotype sets each verdict is about. Leave it blank to run the block without verdicts.
-      The antigen counts, the per-cell values and the per-sample QC are produced either way. The
-      fifteen quality measurements and the panel-versus-reads check belong to the verdict stage.
-      They need a dataset.
+      The block still emits the tag counts, the per-cell values and the per-sample QC. The fifteen
+      quality measurements and the panel-versus-reads check belong to the verdict stage. They need a
+      dataset.
     </template>
   </PlDropdownRef>
   <PlAlert v-if="!app.model.data.datasetRef" type="info">
-    Without a V(D)J dataset the block skips the verdict stage: no antigen verdicts, no per-antigen
-    columns and no panel check are produced. Everything not keyed by a clonotype still is.
+    Without a V(D)J dataset the block skips the verdict stage. It emits no verdicts, no per-identity
+    columns and no panel check. It still emits everything that is not keyed by a clonotype.
   </PlAlert>
 
   <PlSectionSeparator compact> Baseline (background) level </PlSectionSeparator>
@@ -225,7 +225,7 @@ function removeContendingGroup(index: number) {
       the baseline. The block then judges every other count in the same cell against that tag.<br /><br />
       <b>This setting changes the numbers.</b> "Control feature marker" on the Main page only labels
       a feature in the output.<br /><br />
-      Leave blank if your panel declares no role.
+      Leave it blank if your panel declares no role.
     </template>
   </PlDropdown>
   <PlDropdownMulti
@@ -249,15 +249,16 @@ function removeContendingGroup(index: number) {
     @update:model-value="setBaselineSource"
   >
     <template #tooltip>
-      Set from what you declared above, and you can override it. Marking a baseline tag selects that
-      tag. With none marked, the panel's own readings serve.<br /><br />
-      <b>Declared baseline tag</b> — the tag your panel marks as bound by nothing.<br />
+      The block sets this from what you declared above. You can override it. If you mark a baseline
+      tag, the block selects that tag. If you mark no tag, the panel's own readings serve.<br /><br />
+      <b>Declared baseline tag</b> — the tag your panel marks as the one nothing should bind.<br />
       <b>The panel's own readings</b> — the median of each cell's own counts. Verdicts read this way
       are local to this run and do not compare with another run.<br />
-      Where neither can serve, the run reports no baseline and every verdict is left unreliable.
-      That is an outcome, not a setting, so it is not on this list.<br /><br />
-      Selected, never inferred: two runs answered against different baselines produce numbers that
-      do not compare, and a scientist who did not choose the rule cannot know that happened.
+      Where neither can serve, the run reports no baseline and leaves every verdict unreliable. That
+      is an outcome, not a setting, so it is not on this list.<br /><br />
+      You select this, and the block never infers it. Two runs answered against different baselines
+      produce numbers that do not compare. A scientist who did not choose the rule cannot know that
+      happened.
     </template>
   </PlDropdown>
   <!-- Above the info alert, and warn rather than info: this is the one case the user has shown us is
@@ -274,30 +275,31 @@ function removeContendingGroup(index: number) {
   <PlDropdownMulti
     :model-value="groupingSelection"
     :options="groupingOptions"
-    label="Group tags into antigens by"
+    label="Panel columns that define an identity"
     :disabled="panelUnread"
     @update:model-value="setGrouping"
   >
     <template #tooltip>
-      A verdict is about an antigen, not a barcode. Name one or more panel columns, and every tag
-      sharing a value of all of them becomes one antigen. That is how a dual-barcoded antigen gives
-      one row rather than two.<br /><br />
-      Naming several columns makes the antigen the combination: antigen and concentration together
-      read the same antigen at two concentrations as two antigens.<br /><br />
-      Naming the barcode column is the finest grouping — one antigen per barcode — and it wins
-      alone, because any combination including it is already that.<br /><br />
-      An antigen's reading in a cell is the highest of its tags, never their sum. Tags differ in how
-      readily they are taken up, so summing them would need the baseline scaled to match.
+      A verdict is about an identity, not a barcode. Name one or more panel columns. Every tag that
+      shares a value in all of them becomes one identity. That is how an antigen on two barcodes
+      gives one column rather than two.<br /><br />
+      Name several columns and the identity becomes the combination. Antigen and concentration
+      together read the same antigen at two concentrations as two identities.<br /><br />
+      The barcode column is the finest grouping: one identity per barcode. Select it and the block
+      ignores the other columns, because any combination that includes the barcode gives the same
+      identities.<br /><br />
+      An identity's reading in a cell is the highest of its tags, never their sum. Tags differ in
+      uptake, so a sum would need the baseline scaled to match.
     </template>
   </PlDropdownMulti>
 
   <PlNumberField v-model="app.model.data.countFloor" :min-value="0" :step="1" label="Count floor">
     <template #tooltip>
-      Counts below this are not evidence of binding. They are read as zero rather than as a small
-      signal.<br /><br />
-      The baseline tag is exempt. Flooring it would lower the level every count is judged against,
-      and push the whole run toward bound.<br /><br />
-      Shipped at 4, a declared default rather than a calibrated line.
+      Counts below this are not evidence of binding. The block reads them as zero rather than as a
+      small signal.<br /><br />
+      The floor does not apply to the baseline tag. A floor on the baseline would lower the level
+      every count is judged against, and push the whole run toward bound.<br /><br />
+      The default is 4. It is a declared default, not a calibrated line.
     </template>
   </PlNumberField>
   <PlNumberField
@@ -308,9 +310,10 @@ function removeContendingGroup(index: number) {
     label="Bound cutoff (0–100)"
   >
     <template #tooltip>
-      The specificity score at or above which one cell reads that antigen as bound. This is a
+      The specificity score at or above which one cell reads that identity as bound. This is a
       per-cell reading. The clonotype's verdict is the majority of its cells.<br /><br />
-      Inherited from the dominant tool's cutoff rather than justified independently.
+      This default comes from the dominant tool's cutoff. This block does not justify it
+      independently.
     </template>
   </PlNumberField>
   <PlNumberField
@@ -320,15 +323,15 @@ function removeContendingGroup(index: number) {
     label="Minimum voting cells"
   >
     <template #tooltip>
-      How many cells must answer before their majority settles a verdict. Below it the verdict reads
-      unreliable, and gives too few voters as the reason.<br /><br />
-      At 1 a verdict may rest on a single cell, and says so — the answering-cell count travels in
-      the table.
+      How many cells must answer before their majority settles a verdict. Below this number the
+      verdict reads unreliable, and gives too few voters as the reason.<br /><br />
+      At 1 a verdict may rest on a single cell. The table carries the answering-cell count, so you
+      can see when it does.
     </template>
   </PlNumberField>
 
   <!--
-    DEFERRED — the contending-antigen editor is not offered.
+    DEFERRED — the contending-group editor is not offered.
 
     Only the editor is deferred. `contendingGroups` stays in the block data, the args projection still
     passes it, and the workflow still threads `--contending`, so a project that already carries groups
@@ -342,7 +345,7 @@ function removeContendingGroup(index: number) {
     asks the scientist to retype a grouping the panel file is supposed to carry.
 
     It was also close to unusable at the default grouping, which the removed warning admitted in as
-    many words. Under one-identity-per-tag the identities ARE the barcodes, and the panel is read
+    many words. Grouped on the barcode column the identities ARE the barcodes, and the panel is read
     column by column before the run, so no barcode-to-name pairing exists yet and the dropdown could
     only offer 15-mers. A scientist would have been picking sequences out of a list.
 
@@ -355,17 +358,17 @@ function removeContendingGroup(index: number) {
     requires the note to travel WITH the verdict where a group exists, and it still does. It does not
     require this block to offer a way to type one in.
 
-  <PlAccordionSection label="Contending antigens">
+  <PlAccordionSection label="Contending groups">
     <PlAlert type="info">
-      Antigens declared to compete for one binding site. Where one of them reads bound for a
-      clonotype, the others reading "not bound" are marked as competed — the verdict is unchanged,
-      and a downstream statement can test the mark.
+      Identities declared to compete for one binding site. Where one of them reads bound for a
+      clonotype, the block marks the others that read "not bound" as competed. The verdict does not
+      change, and a downstream statement can test the mark.
     </PlAlert>
     <PlAlert v-if="identitiesAreBarcodes" type="warn">
-      Under "one identity per tag" the identities are the feature barcodes themselves. The panel is
-      read column by column before the run, which carries no barcode-to-name pairing, so the antigen
-      names cannot be offered here. Group by a panel column — the feature-name column, for instance
-      — to pick antigens by name.
+      You grouped on the barcode column, so each identity is one feature barcode. The block reads
+      the panel column by column before the run, and that reading carries no barcode-to-name
+      pairing. The block therefore cannot offer the identity names here. Group on a panel column,
+      the feature-name column for instance, to pick identities by name.
     </PlAlert>
     <div v-for="(group, index) in contendingGroups" :key="index">
       <PlDropdownMulti
@@ -392,7 +395,7 @@ function removeContendingGroup(index: number) {
     >
       <template #tooltip>
         How many tags the panel needs before its own readings can serve as the baseline. Below this,
-        that source is not offered.<br /><br />
+        the block does not offer that source.<br /><br />
         No published work sets this line. The default of 8 is this block's choice, not a standard.
       </template>
     </PlNumberField>
@@ -404,7 +407,7 @@ function removeContendingGroup(index: number) {
     >
       <template #tooltip>
         The lowest baseline count this block will judge against, in UMIs. Below it, the cell reads
-        unreliable and gives the reason. It is not called not bound.
+        unreliable and gives the reason. The block does not call it not bound.
       </template>
     </PlNumberField>
     <PlNumberField
@@ -414,9 +417,9 @@ function removeContendingGroup(index: number) {
       label="High baseline reading"
     >
       <template #tooltip>
-        The baseline count, in UMIs, at which a cell counts as sitting in high background. This is a
-        measurement, not a filter. The block counts these cells whether or not the gate below is on,
-        so you can see the run's exposure even when no gate is set.
+        The baseline count, in UMIs, at which a cell is in high background. This is a measurement,
+        not a filter. The block counts these cells whether or not the gate below is on. You can
+        therefore see the run's exposure even when no gate is set.
       </template>
     </PlNumberField>
     <PlNumberField
@@ -427,11 +430,12 @@ function removeContendingGroup(index: number) {
       label="Admissibility gate (baseline UMIs)"
     >
       <template #tooltip>
-        Off when empty. When set, a cell whose baseline reading reaches this is set aside. That cell
-        reads unreliable at every antigen and gives no verdict anywhere.<br /><br />
-        Off is a deliberate default, and a contested one. Published practice gates. The dominant
-        tool does not. Off matches the tool, so first-run numbers stay recognisable. The cost is
-        that a sticky cell stays in and returns a confident "not bound".
+        The gate is off when this field is empty. When you set it, the block sets aside a cell whose
+        baseline reading reaches this value. That cell reads unreliable at every identity and gives
+        no verdict anywhere.<br /><br />
+        Off is a deliberate default, and a contested one. Published practice uses a gate. The
+        dominant tool does not. Off matches the tool, so first-run numbers stay recognisable. The
+        cost is that a sticky cell remains in the set and returns a confident "not bound".
       </template>
     </PlNumberField>
   </PlAccordionSection>
@@ -446,8 +450,9 @@ function removeContendingGroup(index: number) {
       label="Minimum cell agreement (0–1)"
     >
       <template #tooltip>
-        Off when empty: a narrow majority stands and reports how narrow. Set it to leave a verdict
-        unsettled where the answering cells agree less than this share of the time.
+        This setting is off when the field is empty. A narrow majority then stands, and reports how
+        narrow. Set it to leave a verdict unsettled where the answering cells agree less than this
+        share of the time.
       </template>
     </PlNumberField>
   </PlAccordionSection>
