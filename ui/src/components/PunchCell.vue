@@ -2,7 +2,7 @@
 import type { CSSProperties } from "vue";
 import { computed, ref } from "vue";
 import type { Punch, VerdictState } from "./punchMarks";
-import { PUNCH_PAINT, parsePunch } from "./punchMarks";
+import { PUNCH_DIAMETER_PX, PUNCH_PAINT, parsePunch } from "./punchMarks";
 
 // One punch, in the operator's vocabulary rather than the use case figure's:
 //
@@ -20,13 +20,13 @@ import { PUNCH_PAINT, parsePunch } from "./punchMarks";
 // The three states that ARE answers all read as dots of one family, so the card is a field of colour and a
 // reader is never asked to tell a shape from an absence.
 //
-// SIZE carries what the reading rests on, and it applies to bound and not bound alike.
-// `support-travels-with-the-reading` obliges both counts to travel with a verdict wherever it appears, and
-// its reason is confidence, not magnitude: a reading resting on three cells must not look like one resting
-// on forty, and that is as true of a negative as of a positive. An earlier revision of this file sized only
-// `bound`, arguing a negative carries no magnitude worth showing; that conflated how much was bound with
-// how much was measured, and the atom is about the second. `unreliable` and `never asked` stay fixed,
-// because neither asserts anything for evidence to support.
+// EVERY mark is one size, and a large one. The card used to size bound and not-bound by the share of a
+// clonotype\'s cells that answered; that is gone. `support-travels-with-the-reading` is a DELIVERY
+// obligation -- it fixes that the scientist is handed the two counts, not that a dot encode them -- and
+// they are handed over twice already, in this component\'s own tooltip and as columns in the clonotype
+// expansion. What the encoding cost was legibility of the thing the card is for: at panel density a reader
+// scans for WHERE the colour is, and a grid of dots at eight different diameters reads as noise long
+// before anyone measures one against another.
 //
 // The cell's value carries everything needed to explain itself, in ONE value because a grid pairs a cell
 // with another column's cell only by position and no import guarantees that. The format and its decoder
@@ -41,18 +41,6 @@ const props = defineProps<{
 }>();
 
 const punch = computed<Punch>(() => parsePunch(props.params.value));
-
-const diameter = computed(() => {
-  const p = punch.value;
-  if (p.kind !== "read") return 11;
-  // Neither of these rests on anything an evidence count could describe.
-  if (p.state === "unreliable" || p.state === "never asked") return 11;
-  if (p.couldAnswer <= 0) return 8;
-  // Area rather than diameter tracks the support: doubling a diameter quadruples the ink, which would read
-  // as four times the evidence. The floor keeps a one-cell reading visible instead of shrinking it away.
-  const fraction = Math.min(1, Math.max(0, p.answered / p.couldAnswer));
-  return 8 + Math.sqrt(fraction) * 7;
-});
 
 type Glyph = "bound" | "not-bound" | "unreliable" | "none" | "unknown";
 const GLYPH_OF: Record<VerdictState, Glyph> = {
@@ -71,8 +59,8 @@ const punchStyle = computed<CSSProperties>(() => ({
   display: "inline-block",
   boxSizing: "border-box",
   borderRadius: "50%",
-  width: `${diameter.value}px`,
-  height: `${diameter.value}px`,
+  width: `${PUNCH_DIAMETER_PX}px`,
+  height: `${PUNCH_DIAMETER_PX}px`,
   ...(glyph.value === "none" ? {} : PUNCH_PAINT[glyph.value]),
 }));
 

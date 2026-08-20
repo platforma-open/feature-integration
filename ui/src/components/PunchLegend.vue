@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { CSSProperties } from "vue";
-import { PUNCH_PAINT, type PunchGlyph } from "./punchMarks";
+import { PUNCH_DIAMETER_PX, PUNCH_PAINT, type PunchGlyph } from "./punchMarks";
 
 // What the card's marks mean, stated once above it.
 //
@@ -8,9 +8,11 @@ import { PUNCH_PAINT, type PunchGlyph } from "./punchMarks";
 // from the card it explains — the failure mode of every hand-drawn legend, and one nobody notices because
 // both halves look deliberate.
 //
-// Size is deliberately NOT in the legend. On the card a dot's diameter carries how many of a clonotype's
-// cells answered, which is a continuous quantity; a swatch would have to pick one value and would then be
-// read as the meaning rather than as an example. The per-cell tooltip carries the counts in words instead.
+// Size means nothing on the card any more -- every mark is one diameter -- so the swatches take that same
+// diameter from the same constant. While the card sized its dots by evidence, a swatch had to pick one
+// value and was then read as the meaning rather than as an example, which is why this legend used to be
+// deliberately smaller than the thing it explains. That reason is gone, and matching is now the honest
+// drawing. The counts still reach the reader, in the per-cell tooltip and in the clonotype expansion.
 const ENTRIES: { glyph: PunchGlyph | "none"; label: string; meaning: string }[] = [
   {
     glyph: "bound",
@@ -38,8 +40,8 @@ const swatch = (glyph: PunchGlyph | "none"): CSSProperties => ({
   display: "inline-block",
   boxSizing: "border-box",
   borderRadius: "50%",
-  width: "11px",
-  height: "11px",
+  width: `${PUNCH_DIAMETER_PX}px`,
+  height: `${PUNCH_DIAMETER_PX}px`,
   flex: "0 0 auto",
   // "Never asked" draws nothing on the card, so its swatch is an empty well rather than a mark — a legend
   // entry with no glyph beside it reads as a missing image.
