@@ -1300,6 +1300,17 @@ export const platforma = BlockModelV3.create(dataModel)
       // That cut removed the one thing a reader needs from a header: which identity the column is. It
       // also applied only to the joined labels a tag receives when its rows disagree about the grouping
       // column. Correct those labels where they are produced. Do not hide them behind an ellipsis.
+      // Column ORDER here comes from the `pl7.app/table/orderPriority` annotation on each spec, and
+      // from nothing else. The cell count carries 96000, between the clonotype label's 100000 and the
+      // punches' 92000, and lands at position 3: row number, clonotype, cell count, then the identities.
+      //
+      // Verified by A/B against the live grid: a `displayOptions.ordering` rule and this array's own
+      // order are BOTH inert — inverting the rule's priority and moving the cell count to the end of
+      // `primaryColumns` each left it at position 3. Neither lever was added; if you are here to fix a
+      // column that "renders last", measure before you change anything, and measure with
+      // `aria-colindex`. `querySelectorAll('[role="columnheader"]')` returns AG Grid's recycled header
+      // nodes in an order that has nothing to do with column position, and reading it that way is what
+      // produced a bug report against this line when the placement was already correct.
       return createPlDataTableV3(ctx, {
         primaryColumns: [...cellCount, ...ordered].map((c) => DataColumn.fromColumn(c)),
         columns: null,
