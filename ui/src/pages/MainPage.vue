@@ -582,8 +582,9 @@ const gridOptions = {
       >
         <template #tooltip>
           <b>Pick the panel member nothing should bind, if the panel has one.</b><br /><br />
-          This setting only labels that feature in the block output. A downstream reader can then
-          tell the control apart from the antigens. It changes no count and no verdict.<br /><br />
+          This setting only labels that feature in the block output. A downstream block reads the
+          label and can keep the control out of its antigen metrics. It changes no count and no
+          verdict here.<br /><br />
           <b>It does not make the control your baseline.</b> To measure counts against it, declare
           the same feature under "Baseline (background) level" below.<br /><br />
           Leave it blank if you have no control.
@@ -596,8 +597,15 @@ const gridOptions = {
       <PlAlert v-if="combineColumnError" type="warn">
         {{ combineColumnError }}
       </PlAlert>
+      <!-- "Nothing else changes" was the only informative half of this alert, and it was the vague half:
+           what it meant is that this block's own numbers do not move. Said outright instead.
+           No downstream block is named here on purpose. The mark's only consumer today reads it out of
+           the feature axis, and which block that is can change without this text being revisited, so
+           naming one would drift into a lie. "A downstream block" stays true either way. -->
       <PlAlert v-if="controlInfoVisible" type="info">
-        You marked no control, so the output marks no feature as one. Nothing else changes.
+        You marked no control, so the output marks no feature as one. A downstream block cannot then
+        tell your control apart from the antigens. This block's own counts and verdicts stay the
+        same.
       </PlAlert>
       <PlAlert v-if="sampleMappingWarning?.length" type="warn">
         <div v-for="(line, i) in sampleMappingWarning" :key="i">{{ line }}</div>
