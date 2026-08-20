@@ -16,7 +16,7 @@ import type { CSSProperties } from "vue";
 export type PunchGlyph = "bound" | "not-bound" | "unreliable" | "unknown";
 
 /**
- * One diameter for every mark on the card, and for every swatch in the legend.
+ * One diameter for every mark on the card.
  *
  * The card used to size bound and not-bound by how many of a clonotype's cells answered, on the reading
  * that a verdict resting on three cells must not look like one resting on forty. The obligation behind
@@ -24,10 +24,18 @@ export type PunchGlyph = "bound" | "not-bound" | "unreliable" | "unknown";
  * is HANDED the two counts, not that a dot encode them. They are handed over twice already -- in the
  * per-cell tooltip, and as columns in the clonotype expansion -- so the card is free to be a field of
  * flat colour, which is what it is actually read as at panel density.
- *
- * Shared with the legend so a swatch cannot be a different size from the thing it explains.
  */
-export const PUNCH_DIAMETER_PX = 18;
+export const PUNCH_DIAMETER_PX = 22;
+
+/**
+ * The legend's swatches, smaller than the card's marks on purpose.
+ *
+ * Two numbers rather than one is safe here for the reason the encoding was removed: a diameter carries no
+ * meaning any more, so a swatch drawn at a different size cannot misreport anything -- it is an example of
+ * a COLOUR, at the scale a line of text wants. While the card sized its dots by evidence this would have
+ * been a real hazard, because the swatch would have been read as one particular amount of support.
+ */
+export const PUNCH_LEGEND_DIAMETER_PX = 11;
 
 export const PUNCH_PAINT: Record<PunchGlyph, CSSProperties> = {
   bound: { background: "#1a7f37" },
