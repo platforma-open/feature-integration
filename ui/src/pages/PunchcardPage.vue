@@ -155,6 +155,11 @@ const expansionTableState = computed({
 
 const expansionSettings = usePlDataTableSettingsV2({
   model: () => app.model.outputs.expansionTable,
+  // The expansion's data source changes on a DOUBLE-CLICK, not on a run: the model rebuilds the table
+  // filtered to whichever clonotype was chosen. The SDK documents `sourceId` as mandatory for exactly
+  // that case — "when the table can change without block run" — and without it the component holds the
+  // previous source's cached state and the grid sits in Loading until the whole window is reloaded.
+  sourceId: () => app.model.data.expandedSet?.join(" "),
 });
 
 // The slide-over's title names the VIEW, not the clonotype.
