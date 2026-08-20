@@ -582,10 +582,14 @@ export const platforma = BlockModelV3.create(dataModel)
     // naming the column instead.
     const panelColumns = data.panelColumnSnapshot;
     if (panelColumns?.length) {
-      for (const [role, column] of [
+      // Each grouping column is checked on its own. A grouping may name several, and joining them into
+      // one string to check would compare "Identity, Channel" against the panel's headers and never
+      // match — which throws here and takes the whole block to Limbo, refs and all.
+      const named: [string, string | undefined][] = [
         ["Baseline role", data.roleColumn],
-        ["Grouping", groupingColumns(data.grouping).join(", ") || undefined],
-      ] as const) {
+        ...groupingColumns(data.grouping).map((c): [string, string] => ["Grouping", c]),
+      ];
+      for (const [role, column] of named) {
         if (column && !panelColumns.includes(column))
           throw new Error(
             `The ${role} column "${column}" is not in the uploaded panel file. Select a column from the new panel.`,
