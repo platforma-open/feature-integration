@@ -1906,3 +1906,41 @@ def test_run_meta_omits_set_aside_cells_per_clonotype_when_no_gate_is_declared(b
     _run(bed, *BASE)
     meta = json.loads((bed / "result_run_meta.json").read_text())
     assert "cellsSetAsideBySet" not in meta
+
+
+@pytest.fixture
+def two_set_bed(tmp_path):
+    # Two clonotypes whose cells read the comparator differently, so a gate can catch one and leave the
+    # other untouched. This is the ONLY shape that can falsify a dense map: with a single clonotype, an
+    # implementation that emitted every clonotype including the zeros passes every other assertion in
+    # this file.
+    #
+    # K1's cells read CTRL at 6, so a gate of 5 takes both. K2's read it at 2, so the same gate leaves
+    # both. The antigen counts clear the shipped cutoff in each case, so both clonotypes still produce
+    # verdicts and the run is not degenerate.
+    (tmp_path / "counts.csv").write_text(
+        "sampleId,cellId,tag,umiCount\n"
+        "S1,c1,AAAA,500\nS1,c1,CTRL,6\n"
+        "S1,c2,AAAA,600\nS1,c2,CTRL,6\n"
+        "S1,d1,AAAA,500\nS1,d1,CTRL,2\n"
+        "S1,d2,AAAA,600\nS1,d2,CTRL,2\n"
+    )
+    (tmp_path / "panel.csv").write_text("Samples,Name,Sequence,Type\nS1,AgA,AAAA,Target\nS1,Ctrl,CTRL,Control\n")
+    (tmp_path / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS1,c2,K1\nS1,d1,K2\nS1,d2,K2\n")
+    return tmp_path
+
+
+def test_run_meta_omits_a_clonotype_the_gate_did_not_touch(two_set_bed):
+    # The sparseness claim, tested where it can fail. The run record is parsed on every model render, so
+    # a clonotype that lost nothing carries NO entry and a reader takes an absent key as zero. A map that
+    # carried `"K2": 0` would defeat that and pass every relative assertion above.
+    _run(two_set_bed, *BASE, "--gate-threshold", "5")
+    meta = json.loads((two_set_bed / "result_run_meta.json").read_text())
+    # Exact, not relative: K1 has two cells and the gate takes both.
+    assert meta["cellsSetAsideBySet"] == {"K1": 2}
+    assert "K2" not in meta["cellsSetAsideBySet"], "a clonotype the gate did not touch must be absent"
+    # The CSV stays DENSE, which is its own contract: a reader of a table must never have to tell "no
+    # gate" apart from "column missing". The contrast between the two renderings is the design.
+    counts = pl.read_csv(two_set_bed / "result_set_counts.csv")
+    dense = dict(zip(counts["setId"].to_list(), counts["cellsSetAside"].to_list()))
+    assert dense == {"K1": 2, "K2": 0}
