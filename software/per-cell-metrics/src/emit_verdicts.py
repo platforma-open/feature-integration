@@ -212,6 +212,38 @@ def _json_arg(raw: str | None, flag: str):
         raise SystemExit(f"{flag} is not valid JSON: {exc}") from exc
 
 
+# What joins several grouping columns into one identity key. A scientist may group on more than one
+# column, and the identity is the distinct combination of their values, so one string has to carry them
+# all: an identity is a single axis value.
+#
+# A panel value containing this separator would let two different combinations produce one key. That is
+# reported rather than silently merged, and the run continues -- refusing the panel would reject a file
+# that reads correctly under every other grouping.
+GROUPING_KEY_SEPARATOR = " | "
+
+
+def _grouping_columns(rule: dict, declared: list[str]) -> list[str]:
+    """The columns a property rule names, as a list.
+
+    Accepts `columns: [...]`, and the older `column: "..."` because a project stored before the rule
+    took a list carries that shape. Reading both here costs one function; the alternative is a data
+    migration over every stored project to avoid a failed run.
+    """
+    raw = rule.get("columns")
+    if raw is None:
+        single = rule.get("column") or ""
+        raw = [single] if single else []
+    if not isinstance(raw, list) or not all(isinstance(c, str) for c in raw):
+        raise SystemExit(f"--grouping columns must be a list of strings; got {raw!r}")
+    named = [c for c in raw if c]
+    if not named:
+        raise SystemExit("--grouping names no column; give one or more, or use {'by':'tag'}")
+    missing = [c for c in named if c not in declared]
+    if missing:
+        raise SystemExit(f"--grouping names {missing}, which the panel does not declare: {declared}")
+    return named
+
+
 def _build_grouping(
     rule: dict | None,
     panel: pl.DataFrame,
@@ -241,18 +273,15 @@ def _build_grouping(
     # for exactly this mistake.
     if rule is not None and not isinstance(rule, dict):
         raise SystemExit(
-            f"--grouping must be a JSON object, {{'by':'tag'}} or {{'by':'property','column':...}}; got {rule!r}"
+            f"--grouping must be a JSON object, {{'by':'tag'}} or {{'by':'property','columns':[...]}}; got {rule!r}"
         )
     if rule is None or rule.get("by") == "tag":
         # The per-tag grouping groups on no column, so it declares nothing of its identities.
         return by_tag, "per-tag", [], {}
     if rule.get("by") != "property":
-        raise SystemExit(f"--grouping must be {{'by':'tag'}} or {{'by':'property','column':...}}; got {rule!r}")
+        raise SystemExit(f"--grouping must be {{'by':'tag'}} or {{'by':'property','columns':[...]}}; got {rule!r}")
 
-    column = rule.get("column") or ""
-    declared = property_columns(panel)
-    if column not in declared:
-        raise SystemExit(f"--grouping names property column {column!r}, which the panel does not declare: {declared}")
+    columns = _grouping_columns(rule, property_columns(panel))
 
     # Read PER PANEL ROW, not through `consistent_properties`. The panel declares per
     # tag and sample, so a value differing between a tag's rows is a declaration —
@@ -273,14 +302,23 @@ def _build_grouping(
     # what put it there. It cannot be recovered later from tag-grain agreement — a reused barcode has
     # none, so the identity it forms would carry no declaration of the very thing it was grouped on.
     declared: dict[str, dict[str, str]] = {}
-    rows = zip(panel["tag"].to_list(), panel["sample"].to_list(), panel[column].to_list())
-    for tag, sample, raw in sorted(rows):
+    flagged: set[str] = set()
+    rows = zip(
+        panel["tag"].to_list(),
+        panel["sample"].to_list(),
+        *(panel[c].to_list() for c in columns),
+    )
+    for tag, sample, *raw_values in sorted(rows):
         if tag in reference_tags:
             continue
-        value = (raw or "").strip()
-        if value:
-            grouping[(tag, sample)] = value
-            declared.setdefault(value, {})[column] = value
+        values = [(v or "").strip() for v in raw_values]
+        # ALL named columns must carry a value. A combination missing one component is not that
+        # combination, and supplying the absent one would invent a declaration the panel never made.
+        if all(values):
+            identity = GROUPING_KEY_SEPARATOR.join(values)
+            grouping[(tag, sample)] = identity
+            declared.setdefault(identity, {}).update(dict(zip(columns, values)))
+            flagged.update(v for v in values if GROUPING_KEY_SEPARATOR.strip() in v)
         else:
             # A pair the grouping column says nothing about keeps its own identity
             # instead of vanishing. Dropping it would remove a declared reagent from
@@ -298,11 +336,18 @@ def _build_grouping(
         # tags are answered under a grouping that could not place them, so a
         # bare barcode sits among the family identities and only this says why.
         print(
-            f"[emit-verdicts] {len(ungrouped)} tag(s) carry no {column!r} value and stand as their own "
-            f"identity: {ungrouped[:8]}",
+            f"[emit-verdicts] {len(ungrouped)} tag(s) carry no value for every one of {columns} and "
+            f"stand as their own identity: {ungrouped[:8]}",
             file=sys.stderr,
         )
-    return grouping, f"property:{column}", ungrouped, declared
+    if flagged:
+        print(
+            f"[emit-verdicts] {len(flagged)} panel value(s) contain "
+            f"{GROUPING_KEY_SEPARATOR.strip()!r}, which joins grouping columns: {sorted(flagged)[:8]}. "
+            "Two combinations may share one identity key.",
+            file=sys.stderr,
+        )
+    return grouping, "property:" + "|".join(columns), ungrouped, declared
 
 
 def _linker_frame(grouping: Grouping) -> pl.DataFrame:
@@ -1014,8 +1059,17 @@ def main() -> None:
     # column at all and borrows the feature name. Passing the grouping column either way made every
     # per-tag run look up "", so a barcode two samples named differently fell through to its raw 15-mer
     # with the conflict recorded in stderr and shown nowhere a reader would look.
-    grouping_column = grouping_rule.get("column") if isinstance(grouping_rule, dict) else None
-    label_column = args.feature_col if grouping_id == "per-tag" else grouping_column
+    # Under a property grouping on ONE column, that column supplies the rescue: a pair that fell back
+    # has no value for it, and the names it did declare are what a reader needs. Under several columns
+    # there is no single such column, so the feature column supplies it, exactly as the per-tag branch
+    # does -- a pair that fell back has no combination at all, and what a reader needs then is what the
+    # reagent is called rather than which combination it failed to join.
+    grouping_columns = (
+        _grouping_columns(grouping_rule, property_columns(panel))
+        if (isinstance(grouping_rule, dict) and grouping_rule.get("by") == "property")
+        else []
+    )
+    label_column = grouping_columns[0] if len(grouping_columns) == 1 else args.feature_col
     labels = _identity_labels(
         grouping,
         properties,

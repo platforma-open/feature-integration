@@ -1744,3 +1744,67 @@ def test_the_per_tag_grouping_declares_nothing_of_its_identities():
     assert declared == {}
     held = _identity_properties(grouping, props, cols, declared)
     assert held["T1"]["Channel"] == "PE"
+
+
+# --- a grouping may name several columns -----------------------------------------------------
+
+
+def test_two_grouping_columns_make_the_identity_the_combination():
+    # `grouping-belongs-to-the-question`: "Named antigen and concentration together, the identity is
+    # the pair, and the same antigen at two concentrations is two identities."
+    panel = pl.DataFrame(
+        {
+            "tag": ["T1", "T2", "T3"],
+            "sample": ["s1", "s1", "s1"],
+            "Antigen": ["Spike", "Spike", "Nuc"],
+            "Dose": ["low", "high", "low"],
+        }
+    )
+    grouping, rule_id, ungrouped, declared = _build_grouping(
+        {"by": "property", "columns": ["Antigen", "Dose"]}, panel, {}, reference_tags=set()
+    )
+    assert grouping[("T1", "s1")] == "Spike | low"
+    assert grouping[("T2", "s1")] == "Spike | high"
+    assert grouping[("T3", "s1")] == "Nuc | low"
+    assert rule_id == "property:Antigen|Dose"
+    assert ungrouped == []
+    # Both grouped-on columns are declarations of the identity, and both travel.
+    assert declared["Spike | high"] == {"Antigen": "Spike", "Dose": "high"}
+
+
+def test_the_legacy_single_column_rule_still_works():
+    # A project stored before the rule took a list carries `column`. It must keep running.
+    panel = pl.DataFrame({"tag": ["T1"], "sample": ["s1"], "Antigen": ["Spike"]})
+    grouping, rule_id, _, declared = _build_grouping(
+        {"by": "property", "column": "Antigen"}, panel, {}, reference_tags=set()
+    )
+    assert grouping[("T1", "s1")] == "Spike"
+    assert rule_id == "property:Antigen"
+    assert declared["Spike"] == {"Antigen": "Spike"}
+
+
+def test_a_blank_in_any_named_column_falls_back_to_the_tag():
+    # A combination missing one component is not that combination.
+    panel = pl.DataFrame({"tag": ["T1"], "sample": ["s1"], "Antigen": ["Spike"], "Dose": ["  "]})
+    grouping, _, ungrouped, declared = _build_grouping(
+        {"by": "property", "columns": ["Antigen", "Dose"]}, panel, {}, reference_tags=set()
+    )
+    assert grouping[("T1", "s1")] == "T1"
+    assert ungrouped == ["T1"]
+    assert "T1" not in declared, "a pair that fell back declares nothing"
+
+
+def test_a_column_the_panel_does_not_declare_ends_the_run():
+    panel = pl.DataFrame({"tag": ["T1"], "sample": ["s1"], "Antigen": ["Spike"]})
+    with pytest.raises(SystemExit) as e:
+        _build_grouping({"by": "property", "columns": ["Antigen", "Nope"]}, panel, {}, reference_tags=set())
+    assert "Nope" in str(e.value)
+
+
+def test_a_value_carrying_the_join_separator_is_reported_and_the_run_continues(capsys):
+    panel = pl.DataFrame({"tag": ["T1"], "sample": ["s1"], "Antigen": ["Spike | odd"], "Dose": ["low"]})
+    grouping, _, _, _ = _build_grouping(
+        {"by": "property", "columns": ["Antigen", "Dose"]}, panel, {}, reference_tags=set()
+    )
+    assert grouping[("T1", "s1")] == "Spike | odd | low"
+    assert "may share one identity key" in capsys.readouterr().err
