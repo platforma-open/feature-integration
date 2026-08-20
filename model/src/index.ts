@@ -1493,6 +1493,30 @@ export const platforma = BlockModelV3.create(dataModel)
             // back for anyone who wants the name on screen.
             { match: { name: "^pl7\\.app/label$" }, visibility: "optional" },
           ],
+          // Cells-that-answered sits LAST, behind the count it contains. Its annotation puts it at
+          // 98000, ahead of cells-that-read-bound at 97500, and that is the right default everywhere
+          // else: a denominator reads before the number it divides. In this panel the bound count is
+          // what the reader came for and the answered count is the context, so the two swap.
+          //
+          // Overridden here rather than in the workflow spec for the same reason the visibility rules
+          // are: those columns are EXPORTS with downstream readers, and a priority is global.
+          //
+          // This rule only reaches a clonotype the grid has not drawn before, and that is not a caveat
+          // about the rule -- it is where the punchcard's "ordering is INERT" note above comes from.
+          // `expansionTableState.stateCache` keeps one grid state PER `sourceId`, and `sourceId` here is
+          // the expanded clonotype, so every clonotype opened once has its own frozen
+          // `columnOrder.orderedColIds`. A stored order is an explicit list of column ids and it beats
+          // anything the model asks for. Measured: five cached entries on the live project, one of them
+          // still listing `cellsNotBound`, a column this panel no longer has.
+          //
+          // So a reorder that has to reach already-opened clonotypes needs the cache invalidated -- the
+          // device the v3 -> v4 migration used when the frames under those grids changed. Not done here:
+          // the order is a preference, and resetting every reader\'s saved columns and filters to move one
+          // column right is the more expensive mistake.
+          //
+          // Measure with `aria-colindex`. `querySelectorAll(\'[role="columnheader"]\')` returns AG Grid\'s
+          // recycled header nodes in an order that has nothing to do with column position.
+          ordering: [{ match: { name: "^pl7\\.app/antigen/cellsAnswered$" }, priority: 90000 }],
         },
         filters: {
           type: "and",
