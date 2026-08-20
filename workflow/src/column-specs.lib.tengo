@@ -643,6 +643,14 @@ setCountsImportSpec := func(setAxisSpec, served) {
 	return {
 		axes: [{ column: "setId", spec: setAxisSpec }],
 		columns: [
+			// Beside the clonotype's name, and default-visible. `the-explore-readout` puts the
+			// clonotype's own cell count there and keeps numbers out of every position: a verdict from
+			// three cells and one from forty print the same word, so the count is what tells them
+			// apart. It does not vary by identity, which is exactly why it belongs here rather than in
+			// the card. How many of these cells could answer at a given identity is a different number
+			// and travels with that identity's verdict.
+			countCol("cellCount", "pl7.app/antigen/cellCount", "Cells", 96000,
+				"How many cells this clonotype has. The verdicts rest on these cells; how many of them could answer at a given identity travels with that identity's verdict."),
 			countCol("boundCount", "pl7.app/antigen/boundCount", "Antigens bound", 95000,
 				"How many distinct antigen identities this clonotype bound. Breadth, never strength: nothing here says how well it bound any of them."),
 			countCol("offeredCount", "pl7.app/antigen/offeredCount", "Antigens offered", 94000,

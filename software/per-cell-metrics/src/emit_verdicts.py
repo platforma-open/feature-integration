@@ -965,7 +965,24 @@ def main() -> None:
         contending,
     )
     _write_sorted(verdicts, f"{prefix}_verdicts.csv", ["setId", "identity"])
-    _write_sorted(set_counts(verdicts), f"{prefix}_set_counts.csv", ["setId"])
+    # The set's own cell count, joined on rather than computed inside `set_counts`: that function is a
+    # pure reading of the verdicts frame at its (setId, identity) grain, and a cell count does not live
+    # at that grain. It is the set's cells, NOT its answering cells -- that number varies by identity
+    # and travels with the verdict as support. This one is a property of the clonotype, which is why
+    # `the-explore-readout` puts it beside the name instead of in every position: a number repeated
+    # down a column teaches a reader to ignore it.
+    per_set_cells = pl.DataFrame(
+        [(set_id, len(cells)) for set_id, cells in sorted(cells_by_set.items())],
+        orient="row",
+        schema={"setId": pl.String, "cellCount": pl.Int64},
+    )
+    counts_frame = set_counts(verdicts).join(per_set_cells, on="setId", how="left")
+    # Every set comes FROM the linker, so every set has cells. Asserted rather than filled with zero:
+    # a set with no cells is a contradiction, and writing 0 would report it as a real, empty clonotype.
+    missing = counts_frame.filter(pl.col("cellCount").is_null())["setId"].to_list()
+    if missing:
+        raise SystemExit(f"sets carry verdicts but no cells, which cannot happen: {missing[:8]}")
+    _write_sorted(counts_frame, f"{prefix}_set_counts.csv", ["setId"])
 
     summary, punch, summary_emitted = _pivot_identity_summary(verdicts, universe)
     _write_sorted(summary, f"{prefix}_identity_summary.csv", ["setId"])

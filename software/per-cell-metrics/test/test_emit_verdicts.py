@@ -1808,3 +1808,18 @@ def test_a_value_carrying_the_join_separator_is_reported_and_the_run_continues(c
     )
     assert grouping[("T1", "s1")] == "Spike | odd | low"
     assert "may share one identity key" in capsys.readouterr().err
+
+
+def test_the_set_counts_carry_the_clonotype_cell_count(bed):
+    # `the-explore-readout` puts "the clonotype's own cell count beside its name" in the grid, so the
+    # grid needs it as a column. It is the set's cells, not its answering cells: it does not vary by
+    # identity, which is why it belongs beside the name rather than in every position.
+    _run(bed, *BASE)
+    counts = pl.read_csv(bed / "result_set_counts.csv", infer_schema_length=0)
+    assert "cellCount" in counts.columns
+    assert all(int(v) >= 1 for v in counts["cellCount"].to_list())
+    # And it is not the answering count: that varies by identity, this one does not.
+    verdicts = pl.read_csv(bed / "result_verdicts.csv", infer_schema_length=0)
+    by_set = dict(zip(counts["setId"].to_list(), counts["cellCount"].to_list()))
+    for set_id, could in zip(verdicts["setId"].to_list(), verdicts["cellsCouldAnswer"].to_list()):
+        assert int(could) <= int(by_set[set_id]), "a set cannot answer with more cells than it has"
