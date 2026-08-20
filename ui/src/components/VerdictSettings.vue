@@ -3,6 +3,7 @@ import type {
   GroupingRule,
   ReferenceSource,
 } from "@platforma-open/milaboratories.feature-integration.model";
+import { groupingColumns } from "@platforma-open/milaboratories.feature-integration.model";
 import {
   PlAccordionSection,
   PlAlert,
@@ -84,21 +85,46 @@ function setRoleColumn(column: string | undefined) {
   snapshotPanelColumns();
 }
 
-// One control for the whole rule: an empty pick is the reading's own default (one identity per tag), so
-// it projects as an absent rule rather than as a hand-built { by: "tag" }.
-const groupingColumn = computed(() =>
-  app.model.data.grouping?.by === "property" ? app.model.data.grouping.column : "",
-);
+// One control for the whole rule, and it takes SEVERAL columns: an identity is the distinct
+// combination of the named columns' values, so naming antigen and concentration together makes the
+// same antigen at two concentrations two antigens.
+//
+// The barcode column sits in the same list as the property columns, because naming it IS a grouping —
+// the finest one available, one antigen per barcode — rather than a mode beside grouping. It cannot be
+// offered as a property column: the panel reader consumes it as the `tag` key, so it never appears in
+// the panel's property columns. It therefore maps to the `tag` rule, which produces exactly that
+// reading. A sentinel value stands for it, prefixed with a space so no real column name can collide.
+const TAG_GROUPING_VALUE = " tag";
+
+const groupingSelection = computed<string[]>(() => {
+  const rule = app.model.data.grouping;
+  if (rule === undefined) return [];
+  if (rule.by === "tag") return [TAG_GROUPING_VALUE];
+  return groupingColumns(rule);
+});
+
 const groupingOptions = computed(() => [
-  { value: "", label: "One identity per tag" },
+  {
+    value: TAG_GROUPING_VALUE,
+    label: `${app.model.data.barcodeSeqColumn || "Barcode"} — one antigen per barcode`,
+  },
   ...panelPropertyOptions.value,
 ]);
 
-function setGrouping(column: string | undefined) {
-  const rule: GroupingRule | undefined = column ? { by: "property", column } : undefined;
+function setGrouping(selected: string[] | undefined) {
+  const picked = (selected ?? []).filter((c) => c !== "");
+  // The barcode column is the finest grouping there is, so it does not combine with a coarser one: a
+  // combination that includes it is already one antigen per barcode. Picking it therefore wins alone.
+  // Picking nothing leaves the rule absent, which reads the same way.
+  const rule: GroupingRule | undefined = picked.includes(TAG_GROUPING_VALUE)
+    ? { by: "tag" }
+    : picked.length > 0
+      ? { by: "property", columns: picked }
+      : undefined;
   app.model.data.grouping = rule;
-  // The identities ARE the values of the grouping column, so groups declared under the previous rule name
-  // things that no longer exist. Cleared on the gesture that invalidates them rather than left to fail.
+  // The identities ARE the values of the grouping columns, so groups declared under the previous rule
+  // name things that no longer exist. Cleared on the gesture that invalidates them rather than left to
+  // fail.
   app.model.data.contendingGroups = undefined;
   snapshotPanelColumns();
 }
@@ -245,21 +271,25 @@ function removeContendingGroup(index: number) {
   </PlAlert>
 
   <PlSectionSeparator compact> The binding reading </PlSectionSeparator>
-  <PlDropdown
-    :model-value="groupingColumn"
+  <PlDropdownMulti
+    :model-value="groupingSelection"
     :options="groupingOptions"
     label="Group tags into antigens by"
     :disabled="panelUnread"
     @update:model-value="setGrouping"
   >
     <template #tooltip>
-      A verdict is about an antigen, not a barcode. By default each tag is its own antigen. Name a
-      panel column instead, and every tag sharing a value of it becomes one antigen. That is how a
-      dual-barcoded antigen gives one row rather than two.<br /><br />
+      A verdict is about an antigen, not a barcode. Name one or more panel columns, and every tag
+      sharing a value of all of them becomes one antigen. That is how a dual-barcoded antigen gives
+      one row rather than two.<br /><br />
+      Naming several columns makes the antigen the combination: antigen and concentration together
+      read the same antigen at two concentrations as two antigens.<br /><br />
+      Naming the barcode column is the finest grouping — one antigen per barcode — and it wins
+      alone, because any combination including it is already that.<br /><br />
       An antigen's reading in a cell is the highest of its tags, never their sum. Tags differ in how
       readily they are taken up, so summing them would need the baseline scaled to match.
     </template>
-  </PlDropdown>
+  </PlDropdownMulti>
 
   <PlNumberField v-model="app.model.data.countFloor" :min-value="0" :step="1" label="Count floor">
     <template #tooltip>
