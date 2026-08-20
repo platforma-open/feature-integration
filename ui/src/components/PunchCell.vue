@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import type { CSSProperties } from "vue";
 import { computed, ref } from "vue";
-import { PUNCH_PAINT } from "./punchMarks";
+import type { Punch, VerdictState } from "./punchMarks";
+import { PUNCH_PAINT, parsePunch } from "./punchMarks";
 
 // One punch, in the operator's vocabulary rather than the use case figure's:
 //
@@ -27,10 +28,11 @@ import { PUNCH_PAINT } from "./punchMarks";
 // how much was measured, and the atom is about the second. `unreliable` and `never asked` stay fixed,
 // because neither asserts anything for evidence to support.
 //
-// The cell's value carries everything needed to explain itself,
-// `state|answered|couldAnswer|agreement|reason`, in ONE value because a grid pairs a cell with another
-// column's cell only by position and no import guarantees that. Anything that does not parse is drawn as
-// its own mark rather than guessed at, so an unreadable value cannot pass as an answer.
+// The cell's value carries everything needed to explain itself, in ONE value because a grid pairs a cell
+// with another column's cell only by position and no import guarantees that. The format and its decoder
+// live in `punchMarks.ts`, shared with the clonotype expansion, so the two cannot disagree about it.
+// Anything that does not parse is drawn as its own mark rather than guessed at, so an unreadable value
+// cannot pass as an answer.
 //
 // There is deliberately no score and no binding level here: `binary-narrowing` forbids one leaving the
 // block, so the tooltip explains a verdict by what it RESTS on and never by how strongly anything bound.
@@ -38,43 +40,7 @@ const props = defineProps<{
   params: { value: unknown; antigen?: string; mergedNote?: string; showCouldAnswer?: boolean };
 }>();
 
-const VERDICT_STATES = ["bound", "not bound", "unreliable", "never asked"] as const;
-type VerdictState = (typeof VERDICT_STATES)[number];
-
-type Punch =
-  | {
-      kind: "read";
-      state: VerdictState;
-      answered: number;
-      couldAnswer: number;
-      agreement?: number;
-      reason?: string;
-    }
-  | { kind: "unparsed" };
-
-const punch = computed<Punch>(() => {
-  const raw = props.params.value;
-  if (typeof raw !== "string") return { kind: "unparsed" };
-  const parts = raw.split("|");
-  if (parts.length !== 5) return { kind: "unparsed" };
-  const [state, answered, couldAnswer, agreement, reason] = parts;
-  const known = VERDICT_STATES.find((s) => s === state);
-  const a = Number(answered);
-  const c = Number(couldAnswer);
-  if (known === undefined || !Number.isFinite(a) || !Number.isFinite(c))
-    return { kind: "unparsed" };
-  // Both are legitimately empty: a settled verdict has no reason, and a set nobody could ask has no
-  // agreement. Empty is carried as absent rather than as zero, which would read as total disagreement.
-  const ag = agreement === "" ? undefined : Number(agreement);
-  return {
-    kind: "read",
-    state: known,
-    answered: a,
-    couldAnswer: c,
-    agreement: ag !== undefined && Number.isFinite(ag) ? ag : undefined,
-    reason: reason === "" ? undefined : reason,
-  };
-});
+const punch = computed<Punch>(() => parsePunch(props.params.value));
 
 const diameter = computed(() => {
   const p = punch.value;

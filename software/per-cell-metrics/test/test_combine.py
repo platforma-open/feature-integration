@@ -664,3 +664,27 @@ def test_self_disagreement_output_is_deterministic_regardless_of_input_row_order
         rng.shuffle(shuffled)
         out = self_disagreement(_key_states(shuffled), universe, offered, cells_by_set, _NEUTRAL, level="identity")
         assert out.equals(baseline)
+
+
+def test_a_position_reports_its_bound_cells_even_when_the_majority_is_not_bound():
+    # 206's expansion shows "at each identity, how many of its cells read bound". That is neither the
+    # majority nor cellsAnswered: a 3-of-10 minority is exactly what a reader opens the expansion to
+    # see, and it has to survive a "not bound" verdict on the same row. Deriving it from
+    # `agreement * cellsAnswered` would give 7 here -- the majority's share, of the wrong state.
+    df = _states([("S1", f"c{i}", "A", B) for i in range(3)] + [("S1", f"c{i}", "A", N) for i in range(3, 10)])
+    cells_by_set = {"s1": [("S1", f"c{i}") for i in range(10)]}
+    out = combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL)
+    r = _row(out, "A")
+    assert r["state"] == N
+    assert r["cellsAnswered"] == 10
+    assert r["cellsBound"] == 3
+
+
+def test_a_never_asked_position_reports_no_bound_cells():
+    # No tally exists for a position the experiment never put to the clonotype, and 0 is the honest
+    # count rather than a null the punch value would render as an unreadable field.
+    df = _states([("S1", "c1", "A", B)])
+    out = combine_cells(df, {"A", "Z"}, {"S1": {"A"}}, {"s1": [("S1", "c1")]}, _NEUTRAL)
+    r = _row(out, "Z")
+    assert r["state"] == NA
+    assert r["cellsBound"] == 0

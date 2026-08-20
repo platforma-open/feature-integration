@@ -224,6 +224,9 @@ def combine_cells(
                         "state": State.NEVER_ASKED.value,
                         "cellsCouldAnswer": 0,
                         "cellsAnswered": 0,
+                        # No tally exists for a position never put to this clonotype. 0 is the honest
+                        # count; a null would ride into the punch value as an empty field.
+                        "cellsBound": 0,
                         "agreement": None,
                         "unreliableReason": SetUnreliableReason.NEVER_OFFERED.value,
                     }
@@ -251,6 +254,7 @@ def combine_cells(
                         "state": State.UNRELIABLE.value,
                         "cellsCouldAnswer": could,
                         "cellsAnswered": 0,
+                        "cellsBound": 0,
                         "agreement": None,
                         "unreliableReason": reason.value,
                     }
@@ -265,6 +269,7 @@ def combine_cells(
                         "state": State.UNRELIABLE.value,
                         "cellsCouldAnswer": could,
                         "cellsAnswered": answered,
+                        "cellsBound": counts.get(State.BOUND.value, 0),
                         "agreement": None,
                         "unreliableReason": SetUnreliableReason.TOO_FEW_VOTERS.value,
                     }
@@ -288,6 +293,7 @@ def combine_cells(
                         "state": State.UNRELIABLE.value,
                         "cellsCouldAnswer": could,
                         "cellsAnswered": answered,
+                        "cellsBound": counts.get(State.BOUND.value, 0),
                         "agreement": agreement,
                         "unreliableReason": SetUnreliableReason.TIE.value,
                     }
@@ -302,6 +308,7 @@ def combine_cells(
                         "state": State.UNRELIABLE.value,
                         "cellsCouldAnswer": could,
                         "cellsAnswered": answered,
+                        "cellsBound": counts.get(State.BOUND.value, 0),
                         "agreement": agreement,
                         "unreliableReason": SetUnreliableReason.BELOW_AGREEMENT_FLOOR.value,
                     }
@@ -315,6 +322,10 @@ def combine_cells(
                     "state": top_state,
                     "cellsCouldAnswer": could,
                     "cellsAnswered": answered,
+                    # Read from the tally, never from `agreement`. `agreement` is top_count/answered --
+                    # the MAJORITY's share -- and the majority is not always bound, so deriving a bound
+                    # count from it reports the wrong state's cells wherever the verdict is not bound.
+                    "cellsBound": counts.get(State.BOUND.value, 0),
                     "agreement": agreement,
                     "unreliableReason": None,
                 }
@@ -328,6 +339,7 @@ def combine_cells(
             "state": pl.String,
             "cellsCouldAnswer": pl.Int64,
             "cellsAnswered": pl.Int64,
+            "cellsBound": pl.Int64,
             "agreement": pl.Float64,
             "unreliableReason": pl.String,
         },

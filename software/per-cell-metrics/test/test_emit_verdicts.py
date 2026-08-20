@@ -1459,10 +1459,11 @@ def test_punch_bed_can_tell_the_two_counts_apart(wide_bed):
 
 
 def test_punch_pivot_agrees_with_the_long_verdicts(wide_bed):
-    # The punchcard's cell is the only place its three facts meet, so this is the one check
-    # that they are the SAME three facts the long frame carries. A pivot that dropped a
-    # field, swapped the counts, or paired a state with another identity's numbers would
-    # still write a well-formed file.
+    # The punch cell is the only place its facts meet, so this is the one check that they are the
+    # SAME facts the long frame carries. A pivot that dropped a field, swapped the counts, or paired a
+    # state with another identity's numbers would still write a well-formed file. Every field is
+    # listed here on purpose: adding one to the value has to break this test, or the value's shape
+    # would be free to drift from the frame it is built from.
     verdicts, punch = _punch_bed(wide_bed)
     identities = sorted(set(verdicts["identity"].to_list()))
     assert punch.columns == ["setId", *identities]
@@ -1475,6 +1476,7 @@ def test_punch_pivot_agrees_with_the_long_verdicts(wide_bed):
                 r["cellsCouldAnswer"],
                 r["agreement"] or "",
                 r["unreliableReason"] or "",
+                r["cellsBound"],
             ]
         )
         for r in verdicts.iter_rows(named=True)

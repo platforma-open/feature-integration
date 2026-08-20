@@ -600,6 +600,11 @@ def _pivot_identity_summary(verdicts: pl.DataFrame, universe: set[str]) -> tuple
                 pl.col("cellsCouldAnswer").cast(pl.String).fill_null(""),
                 pl.col("agreement").cast(pl.String).fill_null(""),
                 pl.col("unreliableReason").cast(pl.String).fill_null(""),
+                # Sixth, and APPENDED rather than inserted: a reader that splits and destructures the
+                # first five fields positionally still reads them correctly, so a project whose last
+                # run predates this field renders unchanged. 206's expansion needs this one -- "at each
+                # identity, how many of its cells read bound".
+                pl.col("cellsBound").cast(pl.String).fill_null(""),
             ],
             separator="|",
         ).alias("punch")
