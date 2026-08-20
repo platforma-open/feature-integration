@@ -11,10 +11,20 @@ export type ReferenceSource = "declared" | "panel" | "none";
 /**
  * How tags become identities. A RULE over declared properties, never a tag->identity map: a map is
  * keyed by tags, which are known only after the block runs, so any editor for it writes an output
- * back into data. A property column name is knowable at prerun, from the panel header the block
+ * back into data. Property column names are knowable at prerun, from the panel header the block
  * already enumerates. Absent means one identity per tag.
+ *
+ * Several columns may be named, and the identity is the distinct combination of their values: named
+ * antigen and concentration together, the same antigen at two concentrations is two identities.
+ *
+ * `column` is the shape this rule had before it took a list. It stays readable because a project
+ * stored under it must keep running, and `groupingColumns()` is the one place that reads either.
+ * Nothing should write it.
  */
-export type GroupingRule = { by: "tag" } | { by: "property"; column: string };
+export type GroupingRule =
+  | { by: "tag" }
+  | { by: "property"; columns: string[]; column?: never }
+  | { by: "property"; column: string; columns?: never };
 
 /** Workflow inputs (projected from BlockData by the args lambda; validated there). */
 export type BlockArgs = {

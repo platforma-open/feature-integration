@@ -11,7 +11,7 @@ import {
 } from "@platforma-sdk/model";
 import { assemblePattern, CELL_TAG, FEATURE_TAG, UMI_TAG, validatePattern } from "./pattern";
 import { getPreset } from "./presets";
-import type { BlockArgs, BlockData, ReferenceSource } from "./types";
+import type { BlockArgs, BlockData, GroupingRule, ReferenceSource } from "./types";
 
 export { assemblePattern, parsePattern, validatePattern } from "./pattern";
 export type { PatternParts } from "./pattern";
@@ -238,6 +238,18 @@ function readCsvMeta(ctx: BlockRenderCtx<BlockArgs, BlockData>): CsvMeta | undef
   return ctx.prerun
     ?.resolve({ field: "csvMeta", allowPermanentAbsence: true })
     ?.getDataAsJsonOrUndefined<CsvMeta>();
+}
+
+// The grouping columns a rule names, whichever shape it is stored in.
+//
+// A project saved before the rule took a list carries `column` rather than `columns`, and reading
+// both here costs one function. A data migration would have to run against every stored project to
+// avoid a failed run, which is a far worse trade for the same result. Every reader goes through this,
+// so nothing else needs to know two shapes exist.
+export function groupingColumns(rule: GroupingRule | undefined): string[] {
+  if (rule === undefined || rule.by !== "property") return [];
+  if (rule.columns !== undefined) return rule.columns.filter((c: string) => c !== "");
+  return rule.column ? [rule.column] : [];
 }
 
 // A/C/G/T plus N (ambiguous base), case-insensitive.
@@ -565,7 +577,7 @@ export const platforma = BlockModelV3.create(dataModel)
     if (panelColumns?.length) {
       for (const [role, column] of [
         ["Baseline role", data.roleColumn],
-        ["Grouping", data.grouping?.by === "property" ? data.grouping.column : undefined],
+        ["Grouping", groupingColumns(data.grouping).join(", ") || undefined],
       ] as const) {
         if (column && !panelColumns.includes(column))
           throw new Error(
@@ -641,7 +653,12 @@ export const platforma = BlockModelV3.create(dataModel)
       highReferenceLine: Math.round(data.highReferenceLine),
       // A rule over declared panel properties, never a tag→identity map. Absent means one identity per
       // tag, which is the reading's own default, so no hand-built { by: "tag" } is sent in its place.
-      grouping: data.grouping,
+      // Normalised to a list here so the software receives one shape. It reads the older `column`
+      // too, but a run record naming `columns` is what every future reader should see.
+      grouping:
+        data.grouping?.by === "property"
+          ? { by: "property" as const, columns: groupingColumns(data.grouping) }
+          : data.grouping,
       contendingGroups: contendingGroups.length > 0 ? contendingGroups : undefined,
       // Preview: cap reads only in dry mode; a full run omits it (all reads). Projected only when dry, so
       // toggling back to full changes the args hash and re-runs on the complete input.
@@ -719,8 +736,14 @@ export const platforma = BlockModelV3.create(dataModel)
   // list into data would make the output depend on data derived from it, and two open clients would race
   // to write it.
   .retentiveOutput("identityOptions", (ctx): { value: string; label: string }[] => {
-    const grouping = ctx.data.grouping;
-    const column = grouping?.by === "property" ? grouping.column : ctx.data.barcodeSeqColumn;
+    const grouped = groupingColumns(ctx.data.grouping);
+    // Nothing to offer under a grouping on SEVERAL columns. An identity is then the combination of
+    // their values, and the prerun CSV meta is column-wise: it carries each column's distinct values
+    // with no pairing between them. Crossing them would invent combinations the panel never declared,
+    // and offering a fabricated identity to the contending-groups editor is worse than offering none.
+    // The editor says so rather than showing a list built from a guess.
+    if (grouped.length > 1) return [];
+    const column = grouped[0] ?? ctx.data.barcodeSeqColumn;
     if (!column) return [];
     return (readCsvMeta(ctx)?.valuesByColumn?.[column] ?? []).map((v) => ({ value: v, label: v }));
   })
