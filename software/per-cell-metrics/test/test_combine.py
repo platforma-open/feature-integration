@@ -688,3 +688,59 @@ def test_a_never_asked_position_reports_no_bound_cells():
     r = _row(out, "Z")
     assert r["state"] == NA
     assert r["cellsBound"] == 0
+
+
+def test_cells_not_bound_completes_cells_answered_on_every_row():
+    # cellsNotBound is not a free-standing count: SETTLED holds only BOUND and NOT_BOUND (see the
+    # module docstring's four-state model), so it is the other half of the same pair cellsBound
+    # already reports. This checks the pairing across every shape combine_cells produces -- a settled
+    # majority either way, a tie, a floor refusal, too few voters, a position with no tally at all, and
+    # a position never offered -- over every row of each frame, not one identity picked out by `_row`.
+    def _assert_invariant(out: pl.DataFrame) -> None:
+        for row in out.iter_rows(named=True):
+            assert row["cellsBound"] + row["cellsNotBound"] == row["cellsAnswered"], row
+
+    # Settled bound, settled not-bound, and a tie, plus Z which nobody offers -> never-asked.
+    df = _states(
+        [("S1", "b1", "A", B), ("S1", "b2", "A", B), ("S1", "n1", "A", N)]
+        + [("S1", "x1", "B", N), ("S1", "x2", "B", N)]
+        + [("S1", "t1", "C", B), ("S1", "t2", "C", N)]
+    )
+    cells_by_set = {
+        "sBound": [("S1", "b1"), ("S1", "b2"), ("S1", "n1")],
+        "sNotBound": [("S1", "x1"), ("S1", "x2")],
+        "sTie": [("S1", "t1"), ("S1", "t2")],
+    }
+    out = combine_cells(
+        df,
+        universe={"A", "B", "C", "Z"},
+        offered={"S1": {"A", "B", "C"}},
+        cells_by_set=cells_by_set,
+        admissibility=_NEUTRAL,
+    )
+    _assert_invariant(out)
+    z = _row(out.filter(pl.col("setId") == "sBound"), "Z")
+    assert z["state"] == NA and z["cellsAnswered"] == 0
+
+    # Too few voters: one voter, min_voters raised to 2.
+    out_few = combine_cells(
+        _states([("S1", "c1", "A", B)]), {"A"}, {"S1": {"A"}}, {"s1": [("S1", "c1")]}, _NEUTRAL, min_voters=2
+    )
+    _assert_invariant(out_few)
+
+    # Below the agreement floor: a real 3-of-4 majority, refused only because the floor was raised
+    # above it.
+    out_floor = combine_cells(
+        _states([("S1", f"b{i}", "A", B) for i in range(3)] + [("S1", "n0", "A", N)]),
+        {"A"},
+        {"S1": {"A"}},
+        {"s1": [("S1", f"b{i}") for i in range(3)] + [("S1", "n0")]},
+        _NEUTRAL,
+        min_agreement=0.76,
+    )
+    _assert_invariant(out_floor)
+
+    # No tally at all: both of the set's cells individually inadmissible (gated).
+    admissibility = Admissibility({("S1", "c1"): 900, ("S1", "c2"): 900}, 2, {("S1", "c1"), ("S1", "c2")})
+    out_gated = combine_cells(_states([]), {"A"}, {"S1": {"A"}}, {"s1": [("S1", "c1"), ("S1", "c2")]}, admissibility)
+    _assert_invariant(out_gated)

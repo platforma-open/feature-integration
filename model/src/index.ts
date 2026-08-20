@@ -1422,7 +1422,9 @@ export const platforma = BlockModelV3.create(dataModel)
         "pl7.app/label",
         "pl7.app/antigen/verdict",
         ...(panelsDiffer ? ["pl7.app/antigen/cellsCouldAnswer"] : []),
+        "pl7.app/antigen/cellsAnswered",
         "pl7.app/antigen/cellsBound",
+        "pl7.app/antigen/cellsNotBound",
       ];
       // One axis, the identity axis, is what makes `pl7.app/label` a label column rather than a name
       // collision — the frame carries other one-axis labels (the panel's, the tag's), and a label on the
@@ -1448,7 +1450,11 @@ export const platforma = BlockModelV3.create(dataModel)
       // and resolve nothing. An axis assembled here would also be a lookalike with a different identity
       // and would filter nothing.
       const verdictCol = pCols.find((c) => c.spec.name === "pl7.app/antigen/verdict");
-      const setAxis = verdictCol?.spec.axesSpec[0];
+      // Checked directly, and before `setAxis` is derived from it: the filter below reads
+      // `verdictCol.id`, and narrowing only `setAxis` to defined would leave `verdictCol` itself typed
+      // as possibly undefined at that use.
+      if (verdictCol === undefined) return undefined;
+      const setAxis = verdictCol.spec.axesSpec[0];
       if (setAxis === undefined) return undefined;
       return createPlDataTableV3(ctx, {
         primaryColumns: pCols.map((c) => DataColumn.fromColumn(c)),
@@ -1503,6 +1509,14 @@ export const platforma = BlockModelV3.create(dataModel)
                     : { name: setAxis.name, type: setAxis.type, domain: setAxis.domain },
               },
               value: String(chosen[0]),
+            },
+            {
+              type: "patternNotEquals",
+              // A never-asked position is not a reading, and 206 keeps the numbers to the identities the
+              // experiment actually put to these cells. Filtered by the verdict's own value rather than
+              // by a count, because a bound count of 0 is a real reading and must stay.
+              column: { type: "column", id: verdictCol.id },
+              value: "never asked",
             },
           ],
         },

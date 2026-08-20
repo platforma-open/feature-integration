@@ -594,6 +594,18 @@ verdictsImportSpec := func(setAxisSpec, identityAxisSpec, served) {
 					"pl7.app/min": "0"
 				})
 			}),
+			// The other half of the same pair: SETTLED holds only bound and not-bound, so the two
+			// together always exhaust cellsAnswered. Reported alongside cellsBound rather than left for
+			// a reader to derive, because a not-bound reading with no count beside it looks like it has
+			// nothing behind it.
+			verdictCol("cellsNotBound", "cellsNotBound", {
+				name: "pl7.app/antigen/cellsNotBound",
+				valueType: "Int",
+				annotations: a(97250, true, {
+					"pl7.app/label": "Cells that read not bound",
+					"pl7.app/min": "0"
+				})
+			}),
 			verdictCol("agreement", "agreement", {
 				name: "pl7.app/antigen/agreement",
 				valueType: "Double",
