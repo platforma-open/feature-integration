@@ -1382,24 +1382,76 @@ export const platforma = BlockModelV3.create(dataModel)
       // with `discoverColumns failed` out of `discoverLabelColumns`, which reads as an SDK fault and is
       // not one. Only the (set, identity) family belongs here.
       //
-      // Three columns, not the whole family: `the-explore-readout` asks the expansion for the state, how
-      // many cells read bound, and how many could answer. Agreement, the unreliable reason and the
-      // competitor notes are export material with their own readers and would make this a spreadsheet.
+      // The columns Ane's design asks for: identity, state, bound — and could-answer only where the run
+      // carried panels that differ. Named explicitly, which is the whole correctness of this call:
+      // `antigenVerdictsTable` surfaces the entire export frame, whose families are keyed on five
+      // different axes, and handing all of them to one table is a malformed join the SDK reports as
+      // `discoverColumns failed` out of `discoverLabelColumns` — which reads as an SDK fault and is not
+      // one.
+      //
+      // The identity's readable name comes FIRST, and it has to be named here rather than left to
+      // `columns: null`. That option resolves label columns from the result pool, and this label lives
+      // in `exportFb` — a block's own exports are not in its own result pool. Measured before this
+      // existed: 17 rows all printing the same clonotype with nothing telling them apart.
+      //
+      // Could-answer is CONDITIONAL. Under one panel it is the clonotype's own cell count at every
+      // identity, which the grid already carries beside its name — so a column of it repeats one number
+      // down the page and teaches a reader to ignore it. The whole argument for carrying the number is
+      // that a verdict from three cells and one from forty print the same word, and a number that never
+      // varies defeats that argument.
+      //
+      // Read from the run RECORD, not from current args: what panels a run carried is a fact about that
+      // run, the same discipline the comparator uses (served, never requested).
+      const runMeta = ctx.outputs
+        ?.resolve({ field: "antigenRunMeta", allowPermanentAbsence: true })
+        ?.getDataAsJsonOrUndefined<VerdictRunMeta>();
+      // Absent reads as one panel: a run record written before the field existed has no opinion, and one
+      // panel is the ordinary case 206 calls the default.
+      const panelsDiffer = (runMeta?.samplePanelCount ?? 1) > 1;
       const WANTED = [
+        "pl7.app/label",
         "pl7.app/antigen/verdict",
+        ...(panelsDiffer ? ["pl7.app/antigen/cellsCouldAnswer"] : []),
         "pl7.app/antigen/cellsBound",
-        "pl7.app/antigen/cellsCouldAnswer",
       ];
-      const pCols = WANTED.flatMap((name) => frame.filter((c) => c.spec.name === name));
+      // One axis, the identity axis, is what makes `pl7.app/label` a label column rather than a name
+      // collision — the frame carries other one-axis labels (the panel's, the tag's), and a label on the
+      // wrong axis would join nothing. Filtered on the axis rather than trusted by name.
+      const identityAxisName = "pl7.app/antigen/identityId";
+      const pCols = WANTED.flatMap((name) =>
+        frame.filter(
+          (c) =>
+            c.spec.name === name &&
+            (name !== "pl7.app/label" ||
+              (c.spec.axesSpec.length === 1 && c.spec.axesSpec[0].name === identityAxisName)),
+        ),
+      );
       if (pCols.length === 0) return undefined;
-      // The set axis is the first of the (set, identity) pair, taken from a column rather than rebuilt:
-      // an axis assembled here would be a lookalike with a different identity and would filter nothing.
-      const setAxis = pCols[0].spec.axesSpec[0];
+      // The set axis is the first of the (set, identity) pair, taken from the verdict column rather than
+      // from `pCols[0]`: the identity label column now sorts first and carries only the identity axis, so
+      // reading `pCols[0].spec.axesSpec[0]` here would hand the filter that axis instead of the set axis
+      // and resolve nothing. An axis assembled here would also be a lookalike with a different identity
+      // and would filter nothing.
+      const verdictCol = pCols.find((c) => c.spec.name === "pl7.app/antigen/verdict");
+      const setAxis = verdictCol?.spec.axesSpec[0];
       if (setAxis === undefined) return undefined;
       return createPlDataTableV3(ctx, {
         primaryColumns: pCols.map((c) => DataColumn.fromColumn(c)),
         columns: null,
         tableState: ctx.data.expansionTableState,
+        // The identity's own name, made visible. `identityLabelsImportSpec` annotates it hidden, which is
+        // the right convention for a `pl7.app/label` column: a table CONSUMES a label column to name its
+        // axis rather than rendering it as data. That convention fails here for one reason — the identity
+        // axis is invented by this block, so its label column can never sit in this block's own result
+        // pool, and the pool is the only place the table looks. Measured before this rule: 17 rows all
+        // printing the same clonotype with nothing telling them apart.
+        //
+        // Overriding visibility here rather than in the workflow spec, because that column is an EXPORT
+        // with downstream readers, and making it default-visible would change their tables to fix ours.
+        // This is how clonotype-browser adjusts a column it did not annotate.
+        displayOptions: {
+          visibility: [{ match: { name: "^pl7\\.app/label$" }, visibility: "default" }],
+        },
         filters: {
           type: "and",
           filters: [
