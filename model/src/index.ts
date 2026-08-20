@@ -855,15 +855,17 @@ export const platforma = BlockModelV3.create(dataModel)
     const missing = [...datasetNames].filter((n) => !csvSamples.has(n));
     const extra = [...csvSamples].filter((s) => !datasetNames.has(s));
     // One line per issue (the UI renders each on its own line). Missing samples block Run (args throws);
-    // extra CSV values are only informational (those rows are simply never used).
+    // extra CSV values are only informational (those rows are simply never used). Counted into a real
+    // plural rather than written "sample(s)": the reader has to resolve that form themselves, and these
+    // two lines are read while something is already wrong.
     const lines: string[] = [];
     if (missing.length > 0)
       lines.push(
-        `${missing.length} sample(s) in your dataset have no rows in the CSV: ${fmt(missing)}. Run is blocked until every sample has rows, or until you clear the sample column.`,
+        `${missing.length} ${missing.length === 1 ? "sample" : "samples"} in your dataset have no rows in the CSV: ${fmt(missing)}. The block disables Run until every sample has rows, or until you clear the sample column.`,
       );
     if (extra.length > 0)
       lines.push(
-        `${extra.length} sample value(s) in the CSV match no sample in your dataset: ${fmt(extra)}. The block ignores those rows.`,
+        `${extra.length} sample ${extra.length === 1 ? "value" : "values"} in the CSV match no sample in your dataset: ${fmt(extra)}. The block ignores those rows.`,
       );
     return lines.length > 0 ? lines : undefined;
   })
@@ -890,13 +892,13 @@ export const platforma = BlockModelV3.create(dataModel)
     if (problem === undefined) return undefined;
     const { offenders, checked, alternative } = problem;
     return (
-      `Column "${ctx.data.barcodeSeqColumn}" does not hold nucleotide sequences: ${offenders.length} ` +
-      `of ${checked} distinct values contain characters outside A/C/G/T/N (for example ` +
-      `"${offenders[0]}"). The block builds the feature-barcode panel from this column, so the run ` +
+      `Column "${ctx.data.barcodeSeqColumn}" does not hold nucleotide sequences. ${offenders.length} ` +
+      `of ${checked} distinct values contain characters outside A/C/G/T/N, for example ` +
+      `"${offenders[0]}". The block builds the feature-barcode panel from this column, so the run ` +
       "would fail during barcode correction. " +
       (alternative !== undefined
-        ? `Column "${alternative}" holds sequences — pick that one.`
-        : "Pick the column holding the barcode nucleotide sequences.")
+        ? `Column "${alternative}" holds sequences. Pick that one.`
+        : "Pick the column that holds the barcode nucleotide sequences.")
     );
   })
   // Duplicate-barcode detection at config time (UI warning only; the Python guards it authoritatively at
@@ -951,10 +953,11 @@ export const platforma = BlockModelV3.create(dataModel)
     const suggested = suggestSampleColumn(ctx);
     if (!suggested) return undefined;
     return (
-      `The CSV has a column that names your samples ("${suggested}"), and no sample column is set. ` +
-      "The block then reads one panel for every sample. Every sample is then judged on antigens it " +
-      'was never stained with. Those antigens come back as "not bound" instead of "never asked". ' +
-      "If the CSV is sample-specific, set the Sample column."
+      `The CSV has a column that names your samples ("${suggested}"), and you have not set the sample ` +
+      "column. The block therefore reads the CSV as a single panel and applies that one panel to every " +
+      "sample. It then judges every sample on antigens it was never stained with, and those antigens " +
+      'come back as "not bound" instead of "never asked". If the CSV is sample-specific, set the ' +
+      "Sample column."
     );
   })
   // True while the uploaded CSV is still being parsed by staging (handle set, but emit-csv-meta hasn't

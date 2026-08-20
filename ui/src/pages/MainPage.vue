@@ -547,47 +547,48 @@ const gridOptions = {
         </PlNumberField>
       </template>
       <PlSectionSeparator compact> Optional settings </PlSectionSeparator>
-      <PlRow>
-        <PlDropdown
-          v-model="app.model.data.controlFeature"
-          :options="app.model.outputs.controlOptions"
-          label="Control feature marker (output only)"
-          :disabled="tagMappingDisabled"
-          clearable
-          :style="{ flex: 1 }"
-        >
-          <template #tooltip>
-            <b>Pick your non-binding background control here, if the panel has one.</b><br /><br />
-            This setting only labels that feature in the block output. A downstream reader can then
-            tell the control apart from the antigens. It changes no count and no verdict.<br /><br />
-            <b>It does not make the control your baseline.</b> To do that, declare the same feature
-            under "Baseline (background) level" below.<br /><br />
-            Leave blank if you have no control.
-          </template>
-        </PlDropdown>
+      <!-- One field per line. Side by side in a PlRow each got half the drawer's width, which truncated
+           both labels — "Control feature marker (outp…" told the user nothing about what it does not
+           change, and that label carries the whole distinction from the baseline setting below.
+           The sample column comes first: it changes what the run computes, while the control marker
+           only labels a feature in the output. -->
+      <PlDropdown
+        :model-value="app.model.data.sampleColumn"
+        :options="roleFreeColumnOptions"
+        label="Sample column"
+        :disabled="tagMappingDisabled"
+        clearable
+        @update:model-value="setSampleColumn"
+      >
+        <template #tooltip>
+          <b>Set this when your panel CSV has more than one row per barcode</b> — normally because
+          it lists each barcode once per sample. Leave it blank when the CSV has exactly one row per
+          barcode.<br /><br />
+          Names the CSV column holding each row's sample. Every sample in your dataset must appear
+          in it. Extra values are allowed.<br /><br />
+          The block then reads a separate panel for each sample. Each sample is asked only about the
+          identities its own rows declare. One barcode can also name a different antigen in a
+          different sample.<br /><br />
+          The block selects this when it detects a matching column.
+        </template>
+      </PlDropdown>
 
-        <PlDropdown
-          :model-value="app.model.data.sampleColumn"
-          :options="roleFreeColumnOptions"
-          label="Sample column"
-          :disabled="tagMappingDisabled"
-          clearable
-          :style="{ flex: 1 }"
-          @update:model-value="setSampleColumn"
-        >
-          <template #tooltip>
-            <b>Set this when your panel CSV has more than one row per barcode</b> — normally because
-            it lists each barcode once per sample. Leave it blank when the CSV has exactly one row
-            per barcode.<br /><br />
-            Names the CSV column holding each row's sample. Every sample in your dataset must appear
-            in it. Extra values are allowed.<br /><br />
-            The block then reads a separate panel for each sample. Each sample is asked only about
-            the antigens its own rows declare. One barcode can also name different antigens in
-            different samples.<br /><br />
-            Auto-selected when a matching column is detected.
-          </template>
-        </PlDropdown>
-      </PlRow>
+      <PlDropdown
+        v-model="app.model.data.controlFeature"
+        :options="app.model.outputs.controlOptions"
+        label="Control feature marker (output only)"
+        :disabled="tagMappingDisabled"
+        clearable
+      >
+        <template #tooltip>
+          <b>Pick the panel member nothing should bind, if the panel has one.</b><br /><br />
+          This setting only labels that feature in the block output. A downstream reader can then
+          tell the control apart from the antigens. It changes no count and no verdict.<br /><br />
+          <b>It does not make the control your baseline.</b> To measure counts against it, declare
+          the same feature under "Baseline (background) level" below.<br /><br />
+          Leave it blank if you have no control.
+        </template>
+      </PlDropdown>
       <!-- The combine-mode column selector is not offered (MILAB-6496): with it unset, every antigen
            uses the default "sum" mode. The parameter itself is live — combineColumn and minUmi still
            reach per_cell_metrics.py — so a value carried in from an older project is still honoured,
@@ -596,8 +597,7 @@ const gridOptions = {
         {{ combineColumnError }}
       </PlAlert>
       <PlAlert v-if="controlInfoVisible" type="info">
-        No negative control is designated, so no feature will be marked as the background control in
-        the output. Nothing else changes.
+        You marked no control, so the output marks no feature as one. Nothing else changes.
       </PlAlert>
       <PlAlert v-if="sampleMappingWarning?.length" type="warn">
         <div v-for="(line, i) in sampleMappingWarning" :key="i">{{ line }}</div>
