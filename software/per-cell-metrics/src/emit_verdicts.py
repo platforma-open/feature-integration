@@ -809,9 +809,13 @@ def main() -> None:
     # every sample or in none.
     reference_values = {v.strip() for v in args.reference_values.split(",") if v.strip()}
     reference_tags: set[str] = set()
+    # The column is checked whenever one is named, and not only when values are named with it. Gating the
+    # check on `reference_values` left the worse half of the same mistake silent: a role column the panel
+    # does not declare would designate no tag, and the baseline would fall back to the panel's own
+    # readings without a word. That is a different number reported as if it were the requested one.
+    if args.role_column and args.role_column not in prop_cols:
+        raise SystemExit(f"--role-column {args.role_column!r} is not a panel column; columns are {prop_cols}")
     if args.role_column and reference_values:
-        if args.role_column not in prop_cols:
-            raise SystemExit(f"--role-column {args.role_column!r} is not a panel column; columns are {prop_cols}")
         reference_tags = {t for t, props in properties.items() if props.get(args.role_column) in reference_values}
 
     grouping_rule = _json_arg(args.grouping, "--grouping")

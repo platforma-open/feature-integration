@@ -579,20 +579,48 @@ export const platforma = BlockModelV3.create(dataModel)
         'Under "Values that mark the baseline tag", choose at least one value, or choose a ' +
           'different option for "What sets the baseline".',
       );
-    // A role column or a grouping column the panel does not carry ends the whole run at the exec
-    // (emit_verdicts.py exits rather than degrading), and the user meets that as a dead run with no hint
-    // of which setting caused it. The check is against the headers snapshotted when the column was picked
-    // — args reads data only — so a panel swap that leaves the pick behind disables Run with a message
-    // naming the column instead.
+    // Every panel column the verdict settings name, each with the label the user sees. Two different
+    // things can be wrong with one of these, so both checks below walk this same list.
+    //
+    // Each grouping column is checked on its own. A grouping may name several, and joining them into one
+    // string to check would compare "Identity, Channel" against the panel's headers and never match —
+    // which throws here and takes the whole block to Limbo, refs and all.
+    const named: [string, string | undefined][] = [
+      ["Baseline role", data.roleColumn],
+      ...groupingColumns(data.grouping).map((c): [string, string] => ["Grouping", c]),
+    ];
+
+    // First: a column the panel reader consumes as a KEY is not a property column, so naming one here
+    // ends the run at the exec. emit_verdicts.py raises on a grouping column the panel does not declare,
+    // and on a role column wherever role values are set. Where they are NOT set it raises nothing, and
+    // the baseline falls back to the panel's own readings — a wrong answer rather than no answer, which
+    // is the outcome this block exists to refuse.
+    //
+    // The way in is reassigning a key column WITHIN one panel file. The settings dropdowns stop offering
+    // the column, and the pick already stored survives, so the field reads empty while the data is not.
+    // Checked against data rather than the header snapshot because a key column IS a real header: the
+    // snapshot check below cannot see this case and correctly does not try to.
+    const keyColumns: [string, string | undefined][] = [
+      ["barcode sequence", data.barcodeSeqColumn],
+      ["sample", data.sampleColumn],
+    ];
+    for (const [role, column] of named) {
+      if (!column) continue;
+      for (const [key, keyColumn] of keyColumns) {
+        if (column === keyColumn)
+          throw new Error(
+            `The ${role} column "${column}" is also the ${key} column. The panel reader consumes that ` +
+              `column as a key rather than a property, so choose a different column for one of them.`,
+          );
+      }
+    }
+
+    // Second: a role column or a grouping column the panel does not carry at all ends the whole run at
+    // the exec too, and the user meets that as a dead run with no hint of which setting caused it. The
+    // check is against the headers snapshotted when the column was picked — args reads data only — so a
+    // panel swap that leaves the pick behind disables Run with a message naming the column instead.
     const panelColumns = data.panelColumnSnapshot;
     if (panelColumns?.length) {
-      // Each grouping column is checked on its own. A grouping may name several, and joining them into
-      // one string to check would compare "Identity, Channel" against the panel's headers and never
-      // match — which throws here and takes the whole block to Limbo, refs and all.
-      const named: [string, string | undefined][] = [
-        ["Baseline role", data.roleColumn],
-        ...groupingColumns(data.grouping).map((c): [string, string] => ["Grouping", c]),
-      ];
       for (const [role, column] of named) {
         if (column && !panelColumns.includes(column))
           throw new Error(

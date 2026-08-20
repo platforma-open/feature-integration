@@ -24,6 +24,7 @@ import {
   createAgGridColDef,
   makeRowNumberColDef,
 } from "@platforma-sdk/ui-vue";
+import { groupingColumns } from "@platforma-open/milaboratories.feature-integration.model";
 import type { ColDef, GridReadyEvent } from "ag-grid-enterprise";
 import { ClientSideRowModelModule, ModuleRegistry } from "ag-grid-enterprise";
 import { AgGridVue } from "ag-grid-vue3";
@@ -196,6 +197,7 @@ function setSampleColumn(col: string | undefined) {
   // Clearing the sample column is what makes a duplicate barcode illegal again, so the numbers args()
   // gates on have to be refreshed here rather than assumed to be present from an earlier gesture.
   snapshotPanelCounts();
+  clearVerdictSettingsNaming(col || undefined);
 }
 
 // The snapshot goes stale if the dataset changes (different sampleId→name) or the CSV changes (different
@@ -232,9 +234,35 @@ function snapshotPanelCounts() {
     : undefined;
 }
 
+// Claiming a column as a key invalidates any verdict setting that names it: the panel reader strips the
+// barcode and sample columns before the properties are read, so the setting would name a column that is
+// no longer a property. args() refuses the run in that state, which is a blocked Run button rather than a
+// dead run — but the user still has to find the stale pick in a dropdown that has stopped offering it.
+// Clearing it on the gesture that invalidates it is the same treatment clearOnCsvChange gives the panel
+// swap. This is the reassignment case, which reaches the same stale pick by a different gesture.
+function clearVerdictSettingsNaming(column: string | undefined) {
+  if (!column) return;
+  if (app.model.data.roleColumn === column) {
+    // The values designate values of THIS column, so they go with it — the same pairing setRoleColumn keeps.
+    app.model.data.roleColumn = undefined;
+    app.model.data.referenceValues = undefined;
+  }
+  const remaining = groupingColumns(app.model.data.grouping).filter((c) => c !== column);
+  if (remaining.length !== groupingColumns(app.model.data.grouping).length) {
+    // A grouping may name several columns, so losing one leaves the others standing. Losing the last one
+    // leaves no rule, which reads as one identity per tag — the same state as never having set it.
+    app.model.data.grouping =
+      remaining.length > 0 ? { by: "property", columns: remaining } : undefined;
+    // The identities ARE the values of the grouping columns, so declared groups now name things that no
+    // longer exist. Cleared here for the same reason setGrouping clears them.
+    app.model.data.contendingGroups = undefined;
+  }
+}
+
 function onBarcodeColumnChanged(next: unknown) {
   if (!changed(seenBarcodeColumn, next)) return;
   snapshotPanelCounts();
+  clearVerdictSettingsNaming(app.model.data.barcodeSeqColumn);
 }
 
 function onFeatureColumnChanged(next: unknown) {

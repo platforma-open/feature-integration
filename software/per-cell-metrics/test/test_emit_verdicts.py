@@ -1801,6 +1801,33 @@ def test_a_column_the_panel_does_not_declare_ends_the_run():
     assert "Nope" in str(e.value)
 
 
+def test_a_role_column_the_reader_consumes_as_a_key_ends_the_run_with_no_role_values(bed):
+    # `Sequence` is the barcode column, so panel.py strips it before the properties are read and it is
+    # never a property column. Naming it as the role column exited 0 whenever no role values came with
+    # it: the check was gated on the values, so no tag was designated and the baseline fell back to the
+    # panel's own readings in silence. A different number reported as the requested one is worse than a
+    # dead run, so this is the half of the mistake that had to stop being quiet.
+    r = _run(
+        bed,
+        "counts.csv",
+        "panel.csv",
+        "--linker",
+        "linker.csv",
+        "--barcode-col",
+        "Sequence",
+        "--feature-col",
+        "Name",
+        "--sample-col",
+        "Samples",
+        "--role-column",
+        "Sequence",
+        "--output-prefix",
+        "result",
+        expect_failure=True,
+    )
+    assert "Sequence" in r.stderr
+
+
 def test_a_value_carrying_the_join_separator_is_reported_and_the_run_continues(capsys):
     panel = pl.DataFrame({"tag": ["T1"], "sample": ["s1"], "Antigen": ["Spike | odd"], "Dose": ["low"]})
     grouping, _, _, _ = _build_grouping(
