@@ -153,6 +153,24 @@ export type BlockData = {
    */
   contendingGroups?: string[][];
   punchcardTableState: PlDataTableStateV2; // punchcard grid state (UI-only, never projected to args)
+  /**
+   * The clonotype whose expansion is open, as the readout grid's own row key, or undefined when none is.
+   * UI-only, never projected to args — opening an expansion must not re-run anything.
+   *
+   * A whole key rather than a bare string: the grid hands back a `PTableKey`, and `expansionTable` turns
+   * it straight into an axis filter. Undefined is load-bearing and not merely an empty state — the
+   * output returns no table at all while it holds, because a table built with no filter would be every
+   * clonotype's rows at once, which is the one outcome the expansion exists to avoid.
+   */
+  expandedSet?: (string | number)[];
+  /**
+   * Grid state for the expansion table. UI-only, never projected to args.
+   *
+   * Optional, unlike the card's own state beside it: a required field would need every stored project
+   * migrated to carry it, and `createPlDataTableV3` takes `tableState` as optional already. A project
+   * that predates the expansion opens with a default grid instead of failing to open.
+   */
+  expansionTableState?: PlDataTableStateV2;
   // A `punchcardIdentities` list used to sit here, holding the identities whose columns the punchcard
   // showed, driven by an "Antigens shown" multi-select on the card. Removed: PlAgDataTableV2 ships a
   // columns panel and a filters panel, so the control re-implemented in block state something the grid

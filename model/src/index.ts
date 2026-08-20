@@ -1319,6 +1319,88 @@ export const platforma = BlockModelV3.create(dataModel)
     },
     { retentive: true, withStatus: true },
   )
+  // The expansion: ONE clonotype's identities, read down. `the-explore-readout` puts this opposite the
+  // card — the grid is read across a row to see what a clone bound, and the expansion down to see what
+  // those verdicts rest on, which is where a number belongs. A number in every position of the card would
+  // compete with reading it across, so this is where cellsBound and the support counts surface.
+  //
+  // Reads `antigenVerdictsTable`: the LONG verdicts family at (set, identity) grain. That output already
+  // existed, held open by main.tpl for exactly this ("the first page that wants the verdicts unpivoted —
+  // a per-identity list, say — reads it without a workflow change"), so this page costs no workflow
+  // change and no second import. Its rows are identities, which is the shape the expansion wants and the
+  // shape a pivot cannot give it.
+  //
+  // NOT gated on the identity count that gates the card's pivots. That gate exists because a pivot costs
+  // a COLUMN per identity and sits well under the thousand-plus a pMHC panel carries. Here an identity
+  // costs a ROW, and only one clonotype's rows are ever fetched — so a panel too wide for the card is
+  // precisely where this view still reads.
+  //
+  // The filter is pushed down, not applied after the fact: `createPlDataTableV3` puts it in the PTable
+  // def, `createPTableDefV3` wraps the join in a `{type:"filter", predicate}` query node, and the engine
+  // lowers that into the data query (pframes-rs `visit_filter`). So one clonotype's rows are what crosses
+  // the boundary, whatever the run's size.
+  .output(
+    "expansionTable",
+    (ctx) => {
+      // Undefined until a clonotype is chosen, and that is the point rather than a convenience: a table
+      // built with no filter is EVERY clonotype's identities at once, which on a real run is the exact
+      // cost this design exists to avoid. No selection, no table.
+      const chosen = ctx.data.expandedSet;
+      if (chosen === undefined || chosen.length === 0) return undefined;
+      const frame = ctx.outputs
+        ?.resolve({ field: "antigenVerdictsTable", allowPermanentAbsence: true })
+        ?.getPColumns();
+      if (frame === undefined || frame.length === 0) return undefined;
+      // NAMED explicitly, and this is the whole correctness of the call. `antigenVerdictsTable` surfaces
+      // the entire export frame, whose families are keyed on five different axes — tag, panel, sample,
+      // set, and (set, identity). Handing all of them to one table is a malformed join: the SDK answers
+      // with `discoverColumns failed` out of `discoverLabelColumns`, which reads as an SDK fault and is
+      // not one. Only the (set, identity) family belongs here.
+      //
+      // Three columns, not the whole family: `the-explore-readout` asks the expansion for the state, how
+      // many cells read bound, and how many could answer. Agreement, the unreliable reason and the
+      // competitor notes are export material with their own readers and would make this a spreadsheet.
+      const WANTED = [
+        "pl7.app/antigen/verdict",
+        "pl7.app/antigen/cellsBound",
+        "pl7.app/antigen/cellsCouldAnswer",
+      ];
+      const pCols = WANTED.flatMap((name) => frame.filter((c) => c.spec.name === name));
+      if (pCols.length === 0) return undefined;
+      // The set axis is the first of the (set, identity) pair, taken from a column rather than rebuilt:
+      // an axis assembled here would be a lookalike with a different identity and would filter nothing.
+      const setAxis = pCols[0].spec.axesSpec[0];
+      if (setAxis === undefined) return undefined;
+      return createPlDataTableV3(ctx, {
+        primaryColumns: pCols.map((c) => DataColumn.fromColumn(c)),
+        columns: null,
+        tableState: ctx.data.expansionTableState,
+        filters: {
+          type: "and",
+          filters: [
+            {
+              type: "patternEquals",
+              // The FULL axis id, domain included. Dropping the domain leaves an id that
+              // `remapFilterColumnIds` cannot resolve against the table's columns, and the SDK's
+              // unresolved-leaf path calls `console`, which does not exist in the model's QuickJS
+              // sandbox — so the symptom is `ReferenceError: 'console' is not defined` from deep inside
+              // the SDK rather than anything naming the filter. Worth knowing: that error means an
+              // unresolvable filter column, not a logging problem.
+              column: {
+                type: "axis",
+                id:
+                  setAxis.domain === undefined
+                    ? { name: setAxis.name, type: setAxis.type }
+                    : { name: setAxis.name, type: setAxis.type, domain: setAxis.domain },
+              },
+              value: String(chosen[0]),
+            },
+          ],
+        },
+      });
+    },
+    { retentive: true, withStatus: true },
+  )
   // The run's own quality report: every declared measurement with its status, the coverage triple behind
   // it, and — where nothing computed it — the reason it was deferred. This block is obliged to produce the
   // run-level measurements, and the obligation is that every measurement that CAN be computed is computed
