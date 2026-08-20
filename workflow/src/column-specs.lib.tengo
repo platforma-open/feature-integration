@@ -582,6 +582,18 @@ verdictsImportSpec := func(setAxisSpec, identityAxisSpec, served) {
 					"pl7.app/min": "0"
 				})
 			}),
+			// How many of the set's cells read BOUND here, which is neither of the two counts above and is
+			// not recoverable from `agreement`: that is the majority's share, and the majority is not
+			// always bound. A position where three of ten read bound and the verdict is "not bound" still
+			// carries three, and `the-explore-readout` puts exactly that number in the expansion.
+			verdictCol("cellsBound", "cellsBound", {
+				name: "pl7.app/antigen/cellsBound",
+				valueType: "Int",
+				annotations: a(97500, true, {
+					"pl7.app/label": "Cells that read bound",
+					"pl7.app/min": "0"
+				})
+			}),
 			verdictCol("agreement", "agreement", {
 				name: "pl7.app/antigen/agreement",
 				valueType: "Double",
