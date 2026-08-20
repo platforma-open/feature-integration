@@ -1376,18 +1376,12 @@ export const platforma = BlockModelV3.create(dataModel)
         ?.resolve({ field: "antigenVerdictsTable", allowPermanentAbsence: true })
         ?.getPColumns();
       if (frame === undefined || frame.length === 0) return undefined;
-      // NAMED explicitly, and this is the whole correctness of the call. `antigenVerdictsTable` surfaces
-      // the entire export frame, whose families are keyed on five different axes — tag, panel, sample,
-      // set, and (set, identity). Handing all of them to one table is a malformed join: the SDK answers
-      // with `discoverColumns failed` out of `discoverLabelColumns`, which reads as an SDK fault and is
-      // not one. Only the (set, identity) family belongs here.
-      //
-      // The columns Ane's design asks for: identity, state, bound — and could-answer only where the run
-      // carried panels that differ. Named explicitly, which is the whole correctness of this call:
+      // The columns the design asks for — identity, state, bound, and could-answer only where the run
+      // carried panels that differ — NAMED explicitly, which is the whole correctness of this call.
       // `antigenVerdictsTable` surfaces the entire export frame, whose families are keyed on five
-      // different axes, and handing all of them to one table is a malformed join the SDK reports as
-      // `discoverColumns failed` out of `discoverLabelColumns` — which reads as an SDK fault and is not
-      // one.
+      // different axes: tag, panel, sample, set, and (set, identity). Handing all of them to one table is
+      // a malformed join, and the SDK answers with `discoverColumns failed` out of `discoverLabelColumns`,
+      // which reads as an SDK fault and is not one. Only the (set, identity) family belongs here.
       //
       // The identity's readable name comes FIRST, and it has to be named here rather than left to
       // `columns: null`. That option resolves label columns from the result pool, and this label lives
@@ -1426,7 +1420,12 @@ export const platforma = BlockModelV3.create(dataModel)
               (c.spec.axesSpec.length === 1 && c.spec.axesSpec[0].name === identityAxisName)),
         ),
       );
-      if (pCols.length === 0) return undefined;
+      // The identity's name has to be one of them, and a count is not enough to know that. If only the
+      // label failed to match — an axis name drifting at export time is all it would take — the verdict
+      // and bound columns still match, the count is still non-zero, and the panel renders 17 anonymous
+      // rows again with nothing to say it regressed. No panel is a visible failure; a nameless one reads
+      // as working. The verdict column is required too, and the setAxis guard below catches its absence.
+      if (!pCols.some((c) => c.spec.name === "pl7.app/label")) return undefined;
       // The set axis is the first of the (set, identity) pair, taken from the verdict column rather than
       // from `pCols[0]`: the identity label column now sorts first and carries only the identity axis, so
       // reading `pCols[0].spec.axesSpec[0]` here would hand the filter that axis instead of the set axis
