@@ -271,6 +271,67 @@ function removeContendingGroup(index: number) {
     <div v-for="(line, i) in referenceSources.unavailable" :key="i">{{ line }}</div>
   </PlAlert>
 
+  <!-- Directly under the baseline section rather than with the other accordion at the foot of the form.
+       Grouping the accordions together sorted this form by how advanced a control is, which split the
+       baseline's own thresholds away from the baseline. Collapsed, this costs the reader one line and
+       puts every baseline control in one place. The heading does NOT repeat "(background)": that
+       parenthetical glosses the word once, where the reader first meets it, and repeating it would read
+       as part of the name and re-open the several-names-for-one-thing problem this form already closed.
+       The shared word "Baseline" is the link. -->
+  <PlAccordionSection label="Baseline thresholds">
+    <PlNumberField
+      v-model="app.model.data.panelReferenceMinMembers"
+      :min-value="1"
+      :step="1"
+      label="Minimum panel size to serve as baseline"
+    >
+      <template #tooltip>
+        How many tags the panel needs before its own readings can serve as the baseline. Below this,
+        the block does not offer that source.<br /><br />
+        No published work sets this line. The default of 8 is this block's choice, not a standard.
+      </template>
+    </PlNumberField>
+    <PlNumberField
+      v-model="app.model.data.referenceThinLine"
+      :min-value="0"
+      :step="1"
+      label="Minimum usable baseline reading"
+    >
+      <template #tooltip>
+        The lowest baseline count this block will judge against, in UMIs. Below it, the cell reads
+        unreliable and gives the reason. The block does not call it not bound.
+      </template>
+    </PlNumberField>
+    <PlNumberField
+      v-model="app.model.data.highReferenceLine"
+      :min-value="1"
+      :step="1"
+      label="High baseline reading"
+    >
+      <template #tooltip>
+        The baseline count, in UMIs, at which a cell is in high background. This is a measurement,
+        not a filter. The block counts these cells whether or not the gate below is on. You can
+        therefore see the run's exposure even when no gate is set.
+      </template>
+    </PlNumberField>
+    <PlNumberField
+      v-model="app.model.data.gateThreshold"
+      :min-value="1"
+      :step="1"
+      clearable
+      label="Admissibility gate (baseline UMIs)"
+    >
+      <template #tooltip>
+        The gate is off when this field is empty. When you set it, the block sets aside a cell whose
+        baseline reading reaches this value. That cell reads unreliable at every identity and gives
+        no verdict anywhere.<br /><br />
+        Off is a deliberate default, and a contested one. Published practice uses a gate. The
+        dominant tool does not. Off matches the tool, so first-run numbers stay recognisable. The
+        cost is that a sticky cell remains in the set and returns a confident "not bound".
+      </template>
+    </PlNumberField>
+  </PlAccordionSection>
+
   <PlSectionSeparator compact> The binding reading </PlSectionSeparator>
   <PlDropdownMulti
     :model-value="groupingSelection"
@@ -385,60 +446,6 @@ function removeContendingGroup(index: number) {
     </PlBtnGhost>
   </PlAccordionSection>
   -->
-
-  <PlAccordionSection label="Baseline thresholds">
-    <PlNumberField
-      v-model="app.model.data.panelReferenceMinMembers"
-      :min-value="1"
-      :step="1"
-      label="Minimum panel size to serve as baseline"
-    >
-      <template #tooltip>
-        How many tags the panel needs before its own readings can serve as the baseline. Below this,
-        the block does not offer that source.<br /><br />
-        No published work sets this line. The default of 8 is this block's choice, not a standard.
-      </template>
-    </PlNumberField>
-    <PlNumberField
-      v-model="app.model.data.referenceThinLine"
-      :min-value="0"
-      :step="1"
-      label="Minimum usable baseline reading"
-    >
-      <template #tooltip>
-        The lowest baseline count this block will judge against, in UMIs. Below it, the cell reads
-        unreliable and gives the reason. The block does not call it not bound.
-      </template>
-    </PlNumberField>
-    <PlNumberField
-      v-model="app.model.data.highReferenceLine"
-      :min-value="1"
-      :step="1"
-      label="High baseline reading"
-    >
-      <template #tooltip>
-        The baseline count, in UMIs, at which a cell is in high background. This is a measurement,
-        not a filter. The block counts these cells whether or not the gate below is on. You can
-        therefore see the run's exposure even when no gate is set.
-      </template>
-    </PlNumberField>
-    <PlNumberField
-      v-model="app.model.data.gateThreshold"
-      :min-value="1"
-      :step="1"
-      clearable
-      label="Admissibility gate (baseline UMIs)"
-    >
-      <template #tooltip>
-        The gate is off when this field is empty. When you set it, the block sets aside a cell whose
-        baseline reading reaches this value. That cell reads unreliable at every identity and gives
-        no verdict anywhere.<br /><br />
-        Off is a deliberate default, and a contested one. Published practice uses a gate. The
-        dominant tool does not. Off matches the tool, so first-run numbers stay recognisable. The
-        cost is that a sticky cell remains in the set and returns a confident "not bound".
-      </template>
-    </PlNumberField>
-  </PlAccordionSection>
 
   <PlAccordionSection label="Advanced reading settings">
     <PlNumberField
