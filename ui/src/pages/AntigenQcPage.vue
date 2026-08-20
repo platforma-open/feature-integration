@@ -31,7 +31,7 @@ const mismatchSettings = usePlDataTableSettingsV2({
 // A missing V(D)J dataset is a legitimate state rather than a half-filled form: the block runs, and the
 // verdict stage alone is skipped — so neither table below has a source. Read from data rather than from an
 // output, because the point is what the user has chosen, including before the next run. Same device, and
-// the same reason, as the punchcard's own empty state.
+// the same reason, as the explore readout's own empty state.
 const noDataset = computed(() => app.model.data.datasetRef === undefined);
 
 // An absent frame and an empty frame are different facts and get different words. Absent means the verdict
@@ -69,8 +69,8 @@ const mismatchAbsent = computed(() => {
     <PlAlert v-if="noDataset" type="warn">
       This run has no quality report: the verdict stage only runs once a single-cell V(D)J dataset
       is picked, so the run counted barcodes per cell and stopped before anything was measured. Pick
-      a dataset in Settings on the Punchcard page and run again. The per-sample read statistics are
-      unaffected and are on the Per-sample QC page.
+      a dataset in Settings on the Explore readout page and run again. The per-sample read
+      statistics are unaffected and are on the Per-sample QC page.
     </PlAlert>
 
     <template v-else>

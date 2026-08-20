@@ -18,7 +18,7 @@ import { computed } from "vue";
 import { useApp } from "../app";
 
 // The settings for the binding reading. Rendered in the Main page's Settings drawer and again in the
-// Punchcard page's own — one component, one set of controls, both writing the same data. A scientist who
+// Explore readout page's own — one component, one set of controls, both writing the same data. A scientist who
 // meets a card of grey punches can change the rule that produced it without leaving the page.
 //
 // Everything this component EDITS is below the "binding reading" line in BlockArgs, so a change here
@@ -27,7 +27,7 @@ import { useApp } from "../app";
 // tagFeatureCsvHandle, barcodeSeqColumn, sampleColumn — to tell whether the panel has loaded and to keep
 // a role or grouping setting from naming a column the panel reader consumes as a key. Those three force
 // the whole per-sample fan-out to re-run, and they belong to the Main page alone; adding a control for
-// one of them here would make the punchcard's drawer silently expensive.
+// one of them here would make the explore readout's drawer silently expensive.
 //
 // VOCABULARY, and the split is deliberate. Everything a USER reads says "baseline": the level a count
 // must exceed, measured in the same cell from a tag declared to bind nothing. The DATA layer keeps

@@ -173,7 +173,7 @@ const nothingToOffer = computed(() => !noDataset.value && identityOptions.value.
 
 <template>
   <PlBlockPage>
-    <template #title>Punchcard</template>
+    <template #title>Explore readout</template>
     <template #append>
       <PlBtnGhost @click.stop="settingsOpen = true">
         Settings

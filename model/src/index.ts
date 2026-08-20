@@ -1465,8 +1465,8 @@ export const platforma = BlockModelV3.create(dataModel)
             // Shown for every run, including one with no V(D)J dataset. That run produces no antigen
             // columns at all, and the page saying so is the only place a user learns why — hiding the
             // tab would leave the absence unexplained.
-            { type: "link" as const, href: "/punchcard" as const, label: "Punchcard" },
-            // Shown for every run too, and for the same reason as the punchcard: a run with no V(D)J
+            { type: "link" as const, href: "/punchcard" as const, label: "Explore readout" },
+            // Shown for every run too, and for the same reason as the explore readout: a run with no V(D)J
             // dataset computes no quality report, and this page saying so is the only place a user
             // learns why. Labelled "Run quality" and not "QC" so it cannot be read as another view of
             // the per-sample mitool stats above — that page is per sample, this one is per run.

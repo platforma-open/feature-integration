@@ -630,7 +630,7 @@ const gridOptions = {
       <PlAlert v-if="app.model.outputs.unkeyedSamplePanel" type="warn">
         {{ app.model.outputs.unkeyedSamplePanel }}
       </PlAlert>
-      <!-- The binding reading's own settings. The same component is mounted in the Punchcard page's
+      <!-- The binding reading's own settings. The same component is mounted in the Explore readout page's
            Settings drawer, so the rule that produced the card can be changed from the card — which is
            where a reader sees what the rule did, as a wall of red or a column of grey.
 
