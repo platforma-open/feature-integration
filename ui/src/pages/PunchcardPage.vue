@@ -17,6 +17,7 @@ import {
 } from "@platforma-open/milaboratories.feature-integration.model";
 import { computed, ref } from "vue";
 import { useApp } from "../app";
+import { useClonotypeLabels } from "../clonotypeLabels";
 import PunchCell from "../components/PunchCell.vue";
 import PunchLegend from "../components/PunchLegend.vue";
 import VerdictSettings from "../components/VerdictSettings.vue";
@@ -174,7 +175,24 @@ const expansionSettings = usePlDataTableSettingsV2({
 // would need a value route that does not exist (a Parquet p-column cannot be read in the model). The
 // clonotype's name stays available as an optional column of the panel's own table, one click away in the
 // Columns picker, and the reader reached this panel by clicking that clonotype in the first place.
-const expansionTitle = "Clonotype";
+// The clonotype's readable name, fetched through the card's own pFrame handle. `fullPframeHandle` is the
+// frame the grid already joined the upstream label column into, so the title and the card cannot disagree
+// about what this clonotype is called.
+const labelsPframe = computed(() => {
+  const out = app.model.outputs.punchcardTable;
+  return out?.ok === true ? out.value?.fullPframeHandle : undefined;
+});
+// The clonotype axis, derived in the model from an emitted column so its domain is exact. The same id
+// the expansion's filter uses, which is what keeps the label lookup and the filter talking about one
+// axis.
+const clonotypeAxisId = computed(() => app.model.outputs.clonotypeAxisId);
+const { resolveTitle } = useClonotypeLabels(labelsPframe, clonotypeAxisId);
+
+// The panel's title. The name when it is known, and the generic word until then — never the raw
+// scClonotypeKey, which names nothing to a reader and appears nowhere else in the block. The lookup is a
+// driver call, so there IS a first frame with no name yet; "Clonotype" carries that frame rather than
+// flashing a key.
+const expansionTitle = computed(() => resolveTitle(app.model.data.expandedSet?.[0]) ?? "Clonotype");
 
 // A missing V(D)J dataset is a legitimate state rather than a half-filled form: the block runs, and the
 // verdict stage alone is skipped. Read from data rather than from an output, because the point is what the

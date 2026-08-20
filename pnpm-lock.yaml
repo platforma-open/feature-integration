@@ -200,6 +200,9 @@ importers:
       '@platforma-open/milaboratories.feature-integration.model':
         specifier: workspace:*
         version: link:../model
+      '@platforma-sdk/model':
+        specifier: 'catalog:'
+        version: 1.81.1
       '@platforma-sdk/ui-vue':
         specifier: 'catalog:'
         version: 1.81.1(@bytecodealliance/preview2-shim@0.17.8)(typescript@5.6.3)
