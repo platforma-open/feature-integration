@@ -1,4 +1,9 @@
-import type { BlockRenderCtx, InferOutputsType, PlDataTableStateV2 } from "@platforma-sdk/model";
+import type {
+  AxisId,
+  BlockRenderCtx,
+  InferOutputsType,
+  PlDataTableStateV2,
+} from "@platforma-sdk/model";
 import {
   BlockModelV3,
   createPlDataTableStateV2,
@@ -8,6 +13,7 @@ import {
   DataModelBuilder,
   isPColumnSpec,
   parseResourceMap,
+  getAxisId,
 } from "@platforma-sdk/model";
 import { assemblePattern, CELL_TAG, FEATURE_TAG, UMI_TAG, validatePattern } from "./pattern";
 import { getPreset } from "./presets";
@@ -18,6 +24,11 @@ export type { PatternParts } from "./pattern";
 export { allPresets, getPreset } from "./presets";
 export type { Preset } from "./presets";
 export type { BlockArgs, BlockData, GroupingRule, ReferenceSource } from "./types";
+
+// Re-exported so the UI can seed a grid state without depending on @platforma-sdk/model directly — the ui
+// package's only SDK dependency is ui-vue, which does not carry this factory.
+export { createPlDataTableStateV2 } from "@platforma-sdk/model";
+export type { PTableKey } from "@platforma-sdk/model";
 
 // The reading's shipped defaults. They restate the Python's own (verdict.py DEFAULT_FLOOR,
 // BOUND_CUTOFF, DEFAULT_PANEL_MIN_MEMBERS, DEFAULT_REFERENCE_THIN_LINE,
@@ -1319,6 +1330,20 @@ export const platforma = BlockModelV3.create(dataModel)
     },
     { retentive: true, withStatus: true },
   )
+  // The clonotype axis id, DERIVED from an emitted column rather than written out by hand.
+  //
+  // The page hangs the expansion's row button on this axis, and `showCellButtonForAxisId` is matched with
+  // `isJsonEqual` — exact JSON equality, domain and all. A hand-written `{type, name}` misses the domain
+  // this axis carries, matches nothing, and renders no button with no error to say why. Deriving it from
+  // the same spec the filter reads also makes the two provably agree, which is the property that matters:
+  // a button on a row whose key the filter cannot resolve is worse than no button.
+  .output("clonotypeAxisId", (ctx): AxisId | undefined => {
+    const pCols = ctx.outputs
+      ?.resolve({ field: "antigenPunchcardTable", allowPermanentAbsence: true })
+      ?.getPColumns();
+    const axis = pCols?.[0]?.spec.axesSpec[0];
+    return axis === undefined ? undefined : getAxisId(axis);
+  })
   // The expansion: ONE clonotype's identities, read down. `the-explore-readout` puts this opposite the
   // card — the grid is read across a row to see what a clone bound, and the expansion down to see what
   // those verdicts rest on, which is where a number belongs. A number in every position of the card would

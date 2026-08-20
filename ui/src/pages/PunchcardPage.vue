@@ -8,10 +8,12 @@ import {
   PlSlideModal,
   usePlDataTableSettingsV2,
 } from "@platforma-sdk/ui-vue";
+import type { PTableKey } from "@platforma-open/milaboratories.feature-integration.model";
 import {
   PUNCH_COLUMN_NAME,
   PUNCH_IDENTITY_DOMAIN,
   REFERENCE_SOURCE_LABELS,
+  createPlDataTableStateV2,
 } from "@platforma-open/milaboratories.feature-integration.model";
 import { computed, ref } from "vue";
 import { useApp } from "../app";
@@ -107,6 +109,60 @@ const cellRendererSelector = (params: { colDef?: { context?: PunchColumnContext 
 
 // The reading's own settings, reachable from the page they explain.
 const settingsOpen = ref(false);
+
+// The expansion: one clonotype's identities read DOWN, which `the-explore-readout` puts opposite this
+// card's read ACROSS. The card stays a field of colour with no number in any position; every number the
+// atom asks for lives in here.
+//
+// The gesture is a double-click on the row, which is what the Main page already uses to open a sample's
+// report, so it is this block's own idiom.
+//
+// `showCellButtonForAxisId` was tried first, because a visible per-row button is the affordance nine
+// other blocks use and is more discoverable than a double-click. It rendered NOTHING here, with no error.
+// The SDK matches that prop with `isJsonEqual` against either an axis column's own id or the id of a
+// one-axis LABEL column (`table-source-v2.ts:296-315`); on this card the clonotype axis is displayed
+// through a pool-resolved label column and neither branch matched, so the selector returned undefined
+// and the cell rendered as plain text. The axis id itself was not the problem — it is derived from an
+// emitted column, domain and all, and a hand-written `{type, name}` would have missed the three domain
+// keys this axis carries. Worth re-testing if the SDK's label-column branch changes.
+//
+// The key is all the event carries — `cellButtonClicked` emits a `PTableKey` and nothing else, because
+// the table's values live in the pFrame and a detail view is expected to re-query. So the key goes into
+// block data and the model builds a table filtered to it. Nothing is fetched until a row is chosen: with
+// `expandedSet` undefined the model returns no table at all, which matters because an unfiltered
+// expansion would be every clonotype's identities at once.
+const expansionOpen = computed({
+  get: () => app.model.data.expandedSet !== undefined,
+  set: (open: boolean) => {
+    if (!open) app.model.data.expandedSet = undefined;
+  },
+});
+
+function openExpansion(key?: PTableKey) {
+  if (key === undefined) return;
+  app.model.data.expandedSet = key as (string | number)[];
+}
+
+// Seeded on first use rather than required in block data: a required field would need every stored
+// project migrated to carry it, and a project saved before the expansion existed would otherwise open
+// with an undefined grid state bound to v-model.
+const expansionTableState = computed({
+  get: () => app.model.data.expansionTableState ?? createPlDataTableStateV2(),
+  set: (value) => {
+    app.model.data.expansionTableState = value;
+  },
+});
+
+const expansionSettings = usePlDataTableSettingsV2({
+  model: () => app.model.outputs.expansionTable,
+});
+
+// The clonotype's label, for the slide-over's title. Read from the card's own row rather than re-derived:
+// the label column the grid resolved is the same one the expansion resolves, so they cannot disagree.
+const expandedLabel = computed(() => {
+  const key = app.model.data.expandedSet;
+  return key === undefined ? "" : String(key[0]);
+});
 
 // A missing V(D)J dataset is a legitimate state rather than a half-filled form: the block runs, and the
 // verdict stage alone is skipped. Read from data rather than from an output, because the point is what the
@@ -221,12 +277,22 @@ const nothingToOffer = computed(() => !noDataset.value && identityOptions.value.
         :settings="tableSettings"
         :cell-renderer-selector="cellRendererSelector"
         show-export-button
+        @row-double-clicked="openExpansion"
       />
     </template>
 
     <PlSlideModal v-model="settingsOpen" width="448px">
       <template #title>Binding verdict settings</template>
       <VerdictSettings />
+    </PlSlideModal>
+
+    <PlSlideModal v-model="expansionOpen" width="720px">
+      <template #title>{{ expandedLabel }}</template>
+      <PlAgDataTableV2
+        v-if="app.model.outputs.expansionTable"
+        v-model="expansionTableState"
+        :settings="expansionSettings"
+      />
     </PlSlideModal>
   </PlBlockPage>
 </template>
