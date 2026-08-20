@@ -985,7 +985,25 @@ def main() -> None:
         orient="row",
         schema={"setId": pl.String, "cellCount": pl.Int64},
     )
-    counts_frame = set_counts(verdicts).join(per_set_cells, on="setId", how="left")
+    # Set-aside cells PER CLONOTYPE, not per run. `the-explore-readout` states them once for the
+    # clonotype, so the expansion needs them at this grain; the run-level total in the run meta answers
+    # a different question and cannot be split back apart. `gated` holds (sampleId, cellId) keys and
+    # `cells_by_set` maps a set to its members, so this is a membership count over cells already read
+    # rather than a second pass over the reference frame.
+    per_set_gated = pl.DataFrame(
+        [(set_id, sum(1 for key in cells if key in gated)) for set_id, cells in sorted(cells_by_set.items())],
+        orient="row",
+        schema={"setId": pl.String, "cellsSetAside": pl.Int64},
+    )
+    counts_frame = (
+        set_counts(verdicts)
+        .join(per_set_cells, on="setId", how="left")
+        # Filled rather than asserted, unlike cellCount below: with no gate declared `gated` is empty,
+        # so every set legitimately has nothing set aside and 0 is the true answer. A reader must not
+        # have to tell "no gate" apart from "column missing".
+        .join(per_set_gated, on="setId", how="left")
+        .with_columns(pl.col("cellsSetAside").fill_null(0))
+    )
     # Every set comes FROM the linker, so every set has cells. Asserted rather than filled with zero:
     # a set with no cells is a contradiction, and writing 0 would report it as a real, empty clonotype.
     missing = counts_frame.filter(pl.col("cellCount").is_null())["setId"].to_list()

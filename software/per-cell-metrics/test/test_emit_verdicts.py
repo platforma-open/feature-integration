@@ -1852,3 +1852,26 @@ def test_the_set_counts_carry_the_clonotype_cell_count(bed):
     by_set = dict(zip(counts["setId"].to_list(), counts["cellCount"].to_list()))
     for set_id, could in zip(verdicts["setId"].to_list(), verdicts["cellsCouldAnswer"].to_list()):
         assert int(could) <= int(by_set[set_id]), "a set cannot answer with more cells than it has"
+
+
+def test_set_counts_carry_the_clonotype_s_own_set_aside_cells(bed):
+    # 206 states set-aside cells once for the clonotype, because a set-aside cell answers nothing at
+    # any identity -- repeating the subtraction at every position would imply a per-identity failure
+    # that did not happen. Run-level is the wrong grain for that: the expansion is about one clonotype.
+    #
+    # The bed's baseline is CTRL at 6 UMIs in every cell, so a gate of 5 sets every cell aside. That
+    # gives a real non-zero to assert against rather than a vacuous 0 == 0.
+    _run(bed, *BASE, "--gate-threshold", "5")
+    counts = pl.read_csv(bed / "result_set_counts.csv")
+    assert "cellsSetAside" in counts.columns
+    meta = json.loads((bed / "result_run_meta.json").read_text())
+    assert counts["cellsSetAside"].sum() == meta["cellsSetAside"]
+    assert meta["cellsSetAside"] > 0, "the gate set nothing aside, so this proves nothing"
+
+
+def test_set_counts_report_no_set_aside_cells_when_no_gate_is_declared(bed):
+    # Off is the default. The column still has to be present and zero, so a reader never has to tell
+    # "no gate" apart from "column missing".
+    _run(bed, *BASE)
+    counts = pl.read_csv(bed / "result_set_counts.csv")
+    assert counts["cellsSetAside"].to_list() == [0] * len(counts)
