@@ -204,7 +204,7 @@ def consistent_properties(
 # (tag, sample) -> the identity that pair belongs to. Many pairs may share one
 # identity, and one tag may belong to DIFFERENT identities in different samples.
 #
-# Keyed by both because the panel file is: `panel-file-authority@3.0` declares per
+# Keyed by both because the panel file is: `panel-file-authority` declares per
 # tag and sample, since a barcode is a reagent identifier drawn from a small fixed
 # pool and the same barcode carries a different antigen wherever a study reuses that
 # pool to cover more antigens than it has tags. A map keyed by tag alone cannot say
