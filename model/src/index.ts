@@ -1449,8 +1449,25 @@ export const platforma = BlockModelV3.create(dataModel)
         // Overriding visibility here rather than in the workflow spec, because that column is an EXPORT
         // with downstream readers, and making it default-visible would change their tables to fix ours.
         // This is how clonotype-browser adjusts a column it did not annotate.
+        // Two rules, and the order matters — the first match wins. Both columns the table would show as
+        // a name are called `pl7.app/label`, so they are told apart by the axis each one labels.
         displayOptions: {
-          visibility: [{ match: { name: "^pl7\\.app/label$" }, visibility: "default" }],
+          visibility: [
+            // The identity's name, promoted out of hidden. This is the row's subject.
+            {
+              match: {
+                name: "^pl7\\.app/label$",
+                axes: [{ name: "^pl7\\.app/antigen/identityId$" }],
+                partialAxesMatch: false,
+              },
+              visibility: "default",
+            },
+            // Any other label column here labels the CLONOTYPE axis, and the panel is about one
+            // clonotype: printing its name down all 17 rows is repetition, and the reader chose the
+            // clonotype by clicking it. Optional rather than hidden, so the Columns picker can bring it
+            // back for anyone who wants the name on screen.
+            { match: { name: "^pl7\\.app/label$" }, visibility: "optional" },
+          ],
         },
         filters: {
           type: "and",

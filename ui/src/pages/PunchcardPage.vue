@@ -157,12 +157,19 @@ const expansionSettings = usePlDataTableSettingsV2({
   model: () => app.model.outputs.expansionTable,
 });
 
-// The clonotype's label, for the slide-over's title. Read from the card's own row rather than re-derived:
-// the label column the grid resolved is the same one the expansion resolves, so they cannot disagree.
-const expandedLabel = computed(() => {
-  const key = app.model.data.expandedSet;
-  return key === undefined ? "" : String(key[0]);
-});
+// The slide-over's title names the VIEW, not the clonotype.
+//
+// It used to render `String(expandedSet[0])`, which is the raw scClonotypeKey axis value — measured live
+// as `04zdk2ezKgFGCgckfLw5H` against a card showing `C-ZDKEZ`. The card displays that axis through a
+// pool-resolved label column, which is the same fact that made `showCellButtonForAxisId` match nothing
+// here, so the key appears nowhere else in the block and named nothing to the reader.
+//
+// The design asks for `C-ZDKEZ — 4 cells` here instead. Both of those are pFrame values, and the row
+// event carries only a key: no block in this workspace builds a header out of row values, and doing it
+// would need a value route that does not exist (a Parquet p-column cannot be read in the model). The
+// clonotype's name stays available as an optional column of the panel's own table, one click away in the
+// Columns picker, and the reader reached this panel by clicking that clonotype in the first place.
+const expansionTitle = "Clonotype";
 
 // A missing V(D)J dataset is a legitimate state rather than a half-filled form: the block runs, and the
 // verdict stage alone is skipped. Read from data rather than from an output, because the point is what the
@@ -287,7 +294,7 @@ const nothingToOffer = computed(() => !noDataset.value && identityOptions.value.
     </PlSlideModal>
 
     <PlSlideModal v-model="expansionOpen" width="720px">
-      <template #title>{{ expandedLabel }}</template>
+      <template #title>{{ expansionTitle }}</template>
       <PlAgDataTableV2
         v-if="app.model.outputs.expansionTable"
         v-model="expansionTableState"
