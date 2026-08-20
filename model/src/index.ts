@@ -1418,13 +1418,17 @@ export const platforma = BlockModelV3.create(dataModel)
       // Absent reads as one panel: a run record written before the field existed has no opinion, and one
       // panel is the ordinary case 206 calls the default.
       const panelsDiffer = (runMeta?.samplePanelCount ?? 1) > 1;
+      //
+      // Not-bound is deliberately absent. A cell's vote is exactly one of bound or not-bound -- the
+      // combine step settles on that pair and nothing else -- so a third column is `answered - bound`
+      // printed out, and the reader who wants it can do the subtraction from two numbers already on the
+      // row. It stays in the EXPORT, which has its own readers; only this panel drops it.
       const WANTED = [
         "pl7.app/label",
         "pl7.app/antigen/verdict",
         ...(panelsDiffer ? ["pl7.app/antigen/cellsCouldAnswer"] : []),
         "pl7.app/antigen/cellsAnswered",
         "pl7.app/antigen/cellsBound",
-        "pl7.app/antigen/cellsNotBound",
       ];
       // One axis, the identity axis, is what makes `pl7.app/label` a label column rather than a name
       // collision — the frame carries other one-axis labels (the panel's, the tag's), and a label on the
