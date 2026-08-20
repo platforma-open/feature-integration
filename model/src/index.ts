@@ -1586,15 +1586,19 @@ export const platforma = BlockModelV3.create(dataModel)
       const punchCols = frame.filter((c) => c.spec.name === "pl7.app/antigen/cellPunch");
       if (punchCols.length === 0) return undefined;
       const boundCount = frame.filter((c) => c.spec.name === "pl7.app/antigen/boundIdentities");
-      // The bound count LAST, after the identities it counts over, for the same reason cells-answered sits
-      // last on the other face: it is the summary of the row, and a reader reaches it having read the row.
+      // No ordering rule. The bound count sits immediately right of the axes because its own annotation
+      // priority (95000) already outranks every identity column (94000 and down), and that is where it
+      // belongs: it is the one number that summarises the row, and a matrix seventeen columns wide -- or
+      // a hundred -- puts its far edge off screen. A rule pushing it last was tried and removed for
+      // exactly that reason.
+      //
+      // Stated because it looks like an omission next to the by-identity face, which does carry a rule:
+      // there, cells-answered had to be moved because its annotation put it in the wrong place. Here the
+      // annotation is right, so the correct amount of code is none.
       return createPlDataTableV3(ctx, {
-        primaryColumns: [setCol, ...punchCols, ...boundCount].map((c) => DataColumn.fromColumn(c)),
+        primaryColumns: [setCol, ...boundCount, ...punchCols].map((c) => DataColumn.fromColumn(c)),
         columns: null,
         tableState: ctx.data.cellExpansionTableState,
-        displayOptions: {
-          ordering: [{ match: { name: "^pl7\\.app/antigen/boundIdentities$" }, priority: 10000 }],
-        },
         filters: {
           type: "and",
           filters: [
