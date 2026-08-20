@@ -5,6 +5,7 @@ import {
   PlBlockPage,
   PlBtnGhost,
   PlMaskIcon24,
+  PlAgTextAndButtonCell,
   PlSlideModal,
   PlTabs,
   usePlDataTableSettingsV2,
@@ -57,7 +58,12 @@ const tableSettings = usePlDataTableSettingsV2({
 // visibly broken, rather than quietly mislabelled.
 type PunchColumnContext = {
   type?: string;
-  spec?: { name?: string; domain?: Record<string, string>; annotations?: Record<string, string> };
+  spec?: {
+    name?: string;
+    domain?: Record<string, string>;
+    annotations?: Record<string, string>;
+    axesSpec?: { name?: string }[];
+  };
 };
 
 const identityOfColumnNamed = (
@@ -101,7 +107,39 @@ const labelOf = computed(() => {
   return m;
 });
 
+// The clonotype's own column, which is where the row gets its button. Measured rather than assumed: the
+// grid hands this column a context of `{type: "column", spec: {name: "pl7.app/label", axesSpec: [the
+// clonotype axis]}}`. It is NOT an axis context, even though the value shown is the axis's label -- the
+// pool-resolved label column stands in for the axis and is handed over as an ordinary column.
+//
+// Matched by AXIS as well as by name, and against the same axis id the expansion filters on, so the two
+// provably agree. Name alone would be wrong the moment a second label column reaches this frame, which is
+// exactly what happens on the by-identity face.
+const isClonotypeLabelColumn = (params: { colDef?: { context?: PunchColumnContext } }): boolean => {
+  const spec = params.colDef?.context?.spec;
+  const axisName = app.model.outputs.clonotypeAxisId?.name;
+  if (spec === undefined || axisName === undefined) return false;
+  return (
+    spec.name === "pl7.app/label" &&
+    spec.axesSpec?.length === 1 &&
+    spec.axesSpec[0]?.name === axisName
+  );
+};
+
 const cellRendererSelector = (params: { colDef?: { context?: PunchColumnContext } }) => {
+  // The affordance. `invokeRowsOnDoubleClick` makes the button fire the ROW's double-click event, so it
+  // routes through the same `openExpansion` handler as a double-click anywhere on the row -- one path, not
+  // two, and clicking the row keeps working exactly as before. The button exists because nothing on a grid
+  // of coloured dots says it can be opened, and a reader who does not already know does not find out.
+  //
+  // This is the block's second attempt at the affordance. `showCellButtonForAxisId` was tried first and
+  // rendered nothing, with no error: the SDK matches that prop against an axis column's own id or a
+  // one-axis label column's id with `isJsonEqual`, and neither branch matched here. This route does not go
+  // through that matching at all -- it replaces the cell's renderer, which is the same mechanism the punch
+  // glyphs already use on this grid.
+  if (isClonotypeLabelColumn(params)) {
+    return { component: PlAgTextAndButtonCell, params: { invokeRowsOnDoubleClick: true } };
+  }
   const identity = identityOfColumn(params);
   if (identity === undefined) return undefined;
   return {
@@ -403,13 +441,15 @@ const nothingToOffer = computed(() => !noDataset.value && identityOptions.value.
           every identity, so the verdict stage skips it above its own limits on panel width and cell
           count — and a run that skipped it says so here rather than showing an empty grid.
         </PlAlert>
-        <PlAgDataTableV2
-          v-else
-          v-model="cellExpansionTableState"
-          :settings="cellExpansionSettings"
-          :cell-renderer-selector="cellPunchRendererSelector"
-          show-export-button
-        />
+        <template v-else>
+          <PunchLegend variant="cell" />
+          <PlAgDataTableV2
+            v-model="cellExpansionTableState"
+            :settings="cellExpansionSettings"
+            :cell-renderer-selector="cellPunchRendererSelector"
+            show-export-button
+          />
+        </template>
       </template>
     </PlSlideModal>
   </PlBlockPage>
