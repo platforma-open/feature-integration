@@ -736,24 +736,11 @@ setCellCountImportSpec := func(setAxisSpec, served) {
 // The label is the identity string itself. The readable name lives in result_identity_labels.csv,
 // which is imported as a column rather than read as a value, so it is not available while these
 // specs are built.
-// Both identity pivots — the state and the support behind it — are keyed the same way, carry the same
-// column order and the same labels, and differ only in what a column holds. One builder produces both so
-// the pair cannot drift: the punchcard pairs a state with its support by identity, and a divergence in
-// naming or ordering here would pair a state with a different identity's support with nothing to signal it.
-// The id prefix differs between the two families because both frames name their columns after the same
-// identities, and the punchcard frame holds BOTH at once: one prefix would give a state column and its
-// support column the same id inside one frame, where one of the pair silently wins.
-//
-// `visibility` differs too, and it is the difference between a punchcard and an empty grid. The punch
-// family is DEFAULT-visible: every antigen is a column of the card, and a table that hides them until
-// asked is not the view. The exported state family stays optional, because lead selection picks the few
-// identities it ranks on out of a panel that may run to hundreds.
-identityPivotImportSpec := func(setAxisSpec, identities, groupingId, served, colName, valueType, basePriority, idPrefix, visibility, extra) {
-	// The column header is the identity's LABEL where the run record carries one, and the identity itself
-	// otherwise. They differ for exactly one kind of identity: a tag whose rows disagreed about the
-	// grouping column has no value to group on and stands alone under its raw barcode, which among antigen
-	// names is the least readable thing this can emit. The software labels those with the names they did
-	// declare, joined. The identity — the KEY — is untouched; only what a reader sees changes.
+
+// One column per identity, shared by every pivot regardless of what its rows are keyed on. Factored out
+// rather than copied because the label rule below is the part that goes wrong quietly: a second copy that
+// missed it would render a column of raw barcodes and look like panel data.
+identityPivotColumns := func(identities, groupingId, served, colName, valueType, basePriority, idPrefix, visibility, extra) {
 	labels := is_undefined(served.identityLabels) ? {} : served.identityLabels
 	cols := []
 	for i, identity in identities {
@@ -773,13 +760,36 @@ identityPivotImportSpec := func(setAxisSpec, identities, groupingId, served, col
 			}
 		})
 	}
+	return cols
+}
+
+// Both identity pivots — the state and the support behind it — are keyed the same way, carry the same
+// column order and the same labels, and differ only in what a column holds. One builder produces both so
+// the pair cannot drift: the punchcard pairs a state with its support by identity, and a divergence in
+// naming or ordering here would pair a state with a different identity's support with nothing to signal it.
+// The id prefix differs between the two families because both frames name their columns after the same
+// identities, and the punchcard frame holds BOTH at once: one prefix would give a state column and its
+// support column the same id inside one frame, where one of the pair silently wins.
+//
+// `visibility` differs too, and it is the difference between a punchcard and an empty grid. The punch
+// family is DEFAULT-visible: every antigen is a column of the card, and a table that hides them until
+// asked is not the view. The exported state family stays optional, because lead selection picks the few
+// identities it ranks on out of a panel that may run to hundreds.
+
+identityPivotImportSpec := func(setAxisSpec, identities, groupingId, served, colName, valueType, basePriority, idPrefix, visibility, extra) {
+	// The column header is the identity's LABEL where the run record carries one, and the identity itself
+	// otherwise. They differ for exactly one kind of identity: a tag whose rows disagreed about the
+	// grouping column has no value to group on and stands alone under its raw barcode, which among antigen
+	// names is the least readable thing this can emit. The software labels those with the names they did
+	// declare, joined. The identity — the KEY — is untouched; only what a reader sees changes.
 	return {
 		axes: [{ column: "setId", spec: setAxisSpec }],
-		columns: cols,
+		columns: identityPivotColumns(identities, groupingId, served, colName, valueType, basePriority, idPrefix, visibility, extra),
 		storageFormat: "Parquet",
 		partitionKeyLength: 0
 	}
 }
+
 
 // --- The punchcard's pivot: result_identity_punch.csv, keyed (setId) --------------------
 //
@@ -824,6 +834,64 @@ identitySummaryImportSpec := func(setAxisSpec, identities, groupingId, served) {
 // The CSV also repeats referenceCount and inCellList on every tag row. They are per-CELL facts and
 // are imported once, at their own grain, from result_cell_scalars.csv; importing them here as well
 // would put one fact in two columns at two different keys.
+// The per-cell punchcard: one row per cell, one column per identity, that cell's own reading.
+//
+// Same identity columns as the set-level punch, from the same builder, so the two cards name and order
+// their columns identically -- a reader moving between the tabs is looking at one panel, and a column
+// that moved between them would read as a different antigen.
+//
+// The value is `state|reason`, two fields where the set-level punch carries six. A verdict rests on
+// counts a reader needs beside it; a cell IS the evidence, so there is nothing to report about how much
+// of it there was.
+//
+// `setId` is a COLUMN, not an axis. The readout shows one clonotype at a time and filters on it, and a
+// cell belongs to exactly one set, so this is a property of the row rather than part of its key. As an
+// axis it would also have to agree with the clonotype axis the rest of the block uses, which is a
+// domain-carrying axis this frame has no reason to reconstruct.
+cellPunchImportSpec := func(sampleAxisSpec, cellAxisSpec, identities, groupingId, served) {
+	cols := [
+		{
+			column: "setId",
+			id: "setId",
+			// Not default-visible: the readout filters on it, and a column repeating one clonotype id down
+			// every row of a panel about that clonotype is the repetition the expansion already removed once.
+			spec: {
+				name: "pl7.app/antigen/cellSetId",
+				valueType: "String",
+				domain: servedDomain(served),
+				annotations: a(96000, false, { "pl7.app/label": "Clonotype key" })
+			}
+		},
+		{
+			column: "boundIdentities",
+			id: "boundIdentities",
+			spec: {
+				name: "pl7.app/antigen/boundIdentities",
+				valueType: "Int",
+				domain: servedDomain(served),
+				annotations: a(95000, true, {
+					"pl7.app/label": "Identities bound",
+					"pl7.app/description": "How many identities this cell read as bound, over the identities its sample was stained for. A silent position counts as the not-bound it resolves to; a cell that could not be compared counts none.",
+					"pl7.app/min": "0"
+				})
+			}
+		}
+	]
+	for col in identityPivotColumns(identities, groupingId, served,
+		"pl7.app/antigen/cellPunch", "String", 94000, "cellPunch_", true, {}) {
+		cols = append(cols, col)
+	}
+	return {
+		axes: [
+			{ column: "sampleId", spec: sampleAxisSpec },
+			{ column: "cellId", spec: cellAxisSpec }
+		],
+		columns: cols,
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}
+}
+
 cellTagCountsImportSpec := func(sampleAxisSpec, cellAxisSpec, tagAxisSpec) {
 	return {
 		axes: [
@@ -1235,6 +1303,7 @@ export {
 	setCellCountImportSpec: setCellCountImportSpec,
 	identitySummaryImportSpec: identitySummaryImportSpec,
 	identityPunchImportSpec: identityPunchImportSpec,
+	cellPunchImportSpec: cellPunchImportSpec,
 	cellTagCountsImportSpec: cellTagCountsImportSpec,
 	cellScalarsImportSpec: cellScalarsImportSpec,
 	offeredImportSpec: offeredImportSpec,

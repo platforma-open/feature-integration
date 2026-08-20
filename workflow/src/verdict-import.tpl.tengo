@@ -161,6 +161,30 @@ self.body(func(inputs) {
 	addTo(cellRefFb, "cellScalars", inputs.cellScalars,
 		columnSpecs.cellScalarsImportSpec(sampleAxis, cellAxis, served))
 
+	// The per-cell punchcard, into the SAME frame: one row per cell, one column per identity, that cell's
+	// own reading. This is the by-cell face of the expansion, and it is the one place the block shows why a
+	// clonotype's verdict came out as it did rather than only what it came out as.
+	//
+	// Note what this does to the paragraph above. That reasoning still holds for the per-cell per-TAG
+	// counts, which remain unimported: nothing reads them. It no longer holds as a blanket statement about
+	// per-cell material, because this frame now carries a per-cell-per-identity grid — a reader appeared.
+	// What kept the cell x tag table out was the absence of a consumer, not the grain.
+	//
+	// Gated the same way as the identity pivots, and additionally on a cell count in the software, which is
+	// the gate that matters here: the rows are cells rather than clonotypes, so the same panel width costs
+	// an order of magnitude more. The run record says whether it emitted, and the page reads that rather
+	// than inferring it from an absent frame.
+	cellPunchIdentities := []
+	if !is_undefined(served.cellPunchEmitted) && served.cellPunchEmitted {
+		ll.assert(!is_undefined(served.identities),
+			"the run record reports an emitted per-cell punchcard but names no identities")
+		cellPunchIdentities = served.identities
+	}
+	if len(cellPunchIdentities) > 0 {
+		addTo(cellRefFb, "cellPunch", inputs.cellPunch,
+			columnSpecs.cellPunchImportSpec(sampleAxis, cellAxis, cellPunchIdentities, served.groupingId, served))
+	}
+
 	// Which identities each sample was actually stained with — without it "never asked" is a claim a
 	// reader cannot check.
 	addTo(exportFb, "offered", inputs.offered,

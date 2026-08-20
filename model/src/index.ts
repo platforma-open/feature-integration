@@ -59,6 +59,9 @@ const DEFAULT_HIGH_REFERENCE_LINE = 100;
 // wrong antigen. Both id prefixes existed only to serve that match and are gone with it.
 export const PUNCH_COLUMN_NAME = "pl7.app/antigen/identityPunch";
 export const PUNCH_IDENTITY_DOMAIN = "pl7.app/antigen/identityId";
+// The by-cell face's punch column. Same identity domain key, so one column-matching helper serves both
+// cards; only the column NAME distinguishes a set's verdict from a cell's own reading.
+export const CELL_PUNCH_COLUMN_NAME = "pl7.app/antigen/cellPunch";
 // The clonotype's cell count, carried in the punchcard's own frame so the grid can read it: a
 // block's own exports are not in its own result pool, so the copy in the exported setCounts family
 // is unreachable from here.
@@ -1545,6 +1548,60 @@ export const platforma = BlockModelV3.create(dataModel)
               // by a count, because a bound count of 0 is a real reading and must stay.
               column: { type: "column", id: verdictCol.id },
               value: "never asked",
+            },
+          ],
+        },
+      });
+    },
+    { retentive: true, withStatus: true },
+  )
+  // The expansion's BY-CELL face: one row per cell of the chosen clonotype, one column per identity,
+  // carrying that cell's own reading rather than its set's verdict. This is where a reader sees WHY a
+  // verdict came out as it did -- an `unreliable` on the card is cells disagreeing, and nothing but this
+  // shows the disagreement.
+  //
+  // Filtered on `setId`, which is a COLUMN here rather than an axis. The frame is keyed (sampleId, cellId)
+  // because that is what a cell is, and the clonotype is a property of the row. So the filter leaf is a
+  // `{type: "column"}` one, and `PColumn.id` is the `ColumnUniversalId` it wants -- no hand-built id, which
+  // is the same discipline the axis filter above follows for the same reason.
+  //
+  // Same push-down as the by-identity face: `createPlDataTableV3` puts the filter in the PTable def and the
+  // engine lowers it into the data query, so one clonotype's cells are what crosses the boundary. That
+  // matters more here than there -- the frame's grain is every cell of the run, not every clonotype.
+  .output(
+    "cellExpansionTable",
+    (ctx) => {
+      const chosen = ctx.data.expandedSet;
+      if (chosen === undefined || chosen.length === 0) return undefined;
+      const frame = ctx.outputs
+        ?.resolve({ field: "antigenCellReference", allowPermanentAbsence: true })
+        ?.getPColumns();
+      if (frame === undefined || frame.length === 0) return undefined;
+      // The set column has to be found before anything else: without it there is no filter, and an
+      // unfiltered table here is every cell in the run against every identity. Absent means the software
+      // gated the pivot away, which is a legitimate state and not an error -- so no table, and the page
+      // says why from the run record.
+      const setCol = frame.find((c) => c.spec.name === "pl7.app/antigen/cellSetId");
+      if (setCol === undefined) return undefined;
+      const punchCols = frame.filter((c) => c.spec.name === "pl7.app/antigen/cellPunch");
+      if (punchCols.length === 0) return undefined;
+      const boundCount = frame.filter((c) => c.spec.name === "pl7.app/antigen/boundIdentities");
+      // The bound count LAST, after the identities it counts over, for the same reason cells-answered sits
+      // last on the other face: it is the summary of the row, and a reader reaches it having read the row.
+      return createPlDataTableV3(ctx, {
+        primaryColumns: [setCol, ...punchCols, ...boundCount].map((c) => DataColumn.fromColumn(c)),
+        columns: null,
+        tableState: ctx.data.cellExpansionTableState,
+        displayOptions: {
+          ordering: [{ match: { name: "^pl7\\.app/antigen/boundIdentities$" }, priority: 10000 }],
+        },
+        filters: {
+          type: "and",
+          filters: [
+            {
+              type: "patternEquals",
+              column: { type: "column", id: setCol.id },
+              value: String(chosen[0]),
             },
           ],
         },

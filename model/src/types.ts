@@ -171,6 +171,13 @@ export type BlockData = {
    * that predates the expansion opens with a default grid instead of failing to open.
    */
   expansionTableState?: PlDataTableStateV2;
+  /**
+   * Grid state for the expansion's BY-CELL face. Separate from the state beside it, and it has to be: the
+   * two tabs are different tables over different axes -- one row per identity against one row per cell --
+   * so a shared state would carry one tab's column order and filters into the other, where none of the
+   * column ids resolve. Optional for the same reason as above.
+   */
+  cellExpansionTableState?: PlDataTableStateV2;
   // A `punchcardIdentities` list used to sit here, holding the identities whose columns the punchcard
   // showed, driven by an "Antigens shown" multi-select on the card. Removed: PlAgDataTableV2 ships a
   // columns panel and a filters panel, so the control re-implemented in block state something the grid

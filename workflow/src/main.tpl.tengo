@@ -445,6 +445,7 @@ wf.body(func(args) {
 			setCounts: verdictRun.output("setCounts"),
 			identitySummary: verdictRun.output("identitySummary"),
 			identityPunch: verdictRun.output("identityPunch"),
+			cellPunch: verdictRun.output("cellPunch"),
 			// cellCounts is deliberately NOT passed. The per-cell per-tag counts are the run's largest table
 			// and no reader exists for them on either side of the block boundary, so the import template does
 			// not build them into columns — and an input it would ignore is worse than no input, because it

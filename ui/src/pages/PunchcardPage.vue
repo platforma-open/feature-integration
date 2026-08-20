@@ -11,6 +11,7 @@ import {
 } from "@platforma-sdk/ui-vue";
 import type { PTableKey } from "@platforma-open/milaboratories.feature-integration.model";
 import {
+  CELL_PUNCH_COLUMN_NAME,
   PUNCH_COLUMN_NAME,
   PUNCH_IDENTITY_DOMAIN,
   REFERENCE_SOURCE_LABELS,
@@ -19,6 +20,7 @@ import {
 import { computed, ref } from "vue";
 import { useApp } from "../app";
 import { useClonotypeLabels } from "../clonotypeLabels";
+import CellPunchCell from "../components/CellPunchCell.vue";
 import PunchCell from "../components/PunchCell.vue";
 import PunchLegend from "../components/PunchLegend.vue";
 import VerdictSettings from "../components/VerdictSettings.vue";
@@ -58,13 +60,18 @@ type PunchColumnContext = {
   spec?: { name?: string; domain?: Record<string, string>; annotations?: Record<string, string> };
 };
 
-const identityOfColumn = (params: {
-  colDef?: { context?: PunchColumnContext };
-}): string | undefined => {
+const identityOfColumnNamed = (
+  params: { colDef?: { context?: PunchColumnContext } },
+  columnName: string,
+): string | undefined => {
   const spec = params.colDef?.context?.spec;
-  if (spec === undefined || spec.name !== PUNCH_COLUMN_NAME) return undefined;
+  if (spec === undefined || spec.name !== columnName) return undefined;
   return spec.domain?.[PUNCH_IDENTITY_DOMAIN];
 };
+
+const identityOfColumn = (params: {
+  colDef?: { context?: PunchColumnContext };
+}): string | undefined => identityOfColumnNamed(params, PUNCH_COLUMN_NAME);
 
 // An unplaced identity gets a note explaining ITSELF. Its column header reads as a bare barcode where
 // every other header is an antigen, and nothing on the header says why. The banner above the card says
@@ -107,6 +114,15 @@ const cellRendererSelector = (params: { colDef?: { context?: PunchColumnContext 
       showCouldAnswer: panelsDiffer.value,
     },
   };
+};
+
+// The by-cell face's renderer. Matched on the cell punch's own column NAME, so a column of one card can
+// never be drawn by the other card's renderer: the two share an identity domain key but nothing else, and
+// the set-level renderer handed a two-field value would report it unreadable.
+const cellPunchRendererSelector = (params: { colDef?: { context?: PunchColumnContext } }) => {
+  const identity = identityOfColumnNamed(params, CELL_PUNCH_COLUMN_NAME);
+  if (identity === undefined) return undefined;
+  return { component: CellPunchCell, params: { antigen: labelOf.value[identity] ?? identity } };
 };
 
 // The reading's own settings, reachable from the page they explain.
@@ -168,6 +184,20 @@ const expansionTableState = computed({
   set: (value) => {
     app.model.data.expansionTableState = value;
   },
+});
+
+// Its own grid state, and its own `sourceId`. Two tables over different axes: sharing either would carry
+// one face's column order and filters into the other, where none of the column ids resolve.
+const cellExpansionTableState = computed({
+  get: () => app.model.data.cellExpansionTableState ?? createPlDataTableStateV2(),
+  set: (value) => {
+    app.model.data.cellExpansionTableState = value;
+  },
+});
+
+const cellExpansionSettings = usePlDataTableSettingsV2({
+  model: () => app.model.outputs.cellExpansionTable,
+  sourceId: () => app.model.data.expandedSet?.join(" "),
 });
 
 const expansionSettings = usePlDataTableSettingsV2({
@@ -367,10 +397,20 @@ const nothingToOffer = computed(() => !noDataset.value && identityOptions.value.
         />
       </template>
 
-      <PlAlert v-else type="info">
-        One row per cell, one column per identity, is not built yet. It reads the per-cell states
-        the verdict stage already computes, which need exporting first.
-      </PlAlert>
+      <template v-else>
+        <PlAlert v-if="app.model.outputs.cellExpansionTable === undefined" type="info">
+          This run carries no per-cell card. The dense grid it needs is one row per cell against
+          every identity, so the verdict stage skips it above its own limits on panel width and cell
+          count — and a run that skipped it says so here rather than showing an empty grid.
+        </PlAlert>
+        <PlAgDataTableV2
+          v-else
+          v-model="cellExpansionTableState"
+          :settings="cellExpansionSettings"
+          :cell-renderer-selector="cellPunchRendererSelector"
+          show-export-button
+        />
+      </template>
     </PlSlideModal>
   </PlBlockPage>
 </template>
