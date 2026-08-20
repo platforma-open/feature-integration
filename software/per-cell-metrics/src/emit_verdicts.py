@@ -555,11 +555,13 @@ def _pivot_identity_summary(verdicts: pl.DataFrame, universe: set[str]) -> tuple
     identity count: the pivot costs a column per identity and a large panel
     would turn one artifact into a thousand.
 
-    The second frame is the punchcard's, and its cell carries everything a reader
+    The second frame is the readout's, and its cell carries everything a reader
     needs to ask "why is this mark this colour":
-    `state|answered|couldAnswer|agreement|reason`. `agreement` and `reason` are
-    empty where they do not apply — a settled verdict has no reason, and a set
-    nobody could ask has no agreement.
+    `state|answered|couldAnswer|agreement|reason|bound`. `agreement` and `reason`
+    are empty where they do not apply — a settled verdict has no reason, and a set
+    nobody could ask has no agreement. `bound` is last because it was appended: a
+    reader that destructures the first five fields positionally still decodes a
+    value written before it existed.
 
     No score, and no binding level. `binary-narrowing` forbids a reading of the
     antigen counts as a level or an order from leaving this block, so the cell
