@@ -48,6 +48,10 @@ const DEFAULT_HIGH_REFERENCE_LINE = 100;
 // wrong antigen. Both id prefixes existed only to serve that match and are gone with it.
 export const PUNCH_COLUMN_NAME = "pl7.app/antigen/identityPunch";
 export const PUNCH_IDENTITY_DOMAIN = "pl7.app/antigen/identityId";
+// The clonotype's cell count, carried in the punchcard's own frame so the grid can read it: a
+// block's own exports are not in its own result pool, so the copy in the exported setCounts family
+// is unreachable from here.
+export const PUNCH_CELL_COUNT_COLUMN = "pl7.app/antigen/cellCount";
 
 // How each comparator choice is written for a reader. The single place the wording lives: the Python
 // enum, the run-meta JSON and the p-column domain all carry the machine token, so rewording a sentence
@@ -1244,6 +1248,11 @@ export const platforma = BlockModelV3.create(dataModel)
       // column chooser shows.
       const cols = pCols.filter((c) => identityOf(c) !== undefined);
       if (cols.length === 0) return undefined;
+      // The clonotype's cell count, beside its name. It carries no identity domain, so the filter above
+      // drops it — and `primaryColumns` runs no discovery, so a column not listed here never reaches the
+      // grid. It is keyed on the same single axis as the punch columns, which is what makes adding it to
+      // this list safe: a column carrying an axis the others lack would widen the join.
+      const cellCount = pCols.filter((c) => c.spec.name === PUNCH_CELL_COUNT_COLUMN);
       // Alphabetical by the name a READER sees. The workflow emits these sorted by identity, which under
       // the per-tag grouping is the barcode — and a panel's names never sort the same as its sequences, so
       // the card opened in an order that looked arbitrary to the only person reading it. Numeric collation
@@ -1261,7 +1270,7 @@ export const platforma = BlockModelV3.create(dataModel)
       // also applied only to the joined labels a tag receives when its rows disagree about the grouping
       // column. Correct those labels where they are produced. Do not hide them behind an ellipsis.
       return createPlDataTableV3(ctx, {
-        primaryColumns: ordered.map((c) => DataColumn.fromColumn(c)),
+        primaryColumns: [...cellCount, ...ordered].map((c) => DataColumn.fromColumn(c)),
         columns: null,
         tableState: ctx.data.punchcardTableState,
       });

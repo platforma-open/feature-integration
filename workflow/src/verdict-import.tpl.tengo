@@ -123,6 +123,13 @@ self.body(func(inputs) {
 			columnSpecs.identityPunchImportSpec(setAxis, summaryIdentities, served.groupingId, served))
 	}
 
+	// The clonotype's own cell count, beside its name. Imported into THIS frame and not only into the
+	// export, because a block's own exports are not in its own result pool: the copy in the exported
+	// setCounts family is unreadable by this grid. Ungated by the identity count — a card with no
+	// identity columns still says how many cells each clonotype has.
+	addTo(punchFb, "setCellCount", inputs.setCounts,
+		columnSpecs.setCellCountImportSpec(setAxis, served))
+
 	// The per-cell material stays INSIDE the block: an output, never an export. Reading the same experiment
 	// under another grouping is another execution of this block, not a re-derivation performed by a reader,
 	// so nothing downstream needs per-cell state — and nothing downstream ever asked for it. Labelling and

@@ -665,6 +665,39 @@ setCountsImportSpec := func(setAxisSpec, served) {
 	}
 }
 
+// --- The clonotype's cell count, for the punchcard's OWN frame ---------------------------
+//
+// The same column setCountsImportSpec carries, imported again into the card's frame. A block's own
+// exports are not in its own result pool — the reason the punchcard is an output rather than an export
+// — so the count sitting in the exported setCounts family is unreadable by the very grid that has to
+// show it. The number was computed and rendered nowhere until this existed.
+//
+// Only the cell count. The other four set counts are identity counts, and putting them here would add
+// four numeric columns to a card whose whole argument is that numbers do not belong in every position:
+// `the-explore-readout` puts the clonotype's cell count beside its name and keeps the rest to the
+// expansion.
+setCellCountImportSpec := func(setAxisSpec, served) {
+	return {
+		axes: [{ column: "setId", spec: setAxisSpec }],
+		columns: [{
+			column: "cellCount",
+			id: "cellCount",
+			spec: {
+				name: "pl7.app/antigen/cellCount",
+				valueType: "Int",
+				domain: servedDomain(served),
+				annotations: a(96000, true, {
+					"pl7.app/label": "Cells",
+					"pl7.app/min": "0",
+					"pl7.app/description": "How many cells this clonotype has. A verdict resting on three cells and one resting on forty print the same word, so this is what tells them apart."
+				})
+			}
+		}],
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}
+}
+
 // --- Per-identity summary: result_identity_summary.csv, keyed (setId) --------------------
 //
 // The same verdicts pivoted onto the set axis alone, one column per identity, so a per-antigen state
@@ -1175,6 +1208,7 @@ export {
 
 	verdictsImportSpec: verdictsImportSpec,
 	setCountsImportSpec: setCountsImportSpec,
+	setCellCountImportSpec: setCellCountImportSpec,
 	identitySummaryImportSpec: identitySummaryImportSpec,
 	identityPunchImportSpec: identityPunchImportSpec,
 	cellTagCountsImportSpec: cellTagCountsImportSpec,
