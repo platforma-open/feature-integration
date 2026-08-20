@@ -1944,3 +1944,77 @@ def test_run_meta_omits_a_clonotype_the_gate_did_not_touch(two_set_bed):
     counts = pl.read_csv(two_set_bed / "result_set_counts.csv")
     dense = dict(zip(counts["setId"].to_list(), counts["cellsSetAside"].to_list()))
     assert dense == {"K1": 2, "K2": 0}
+
+
+@pytest.fixture
+def silent_position_bed(tmp_path):
+    # One clonotype, two cells, two antigens, and the shape that separates "asked and silent" from "never
+    # asked": c1 carries counts for both antigens, c2 carries counts for AgA only. So (c2, AgB) has no row
+    # in `read_states` at all, and every antigen is on the sample's panel -- which makes it a SILENT
+    # position rather than an unasked one. An implementation that pivots the sparse frame and stops leaves
+    # that position blank, and blank is reserved for never-asked.
+    (tmp_path / "counts.csv").write_text(
+        "sampleId,cellId,tag,umiCount\nS1,c1,AAAA,500\nS1,c1,BBBB,400\nS1,c1,CTRL,2\nS1,c2,AAAA,600\nS1,c2,CTRL,2\n"
+    )
+    (tmp_path / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type\nS1,AgA,AAAA,Target\nS1,AgB,BBBB,Target\nS1,Ctrl,CTRL,Control\n"
+    )
+    (tmp_path / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS1,c2,K1\n")
+    return tmp_path
+
+
+def _cell_punch(bed):
+    frame = pl.read_csv(bed / "result_cell_punch.csv")
+    return {(row["sampleId"], row["cellId"]): row for row in frame.iter_rows(named=True)}
+
+
+def test_cell_punch_gives_every_cell_a_row_and_every_identity_a_column(silent_position_bed):
+    _run(silent_position_bed, *BASE)
+    rows = _cell_punch(silent_position_bed)
+    assert set(rows) == {("S1", "c1"), ("S1", "c2")}, "one row per cell of the set"
+    # The columns are the PANEL, not what this run happened to ask. The comparator is not an identity.
+    for key in rows:
+        # Keyed by the BARCODE, not the display name: with no grouping column each tag stands alone
+        # under its own sequence, exactly as the set-level punch keys its columns.
+        assert "AAAA" in rows[key] and "BBBB" in rows[key]
+        assert rows[key]["setId"] == "K1", "the set travels as a column so the readout can filter on it"
+
+
+def test_cell_punch_resolves_a_silent_position_rather_than_leaving_it_blank(silent_position_bed):
+    # The claim this fixture exists for. (c2, AgB) has no row in the states frame, its sample offered AgB,
+    # and c2 can be compared -- so it reads NOT BOUND, exactly as silent_tally counts it when it produces
+    # c2's contribution to K1's verdict at AgB. Blank here would contradict that arithmetic.
+    _run(silent_position_bed, *BASE)
+    rows = _cell_punch(silent_position_bed)
+    silent = rows[("S1", "c2")]["BBBB"]
+    assert silent is not None, "an asked-and-silent position must not be blank"
+    assert silent.split("|")[0] == "not bound", silent
+    # And the position that DID carry counts reads bound, so the test is not passing on a frame where
+    # everything is not-bound.
+    assert rows[("S1", "c1")]["BBBB"].split("|")[0] == "bound", rows[("S1", "c1")]["BBBB"]
+
+
+def test_cell_punch_counts_the_identities_a_cell_read_bound(silent_position_bed):
+    _run(silent_position_bed, *BASE)
+    rows = _cell_punch(silent_position_bed)
+    # c1 bound both antigens; c2 bound AgA and was silent -- so not bound -- at AgB.
+    assert rows[("S1", "c1")]["boundIdentities"] == 2
+    assert rows[("S1", "c2")]["boundIdentities"] == 1
+
+
+def test_cell_punch_marks_a_gated_cell_unreliable_at_every_identity(silent_position_bed):
+    # A gate reading the comparator at 2 takes both cells. A gated cell was not measured at all, so no
+    # position of it is bound or not bound -- and its bound count is zero rather than absent.
+    _run(silent_position_bed, *BASE, "--gate-threshold", "1")
+    rows = _cell_punch(silent_position_bed)
+    for key, row in rows.items():
+        for identity in ("AAAA", "BBBB"):
+            assert row[identity].split("|")[0] == "unreliable", (key, identity, row[identity])
+        assert row["boundIdentities"] == 0, key
+
+
+def test_run_meta_says_whether_the_cell_punch_was_emitted(silent_position_bed):
+    _run(silent_position_bed, *BASE)
+    meta = json.loads((silent_position_bed / "result_run_meta.json").read_text())
+    assert meta["cellPunchEmitted"] is True
+    assert meta["cellPunchCells"] == 2

@@ -92,6 +92,7 @@ from verdict import (
     DEFAULT_REFERENCE_THIN_LINE,
     Admissibility,
     ReferenceChoice,
+    State,
     _cell_admissibility_reason,
     apply_floor,
     combine_tags_to_identities,
@@ -625,6 +626,136 @@ def _pivot_identity_summary(verdicts: pl.DataFrame, universe: set[str]) -> tuple
     return states, punch.select(ordered), True
 
 
+# A run whose cell count passes this does not get a per-cell punchcard. The frame below is the DENSE
+# per-cell-per-identity grid, which the rest of this module goes out of its way never to build: `silent_tally`
+# exists precisely so silent positions are counted rather than materialised, and its docstring puts the dense
+# grid at 11-20x the sparse input on a realistic panel. The grid is built here anyway because the readout
+# needs it, and it is bounded here because "needs it" is not the same as "at any size". Above the line the
+# export is skipped and the page says so, which is a readout a reader can act on; a run that dies importing a
+# Parquet file is not.
+CELL_PUNCH_MAX_CELLS = 200_000
+
+
+def _pivot_cell_punch(
+    states: pl.DataFrame,
+    cells_by_set: dict[str, list[CellKey]],
+    offered_by_sample: dict[str, set[str]],
+    admissibility: Admissibility,
+    universe: set[str],
+) -> tuple[pl.DataFrame, bool]:
+    """One row per cell, one column per identity: that cell's own reading, not its set's verdict.
+
+    The same four states the set-level card uses, and for the same reason -- a
+    cell asked about an identity always resolves to one of them. Three of the
+    four come straight from `read_states`. The fourth is structural: an identity
+    no sample holding this cell offered is NEVER_ASKED, and it is the only way a
+    position here is blank.
+
+    **A cell with no row in `states` is not an absence.** It was asked and it
+    read nothing, its count is zero, and a zero count resolves the same way
+    every time: NOT_BOUND, unless the cell itself cannot be compared, in which
+    case UNRELIABLE. That is `silent_tally`'s rule, and the reason it is not
+    re-derived here is that the deciding function -- `_cell_admissibility_reason`
+    -- is identity-independent and is the one both `read_states` and
+    `silent_tally` already call. Drawing a silent cell as an empty position
+    would contradict the arithmetic that produced its set's verdict, where the
+    same cell voted.
+
+    `setId` travels as a COLUMN rather than an axis. The readout shows one
+    clonotype at a time and filters on it, and a cell belongs to exactly one
+    set, so the fact is a property of the row.
+    """
+    members = [(sample, cell, set_id) for set_id, keys in sorted(cells_by_set.items()) for sample, cell in keys]
+    ordered_identities = sorted(universe)
+    empty = pl.DataFrame(schema={"sampleId": pl.String, "cellId": pl.String, "setId": pl.String})
+    if not members or not ordered_identities:
+        return empty, False
+    # Both gates, and the identity one is the same limit the set-level pivot uses: a column per identity is
+    # a p-column per identity, and that cost is per identity whichever axis the rows are on.
+    if len(ordered_identities) > IDENTITY_SUMMARY_MAX_IDENTITIES or len(members) > CELL_PUNCH_MAX_CELLS:
+        return empty, False
+
+    member_frame = pl.DataFrame(
+        members, orient="row", schema={"sampleId": pl.String, "cellId": pl.String, "setId": pl.String}
+    )
+    offered_frame = pl.DataFrame(
+        [(sample, identity) for sample, ids in sorted(offered_by_sample.items()) for identity in sorted(ids)],
+        orient="row",
+        schema={"sampleId": pl.String, "identity": pl.String},
+    )
+    # Why the reason is carried per CELL and not per position: it answers "can this cell be compared at all",
+    # which no identity changes. One row per member, not one per member and identity.
+    reasons = pl.DataFrame(
+        [
+            (
+                sample,
+                cell,
+                (lambda r: r.value if r is not None else None)(
+                    _cell_admissibility_reason((sample, cell), admissibility)
+                ),
+            )
+            for sample, cell, _ in members
+        ],
+        orient="row",
+        schema={"sampleId": pl.String, "cellId": pl.String, "cellReason": pl.String},
+    )
+
+    # Joined to `offered` rather than crossed with the universe: a position no sample holding the cell
+    # offered must not appear at all, or the silent rule below would resolve a question nobody asked.
+    grid = (
+        member_frame.join(offered_frame, on="sampleId", how="inner")
+        .join(reasons, on=["sampleId", "cellId"], how="left")
+        .join(
+            states.select("sampleId", "cellId", "identity", "state", "unreliableReason"),
+            on=["sampleId", "cellId", "identity"],
+            how="left",
+        )
+        .with_columns(
+            pl.when(pl.col("state").is_not_null())
+            .then(pl.col("state"))
+            .when(pl.col("cellReason").is_not_null())
+            .then(pl.lit(State.UNRELIABLE.value))
+            .otherwise(pl.lit(State.NOT_BOUND.value))
+            .alias("cellState"),
+            # The reason a POSITION is unreliable where one was recorded, and the cell's own reason where the
+            # position is silent. Never both: a recorded row already carries whichever applied.
+            pl.when(pl.col("unreliableReason").is_not_null())
+            .then(pl.col("unreliableReason"))
+            .otherwise(pl.col("cellReason"))
+            .alias("reason"),
+        )
+    )
+
+    # How many identities this cell read BOUND, over the identities it was asked. Counted before the pivot,
+    # where it is one group_by, and counted from the resolved state so a silent position counts as the
+    # not-bound it is.
+    bound_counts = (
+        grid.group_by("sampleId", "cellId")
+        .agg((pl.col("cellState") == State.BOUND.value).sum().alias("boundIdentities"))
+        .with_columns(pl.col("boundIdentities").cast(pl.Int64))
+    )
+
+    # `state|reason`, two fields, and nothing else. The set-level punch carries six because a verdict rests
+    # on counts a reader needs beside it; a cell IS the evidence, so there is nothing to report about how
+    # much of it there was.
+    punch = grid.with_columns(
+        pl.concat_str([pl.col("cellState"), pl.col("reason").fill_null("")], separator="|").alias("punch")
+    ).pivot(on="identity", index=["sampleId", "cellId"], values="punch")
+
+    # Every identity gets a column even where no cell was offered it, so the readout's columns are the panel
+    # rather than whatever this run happened to ask -- the same promise the set-level card makes.
+    for identity in ordered_identities:
+        if identity not in punch.columns:
+            punch = punch.with_columns(pl.lit(None, dtype=pl.String).alias(identity))
+
+    return (
+        punch.join(member_frame, on=["sampleId", "cellId"], how="left")
+        .join(bound_counts, on=["sampleId", "cellId"], how="left")
+        .select("sampleId", "cellId", "setId", "boundIdentities", *ordered_identities),
+        True,
+    )
+
+
 def _leaf(level, entity, measurement, value, detail, panel_id, status: Status) -> QcRow:
     """One measurement's row: its own status, and the coverage of that one status.
 
@@ -1028,12 +1159,22 @@ def main() -> None:
     _write_sorted(summary, f"{prefix}_identity_summary.csv", ["setId"])
     _write_sorted(punch, f"{prefix}_identity_punch.csv", ["setId"])
 
+    cell_punch, cell_punch_emitted = _pivot_cell_punch(states, cells_by_set, offered_by_sample, admissibility, universe)
+    _write_sorted(cell_punch, f"{prefix}_cell_punch.csv", ["setId", "sampleId", "cellId"])
+
     # The sparse per-tag counts and the per-cell scalars together carry every
-    # per-cell state, at a small fraction of the size a per-cell-per-identity
-    # table would take. They stay inside the block: reading the same experiment
-    # under another grouping is another execution rather than a re-derivation a
-    # reader performs, and the grouping enters after the counting, so a second
-    # execution over unchanged inputs re-does the verdict step alone.
+    # per-cell state, at a small fraction of the size the dense
+    # per-cell-per-identity grid takes. They stay inside the block: reading the
+    # same experiment under another grouping is another execution rather than a
+    # re-derivation a reader performs, and the grouping enters after the
+    # counting, so a second execution over unchanged inputs re-does the verdict
+    # step alone.
+    #
+    # That argument used to end "so the dense grid is never exported", and it no
+    # longer holds: `_pivot_cell_punch` above exports it, because a readout that
+    # shows one clonotype's cells against the panel cannot be assembled from a
+    # sparse frame by a grid. What survives of the argument is the SIZE, which is
+    # why that function carries a cell gate and reports whether it emitted.
     # With no list, membership is unknown rather than false: a barcode nobody
     # classified is not a barcode classified as "not a cell". "false" would be
     # a claim the run cannot support.
@@ -1545,6 +1686,10 @@ def main() -> None:
         "identityProperties": emitted_properties,
         "identityPropertyValues": {c: property_values[c] for c in emitted_properties},
         "identitySummaryEmitted": summary_emitted,
+        # False where the run was too wide or too deep for the dense per-cell grid, so the readout can say
+        # which of the two it was rather than showing an empty tab.
+        "cellPunchEmitted": cell_punch_emitted,
+        "cellPunchCells": len(cell_punch),
         "identitySummaryLimit": IDENTITY_SUMMARY_MAX_IDENTITIES,
         "readingsFloored": readings_floored,
         "cellsEmptied": cells_emptied,
