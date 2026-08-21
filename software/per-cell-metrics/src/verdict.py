@@ -161,6 +161,8 @@ class ReferenceChoice(str, Enum):
     #
     # `UnreliableReason` deliberately does the opposite -- its value IS the prose a
     # reader sees -- because nothing branches on it.
+    # DECLARED reads against ONE declared tag. A panel declaring several is
+    # refused rather than combined -- see `reference_by_cell`.
     DECLARED = "declared"
     PANEL = "panel"
     DISTRIBUTION = "distribution"
@@ -281,9 +283,33 @@ def reference_by_cell(
     )
 
     if served is ReferenceChoice.DECLARED:
-        # Several reference tags combine as any identity's tags do: by the
-        # highest. Taking an arbitrary one would make the comparator depend on
-        # row order.
+        if len(reference_tags) > 1:
+            # DEFERRED, not unsupported-by-oversight. `baseline-scope` builds the
+            # reference as a grouping over a declared property: a panel may carry
+            # several comparators, and each serves the group its declaration
+            # scopes it to. This block has no group-by half -- a tag is a
+            # comparator for the whole panel or for none of it -- so it cannot
+            # say WHICH antigens a second comparator belongs to.
+            #
+            # Refused rather than combined. The block used to take the highest
+            # across them, which is a combination, and `baseline-scope` states
+            # that references are never combined. It is also what the field does:
+            # the ordinary antibody run "rejects a second control outright", and
+            # the T-cell run requires one control per allele and rejects two.
+            #
+            # Refused rather than degraded to no comparator at all, because this
+            # is a panel a scientist can fix in a minute and a silent drop to
+            # *unreliable* everywhere would not tell them how.
+            named = ", ".join(sorted(reference_tags))
+            raise SystemExit(
+                f"the panel declares {len(reference_tags)} baseline tags ({named}), and this version of "
+                "the block reads counts against one baseline tag or none. Reading against several needs "
+                "a panel column that says which antigens each one belongs to, which this version does "
+                "not have. Mark one tag as the baseline, or clear the role values and choose a different "
+                "baseline source."
+            )
+        # An aggregator over a single tag. `group_by` still runs so a cell with a
+        # duplicated reading cannot produce two rows for one cell.
         rows = (
             scoped.filter(pl.col("tag").is_in(list(reference_tags)))
             .group_by(CELL_KEY)

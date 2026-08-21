@@ -165,10 +165,37 @@ def test_empty_droplets_is_not_offered():
     assert not hasattr(ReferenceChoice, "EMPTY_DROPLETS")
 
 
-def test_several_reference_tags_combine_by_the_highest():
+def test_several_reference_tags_are_refused_rather_than_combined():
+    # This used to take the highest of them. `baseline-scope` states that
+    # references are never combined, and taking the highest is a combination.
+    #
+    # Refused rather than given a different rule, because the atom's construct
+    # scopes each reference to a group of antigens by a declared property, and
+    # this version of the block has no group-by half -- so it cannot say WHICH
+    # antigens a second comparator belongs to. It is also what the field does:
+    # the ordinary antibody run rejects a second control outright.
     counts = _counts([("S1", "c1", "CTRL1", 3), ("S1", "c1", "CTRL2", 11)])
-    ref, _ = reference_by_cell(counts, {"CTRL1", "CTRL2"}, ReferenceChoice.DECLARED)
-    assert ref[("S1", "c1")] == 11  # not 3, not arbitrary
+    with pytest.raises(SystemExit, match="declares 2 baseline tags"):
+        reference_by_cell(counts, {"CTRL1", "CTRL2"}, ReferenceChoice.DECLARED)
+
+
+def test_one_reference_tag_still_serves():
+    # The supported shape, and the one every antibody kit ships: one comparator
+    # for the whole panel. The refusal above must not catch it.
+    counts = _counts([("S1", "c1", "CTRL", 7)])
+    ref, choice = reference_by_cell(counts, {"CTRL"}, ReferenceChoice.DECLARED)
+    assert choice is ReferenceChoice.DECLARED
+    assert ref[("S1", "c1")] == 7
+
+
+def test_several_reference_tags_do_not_block_a_rung_that_does_not_use_them():
+    # The refusal is scoped to the rung that reads a declared tag AS the
+    # comparator. Under the panel rung several declared tags are just readings
+    # in the median, which is well defined however many there are -- refusing
+    # there would withdraw a run over a question that does not arise in it.
+    counts = _counts([("S1", "c1", "CTRL1", 3), ("S1", "c1", "CTRL2", 11), ("S1", "c1", "AAAA", 9)])
+    _, choice = reference_by_cell(counts, {"CTRL1", "CTRL2"}, ReferenceChoice.PANEL, panel_size=25, min_members=25)
+    assert choice is ReferenceChoice.PANEL
 
 
 def test_cell_missing_the_reference_tag_reads_zero():

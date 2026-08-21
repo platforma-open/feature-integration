@@ -14,7 +14,7 @@ samples are `SNN`, and no real sequence, antigen or sample identifier appears an
 |---|---|
 | `panel.csv` | Four samples, panels of 3, 4, 4 and 5 tags. **No** comparator tag. |
 | `panel_with_reference.csv` | The same panels plus **one** comparator tag (`Ctrl1`) on every sample. |
-| `panel_multi_reference.csv` | The same panels plus **two** comparator tags (`Ctrl1`, `Ctrl2`) on every sample. |
+| `panel_multi_reference.csv` | The same panels plus **two** comparator tags (`Ctrl1`, `Ctrl2`) on every sample. This version of the block **refuses** it on the declared rung — see the shapes table below. It still serves on the panel rung, where a declared tag is an ordinary reading, and it is the only panel here declaring every barcode the counts carry. |
 | `panel_narrow.csv` | The **three-column** shape: sample, barcode, antigen name, and no fourth column. No role column, so nothing can be named as a comparator and the panel's own readings serve. The control is an ordinary row nothing marks. |
 | `panel_wide.csv` | The **seven-column** shape: sample, name, catalogue id, barcode, channel, a constant column, role. The role column declares target vs off-target and carries **no** comparator value. Includes case-variant role values. |
 
@@ -71,8 +71,8 @@ the counts carry, so it is the bed to use when the mismatch table itself is unde
 | Same barcode, different names across samples | Four barcodes carry two `AgNN` names each. A fifth recurs under one name, so a test can tell "recurs" from "recurs inconsistently". |
 | One panel over every sample | Not a separate file: the comparator rows are declared on all four samples, which is the unkeyed case within a keyed panel. |
 | A designated negative control | `panel_with_reference.csv`. |
-| **No** negative control | `panel.csv`. Eight distinct barcodes, exactly the shipped minimum of eight, so the panel serves as its own comparator rather than falling silent. |
-| **Several** designated controls | `panel_multi_reference.csv`. `Ctrl2` reads above `Ctrl1` in every cell, so the served comparator is 60 and not 6 — and bindings that hold at 6 fall away at 60. |
+| **No** negative control | `panel.csv`. Eight distinct barcodes, below the shipped minimum of 25, so the panel does **not** serve as its own comparator: a run over it reads *unreliable* throughout unless the minimum is lowered on the command line, which several tests do deliberately. |
+| **Several** designated controls | `panel_multi_reference.csv`. `Ctrl2` reads above `Ctrl1` in every cell. This used to be the bed for *the higher of the two serves*; that rule is gone. `baseline-scope` states that references are never combined, and taking the highest is a combination — so the run is now **refused**, naming both tags. The 60-against-6 spread is kept because it is what makes a combining rule detectable if one ever returns. |
 | One antigen on several barcodes | `Ag07` is carried on two barcodes, both on the fourth sample. |
 | A barcode declared in one sample, read in another | `Ag06`'s barcode is declared by the third sample only and read in the second only, so both directions of the check fire on different samples at once. |
 | Free-text properties, inconsistently spelled | Not carried here. The panel has no free-text property column beyond `Name`; `test_panel.py` covers the hygiene measurement. |

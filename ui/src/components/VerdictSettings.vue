@@ -260,7 +260,12 @@ function removeContendingGroup(index: number) {
       Select which values of the role column mark the baseline tag. A tag is the baseline in every
       sample, or in none. You cannot give some samples a different baseline.<br /><br />
       Required once you name a role column. That column says where each tag's role is written; these
-      values are what actually marks one. Named alone, the column changes nothing.
+      values are what actually marks one. Named alone, the column changes nothing.<br /><br />
+      This version reads counts against <b>one</b> baseline tag, or none. If the values you pick
+      mark more than one tag, the run stops and names the tags it found. Reading against several
+      needs a panel column saying which antigens each one belongs to, which this version does not
+      have. One value can still mark several tags, so this is about the tags rather than about how
+      many values you pick.
     </template>
   </PlDropdownMulti>
 

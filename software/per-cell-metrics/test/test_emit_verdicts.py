@@ -1013,7 +1013,13 @@ def test_the_panel_mismatch_fires_per_sample_in_both_directions(wide_bed):
     # Read against the two-comparator panel, the only one here declaring every barcode the counts
     # carry: on the others the undeclared comparator adds rows and the table is no longer a clean
     # statement about this one barcode.
-    r = _run(wide_bed, *_bed_args("panel_multi_reference.csv"))
+    #
+    # On the panel rung, because this version refuses two declared comparators and this test is about
+    # the PANEL FILE rather than about the comparator. The minimum is lowered to the panel it has, for
+    # the same reason: neither number is the subject here.
+    size = pl.read_csv(wide_bed / "panel_multi_reference.csv", infer_schema_length=0)["Sequence"].n_unique()
+    on_panel_rung = ["--reference-source", "panel", "--panel-min-members", str(size)]
+    r = _run(wide_bed, *_bed_args("panel_multi_reference.csv", *on_panel_rung))
     assert r.returncode == 0, r.stderr
 
     m = pl.read_csv(wide_bed / "result_panel_mismatch.csv", infer_schema_length=0)
@@ -1057,24 +1063,26 @@ def test_one_antigen_on_two_barcodes_is_read_by_its_highest_member(wide_bed):
     assert _states(wide_bed)[(spanning, name)] == "bound"
 
 
-def test_the_higher_of_two_declared_comparators_serves(wide_bed):
-    # Several comparator tags combine as any identity's tags do: by the highest. The bed's second
-    # comparator reads 60 against the first's 6, and specificity_score(500, 6) is 100 while
-    # specificity_score(500, 60) is 0.1 -- so a count of 500 binds against the lower comparator and
-    # fails against the higher. Taking the lower, or an arbitrary one, would make the two runs
-    # identical; taking the higher can only ever withdraw a binding.
-    assert _run(wide_bed, *_bed_args("panel_with_reference.csv")).returncode == 0
-    one = _states(wide_bed)
-    assert _run(wide_bed, *_bed_args("panel_multi_reference.csv")).returncode == 0
-    two = _states(wide_bed)
+def test_two_declared_comparators_are_refused_rather_than_combined(wide_bed):
+    # This used to assert the opposite: that the higher of the two served, because several comparator
+    # tags combined the way an identity's tags do. `baseline-scope` states that references are never
+    # combined, and taking the highest is a combination.
+    #
+    # The atom's construct scopes each reference to a group of antigens by a declared property. This
+    # version has no group-by half, so it cannot say which antigens a second comparator belongs to, and
+    # it refuses instead of choosing a rule nobody wrote down. The field does the same -- the ordinary
+    # antibody run rejects a second control outright.
+    #
+    # Refused loudly rather than degraded to no comparator: this is a panel a scientist fixes in a
+    # minute, and a silent fall to *unreliable* everywhere would not tell them how.
+    r = _run(wide_bed, *_bed_args("panel_multi_reference.csv"), expect_failure=True)
+    assert "declares 2 baseline tags" in r.stderr
+    assert "one baseline tag or none" in r.stderr
 
-    assert set(one) == set(two), "the two panels declare the same identities"
-    bound_one = {key for key, state in one.items() if state == "bound"}
-    bound_two = {key for key, state in two.items() if state == "bound"}
-    assert bound_two < bound_one, "the higher comparator must withdraw at least one binding"
-    assert bound_two, "and must not withdraw them all, or the bed says nothing about which one served"
-    # Withdrawn, not made unanswerable: the comparison was made against a bigger number and failed.
-    assert {two[key] for key in bound_one - bound_two} == {"not bound"}
+    # The one-comparator panel over the same counts still serves, so the refusal is about the count of
+    # comparators and not about anything else in the bed.
+    assert _run(wide_bed, *_bed_args("panel_with_reference.csv")).returncode == 0
+    assert any(state == "bound" for state in _states(wide_bed).values())
 
 
 def test_the_bed_panel_without_a_declared_comparator_serves_as_its_own(wide_bed):
@@ -1423,9 +1431,16 @@ def test_naming_the_off_target_role_as_the_comparator_deletes_the_off_target_que
     # The role column says what a member is TO THE QUESTION; the comparator is a different axis. Naming
     # the off-target role as the comparator does not merely move a baseline — reference tags are held
     # out of the identity universe, so the off-targets stop being asked about at all.
+    # The role value that marks exactly ONE tag. This version of the block reads counts against one
+    # baseline tag or none, so a role value marking two is refused before it can demonstrate anything --
+    # and what is demonstrated here is the ROLE axis, not how several comparators combine.
     roles = _wide_roles(wide_bed)
-    off_target = {tag for tag, values in roles.items() if values == {"Off-Target"}}
-    assert off_target, "the bed must declare at least one off-target for this test to mean anything"
+    by_value: dict[str, set[str]] = {}
+    for tag, values in roles.items():
+        if len(values) == 1:
+            by_value.setdefault(next(iter(values)), set()).add(tag)
+    single = next(v for v, tags in sorted(by_value.items()) if len(tags) == 1 and "off-target" in v.lower())
+    off_target = by_value[single]
 
     assert (
         _run(
@@ -1455,7 +1470,7 @@ def test_naming_the_off_target_role_as_the_comparator_deletes_the_off_target_que
             "--role-column",
             "Type",
             "--reference-values",
-            "Off-Target",
+            single,
             "--output-prefix",
             "named",
         ).returncode
@@ -1471,36 +1486,39 @@ def test_naming_the_off_target_role_as_the_comparator_deletes_the_off_target_que
 
 def test_a_role_value_differing_only_in_case_is_not_matched(wide_bed):
     # The observed file held six Type values that were three roles. A tag whose role is spelled
-    # `Off-target` is not selected by `Off-Target`, silently — so it stays a question while its
-    # identically-roled siblings become comparators.
+    # `Off-target` is not selected by `Off-Target`, silently.
+    #
+    # The claim is now proved by WHICH tags the run names rather than by which stay questions, and it is
+    # a sharper proof: `Off-Target` marks two tags, so this version refuses the panel and says exactly
+    # which two it found. A matcher that ignored case would have found three and said so.
     roles = _wide_roles(wide_bed)
-    variant = {
-        tag
-        for tag, values in roles.items()
-        if len(values) == 1 and (v := next(iter(values))) != "Off-Target" and v.lower() == "off-target"
-    }
+    agreed = {tag: next(iter(values)) for tag, values in roles.items() if len(values) == 1}
+    exact = {tag for tag, value in agreed.items() if value == "Off-Target"}
+    variant = {tag for tag, value in agreed.items() if value != "Off-Target" and value.lower() == "off-target"}
+    assert len(exact) > 1, "the bed must declare more than one off-target for the refusal to fire"
     assert variant, "the bed must carry a case variant of the off-target role"
 
-    assert (
-        _run(
-            wide_bed,
-            "counts.csv",
-            "panel_wide.csv",
-            "--linker",
-            "linker.csv",
-            *WIDE_COLS,
-            *WIDE_DECLARED_RUNG,
-            "--role-column",
-            "Type",
-            "--reference-values",
-            "Off-Target",
-            "--output-prefix",
-            "named",
-        ).returncode
-        == 0
+    r = _run(
+        wide_bed,
+        "counts.csv",
+        "panel_wide.csv",
+        "--linker",
+        "linker.csv",
+        *WIDE_COLS,
+        *WIDE_DECLARED_RUNG,
+        "--role-column",
+        "Type",
+        "--reference-values",
+        "Off-Target",
+        "--output-prefix",
+        "named",
+        expect_failure=True,
     )
-    asked = {identity for _, identity in _states_prefix(wide_bed, "named")}
-    assert variant <= asked, "the case-variant tag was silently left as a question"
+    assert f"declares {len(exact)} baseline tags" in r.stderr
+    for tag in exact:
+        assert tag in r.stderr, "a tag the role value names must be in the refusal"
+    for tag in variant:
+        assert tag not in r.stderr, "the case-variant tag was matched, and it must not be"
 
 
 def _states_prefix(bed, prefix):
