@@ -293,6 +293,52 @@ export function groupingColumns(rule: GroupingRule | undefined): string[] {
   return rule.column ? [rule.column] : [];
 }
 
+// Which rungs this data could read against, from data ALONE so `args()` may call it. These reproduce the
+// two `options` branches of the `referenceSources` output, which reads the same two facts from panel
+// metadata. `panelBarcodeDistinct` is the count that output calls `panelSize`, snapshotted by
+// MainPage.snapshotPanelCounts on the gesture that names the barcode column. Absent means the metadata
+// had not resolved then; the rung reads as unserviceable, which is the permissive direction here because
+// the fallback below is the same rung the software would have degraded to anyway.
+function referenceRungsAvailable(data: BlockData): { declared: boolean; panel: boolean } {
+  return {
+    declared: !!data.referenceValues?.length,
+    panel:
+      data.panelBarcodeDistinct !== undefined &&
+      data.panelBarcodeDistinct >= Math.round(data.panelReferenceMinMembers),
+  };
+}
+
+/**
+ * The baseline rung a run made from this data reads against.
+ *
+ * THE block's one derivation of it. `args()` projects what this returns and the `effectiveReferenceSource`
+ * output displays what this returns, so the settings field and the workflow input cannot disagree — which
+ * they previously could, and did. The rule used to be written twice: once in the UI to decide what the
+ * dropdown showed, once in `args()` to decide what was sent. A stored choice that had stopped being
+ * serviceable sat between the two copies — the field re-rendered as the derived rung while the data still
+ * held the dead one — so the form showed a scientist the exact value they were being asked to supply while
+ * Run stayed greyed out. One function is what makes that state unrepresentable rather than merely fixed.
+ *
+ * An explicit choice wins while it can serve. It is IGNORED rather than honoured once it cannot — reading
+ * against a declared tag after its values were cleared, or against a panel after the minimum size was
+ * raised past it. `served_source` degrades such a request to no baseline at all, which costs the run every
+ * verdict; falling to the rung that can serve is the smaller surprise, and the field shows the fall
+ * happening. A choice ignored this way is not erased: it revives if the rung becomes serviceable again,
+ * because nothing here writes to `data`.
+ *
+ * Where NEITHER rung can serve there is nothing to fall to, and "panel" is returned so the software
+ * degrades it to none — `292-no-declared-reference`'s third rung, where the run is still made and every
+ * verdict reads not evaluated. `none` is never returned as a derived answer for the same reason it is
+ * never offered in the dropdown: it is what a run REPORTS, not something this block asks for. A stored
+ * `none` therefore falls through to the derived rung rather than being honoured.
+ */
+export function resolveReferenceSource(data: BlockData): ReferenceSource {
+  const available = referenceRungsAvailable(data);
+  if (data.referenceSource === "declared" && available.declared) return "declared";
+  if (data.referenceSource === "panel" && available.panel) return "panel";
+  return available.declared ? "declared" : "panel";
+}
+
 // A/C/G/T plus N (ambiguous base), case-insensitive.
 const isDnaValue = (v: string) => /^[ACGTN]+$/i.test(v);
 
@@ -601,13 +647,23 @@ export const platforma = BlockModelV3.create(dataModel)
     if (data.boundCutoff < 0 || data.boundCutoff > 100)
       throw new Error("The bound cutoff is a score between 0 and 100");
     if (data.minVotingCells < 1) throw new Error("At least one cell must vote");
-    // "declared" reads counts against a tag the panel marks as the comparator, and nothing marks one
-    // without the role values. Asking for it anyway would degrade to no comparator inside the run, where
-    // the choice is recorded but the user never sees they lost it.
-    if (data.referenceSource === "declared" && !data.referenceValues?.length)
+    // A role column names WHERE each tag's role is written; the role values are what actually marks one.
+    // Named alone the column is inert: emit_verdicts.py reads it only under `if args.role_column and
+    // reference_values`, so it is validated as a real panel column, recorded in the run meta, and changes
+    // no number. The run then reads against the panel's own readings while the form says a baseline tag
+    // is declared — a wrong answer wearing the look of a configured one, which is the outcome this block
+    // exists to refuse. Requiring the values costs no expressiveness: a panel that declares no baseline
+    // is still served by leaving this column blank, which is the configuration `292-no-declared-reference`
+    // protects.
+    //
+    // The ONLY baseline gate. Which rung a run reads against is never refused here, because
+    // `resolveReferenceSource` cannot return one that will not serve — a stored choice that has stopped
+    // being serviceable is ignored rather than sent, so there is no invalid combination left to catch.
+    if (data.roleColumn && !data.referenceValues?.length)
       throw new Error(
-        'Under "Values that mark the baseline tag", choose at least one value, or choose a ' +
-          'different option for "What sets the baseline".',
+        `The panel column "${data.roleColumn}" declares each tag's role, but no value of it is marked ` +
+          `as the baseline, so the column changes nothing. Under "Values that mark the baseline tag", ` +
+          `choose at least one value, or clear the role column to read against the panel's own readings.`,
       );
     // Every panel column the verdict settings name, each with the label the user sees. Two different
     // things can be wrong with one of these, so both checks below walk this same list.
@@ -696,17 +752,12 @@ export const platforma = BlockModelV3.create(dataModel)
       referenceValues: data.referenceValues?.length
         ? [...new Set(data.referenceValues)].sort()
         : undefined,
-      // Resolved here rather than sent absent, so the run records the rule it actually read under and the
-      // settings field can always show a concrete one. This reproduces verdict.py's `resolve_default_source`
-      // from data alone: a declared baseline tag where values mark one, otherwise the panel's own readings.
-      // The third rung needs the panel SIZE, which is panel metadata rather than data — and it needs no
-      // help here, because `served_source` already degrades a panel request to none when the panel is too
-      // short. So the two agree without this reaching outside data.
-      //
-      // A value the user chose explicitly wins: `served_source` never substitutes a different rung for one
-      // that was asked for, only drops it to none.
-      referenceSource:
-        data.referenceSource ?? (data.referenceValues?.length ? "declared" : "panel"),
+      // Always concrete, so the run records the rule it actually read under — and derived by the SAME
+      // function the settings field displays, which is what stops the two disagreeing. See
+      // `resolveReferenceSource` for the rule and for why an unserviceable choice is ignored here rather
+      // than sent. `served_source` never substitutes a different rung for one it was asked for, only drops
+      // it to none, so what this sends is what the run is answered under.
+      referenceSource: resolveReferenceSource(data),
       panelReferenceMinMembers: Math.round(data.panelReferenceMinMembers),
       referenceThinLine: Math.round(data.referenceThinLine),
       countFloor: Math.round(data.countFloor),
@@ -1668,6 +1719,13 @@ export const platforma = BlockModelV3.create(dataModel)
   // before a run, from the panel metadata staging already emits: the panel's size is the count of distinct
   // barcodes, and a declared comparator needs a role column and values of it that the column actually
   // carries. Offering a source the run would silently degrade would record a choice the user never gets.
+  // The rung the run WOULD read against, for the settings field to show. The same call `args()` projects,
+  // so the field cannot show one rule while the workflow receives another — the divergence that made a
+  // cleared role column look configured while Run stayed greyed. The UI has no derivation of its own to
+  // keep in step, and reads this the way it reads any other output; nothing writes back, so there is no
+  // hairpin. Not retentive: it is a pure function of data, so it settles with the data rather than lagging
+  // an expensive recomputation.
+  .output("effectiveReferenceSource", (ctx): ReferenceSource => resolveReferenceSource(ctx.data))
   .retentiveOutput("referenceSources", (ctx): ReferenceSourceChoices => {
     const meta = readCsvMeta(ctx);
     const barcodeColumn = ctx.data.barcodeSeqColumn;

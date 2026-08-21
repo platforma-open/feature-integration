@@ -79,10 +79,32 @@ function snapshotPanelColumns() {
 
 // Changing the role column drops the values chosen under the old one: they designate values of THIS
 // column, and left behind they would mark no tag at all while still reading as a configured comparator.
+//
+// Declaring a baseline is also what the baseline CHOICE was made against, so changing the declaration
+// drops the choice too. An override means "I want this rung given what I have declared" — it is not a
+// standing instruction that outlives the declaration it answered. Left behind, marking a baseline tag
+// could not move the field onto it, which reads as the block ignoring the thing you just declared.
+//
+// This is the same rule the two settings either side of it already follow: the role values go when the
+// role column changes, and `contendingGroups` goes when the grouping rule changes. A setting does not
+// outlive the thing it was chosen against.
+//
+// Only on a GESTURE, never from a watcher — a watcher on a model output writing back into data is the
+// hairpin, and two clients with the project open would race on it.
+function clearBaselineChoice() {
+  app.model.data.referenceSource = undefined;
+}
+
 function setRoleColumn(column: string | undefined) {
   app.model.data.roleColumn = column || undefined;
   app.model.data.referenceValues = undefined;
+  clearBaselineChoice();
   snapshotPanelColumns();
+}
+
+function setReferenceValues(values: string[]) {
+  app.model.data.referenceValues = values.length > 0 ? values : undefined;
+  clearBaselineChoice();
 }
 
 // One control for the whole rule, and it takes SEVERAL columns: an identity is the distinct
@@ -134,32 +156,22 @@ function setGrouping(selected: string[] | undefined) {
 // would make the output depend on the data it feeds.
 const referenceSources = computed(() => app.model.outputs.referenceSources);
 
-// The source the field SHOWS. There is no "automatic" row: it would have named the same rule as one of
-// the rows beside it — the panel's own readings today, the declared tag as soon as one is marked — and two
-// rows meaning one thing reads as a duplicate rather than a choice.
+// The rungs this panel can serve, and the rung it currently reads against. Both come from model outputs:
+// the option list from `referenceSources`, the shown value from `effectiveReferenceSource`.
 //
-// Instead the rule is DERIVED, the same way `args()` derives what it sends: a declared baseline tag where
-// values mark one, otherwise the panel's own readings. So declaring a tag moves this field visibly, which
-// beats an invisible rule that followed the panel silently. The derivation lives in `args()` too, and the
-// two must agree — that is the one thing to keep in step if either changes.
+// The shown value USED to be derived here, which is what made the field lie. The same rule was written
+// twice — once in this component to decide what to display, once in `args()` to decide what to send — and
+// a stored choice that had stopped being serviceable sat between the two copies. Clearing the role values
+// left a dead "declared" behind: this component re-rendered as "the panel's own readings" while the data
+// still held "declared", so the form showed a scientist the exact value they were being asked to supply
+// while Run stayed greyed out, and only re-picking the already-shown value fixed it.
 //
-// An explicit pick wins and sticks, because `served_source` never swaps a requested rung for a different
-// one. A pick that has stopped being serviceable (declared, after its values were cleared) falls back to
-// the derived rule here so the dropdown still shows something real; `args()` refuses that combination
-// loudly, which is where the user learns about it.
+// Now there is one derivation, `resolveReferenceSource`, in the model. `args()` projects it and this field
+// displays it, so they cannot disagree. Reading an output to display it is not a hairpin — nothing here
+// writes back — and the derivation could not live in this component anyway, because `args()` cannot reach
+// into the UI to share it.
 const serviceableSources = computed(() => referenceSources.value?.options ?? []);
-
-const derivedSource = computed<string>(() => {
-  const offered = serviceableSources.value.map((o) => o.value as string);
-  const wanted = (app.model.data.referenceValues?.length ?? 0) > 0 ? "declared" : "panel";
-  return offered.includes(wanted) ? wanted : (offered[0] ?? "none");
-});
-
-const shownSource = computed<string>(() => {
-  const chosen = app.model.data.referenceSource;
-  const offered = serviceableSources.value.map((o) => o.value as string);
-  return chosen !== undefined && offered.includes(chosen) ? chosen : derivedSource.value;
-});
+const shownSource = computed(() => app.model.outputs.effectiveReferenceSource);
 
 function setBaselineSource(value: string | undefined) {
   app.model.data.referenceSource = value === undefined ? undefined : (value as ReferenceSource);
@@ -228,16 +240,23 @@ function removeContendingGroup(index: number) {
       Leave it blank if your panel declares no role.
     </template>
   </PlDropdown>
+  <!-- Required exactly while a role column is named, and not otherwise. The column alone marks no tag:
+       it is validated, recorded, and changes no number, so the pair is the setting and half of it is an
+       unfinished form. Blank column + blank values stays legitimate — that is the panel that declares no
+       baseline, which `292-no-declared-reference` serves. -->
   <PlDropdownMulti
     :model-value="app.model.data.referenceValues ?? []"
     :options="roleValueOptions"
     label="Values that mark the baseline tag"
     :disabled="panelUnread || !app.model.data.roleColumn"
-    @update:model-value="app.model.data.referenceValues = $event.length > 0 ? $event : undefined"
+    :required="!!app.model.data.roleColumn"
+    @update:model-value="setReferenceValues($event)"
   >
     <template #tooltip>
       Select which values of the role column mark the baseline tag. A tag is the baseline in every
-      sample, or in none. You cannot give some samples a different baseline.
+      sample, or in none. You cannot give some samples a different baseline.<br /><br />
+      Required once you name a role column. That column says where each tag's role is written; these
+      values are what actually marks one. Named alone, the column changes nothing.
     </template>
   </PlDropdownMulti>
 
@@ -256,9 +275,15 @@ function removeContendingGroup(index: number) {
       are local to this run and do not compare with another run.<br />
       Where neither can serve, the run reports no baseline and leaves every verdict unreliable. That
       is an outcome, not a setting, so it is not on this list.<br /><br />
-      You select this, and the block never infers it. Two runs answered against different baselines
-      produce numbers that do not compare. A scientist who did not choose the rule cannot know that
-      happened.
+      Two runs answered against different baselines produce numbers that do not compare, so this
+      field always shows the rule your run will actually be answered under — never a placeholder and
+      never a different rule from the one that gets used.<br /><br />
+      An override holds until you change what you declared above. Reading against the panel while a
+      tag is declared is a deliberate configuration, so the choice sticks — but marking a different
+      baseline tag is a new declaration, and the field follows it rather than holding the answer you
+      gave to the old one.<br /><br />
+      If the rule you chose stops being available — you raise the minimum panel size past your panel
+      — this field falls to the rule that can serve, and shows it.
     </template>
   </PlDropdown>
   <!-- Above the info alert, and warn rather than info: this is the one case the user has shown us is
