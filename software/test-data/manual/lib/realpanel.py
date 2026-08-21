@@ -148,29 +148,42 @@ MAGNITUDES_DEEP = {
 # Scaled to the measured shallow distribution: among barcodes clearing a floor of 4 the per-barcode
 # totals run p25 5, median 7, p75 11, p90 17, p99 201. So every tier but the top sits in single or
 # low double digits, and `strong` carries the p99 tail rather than the bulk.
+# Recalibrated 2026-08-21 against the CURRENT rule, where the comparator is a single declared baseline
+# tag rather than the highest of several off-targets. That baseline usually reads 0, and against 0 the
+# cutoff is reached at a count of 49 (against 5 it was ~120). So the line moved DOWN in comparator terms
+# and UP relative to this regime's depth: with per-cell totals whose median is 7, only the top few
+# percent of cells can reach it at all. That is not a defect to tune away — it is why real in-vivo runs
+# report 1.4% and 2.9% of cells bound, and the weights below are set so this bed lands in that band.
+#
+# Each tier's range is placed relative to the line at 49, so the tier NAMES describe outcomes again:
+# strong clears it outright, good straddles it, and everything below it reads not bound.
 MAGNITUDES_SHALLOW = {
-    "strong": (40, 150),
-    "good": (12, 35),
-    "medium": (6, 12),
-    "weak": (4, 8),
+    "strong": (60, 250),
+    "good": (30, 70),
+    "medium": (12, 30),
+    "weak": (4, 12),
     "noise": (1, 3),
-    "cross": (6, 20),
-    "offtarget": (6, 20),
-    "gated_target": (4, 12),
-    "gated_ref": (12, 40),
+    "cross": (60, 150),
+    "offtarget": (12, 40),
+    "gated_target": (12, 30),
+    "gated_ref": (120, 400),
 }
 
 # Tier weights. `deep` makes a clean binder the common case; `shallow` makes a sub-floor reading the
 # common case, which is what 63-80% of real barcodes measured as.
+# Weights chosen so the share of CELLS reaching a bound identity lands in the 1.4-2.9% band real
+# in-vivo runs report. Only `strong` and `crossreactive` clear the line outright and `good` straddles it,
+# so the bound share is roughly strong + half of good + crossreactive.
 TIERS_SHALLOW = [
-    ("strong", 0.05, "the p99 tail: a real binder at tens to hundreds of UMIs -> bound"),
-    ("good", 0.10, "a reading clear of the floor with some margin -> bound or on the line"),
-    ("medium", 0.20, "single-digit UMIs against a comparable background -> on the line"),
+    ("strong", 0.010, "clears the line outright -> bound"),
+    ("good", 0.030, "straddles the line -> mostly not bound, since the baseline's own background "
+                    "moves the line from 49 up toward 90"),
+    ("medium", 0.15, "a real reading well clear of the floor, far below the line -> not bound"),
     ("weak", 0.30, "barely clear of the count floor -> not bound"),
-    ("noise", 0.25, "every member sub-floor -> floored, nothing to answer with"),
-    ("crossreactive", 0.05, "two members co-dominant at single-digit counts"),
-    ("offtarget", 0.03, "an off-target member is the dominant reading"),
-    ("gated", 0.02, "the comparator reads above the target"),
+    ("noise", 0.452, "every member sub-floor -> floored, nothing to answer with"),
+    ("crossreactive", 0.008, "two members co-dominant ABOVE the line -> bound on two identities"),
+    ("offtarget", 0.03, "the baseline is the dominant reading -> not bound"),
+    ("gated", 0.02, "the comparator reads far above the target -> set aside when the gate is on"),
 ]
 
 # _background() parameters. At shallow depth background is not a floor UNDER the signal, it is
@@ -691,15 +704,17 @@ QUALITY_PROFILES = {
 
 # What each reading tier should come back as, given the block's defaults. A statement of intent for the
 # reader of the truth table, not an assertion the generator can make on its own.
+# What each tier should come back as under the CURRENT rule, at shallow depth, against a single declared
+# baseline. The line is a count of 49 when the baseline reads 0 and climbs toward 90 as the baseline's own
+# background rises, so `good` straddles a MOVING line and lands mostly not bound.
 EXPECTED_STATE_SHALLOW = {
-    "strong": "bound where the comparator is thick enough to compare against — this is the only tier "
-    "that reaches the line at this depth",
-    "good": "not bound: a real reading, but the line sits above it once the comparator is this sparse",
-    "medium": "not bound, or unreliable where the comparator reads under the thin line",
-    "weak": "not bound — clear of the count floor and nothing more",
-    "noise": "floored, or unreliable for want of a comparator; nothing to answer with",
-    "crossreactive": "two co-dominant readings, neither of which reaches bound at this depth",
-    "offtarget": "not bound; the comparator IS the dominant reading",
+    "strong": "bound — clears the line even where the baseline's own background has pushed it up",
+    "good": "on the line: bound where the baseline read 0, not bound where it read a few",
+    "medium": "not bound — a real reading, well clear of the floor, far below the line",
+    "weak": "not bound — barely clear of the count floor",
+    "noise": "floored; not bound, and nothing to answer with",
+    "crossreactive": "bound on TWO identities — both co-dominant readings clear the line",
+    "offtarget": "not bound; the baseline IS the dominant reading",
     "gated": "unreliable (gate on) / not bound with a high comparator (gate off)",
 }
 
@@ -1217,7 +1232,15 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
         rows = list(csv.DictReader(fh, delimiter="\t"))
     for r in rows:
         tiers[r["tier"]] = tiers.get(r["tier"], 0) + 1
+    # `offtarget` and `gated` both need a COMPARATOR member to plant a dominant on, and `plant_cell`
+    # degrades them when the sample offers none. A panel that declares no baseline at all — every member
+    # either a target or an off-target, with no negative control — therefore cannot carry them, and requiring them
+    # would fail a run that is faithfully reproducing that panel. Every other tier is unconditional.
+    needs_comparator = {"offtarget", "gated"}
+    any_comparator = any(pnl.offtargets for pnl in panels.values())
     for tier in TIER_NAMES:
+        if tier in needs_comparator and not any_comparator:
+            continue
         ok(tiers.get(tier, 0) > 0, f"tier {tier} is present ({tiers.get(tier, 0)} cells)")
     ok(len(rows) > 0, "readings truth is non-empty")
 
@@ -1360,13 +1383,13 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
             break
     if chosen is None:
         chosen = "none"
-        per_tier, totals, multi, served = simulate_verdicts(run_dir, panels, source="none",
-                                                    baseline_tag=baseline_tag)
+        per_tier, totals, multi, served, cells_bound, n_cells_sim = simulate_verdicts(
+            run_dir, panels, source="none", baseline_tag=baseline_tag)
     else:
-        per_tier, totals, multi, served = rungs[chosen]
+        per_tier, totals, multi, served, cells_bound, n_cells_sim = rungs[chosen]
     try:
-        gated_tier, _gt, _gm, _gs = simulate_verdicts(run_dir, panels, source=chosen, gate=300,
-                                                      baseline_tag=baseline_tag)
+        gated_tier = simulate_verdicts(run_dir, panels, source=chosen, gate=300,
+                                       baseline_tag=baseline_tag)[0]
     except BaselineRefused:
         gated_tier = {t: {} for t in TIER_NAMES}
     n_of = {t: sum(per_tier[t].values()) for t in TIER_NAMES}
@@ -1392,7 +1415,11 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
         if isinstance(r, BaselineRefused):
             note = f"REFUSED — {r}"
         elif r[3] != src:
-            note = f"cannot serve (panel holds < {PANEL_MIN_MEMBERS} tags) -> degrades to none"
+            # The two rungs degrade for different reasons and saying so matters: one is fixed by naming
+            # a baseline in the panel, the other cannot be fixed by a panel this size at all.
+            why = ("no tag carries the baseline role" if src == "declared"
+                   else f"panel holds fewer than {PANEL_MIN_MEMBERS} tags")
+            note = f"cannot serve ({why}) -> degrades to none"
         else:
             note = "serves" + ("  <- reported below" if src == chosen else "")
         print(f"  rung {src:<10} {note}")
@@ -1408,6 +1435,8 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
     grid = sum(totals.values())
     print("  whole grid (every cell x every identity its sample offered): "
           + ", ".join(f"{k} {v} ({v / max(1, grid):.0%})" for k, v in sorted(totals.items())))
+    print(f"  cells reaching a bound identity: {cells_bound}/{n_cells_sim} "
+          f"({cells_bound / max(1, n_cells_sim):.2%}) — the metric a real run's per-cell table reports")
 
     grid_bound = totals.get("bound", 0) / max(1, grid)
     if chosen == "none":
@@ -1459,8 +1488,9 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
         #    to know where the line sits.
         ok(all(totals.get(k, 0) > 0 for k in ("bound", "not bound")),
            "both settled states occur in the run")
-        ok(0.002 <= grid_bound <= 0.30,
-           f"the bound share is in the range the current rule produces on shallow data ({grid_bound:.1%})")
+        cell_bound = cells_bound / max(1, n_cells_sim)
+        ok(0.008 <= cell_bound <= 0.05,
+           f"cells reaching bound match the 1.4-2.9% real in-vivo runs report ({cell_bound:.2%})")
         # A sparse comparator no longer produces *unreliable* — that was the thin-reference line, and the
         # block removed it. With a comparator serving and the gate off, nothing is unreliable, and a run
         # that still shows some has either lost its comparator for part of the panel or been gated.
@@ -1634,6 +1664,7 @@ def simulate_verdicts(run_dir, panels, floor=FLOOR, cutoff=CUTOFF, gate=None,
     per_tier = {t: {} for t in TIER_NAMES}
     per_tier_multi = {t: 0 for t in TIER_NAMES}
     totals = {}
+    cells_bound = 0
     for key, per in counts.items():
         sample, _cell = key
         panel = panels[sample]
@@ -1666,6 +1697,12 @@ def simulate_verdicts(run_dir, panels, floor=FLOOR, cutoff=CUTOFF, gate=None,
                 n_bound += 1
             if name == dominant_of.get(key):
                 per_tier[tier][state] = per_tier[tier].get(state, 0) + 1
+        if n_bound >= 1:
+            cells_bound += 1
         if n_bound >= 2:
             per_tier_multi[tier] = per_tier_multi.get(tier, 0) + 1
-    return per_tier, totals, per_tier_multi, served
+    # cells_bound is the metric a real run publishes: its per-cell table carries ONE row per cell with
+    # that cell's MAX specificity, so a reported "1.4% above the cutoff" is 1.4% of CELLS, not of the
+    # (cell x identity) grid. Asserting the grid share instead compares against the wrong denominator
+    # and moves with panel width rather than with the reading.
+    return per_tier, totals, per_tier_multi, served, cells_bound, len(counts)
