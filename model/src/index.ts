@@ -38,7 +38,12 @@ export type { PTableKey } from "@platforma-sdk/model";
 const DEFAULT_COUNT_FLOOR = 4;
 const DEFAULT_BOUND_CUTOFF = 75;
 const DEFAULT_MIN_VOTING_CELLS = 1;
-const DEFAULT_PANEL_REFERENCE_MIN_MEMBERS = 8;
+// From one preprint, whose own panels held fifty and a hundred members; nothing validates it lower.
+// It GATES rather than tunes -- below it, a count compared against a handful of other antigens is not
+// a background estimate -- so lowering it is a departure rather than a preference. It was 8, which no
+// source supports and which put this rung within reach of an antibody panel; those kits cap at
+// fifteen tags, so such a panel now falls to the tag-distribution rung instead.
+const DEFAULT_PANEL_REFERENCE_MIN_MEMBERS = 25;
 // Both from the study the tag-distribution rung comes from. The first is its own bootstrapping
 // figure; the second has no published value at all -- that paper shows the trough in a figure and
 // never says how deep one has to be -- so it ships as a declared default a run can move and says it

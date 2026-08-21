@@ -313,7 +313,11 @@ function removeContendingGroup(index: number) {
       <template #tooltip>
         How many tags the panel needs before its own readings can serve as the baseline. Below this,
         the block does not offer that source.<br /><br />
-        No published work sets this line. The default of 8 is this block's choice, not a standard.
+        The default of 25 comes from one preprint, whose own panels held 50 and 100 tags. Nothing
+        validates it lower. Lowering it is a departure from the method rather than a preference:
+        comparing a count against a handful of other antigens is not a background estimate.<br /><br />
+        An antibody kit caps at 15 tags, so this source is out of reach of one. Such a panel can use
+        each tag's own distribution instead.
       </template>
     </PlNumberField>
     <PlNumberField

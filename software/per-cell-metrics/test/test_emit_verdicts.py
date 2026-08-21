@@ -291,8 +291,8 @@ def test_a_panel_with_no_declared_reference_falls_to_the_panel_not_to_nothing(be
     # where the panel carries enough members, else nothing. Skipping the middle
     # rung makes every identity unreliable in a twenty-antigen run that could
     # be read perfectly well -- which is the configuration the ordering exists
-    # for. Ten tags here, against a shipped minimum of eight.
-    tags = [f"T{i:02d}" for i in range(10)]
+    # for. Twenty-six tags here, against a shipped minimum of twenty-five.
+    tags = [f"T{i:02d}" for i in range(26)]
     (bed / "panel.csv").write_text(
         "Samples,Name,Sequence,Type\n" + "".join(f"S1,Ag{i},{t},Target\n" for i, t in enumerate(tags))
     )
@@ -1058,10 +1058,15 @@ def test_the_higher_of_two_declared_comparators_serves(wide_bed):
 
 
 def test_the_bed_panel_without_a_declared_comparator_serves_as_its_own(wide_bed):
+    # The bed's panel is eight antigens, below the shipped minimum of twenty-five, so the rung is
+    # asked for explicitly here. That is not the bed falling short: an eight-antigen panel is what
+    # this block's runs actually carry, and the test below this one is what pins the shipped default's
+    # answer for one. What this test is about is what the rung DOES once it serves -- which comparator
+    # it builds, and that the minimum count spares only a declared one.
     shape = _bed_shape(wide_bed)
-    assert len(shape["antigens"]) >= DEFAULT_PANEL_MIN_MEMBERS, "a panel this small cannot stand in"
+    stands_in = ["--panel-min-members", str(len(shape["antigens"]))]
 
-    r = _run(wide_bed, *_bed_args("panel.csv"))
+    r = _run(wide_bed, *_bed_args("panel.csv", *stands_in))
     assert r.returncode == 0, r.stderr
     meta = json.loads((wide_bed / "result_run_meta.json").read_text())
     assert meta["referenceChoice"] == ReferenceChoice.PANEL.value
@@ -1072,9 +1077,29 @@ def test_the_bed_panel_without_a_declared_comparator_serves_as_its_own(wide_bed)
     # The floor spares a comparator's reading, and only a declared comparator has one to spare. With
     # no declaration c08's comparator reading of 1 is floored like any other count, so this run
     # floors strictly more than the same counts read against a declared comparator.
-    assert _run(wide_bed, *_bed_args("panel_with_reference.csv")).returncode == 0
+    assert _run(wide_bed, *_bed_args("panel_with_reference.csv", *stands_in)).returncode == 0
     with_declared = json.loads((wide_bed / "result_run_meta.json").read_text())["readingsFloored"]
     assert without > with_declared > 0
+
+
+def test_a_panel_of_this_size_no_longer_stands_in_for_its_own_comparator(wide_bed):
+    # The shipped minimum answers the bed's own panel, with nothing asked for. Eight antigens is under
+    # twenty-five, so the panel cannot be its own background and the run says so rather than comparing
+    # a count against seven other antigens and calling the result a background estimate.
+    #
+    # This is what the minimum moving from 8 to 25 changed, and it is the whole point of the move: an
+    # antibody kit caps at fifteen tags, so no such panel reaches this rung. Such a run now asks for
+    # the tag-distribution rung instead.
+    shape = _bed_shape(wide_bed)
+    assert len(shape["antigens"]) < DEFAULT_PANEL_MIN_MEMBERS, "the bed grew past the minimum"
+
+    assert _run(wide_bed, *_bed_args("panel.csv")).returncode == 0
+    meta = json.loads((wide_bed / "result_run_meta.json").read_text())
+    assert meta["referenceChoice"] == ReferenceChoice.NONE.value
+    # Never-asked stands beside it and is not a kind of unreliable: those are the identities a set's
+    # own samples never offered, and no comparator would have changed them. Every position that WAS
+    # asked reads unreliable.
+    assert set(_states(wide_bed).values()) == {"unreliable", "never asked"}
 
 
 def test_a_reading_from_a_sample_that_never_offered_it_is_not_a_vote(bed):
@@ -1161,7 +1186,11 @@ def test_no_qc_row_carries_a_null_panel_key(bed):
 # samples should carry one verdict for a barcode that names two different antigens -- that question is
 # open, and a test asserting today's answer would have to be deleted to settle it.
 
-CUSTOMER_TAGS = [f"SEQ{i:02d}" for i in range(1, 10)]  # nine, against a shipped minimum of eight
+# Twenty-six, against a shipped minimum of twenty-five. The count is the only thing this list carries
+# that the panel rung cares about; every test below reads its members by position, so widening it
+# changes what serves and nothing else. Padded to two digits so the sorted identity list this bed's
+# assertions compare against is the list order.
+CUSTOMER_TAGS = [f"SEQ{i:02d}" for i in range(1, 27)]
 
 
 def _customer_bed(root, *, renamed=2, span_samples=True):
@@ -1312,12 +1341,25 @@ def _wide_roles(bed):
 
 
 def test_the_narrow_shape_labels_every_barcode_the_samples_name_differently_with_both_names(wide_bed):
-    # Nine tags and no role column: the panel's own readings serve, and the grouping is the per-tag one.
+    # No role column, so the panel's own readings serve and the grouping is the per-tag one. The panel
+    # is below the shipped minimum of twenty-five, so the rung is asked for explicitly: what this test
+    # is about is the LABEL a barcode gets, and it needs a run that produced verdicts to look at.
+    #
     # A barcode two samples name differently has no agreed name, and the label used to fall through to
     # the raw 15-mer -- the conflict recorded on stderr and shown nowhere a reader would look. It carries
     # the names it DID declare instead, joined, exactly as a property grouping does.
+    narrow_size = pl.read_csv(wide_bed / "panel_narrow.csv", infer_schema_length=0)["Sequence"].n_unique()
     r = _run(
-        wide_bed, "counts.csv", "panel_narrow.csv", "--linker", "linker.csv", *NARROW_COLS, "--output-prefix", "result"
+        wide_bed,
+        "counts.csv",
+        "panel_narrow.csv",
+        "--linker",
+        "linker.csv",
+        *NARROW_COLS,
+        "--panel-min-members",
+        str(narrow_size),
+        "--output-prefix",
+        "result",
     )
     assert r.returncode == 0, r.stderr
     meta = json.loads((wide_bed / "result_run_meta.json").read_text())

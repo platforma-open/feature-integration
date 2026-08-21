@@ -112,7 +112,7 @@ Test_shaping_parameters_are_always_present := func() {
 	test.isEqual("4", va.valueOf(args, "--floor"), "the count floor is stated even when defaulted")
 	test.isEqual("75", va.valueOf(args, "--cutoff"), "the bound cutoff is stated even when defaulted")
 	test.isEqual("1", va.valueOf(args, "--min-voters"), "the voter minimum is stated even when defaulted")
-	test.isEqual("8", va.valueOf(args, "--panel-min-members"), "the panel minimum is stated")
+	test.isEqual("25", va.valueOf(args, "--panel-min-members"), "the panel minimum is stated")
 	test.isEqual("100", va.valueOf(args, "--high-reference-line"), "the high-reference line is stated")
 	test.isEqual("300", va.valueOf(args, "--distribution-min-cells"), "the cell condition is stated")
 	test.isEqual("0.5", va.valueOf(args, "--distribution-separation"), "the separation condition is stated")

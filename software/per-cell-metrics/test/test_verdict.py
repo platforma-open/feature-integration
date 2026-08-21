@@ -171,8 +171,14 @@ def test_shipped_defaults_are_pinned():
     # These are user-facing numbers that appear in a dropdown and change what
     # the block produces, so an edit to any of them must be a deliberate,
     # visible act — not a silent one that only this test would otherwise
-    # catch. The values themselves are not calibrated against real data.
-    assert DEFAULT_PANEL_MIN_MEMBERS == 8
+    # catch. The high-reference line is not calibrated against real data.
+    #
+    # The panel minimum is different in kind: it GATES the rung rather than
+    # tuning it, and it comes from one preprint whose own panels held fifty and
+    # a hundred members. It was 8, which no source supports. At 25 the rung is
+    # out of reach of any antibody panel, since those kits cap at fifteen tags,
+    # and such a panel falls to the tag-distribution rung instead.
+    assert DEFAULT_PANEL_MIN_MEMBERS == 25
     assert DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE == 100
 
 

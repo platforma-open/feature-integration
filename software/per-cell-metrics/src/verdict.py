@@ -118,7 +118,19 @@ def apply_floor(counts: pl.DataFrame, floor: int, reference_tags: set[str]) -> F
 # Shipped defaults. Every one is a visible parameter rather than a constant,
 # because nothing published sets any of them and a hard-coded line would pretend
 # to a basis nobody has.
-DEFAULT_PANEL_MIN_MEMBERS = 8
+#
+# The panel minimum is the exception to that sentence, and it GATES rather than
+# tunes: it comes from one preprint, whose own panels held fifty and a hundred
+# members, and nothing validates it lower. Below it, comparing a count against a
+# handful of other antigens is not a background estimate, so the baseline it
+# permits is not conservative but wrong. Lowering it is a departure rather than
+# a preference.
+#
+# It was 8, which no source supports and which put this rung within reach of an
+# antibody panel. It is not: the kits cap at fifteen tags, so a panel that
+# declares no comparator now falls to the rung that fits each tag's own
+# distribution instead of standing in as its own background.
+DEFAULT_PANEL_MIN_MEMBERS = 25
 DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE = 100
 
 
