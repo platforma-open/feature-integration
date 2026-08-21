@@ -141,7 +141,10 @@ export type ReferenceSourceChoices = {
   options: { value: ReferenceSource; label: string; description: string }[];
   /** One line per source this panel cannot serve, saying why. */
   unavailable: string[];
-  /** What an unset source resolves to for this panel, as a sentence. */
+  /**
+   * What a run with nothing chosen is answered under, as a sentence. Constant now that nothing derives,
+   * and kept because the sentence is what a reader needs rather than the token.
+   */
   fallback: string;
   /**
    * Set only for the one combination a user is likely to have got wrong: a control feature marked on
@@ -310,66 +313,37 @@ export function groupingColumns(rule: GroupingRule | undefined): string[] {
 // MainPage.snapshotPanelCounts on the gesture that names the barcode column. Absent means the metadata
 // had not resolved then; the rung reads as unserviceable, which is the permissive direction here because
 // the fallback below is the same rung the software would have degraded to anyway.
-function referenceRungsAvailable(data: BlockData): { declared: boolean; panel: boolean } {
-  return {
-    declared: !!data.referenceValues?.length,
-    panel:
-      data.panelBarcodeDistinct !== undefined &&
-      data.panelBarcodeDistinct >= Math.round(data.panelReferenceMinMembers),
-  };
-}
-
-// The tag-distribution rung is deliberately absent from the two above, and it is not an omission.
-// Its conditions -- enough cells in the sample, and counts that actually separate -- are facts about
-// data this block has not read yet, and one of them is per tag. Nothing in `data` can answer them, so
-// the request is always serviceable and the RUN reports what it managed: which tags fitted, which did
-// not, and why. That is the same contract every other rung has, arrived at from the other direction.
+// `referenceRungsAvailable` stood here and is gone with the derivation it fed. Which rungs this data
+// could serve is still worth SAYING -- the dropdown's option list says it -- but it is no longer allowed
+// to decide anything, and a helper shared between a display and a projection is how the deciding crept
+// back in last time.
 
 /**
- * The baseline rung a run made from this data reads against.
+ * The baseline rung this run is answered under: the scientist's choice, and nothing else.
  *
- * THE block's one derivation of it. `args()` projects what this returns and the `effectiveReferenceSource`
- * output displays what this returns, so the settings field and the workflow input cannot disagree — which
- * they previously could, and did. The rule used to be written twice: once in the UI to decide what the
- * dropdown showed, once in `args()` to decide what was sent. A stored choice that had stopped being
- * serviceable sat between the two copies — the field re-rendered as the derived rung while the data still
- * held the dead one — so the form showed a scientist the exact value they were being asked to supply while
- * Run stayed greyed out. One function is what makes that state unrepresentable rather than merely fixed.
+ * `what-plays-the-baseline` requires that the scientist selects among the rungs and that nothing selects
+ * for them, because a baseline nobody chose is a methodology nobody knows they used — and two runs of one
+ * experiment would otherwise be answered by different rules with nobody choosing either. This function
+ * used to derive the rung from what the panel could serve. It no longer does, and the software's own
+ * derivation is gone too, so there is now exactly one place a rung comes from: `data.referenceSource`.
  *
- * An explicit choice wins while it can serve. It is IGNORED rather than honoured once it cannot — reading
- * against a declared tag after its values were cleared, or against a panel after the minimum size was
- * raised past it. `served_source` degrades such a request to no baseline at all, which costs the run every
- * verdict; falling to the rung that can serve is the smaller surprise, and the field shows the fall
- * happening. A choice ignored this way is not erased: it revives if the rung becomes serviceable again,
- * because nothing here writes to `data`.
+ * An unselected run is not refused. It is answered under the ladder's bottom rung, where no baseline
+ * exists and every verdict that needs one reads UNRELIABLE — the identity was put to those cells and the
+ * data cannot settle it. A cell-level comparison yields only bound or not bound, so where no baseline
+ * exists there is no comparison to yield anything, and *unreliable* is what marks its absence. The
+ * clonotype verdict follows: a clonotype whose cells all read unreliable has no voters and reads
+ * unreliable itself. Not *not evaluated* — that is a quality-measurement status and never a verdict
+ * state, and the two are opposite claims.
  *
- * Where NEITHER rung can serve there is nothing to fall to, and "panel" is returned so the software
- * degrades it to none — the ladder's bottom rung, where the run is still made and every verdict that
- * needs a baseline reads UNRELIABLE. Not "not evaluated": that is a quality-measurement status and is
- * never a verdict state, and the two are opposite claims — one says a measurement was not produced, the
- * other says the identity was put to those cells and the data cannot settle it.
- *
- * `none` is never returned as a derived answer for the same reason it is never offered in the dropdown:
- * it is what a run REPORTS, not something this block asks for. A stored `none` therefore falls through
- * to the derived rung rather than being honoured.
- *
- * DERIVING AT ALL IS A KNOWN DEVIATION. `what-plays-the-baseline` requires that the scientist selects
- * among the rungs and that nothing selects for them. The software's own derivation is already gone, and
- * --reference-source is now required there, so this function is the last one left and the value it
- * returns is what every run is answered under. Removing it needs one ruling from the spec's author that
- * the corpus does not settle: whether a run with nothing selected refuses to start, or completes with
- * every verdict that needs a baseline reading unreliable. The two need different code here — a throw
- * from `args()` against projecting "none" — which is why this still stands.
+ * A stored choice is passed through even where this data cannot serve it — reading against a declared tag
+ * after its values were cleared, say. `served_source` in the software degrades such a request to no
+ * baseline at all and never substitutes a different rung, and the run record states both what was asked
+ * for and what served. Falling to a rung that can serve would be the block choosing one, which is the
+ * whole thing this stopped doing. Nothing here writes to `data`, so a choice that becomes serviceable
+ * again revives on its own.
  */
 export function resolveReferenceSource(data: BlockData): ReferenceSource {
-  const available = referenceRungsAvailable(data);
-  if (data.referenceSource === "declared" && available.declared) return "declared";
-  if (data.referenceSource === "panel" && available.panel) return "panel";
-  // Passed through unconditionally, unlike the two above. Nothing here can tell whether it will
-  // serve, so there is no unserviceable state to ignore -- and falling back from it would send a
-  // different rung than the scientist asked for, which is the one thing this block never does.
-  if (data.referenceSource === "distribution") return "distribution";
-  return available.declared ? "declared" : "panel";
+  return data.referenceSource ?? "none";
 }
 
 // A/C/G/T plus N (ambiguous base), case-insensitive.
@@ -692,9 +666,11 @@ export const platforma = BlockModelV3.create(dataModel)
     // is still served by leaving this column blank, which is the configuration `292-no-declared-reference`
     // protects.
     //
-    // The ONLY baseline gate. Which rung a run reads against is never refused here, because
-    // `resolveReferenceSource` cannot return one that will not serve — a stored choice that has stopped
-    // being serviceable is ignored rather than sent, so there is no invalid combination left to catch.
+    // The ONLY baseline gate, and it is about the ROLE COLUMN, never about which rung was chosen. An
+    // unselected rung is not an invalid state: it is answered under the ladder's bottom rung, where every
+    // verdict that needs a baseline reads unreliable and the run says so. Refusing to start would be this
+    // block deciding a scientist's methodology by withholding the run, which is the same act as choosing
+    // one for them.
     if (data.roleColumn && !data.referenceValues?.length)
       throw new Error(
         `The panel column "${data.roleColumn}" declares each tag's role, but no value of it is marked ` +
@@ -788,11 +764,11 @@ export const platforma = BlockModelV3.create(dataModel)
       referenceValues: data.referenceValues?.length
         ? [...new Set(data.referenceValues)].sort()
         : undefined,
-      // Always concrete, so the run records the rule it actually read under — and derived by the SAME
-      // function the settings field displays, which is what stops the two disagreeing. See
-      // `resolveReferenceSource` for the rule and for why an unserviceable choice is ignored here rather
-      // than sent. `served_source` never substitutes a different rung for one it was asked for, only drops
-      // it to none, so what this sends is what the run is answered under.
+      // Always concrete, because the software has no default left to fall back on: --reference-source is
+      // required there, and nothing below this line picks a rung. An unselected choice reaches the run as
+      // "none", which is a rung rather than a refusal. `served_source` never substitutes a different rung
+      // for one it was asked for, only drops it to none, so what this sends is what the run is answered
+      // under — and the run record carries both, so a drop is visible.
       referenceSource: resolveReferenceSource(data),
       panelReferenceMinMembers: Math.round(data.panelReferenceMinMembers),
       distributionMinCells: Math.round(data.distributionMinCells),
@@ -1756,12 +1732,11 @@ export const platforma = BlockModelV3.create(dataModel)
   // before a run, from the panel metadata staging already emits: the panel's size is the count of distinct
   // barcodes, and a declared comparator needs a role column and values of it that the column actually
   // carries. Offering a source the run would silently degrade would record a choice the user never gets.
-  // The rung the run WOULD read against, for the settings field to show. The same call `args()` projects,
-  // so the field cannot show one rule while the workflow receives another — the divergence that made a
-  // cleared role column look configured while Run stayed greyed. The UI has no derivation of its own to
-  // keep in step, and reads this the way it reads any other output; nothing writes back, so there is no
-  // hairpin. Not retentive: it is a pure function of data, so it settles with the data rather than lagging
-  // an expensive recomputation.
+  // The rung the run WILL be answered under, for the settings field to show. The same call `args()`
+  // projects, so the field cannot show one rule while the workflow receives another. Now that nothing
+  // derives, that is a near-identity — and it is kept precisely because the last divergence between a
+  // shown rung and a sent one came from two copies of one rule, so there is still only one. The UI reads
+  // it the way it reads any other output; nothing writes back, so there is no hairpin.
   .output("effectiveReferenceSource", (ctx): ReferenceSource => resolveReferenceSource(ctx.data))
   .retentiveOutput("referenceSources", (ctx): ReferenceSourceChoices => {
     const meta = readCsvMeta(ctx);
@@ -1831,32 +1806,37 @@ export const platforma = BlockModelV3.create(dataModel)
         `Pick this where your panel declares no baseline tag and is too small to stand in for one.`,
     });
 
-    // `none` is deliberately NOT offered. It is what the run REPORTS when neither rung can serve — the
-    // third rung of `292-no-declared-reference`'s ordering — and never something a scientist asks for:
-    // requesting it guarantees a run with no answers at all, every position unreliable. It was on this
-    // list only because `ReferenceSource` (what is requested) and `ReferenceChoice` (what served) happen
-    // to share their three tokens, and the giveaway was its own description, which explained the software
-    // degrading rather than a choice anyone would make. The served case is still surfaced: the punchcard
-    // says so in a banner, and `unavailable` below says why neither rung could serve.
+    // `none` IS offered, and it used to be deliberately withheld. The reasoning then was that requesting
+    // it guarantees a run with no answers at all, so nobody would choose it. That was right about the
+    // consequence and wrong about the status: the ladder's bottom rung is a legitimate position, held in
+    // print by scientists who argue that a tag declared to be bound by nothing is not truly negative and
+    // that a reference chosen that way lends false confidence. On that view the absence is a design
+    // choice rather than an omission, and a block that will not let a scientist state it is choosing for
+    // them. It is also what an unselected run is answered under, so withholding it made that state
+    // unnameable in the one control that is about it.
+    options.push({
+      value: "none",
+      label: "No baseline",
+      description:
+        "The block reads no count against anything. Every verdict that needs a baseline reads " +
+        "unreliable — the antigen was put to those cells and the data cannot settle it. The rest of " +
+        "the readout still stands: what the reads gave, what the panel and the reads disagree about, " +
+        "and how often clonotypes contradict themselves.",
+    });
 
-    // The three-rung default, restated from verdict.py resolve_default_source.
-    const fallback =
-      declaredTags.length > 0
-        ? "the declared baseline tags"
-        : panelSize >= minMembers
-          ? "the panel's own readings"
-          : "no baseline — every reading would be unreliable";
+    // What an unselected run is answered under. Not a "fallback" any more, and the word is gone with the
+    // thing: nothing falls anywhere. This states the consequence of leaving the field alone.
+    const fallback = "no baseline — every verdict that needs one reads unreliable";
 
-    // Built from `fallback` rather than naming a rung, so the sentence stays true where the panel is
-    // also too small to serve as its own baseline: that case reads "no baseline" instead of claiming a
-    // median served. A warning and never a block — atom `292-no-declared-reference` serves an
-    // undeclared baseline as a legitimate configuration, so this flags a likely mistake, not an
-    // invalid state.
+    // A warning and never a block. A panel that declares no baseline is a legitimate configuration, so
+    // this flags a likely mistake rather than an invalid state — and it no longer claims another rung
+    // steps in, because none does.
     const controlNotBaseline = markerWithoutBaseline
       ? "You marked a control feature, but no tag is the baseline. The control feature marker only " +
-        "labels that feature in the output. It does not set the level a count must exceed. This run " +
-        `judges counts against ${fallback} instead. To use your control as the baseline, select the ` +
-        "panel column that declares it. Then select the value that marks it."
+        "labels that feature in the output. It does not set the level a count must exceed. Unless you " +
+        "choose a baseline below, this run judges counts against nothing and every verdict that needs " +
+        "a baseline reads unreliable. To use your control as the baseline, select the panel column " +
+        "that declares it. Then select the value that marks it."
       : undefined;
     return { options, unavailable, fallback, controlNotBaseline };
   })

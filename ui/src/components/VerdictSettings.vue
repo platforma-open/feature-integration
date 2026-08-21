@@ -156,8 +156,8 @@ function setGrouping(selected: string[] | undefined) {
 // would make the output depend on the data it feeds.
 const referenceSources = computed(() => app.model.outputs.referenceSources);
 
-// The rungs this panel can serve, and the rung it currently reads against. Both come from model outputs:
-// the option list from `referenceSources`, the shown value from `effectiveReferenceSource`.
+// The rungs this panel can serve, and the rung the run will be answered under. Both come from model
+// outputs: the option list from `referenceSources`, the shown value from `effectiveReferenceSource`.
 //
 // The shown value USED to be derived here, which is what made the field lie. The same rule was written
 // twice — once in this component to decide what to display, once in `args()` to decide what to send — and
@@ -166,12 +166,16 @@ const referenceSources = computed(() => app.model.outputs.referenceSources);
 // still held "declared", so the form showed a scientist the exact value they were being asked to supply
 // while Run stayed greyed out, and only re-picking the already-shown value fixed it.
 //
-// Now there is one derivation, `resolveReferenceSource`, in the model. `args()` projects it and this field
-// displays it, so they cannot disagree. Reading an output to display it is not a hairpin — nothing here
-// writes back — and the derivation could not live in this component anyway, because `args()` cannot reach
-// into the UI to share it.
+// There is now no derivation anywhere — the block does not choose a baseline, because a baseline nobody
+// chose is a methodology nobody knows they used. `effectiveReferenceSource` is the stored choice, or the
+// bottom rung where none was made. Reading an output to display it is not a hairpin: nothing here writes
+// back, and this component must not acquire a rule of its own again.
 const serviceableSources = computed(() => referenceSources.value?.options ?? []);
 const shownSource = computed(() => app.model.outputs.effectiveReferenceSource);
+// Whether the scientist has actually chosen. Read from data rather than from the output above, which
+// answers "none" both for an explicit choice of no baseline and for no choice at all — the two look the
+// same to a run and are opposite things to say to a reader.
+const baselineUnchosen = computed(() => app.model.data.referenceSource === undefined);
 
 function setBaselineSource(value: string | undefined) {
   app.model.data.referenceSource = value === undefined ? undefined : (value as ReferenceSource);
@@ -268,24 +272,31 @@ function removeContendingGroup(index: number) {
     @update:model-value="setBaselineSource"
   >
     <template #tooltip>
-      The block sets this from what you declared above. You can override it. If you mark a baseline
-      tag, the block selects that tag. If you mark no tag, the panel's own readings serve.<br /><br />
+      You choose this. The block does not choose it for you and does not change it when you change
+      what you declared above: two runs answered against different baselines produce numbers that do
+      not compare, and a baseline nobody chose is a method nobody knows they used.<br /><br />
       <b>Declared baseline tag</b> — the tag your panel marks as the one nothing should bind.<br />
-      <b>The panel's own readings</b> — the median of each cell's own counts. Verdicts read this way
-      are local to this run and do not compare with another run.<br />
-      Where neither can serve, the run reports no baseline and leaves every verdict unreliable. That
-      is an outcome, not a setting, so it is not on this list.<br /><br />
-      Two runs answered against different baselines produce numbers that do not compare, so this
-      field always shows the rule your run will actually be answered under — never a placeholder and
-      never a different rule from the one that gets used.<br /><br />
-      An override holds until you change what you declared above. Reading against the panel while a
-      tag is declared is a deliberate configuration, so the choice sticks — but marking a different
-      baseline tag is a new declaration, and the field follows it rather than holding the answer you
-      gave to the old one.<br /><br />
-      If the rule you chose stops being available — you raise the minimum panel size past your panel
-      — this field falls to the rule that can serve, and shows it.
+      <b>The panel's own readings</b> — the median of each cell's own counts.<br />
+      <b>Each tag's own distribution</b> — that tag's counts across the sample's cells, split in
+      two.<br />
+      <b>No baseline</b> — nothing is compared. Every verdict that needs a baseline reads
+      unreliable.<br /><br />
+      The last three are local to this run: what a count was read against was a population of this
+      run, so those magnitudes do not travel between runs.<br /><br />
+      If the rule you chose cannot serve — you raise the minimum panel size past your panel, or
+      clear the values that marked your baseline tag — the run does not quietly use a different one.
+      It reports no baseline, leaves every verdict that needs one unreliable, and records both what
+      you asked for and what served.
     </template>
   </PlDropdown>
+  <!-- Not an error and not a block: leaving this unchosen is answered under the bottom rung, which is a
+       legitimate position. It is a loud one, though, because the reader gets no verdicts out of it and
+       the field itself shows nothing to explain why. -->
+  <PlAlert v-if="baselineUnchosen && serviceableSources.length > 0" type="warn">
+    No baseline is chosen, so this run judges no count against anything and every verdict that needs
+    a baseline will read unreliable. Choose one above. "No baseline" is on that list if it is what
+    you mean.
+  </PlAlert>
   <!-- Above the info alert, and warn rather than info: this is the one case the user has shown us is
        a mistake rather than a configuration. It sits in this section instead of beside the control
        field on the Main page because the fix — the two dropdowns above — is here. -->

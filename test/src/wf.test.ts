@@ -171,6 +171,10 @@ blockTest.skip(
         countFloor: 4,
         boundCutoff: 75,
         minVotingCells: 1,
+        // Stated, because the block chooses no baseline for anyone. Left unset this run would be
+        // answered under the bottom rung and every verdict needing a baseline would read unreliable --
+        // which is a legitimate run and says nothing about the pipeline this test is here to exercise.
+        referenceSource: "panel",
         panelReferenceMinMembers: 8,
         distributionMinCells: 300,
         distributionSeparation: 0.5,
