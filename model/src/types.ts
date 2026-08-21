@@ -78,7 +78,6 @@ export type BlockArgs = {
   referenceValues?: string[];
   referenceSource?: ReferenceSource;
   panelReferenceMinMembers: number; // members the panel needs before its own readings can serve
-  referenceThinLine: number; // below this the comparator rests on too little to compare against
   countFloor: number; // counts below this are not evidence of binding
   boundCutoff: number; // specificity score (0-100) at or above which a cell binds
   minVotingCells: number; // a verdict may rest on one cell and say so
@@ -138,7 +137,6 @@ export type BlockData = {
   referenceValues?: string[];
   referenceSource?: ReferenceSource;
   panelReferenceMinMembers: number;
-  referenceThinLine: number;
   countFloor: number;
   boundCutoff: number;
   minVotingCells: number;

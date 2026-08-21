@@ -14,7 +14,6 @@ sample identifier may appear. Barcodes are drawn from ACGT, antigens are `AgNN`,
 The thresholds the counts are chosen against, all shipped defaults in `verdict.py`:
 
   floor 4                  a reading below this is zeroed before anything else runs
-  reference thin line 2     a comparator below this leaves the cell impossible to compare
   bound cutoff 75           on `specificity_score`, which is a beta function and not a ratio
   high-reference line 100   a comparator at or above this is flagged as an observation
 
@@ -72,9 +71,13 @@ CONTROL_NAMES = {"R0": "Ctrl1", "R1": "Ctrl2"}
 
 # (sample, cell, barcode slot, umiCount).
 #
-# R0 reads 6 in every cell but c11, where it reads 1 -- below the thin line of 2, so c11 cannot be
-# compared at all and every identity its set was offered reads *unreliable*. That is the only source
-# of that state in the bed, so lifting c11's 1 costs the fourth state.
+# R0 reads 6 in every cell but c11, where it reads 400. The bed is run with --gate-threshold 100, so
+# c11 is set aside by the admissibility gate and every identity its set was offered reads *unreliable*.
+# That is the bed's only per-cell source of the fourth state, so lowering c11's 400 costs it.
+#
+# It used to read 1 instead, which fell below a thin-reference line that routed the cell to
+# *unreliable*. `count-becomes-a-state` deleted that branch -- no published line separates a thin
+# comparator from a usable one -- so the state now comes from the gate, which is a declared parameter.
 #
 # R1 reads 60, above R0 everywhere it appears, so the two-control panel's comparator is 60 and not 6.
 # 60 also sits below the high-reference observation line of 100, keeping that measurement quiet.
@@ -138,7 +141,11 @@ COUNTS = [
     # No A5 row in S03 at all, though S03 is the only sample that declares it: the other direction
     # of the same check. Both S03 cells were offered A5 and read nothing, so K03 reads *not bound*
     # at A5 -- not *never asked*, which is the regression this shape exists to catch.
-    ("S03", "c08", "R0", 6),
+    # c08's comparator reads 1: below the floor of 4, but the floor spares a DECLARED comparator, so
+    # it survives to be compared (0.96 against 8, 100 against 500 -- the same states a 6 gives). Read
+    # without a declaration it is floored like any other count, which is what makes the exemption
+    # observable. It used to be c11 that carried this, before c11 was raised to 400 for the gate.
+    ("S03", "c08", "R0", 1),
     ("S03", "c08", "R1", 60),
     ("S03", "c08", "A0", 500),
     ("S03", "c08", "A2", 500),
@@ -160,8 +167,8 @@ COUNTS = [
     ("S04", "c10", "A4", 500),
     ("S04", "c10", "A6", 8),
     ("S04", "c10", "A7", 500),
-    # -- S04, set K04: one cell, comparator below the thin line.
-    ("S04", "c11", "R0", 1),
+    # -- S04, set K04: one cell, comparator high enough for the gate to set it aside.
+    ("S04", "c11", "R0", 400),
     ("S04", "c11", "A0", 500),
     ("S04", "c11", "A1", 8),
     ("S04", "c11", "A4", 500),

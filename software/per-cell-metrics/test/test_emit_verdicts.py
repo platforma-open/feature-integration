@@ -127,7 +127,6 @@ def test_run_meta_records_every_choice(bed):
         "minVoters",
         "gateThreshold",
         "panelMinMembers",
-        "referenceThinLine",
         "grouping",
         "contending",
         "readingsFloored",
@@ -298,9 +297,9 @@ def test_a_panel_with_no_declared_reference_falls_to_the_panel_not_to_nothing(be
         "Samples,Name,Sequence,Type\n" + "".join(f"S1,Ag{i},{t},Target\n" for i, t in enumerate(tags))
     )
     # Background counts sit *above* the shipped floor of 4. At 3 they would be
-    # floored to zero, the panel median would be 0, every cell would fall below
-    # the thin line, and the run would read unreliable for a reason that has
-    # nothing to do with which comparator was chosen -- hiding the very thing
+    # floored to zero and the panel median would be 0, so every count that cleared
+    # the floor would score near 100 against it and read *bound* for a reason that
+    # has nothing to do with which comparator was chosen -- hiding the very thing
     # this test exists to check.
     rows = ["sampleId,cellId,tag,umiCount"]
     for cell in ("c1", "c2", "c3"):
@@ -677,7 +676,6 @@ DECLARED_FLAGS = (
     "--reference-values",
     "--reference-source",
     "--panel-min-members",
-    "--reference-thin-line",
     "--floor",
     "--cutoff",
     "--min-voters",
@@ -840,7 +838,10 @@ def wide_bed(tmp_path):
 def _bed_args(panel_csv, *extra):
     # The bed's column names are the ones BASE already names, so only the panel file varies across
     # the three shapes: no comparator, one comparator, two.
-    return ["counts.csv", panel_csv, *BASE[2:], *extra]
+    # The gate is on for every bed run: it is what sets c11 aside and so what keeps *unreliable*
+    # reachable in the bed. 100 is above every other comparator here (6, and 60 on the two-control
+    # panel) and below c11's 400, so exactly one cell is set aside.
+    return ["counts.csv", panel_csv, *BASE[2:], "--gate-threshold", "100", *extra]
 
 
 def _bed_shape(bed):
@@ -953,8 +954,7 @@ def test_the_bed_keys_identity_by_barcode_where_the_names_would_split(wide_bed):
 def test_the_bed_reaches_all_four_states_in_one_run(wide_bed):
     # A bed that cannot reach a state tests nothing about it. All four come from one run here: bound
     # from counts of 500 and 5000 against a comparator of 6, not bound from counts of 8, never asked
-    # from the three-tag panel, and unreliable from the one cell whose comparator reads 1 -- below
-    # the thin line of 2, so that cell cannot be compared at all.
+    # from the three-tag panel, and unreliable from the one cell the admissibility gate sets aside.
     r = _run(wide_bed, *_bed_args("panel_with_reference.csv"))
     assert r.returncode == 0, r.stderr
     v = pl.read_csv(wide_bed / "result_verdicts.csv", infer_schema_length=0)
@@ -1070,7 +1070,7 @@ def test_the_bed_panel_without_a_declared_comparator_serves_as_its_own(wide_bed)
     without = meta["readingsFloored"]
 
     # The floor spares a comparator's reading, and only a declared comparator has one to spare. With
-    # no declaration the thin comparator reading of 1 is floored like any other count, so this run
+    # no declaration c08's comparator reading of 1 is floored like any other count, so this run
     # floors strictly more than the same counts read against a declared comparator.
     assert _run(wide_bed, *_bed_args("panel_with_reference.csv")).returncode == 0
     with_declared = json.loads((wide_bed / "result_run_meta.json").read_text())["readingsFloored"]
@@ -1521,25 +1521,26 @@ def test_cell_scalars_pairs_each_cell_with_its_own_admissibility(tmp_path):
     the multiset of its values, passes just as happily when every label has moved
     one row down.
 
-    Three distinct labels appear on purpose. A bed where every cell reads the
-    same label cannot tell a correct pairing from any permutation of it, and two
-    labels only catch permutations that cross the boundary between them.
+    Two distinct labels appear, which is every label this bed can reach. Since
+    `count-becomes-a-state` deleted the thin-reference branch the vocabulary is
+    `admissible`, `cell set aside by the admissibility gate`, and `no comparator
+    for this cell` — and the third is unreachable here: with a declared comparator
+    `reference_by_cell` zero-fills every analysed cell it read nothing for, so no
+    cell in this bed can lack one. That reason needs a run with no comparator at
+    all, where it is the answer for every cell and so distinguishes nothing.
 
-    `no comparator for this cell` is deliberately NOT among them: with a declared
-    comparator, `reference_by_cell` zero-fills every analysed cell it read
-    nothing for (verdict.py:212-221), so a cell missing its comparator row reads
-    THIN rather than NO_COMPARATOR. That reason needs a run with no comparator at
-    all, where it is the answer for every cell and so distinguishes nothing here.
+    Three of the four cells carry one label and one carries the other, so any
+    permutation that moves the gated label is still caught.
     """
     (tmp_path / "counts.csv").write_text(
         "sampleId,cellId,tag,umiCount\n"
         "S1,ok1,AAAA,500\nS1,ok1,CTRL,6\n"  # comparable
         "S1,ok2,AAAA,500\nS1,ok2,CTRL,6\n"  # comparable
-        "S1,thin,AAAA,500\nS1,thin,CTRL,1\n"  # comparator below the thin line of 2
+        "S1,low,AAAA,500\nS1,low,CTRL,1\n"  # a very low comparator -- still compared, still admissible
         "S1,hi,AAAA,500\nS1,hi,CTRL,400\n"  # comparator above the gate -> set aside
     )
     (tmp_path / "panel.csv").write_text("Samples,Name,Sequence,Type\nS1,AgA,AAAA,Target\nS1,Ctrl,CTRL,Control\n")
-    (tmp_path / "linker.csv").write_text("sampleId,cellId,setId\nS1,ok1,K1\nS1,ok2,K1\nS1,thin,K2\nS1,hi,K2\n")
+    (tmp_path / "linker.csv").write_text("sampleId,cellId,setId\nS1,ok1,K1\nS1,ok2,K1\nS1,low,K2\nS1,hi,K2\n")
     _run(tmp_path, *BASE, "--gate-threshold", "100")
 
     scalars = pl.read_csv(tmp_path / "result_cell_scalars.csv", infer_schema_length=0)
@@ -1547,7 +1548,7 @@ def test_cell_scalars_pairs_each_cell_with_its_own_admissibility(tmp_path):
     assert by_cell == {
         "ok1": "admissible",
         "ok2": "admissible",
-        "thin": "the comparator rests on too little to compare against",
+        "low": "admissible",
         "hi": "cell set aside by the admissibility gate",
     }
 

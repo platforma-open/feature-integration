@@ -36,7 +36,7 @@ def _row(out, identity):
 # A permissive admissibility used by every test whose cells all have an
 # explicit row in `states` -- no cell is silent, so asked == observed for
 # every identity and the silent terms are 0 regardless of what this holds.
-_NEUTRAL = Admissibility({}, 0, set())
+_NEUTRAL = Admissibility({}, set())
 
 
 def test_majority_wins():
@@ -108,7 +108,7 @@ def test_silent_cells_vote_an_antigen_every_cell_failed_still_reads_not_bound():
     df = _states([])
     members = [("S1", f"c{i}") for i in range(5)]
     cells_by_set = {"s1": members}
-    admissibility = Admissibility({k: 5 for k in members}, 2, set())
+    admissibility = Admissibility({k: 5 for k in members}, set())
     r = _row(combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility), "A")
     assert r["state"] == N
     assert r["cellsAnswered"] == 5
@@ -203,7 +203,7 @@ def test_set_with_every_cell_set_aside_is_unreliable_through_the_real_pipeline()
     identities = combine_tags_to_identities(counts, {("TAG", "S1"): "A"})
     reference = {("S1", "c1"): 900, ("S1", "c2"): 900}
     gated, _ = gate_cells(reference, threshold=800)
-    admissibility = Admissibility(reference, 2, gated)
+    admissibility = Admissibility(reference, gated)
     per_cell = read_states(identities, admissibility, cutoff=75.0)
 
     # No setId to attach: which set these rows belong to comes from
@@ -222,7 +222,7 @@ def test_all_cells_gated_is_not_reported_when_the_reason_mix_is_not_unanimous():
     df = _states([])
     members = [("S1", "c1"), ("S1", "c2")]
     cells_by_set = {"s1": members}
-    admissibility = Admissibility({("S1", "c1"): 900}, 2, {("S1", "c1")})  # c2 has no comparator entry
+    admissibility = Admissibility({("S1", "c1"): 900}, {("S1", "c1")})  # c2 has no comparator entry
     r = _row(combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility), "A")
     assert r["state"] == U
     assert r["unreliableReason"] == SetUnreliableReason.NO_COMPARATOR.value
@@ -236,7 +236,7 @@ def test_cellscouldanswer_is_not_a_row_count():
     df = _states(explicit)
     members = [("S1", "c0"), ("S1", "c1"), ("S1", "c2")] + [("S1", f"s{i}") for i in range(37)]
     cells_by_set = {"s1": members}
-    admissibility = Admissibility({k: 5 for k in members}, 2, set())
+    admissibility = Admissibility({k: 5 for k in members}, set())
     r = _row(combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility), "A")
     assert r["cellsCouldAnswer"] == 40  # not 3
     assert r["cellsAnswered"] == 40  # 2 explicit bound + 1 explicit not-bound + 37 silent not-bound
@@ -252,7 +252,7 @@ def test_a_set_spanning_two_panels_counts_only_the_asked_cells_and_does_not_infl
     cells_by_set = {"s1": members}
     # S1's cells are admissible; S2's c3 is gated, c4 has a normal reference.
     reference = {("S1", "c1"): 5, ("S1", "c2"): 5, ("S2", "c3"): 900, ("S2", "c4"): 5}
-    admissibility = Admissibility(reference, 2, {("S2", "c3")})
+    admissibility = Admissibility(reference, {("S2", "c3")})
     out = combine_cells(df, {"A", "B"}, {"S1": {"A"}, "S2": {"B"}}, cells_by_set, admissibility)
 
     row_a = _row(out, "A")
@@ -300,11 +300,11 @@ def test_dominant_reason_raises_rather_than_falling_through_to_thin_comparator()
     # UNRELIABLE, while `admissibility` says it is perfectly fine -- a real
     # comparator, not gated, not thin. That contradiction is exactly what
     # used to let an admissible key reach _dominant_reason and fall through
-    # to THIN_COMPARATOR; it must now raise instead of reporting a
+    # to NO_COMPARATOR; it must now raise instead of reporting a
     # comparator problem for a cell whose comparator is fine.
     df = _states([("S1", "c1", "A", U)])
     cells_by_set = {"s1": [("S1", "c1")]}
-    admissibility = Admissibility({("S1", "c1"): 10}, 2, set())
+    admissibility = Admissibility({("S1", "c1"): 10}, set())
     # ValueError rather than AssertionError, and the type is the point: an `assert` is stripped
     # under -O, and this guard stripped does not crash -- it returns a wrong answer. Pinning the
     # type here is what keeps it from quietly becoming strippable again.
@@ -604,7 +604,7 @@ def test_silent_cells_flip_agreement_into_disagreement():
     members = [("S1", "c0"), ("S1", "c1")] + [("S1", f"s{i}") for i in range(38)]
     states = _key_states([("S1", "c0", "A", B), ("S1", "c1", "A", B)])
     cells_by_set = {"s1": members}
-    admissibility = Admissibility({k: 5 for k in members}, 2, set())
+    admissibility = Admissibility({k: 5 for k in members}, set())
     out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility, level="identity")
     r = _row_for_key(out, "A")
     assert r["setsEvaluated"] == 1
@@ -618,7 +618,7 @@ def test_one_observed_positive_among_many_silent_negatives_is_evaluable():
     members = [("S1", "c0")] + [("S1", f"s{i}") for i in range(19)]
     states = _key_states([("S1", "c0", "A", B)])
     cells_by_set = {"s1": members}
-    admissibility = Admissibility({k: 5 for k in members}, 2, set())
+    admissibility = Admissibility({k: 5 for k in members}, set())
     out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility, level="identity")
     r = _row_for_key(out, "A")
     assert r["setsEvaluated"] == 1
@@ -633,7 +633,7 @@ def test_all_silent_not_bound_cells_agree():
     members = [("S1", f"s{i}") for i in range(5)]
     states = _key_states([])
     cells_by_set = {"s1": members}
-    admissibility = Admissibility({k: 5 for k in members}, 2, set())
+    admissibility = Admissibility({k: 5 for k in members}, set())
     out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility, level="identity")
     r = _row_for_key(out, "A")
     assert r["setsEvaluated"] == 1
@@ -741,6 +741,6 @@ def test_cells_not_bound_completes_cells_answered_on_every_row():
     _assert_invariant(out_floor)
 
     # No tally at all: both of the set's cells individually inadmissible (gated).
-    admissibility = Admissibility({("S1", "c1"): 900, ("S1", "c2"): 900}, 2, {("S1", "c1"), ("S1", "c2")})
+    admissibility = Admissibility({("S1", "c1"): 900, ("S1", "c2"): 900}, {("S1", "c1"), ("S1", "c2")})
     out_gated = combine_cells(_states([]), {"A"}, {"S1": {"A"}}, {"s1": [("S1", "c1"), ("S1", "c2")]}, admissibility)
     _assert_invariant(out_gated)

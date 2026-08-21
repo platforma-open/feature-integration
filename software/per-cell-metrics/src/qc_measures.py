@@ -156,9 +156,9 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     ),
     Measurement(
         "floorRemoved",
-        "Counts the floor removed, and cells left with none",
+        "Counts removed as below the minimum, and cells left with none",
         "sample",
-        "Readings the floor zeroed, and cells whose every non-reference reading was floored.",
+        "Readings the minimum zeroed, and cells whose every non-reference reading was removed.",
     ),
     Measurement(
         "uniqueCountsPerCell",

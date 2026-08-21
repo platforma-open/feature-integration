@@ -37,21 +37,18 @@ PARAMETER_NAMES := [
 	"minVotingCells",
 	"panelReferenceMinMembers",
 	"referenceSource",
-	"referenceThinLine",
 	"referenceValues",
 	"roleColumn"
 ]
 
 // Defaults mirroring the CLI's own (verdict.py DEFAULT_FLOOR, BOUND_CUTOFF, combine.py
-// DEFAULT_MIN_VOTERS, DEFAULT_PANEL_MIN_MEMBERS, DEFAULT_REFERENCE_THIN_LINE,
-// DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE). They are restated rather than left to argparse so the value
+// DEFAULT_MIN_VOTERS, DEFAULT_PANEL_MIN_MEMBERS, DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE). They are restated rather than left to argparse so the value
 // that produced a run is always on the command line, where the run record and a re-run both see it; a
 // parameter carried only as a CLI default drifts the moment one side changes.
 DEFAULT_COUNT_FLOOR := 4
 DEFAULT_BOUND_CUTOFF := 75
 DEFAULT_MIN_VOTING_CELLS := 1
 DEFAULT_PANEL_MIN_MEMBERS := 8
-DEFAULT_REFERENCE_THIN_LINE := 2
 DEFAULT_HIGH_REFERENCE_LINE := 100
 
 _num := func(value, fallback) {
@@ -110,7 +107,6 @@ build := func(params) {
 	}
 
 	add("--panel-min-members", _intArg(_num(params.panelReferenceMinMembers, DEFAULT_PANEL_MIN_MEMBERS)))
-	add("--reference-thin-line", _intArg(_num(params.referenceThinLine, DEFAULT_REFERENCE_THIN_LINE)))
 	add("--floor", _intArg(_num(params.countFloor, DEFAULT_COUNT_FLOOR)))
 	add("--cutoff", string(_num(params.boundCutoff, DEFAULT_BOUND_CUTOFF)))
 	add("--min-voters", _intArg(_num(params.minVotingCells, DEFAULT_MIN_VOTING_CELLS)))

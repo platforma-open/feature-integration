@@ -79,7 +79,7 @@ the counts carry, so it is the bed to use when the mismatch table itself is unde
 
 ## The counts, and which threshold each one is for
 
-Shipped defaults in `verdict.py`: floor **4**, comparator thin line **2**, bound cutoff **75** on
+Shipped defaults in `verdict.py`: floor **4**, bound cutoff **75** on
 `specificity_score`, high-reference observation line **100**. The score is a beta function and not a
 ratio, so the useful values are not where intuition puts them — against a comparator of 6 a count of
 8 scores 0.0001, 50 scores 3.1, 60 scores 7.2 and 500 scores 100.
@@ -90,9 +90,10 @@ ratio, so the useful values are not where intuition puts them — against a comp
 | `500` | The *bound* reading while the comparator is 6 (score 100) — and a *not bound* reading against 60 (score 0.1). That difference is what the two-comparator panel measures. |
 | `5000` | Bound against either comparator, so one binding survives on the two-comparator panel and the bed does not degenerate into all *not bound*. |
 | `2` (one reading only) | Below the floor of 4, so it is zeroed and counted in `readingsFloored`. |
-| `6` (`Ctrl1`) | At or above the thin line of 2 so cells can be compared, and far below 500 so a real binding clears the cutoff. The test is `reference < thin_line`, so a comparator reading exactly 2 is still comparable — calibrate a new fixture against that, not against "above 2". |
+| `6` (`Ctrl1`) | Far below 500, so a real binding clears the cutoff. There is no lower bound to calibrate against any more: `count-becomes-a-state` deleted the thin-reference branch, so any comparator reading is compared. |
 | `60` (`Ctrl2`) | Above `Ctrl1` so the highest-member rule is observable, and below the high-reference line of 100 so that measurement stays quiet. |
-| `1` (`Ctrl1` in one cell) | Below the thin line of 2. This is the bed's only source of *unreliable*: raise it and the fourth state disappears. |
+| `1` (`Ctrl1` in `c08`) | Below the floor of 4. The floor spares a **declared** comparator, so this reading survives to be compared and gives the same states a 6 would. Read with no declared comparator it is floored like any other count, which is what makes the exemption observable. |
+| `400` (`Ctrl1` in `c11`) | Above the bed's `--gate-threshold` of 100, so `c11` is set aside by the admissibility gate. This is the bed's only per-cell source of *unreliable*: lower it and the fourth state disappears from `K04`. |
 
 ## What each set reads, on `panel_with_reference.csv`
 
@@ -101,7 +102,7 @@ ratio, so the useful values are not where intuition puts them — against a comp
 | `K01` | three cells of the three-tag sample | *bound* twice, *not bound* once, *never asked* five times. One of its cells is silent on a bound identity and votes *not bound* against two that bind it. |
 | `K02` | three cells of a four-tag sample | *bound* twice, *not bound* twice, *never asked* four times. One of its readings is floored. |
 | `K03` | four cells across two samples | Offered the union of two panels, so nothing in it reads *never asked*. Two identities read *unreliable* on a tie. |
-| `K04` | one cell whose comparator reads 1 | *unreliable* everywhere it was offered, *never asked* elsewhere. |
+| `K04` | one cell the gate sets aside | *unreliable* everywhere it was offered, *never asked* elsewhere. |
 
 Two readings are worth naming, because both are states an earlier revision got wrong:
 

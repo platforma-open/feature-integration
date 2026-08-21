@@ -66,7 +66,7 @@ const cellStyle: CSSProperties = {
 };
 
 // No token -> sentence map here, deliberately. `UnreliableReason`'s VALUES are already the prose meant for
-// a reader ("the comparator rests on too little to compare against"); the enum member is what code
+// a reader ("no comparator for this cell"); the enum member is what code
 // compares against. The set-level card does expand tokens, because its reasons come from
 // `SetUnreliableReason`, a different vocabulary that really is machine values. Mapping these would be a
 // second copy of wording that already exists, and one that silently stops matching if it is reworded.

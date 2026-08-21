@@ -20,9 +20,9 @@ in verdict.py answers directly.
 
 *The floor is 4.* Any antigen reading of 1-3 is zeroed before anything else
 runs, so background counts here sit at 5 or above. A floored reading can also
-drag a panel-derived comparator to zero, put every cell below the reference
-thin line of 2, and turn a whole run *unreliable* for a reason that has
-nothing to do with the scenario.
+drag a panel-derived comparator to zero, against which every surviving count
+scores near 100, turning a whole run *bound* for a reason that has nothing to
+do with the scenario.
 
 *A cell with no comparator reading is inadmissible and votes nowhere.* Every
 bed declares a comparator tag whose role value matches `--reference-values`,
@@ -70,9 +70,8 @@ BASE = [
 ]
 
 # A comparator reading every cell shares. Above the floor of 4 so it survives
-# it, above the reference thin line of 2 so the cell is admissible, and well
-# below the high-reference observation line of 100 so nothing in these beds is
-# flagged for background it does not have.
+# it, and well below the high-reference observation line of 100 so nothing in
+# these beds is flagged for background it does not have.
 COMPARATOR = 6
 
 # Clears the cutoff of 75 against a comparator of 6: the score is 100.
@@ -347,8 +346,8 @@ def gated_bed(tmp_path):
     cells = ("c1", "c2", "c3")
     rows = ["sampleId,cellId,tag,umiCount"]
     for cell in cells:
-        # 20 is above the reference thin line of 2, so these cells are
-        # admissible until the gate is what sets them aside -- and below the
+        # 20 leaves these cells admissible until the gate is what sets them
+        # aside -- and it is below the
         # high-reference observation line of 100, so the bed is not also
         # exercising that measurement.
         rows.append(f"S1,{cell},CTRL,20")

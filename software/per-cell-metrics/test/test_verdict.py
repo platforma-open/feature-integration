@@ -9,7 +9,6 @@ from verdict import (
     DEFAULT_FLOOR,
     DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE,
     DEFAULT_PANEL_MIN_MEMBERS,
-    DEFAULT_REFERENCE_THIN_LINE,
     Admissibility,
     ReferenceChoice,
     State,
@@ -174,7 +173,6 @@ def test_shipped_defaults_are_pinned():
     # visible act — not a silent one that only this test would otherwise
     # catch. The values themselves are not calibrated against real data.
     assert DEFAULT_PANEL_MIN_MEMBERS == 8
-    assert DEFAULT_REFERENCE_THIN_LINE == 2
     assert DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE == 100
 
 
@@ -261,8 +259,8 @@ def test_the_panel_median_truncates_rather_than_rounds():
     # A median of 1.5 is the value that separates the two: truncation gives 1,
     # and polars' round-half-to-even gives 2. At a median of 2.5 both give 2,
     # so a fixture there cannot tell them apart — and the difference matters,
-    # because 1 falls below the thin line of 2 and reads unreliable while 2 is
-    # compared normally. Truncation is the behaviour; this pins it.
+    # because a comparator of 1 and one of 2 give different scores. Truncation is
+    # the behaviour; this pins it.
     counts = _counts(
         [
             ("S1", "c1", "AAAA", 1),
@@ -362,43 +360,42 @@ def test_cutoff_is_seventy_five():
 
 
 def test_high_count_against_a_quiet_reference_is_bound():
-    # thin_line=0 here, not the default 2: a reference reading of 0 is itself
-    # below the default thin line (a panel median that truncates to 1 already
-    # reads unreliable at that default), so pinning the score computation in
-    # isolation needs the thin-line rule turned off.
-    out = read_states(_ident([("S1", "c1", "A", 200)]), Admissibility({("S1", "c1"): 0}, 0, set()), 75.0)
+    out = read_states(_ident([("S1", "c1", "A", 200)]), Admissibility({("S1", "c1"): 0}, set()), 75.0)
     assert out["state"].to_list() == [State.BOUND.value]
 
 
 def test_zero_reads_not_bound_never_unreliable():
-    out = read_states(_ident([("S1", "c1", "A", 0)]), Admissibility({("S1", "c1"): 5}, 2, set()), 75.0)
+    out = read_states(_ident([("S1", "c1", "A", 0)]), Admissibility({("S1", "c1"): 5}, set()), 75.0)
     assert out["state"].to_list() == [State.NOT_BOUND.value]
 
 
-def test_reference_below_the_thin_line_is_unreliable_not_scored():
-    # A comparison against almost nothing is not a comparison.
-    out = read_states(_ident([("S1", "c1", "A", 50)]), Admissibility({("S1", "c1"): 1}, 2, set()), 75.0)
-    assert out["state"].to_list() == [State.UNRELIABLE.value]
+def test_a_very_low_comparator_is_scored_rather_than_rerouted():
+    # `count-becomes-a-state` deleted the thin-reference branch rather than filling
+    # it in: no published line separates thin from usable, so the comparison runs
+    # and the reference reading is emitted for the reader to judge instead. A
+    # comparator of 1 is a real comparison, and the score decides it like any other.
+    out = read_states(_ident([("S1", "c1", "A", 50)]), Admissibility({("S1", "c1"): 1}, set()), 75.0)
+    assert out["state"].to_list() == [State.NOT_BOUND.value]  # scores 58.4, under the cutoff
+    assert out["unreliableReason"].to_list() == [None]
+    assert out["referenceCount"].to_list() == [1], "the reader is given what the verdict rested on"
 
 
 def test_gated_cell_is_unreliable_and_stays_in_the_frame():
-    out = read_states(_ident([("S1", "c1", "A", 500)]), Admissibility({("S1", "c1"): 900}, 2, {("S1", "c1")}), 75.0)
+    out = read_states(_ident([("S1", "c1", "A", 500)]), Admissibility({("S1", "c1"): 900}, {("S1", "c1")}), 75.0)
     assert out.height == 1
     assert out["state"].to_list() == [State.UNRELIABLE.value]
 
 
-def test_a_gated_cell_reports_the_gate_even_when_its_reference_is_thin():
-    # Both conditions hold at once: the gate set this cell aside AND its
-    # comparator is below the thin line. Reachable whenever the gate threshold
-    # sits at or below the thin line, and both are user-set. The state is
-    # unreliable either way, but the reason is an exported column that a later
-    # step reads to tell a panel problem from a re-run problem, so which
-    # condition wins is a fact someone acts on. The gate wins: a cell it set
-    # aside was not measured at all, so its comparator's thickness is moot.
-    out = read_states(_ident([("S1", "c1", "A", 500)]), Admissibility({("S1", "c1"): 1}, 2, {("S1", "c1")}), 75.0)
+def test_a_gated_cell_reports_the_gate_even_when_its_reference_is_very_low():
+    # The gate set this cell aside AND its comparator reads 1. A very low
+    # comparator is no longer a reason on its own, so only the gate can be
+    # reported -- but the reason is an exported column that a later step reads to
+    # tell a panel problem from a re-run problem, so this pins that the gate is
+    # what it says. A cell the gate set aside was not measured at all.
+    out = read_states(_ident([("S1", "c1", "A", 500)]), Admissibility({("S1", "c1"): 1}, {("S1", "c1")}), 75.0)
     assert out["state"].to_list() == [State.UNRELIABLE.value]
     reason = out["unreliableReason"].to_list()[0]
-    assert reason == UnreliableReason.GATED  # not the thin-comparator reason
+    assert reason == UnreliableReason.GATED
 
 
 def test_densify_handles_a_sample_stained_with_nothing():
@@ -411,12 +408,12 @@ def test_densify_handles_a_sample_stained_with_nothing():
 
 
 def test_never_asked_is_not_produced_here():
-    out = read_states(_ident([("S1", "c1", "A", 0)]), Admissibility({("S1", "c1"): 5}, 2, set()), 75.0)
+    out = read_states(_ident([("S1", "c1", "A", 0)]), Admissibility({("S1", "c1"): 5}, set()), 75.0)
     assert State.NEVER_ASKED.value not in out["state"].to_list()
 
 
 def test_no_score_column_leaves_the_reading():
-    out = read_states(_ident([("S1", "c1", "A", 50)]), Admissibility({("S1", "c1"): 5}, 2, set()), 75.0)
+    out = read_states(_ident([("S1", "c1", "A", 50)]), Admissibility({("S1", "c1"): 5}, set()), 75.0)
     assert "score" not in out.columns
     assert {"umiCount", "referenceCount"} <= set(out.columns)
 
@@ -434,18 +431,20 @@ def test_a_score_exactly_at_the_cutoff_is_bound():
     # The comparison then lands on the line with no floating-point drift, and
     # ">=" must call it bound.
     exact = specificity_score(10, 2)
-    out = read_states(_ident([("S1", "c1", "A", 10)]), Admissibility({("S1", "c1"): 2}, 2, set()), cutoff=exact)
+    out = read_states(_ident([("S1", "c1", "A", 10)]), Admissibility({("S1", "c1"): 2}, set()), cutoff=exact)
     assert out["state"].to_list() == [State.BOUND.value]
 
 
-def test_a_reference_exactly_at_the_thin_line_is_scored_not_unreliable():
-    # Below the line the comparison does not exist; AT the line it does. This
-    # is the pair that makes the thin line a floor rather than a gap.
-    at_line = read_states(_ident([("S1", "c1", "A", 0)]), Admissibility({("S1", "c1"): 2}, 2, set()), 75.0)
-    below_line = read_states(_ident([("S1", "c2", "A", 0)]), Admissibility({("S1", "c2"): 1}, 2, set()), 75.0)
-    assert at_line["unreliableReason"].to_list() == [None]
-    assert at_line["state"].to_list() == [State.NOT_BOUND.value]
-    assert below_line["state"].to_list() == [State.UNRELIABLE.value]
+def test_no_line_separates_a_thin_comparator_from_a_usable_one():
+    # There is no boundary left to be off-by-one about. A comparator of 1 and one
+    # of 2 differ only in the score they produce, and a large enough antigen count
+    # binds against either.
+    for ref in (1, 2):
+        low = read_states(_ident([("S1", "c1", "A", 0)]), Admissibility({("S1", "c1"): ref}, set()), 75.0)
+        high = read_states(_ident([("S1", "c2", "A", 500)]), Admissibility({("S1", "c2"): ref}, set()), 75.0)
+        assert low["unreliableReason"].to_list() == [None], f"comparator {ref} is a comparison"
+        assert low["state"].to_list() == [State.NOT_BOUND.value]
+        assert high["state"].to_list() == [State.BOUND.value], f"500 binds against a comparator of {ref}"
 
 
 def test_no_comparator_is_unreliable_but_a_comparator_reading_zero_is_scored():
@@ -453,13 +452,10 @@ def test_no_comparator_is_unreliable_but_a_comparator_reading_zero_is_scored():
     # reference dict, per reference_by_cell's contract) means no comparison
     # existed; a comparator present and reading 0 is a real comparison and
     # scores normally -- a positive antigen count against a zero reference is
-    # the strongest evidence there is. thin_line=0 isolates that from the
-    # separate (and, at the default of 2, overlapping) thin-line rule.
-    #
     # This also subsumes the plain no-comparator-is-unreliable check: nothing
     # else in the suite needs a weaker, reason-blind version of this.
-    no_comparator = read_states(_ident([("S1", "c1", "A", 200)]), Admissibility({}, 0, set()), 75.0)
-    zero_comparator = read_states(_ident([("S1", "c1", "A", 200)]), Admissibility({("S1", "c1"): 0}, 0, set()), 75.0)
+    no_comparator = read_states(_ident([("S1", "c1", "A", 200)]), Admissibility({}, set()), 75.0)
+    zero_comparator = read_states(_ident([("S1", "c1", "A", 200)]), Admissibility({("S1", "c1"): 0}, set()), 75.0)
     assert no_comparator["state"].to_list() == [State.UNRELIABLE.value]
     assert no_comparator["unreliableReason"].to_list() == [UnreliableReason.NO_COMPARATOR]
     assert zero_comparator["state"].to_list() == [State.BOUND.value]
@@ -483,7 +479,7 @@ def test_duplicated_cells_rows_give_the_deduped_answer():
     # second cell. asked must count distinct cells (2), not rows (3), and
     # silentNotBound must follow from the deduped count.
     cells = _cells([("S1", "c1"), ("S1", "c2"), ("S1", "c2")])
-    admissibility = Admissibility({("S1", "c1"): 5, ("S1", "c2"): 5}, 2, set())
+    admissibility = Admissibility({("S1", "c1"): 5, ("S1", "c2"): 5}, set())
     observed = read_states(_ident([("S1", "c1", "A", 50)]), admissibility, 75.0)
     tally = silent_tally(observed, cells, {"S1": {"A"}}, admissibility)
     row = tally.row(0, named=True)
@@ -499,7 +495,7 @@ def test_duplicated_observed_rows_are_rejected_not_silently_wrong():
     # (cell, identity); this input violates that, so the function must now
     # refuse it loudly instead of emitting a negative count.
     cells = _cells([("S1", "c1")])
-    admissibility = Admissibility({}, 2, set())  # no comparator for c1: inadmissible
+    admissibility = Admissibility({}, set())  # no comparator for c1: inadmissible
     observed = read_states(_ident([("S1", "c1", "A", 50), ("S1", "c1", "A", 50)]), admissibility, 75.0)
     # ValueError rather than AssertionError, and the type is the point: an `assert` is stripped
     # under -O, and this guard stripped does not crash -- it returns a wrong answer. Pinning the
@@ -511,11 +507,10 @@ def test_duplicated_observed_rows_are_rejected_not_silently_wrong():
 def _build_silent_tally_population(seed, force_empty_sample=None):
     # Shared by every check below: build a small, varied population by
     # construction -- several samples, cells, identities, some cells gated,
-    # some below the thin line, some with a normal reference.
+    # some with a very low reference, some with a normal one.
     rng = random.Random(seed)
     samples = ["S1", "S2", "S3"]
     identities = ["A", "B", "C"]
-    thin_line = 2
     gated: set[tuple[str, str]] = set()
     reference: dict[tuple[str, str], int] = {}
     cell_rows = []
@@ -532,12 +527,12 @@ def _build_silent_tally_population(seed, force_empty_sample=None):
             cell_rows.append((sample, cell))
             key = (sample, cell)
             # Reference reading: sometimes missing (no comparator), sometimes
-            # thin, sometimes ordinary.
+            # very low, sometimes ordinary.
             roll = rng.random()
             if roll < 0.2:
                 pass  # no comparator for this cell
             elif roll < 0.4:
-                reference[key] = 1  # below thin_line=2
+                reference[key] = 1  # a very low comparator, still comparable
             else:
                 reference[key] = rng.randint(2, 20)
             if rng.random() < 0.15:
@@ -555,20 +550,20 @@ def _build_silent_tally_population(seed, force_empty_sample=None):
                     count = rng.randint(0, 30) if rng.random() < 0.7 else rng.randint(200, 900)
                     tag_rows.append((sample, cell, identity, count))
 
-    return samples, identities, thin_line, gated, reference, cell_rows, tag_rows, offered_by_sample
+    return samples, identities, gated, reference, cell_rows, tag_rows, offered_by_sample
 
 
 def _check_silent_tally_matches_oracle(seed, cutoff=BOUND_CUTOFF, force_empty_sample=None):
     # Checks silent_tally's three cheap terms, sample-keyed (the default),
     # against the dense grid built by densify and read through read_states,
     # which never skips a row.
-    samples, identities, thin_line, gated, reference, cell_rows, tag_rows, offered_by_sample = (
-        _build_silent_tally_population(seed, force_empty_sample)
+    samples, identities, gated, reference, cell_rows, tag_rows, offered_by_sample = _build_silent_tally_population(
+        seed, force_empty_sample
     )
 
     cells = _cells(cell_rows)
     sparse_identities = _ident(tag_rows)
-    admissibility = Admissibility(reference, thin_line, gated)
+    admissibility = Admissibility(reference, gated)
     observed = read_states(sparse_identities, admissibility, cutoff)
 
     dense = densify(sparse_identities, cells, offered_by_sample)
@@ -652,13 +647,13 @@ def _check_silent_tally_matches_oracle_grouped(seed, cutoff=BOUND_CUTOFF, force_
     # -- exactly the shape a hoisted asked/total_inadmissible would get
     # wrong, since S1, S2, S3 are built with independently random offered
     # sets and need not agree on what a given group's identity was offered.
-    samples, identities, thin_line, gated, reference, cell_rows, tag_rows, offered_by_sample = (
-        _build_silent_tally_population(seed, force_empty_sample)
+    samples, identities, gated, reference, cell_rows, tag_rows, offered_by_sample = _build_silent_tally_population(
+        seed, force_empty_sample
     )
 
     cells = _cells(cell_rows)
     sparse_identities = _ident(tag_rows)
-    admissibility = Admissibility(reference, thin_line, gated)
+    admissibility = Admissibility(reference, gated)
     observed = read_states(sparse_identities, admissibility, cutoff)
     dense = densify(sparse_identities, cells, offered_by_sample)
     oracle = read_states(dense, admissibility, cutoff)
@@ -731,7 +726,7 @@ def test_silent_tally_agrees_with_the_oracle_when_groups_span_differing_panels(s
 def test_silent_tally_group_column_is_named_by_the_caller():
     cells = _cells([("S1", "c1"), ("S2", "c1")])
     observed = _ident([])
-    admissibility = Admissibility({("S1", "c1"): 5, ("S2", "c1"): 5}, 2, set())
+    admissibility = Admissibility({("S1", "c1"): 5, ("S2", "c1"): 5}, set())
     tally = silent_tally(
         observed,
         cells,
@@ -753,7 +748,7 @@ def test_a_group_spanning_two_panels_does_not_inflate_silent_unreliable():
     # cell was never asked about.
     cells = _cells([("S1", "c1"), ("S2", "c2")])
     observed = _ident([])  # both cells silent
-    admissibility = Admissibility({("S1", "c1"): 5}, 2, {("S2", "c2")})
+    admissibility = Admissibility({("S1", "c1"): 5}, {("S2", "c2")})
     tally = silent_tally(
         observed,
         cells,

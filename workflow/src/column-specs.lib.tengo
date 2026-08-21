@@ -489,13 +489,12 @@ qcMeasurementAxis := func(blockId) {
 VERDICT_STATES := string(json.encode(["bound", "not bound", "never asked", "unreliable"]))
 BOOL_VALUES := string(json.encode(["true", "false"]))
 UNRELIABLE_REASONS := string(json.encode([
-	"never-offered", "no-comparator", "thin-comparator", "all-cells-gated",
+	"never-offered", "no-comparator", "all-cells-gated",
 	"tie", "below-agreement-floor", "too-few-voters"]))
 ADMISSIBILITY_VALUES := string(json.encode([
 	"admissible",
 	"cell set aside by the admissibility gate",
-	"no comparator for this cell",
-	"the comparator rests on too little to compare against"]))
+	"no comparator for this cell"]))
 QC_STATUSES := string(json.encode(["acceptable", "alerting", "unjudged", "not evaluated"]))
 MISMATCH_DIRECTIONS := string(json.encode(["declared-never-seen", "undeclared-in-panel"]))
 

@@ -89,7 +89,6 @@ from verdict import (
     DEFAULT_FLOOR,
     DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE,
     DEFAULT_PANEL_MIN_MEMBERS,
-    DEFAULT_REFERENCE_THIN_LINE,
     Admissibility,
     ReferenceChoice,
     State,
@@ -877,7 +876,6 @@ def main() -> None:
         help="which comparator to ask for; the run may serve 'none' instead, never a different one",
     )
     p.add_argument("--panel-min-members", type=int, default=DEFAULT_PANEL_MIN_MEMBERS)
-    p.add_argument("--reference-thin-line", type=int, default=DEFAULT_REFERENCE_THIN_LINE)
     p.add_argument("--floor", type=int, default=DEFAULT_FLOOR, help="zero every non-comparator reading below this")
     p.add_argument(
         "--cutoff", type=float, default=BOUND_CUTOFF, help="specificity score at or above which a cell binds"
@@ -1087,7 +1085,7 @@ def main() -> None:
     # Built once and handed to every consumer. Two bundles built from two
     # reference dicts do not raise; they disagree about which cells cannot be
     # compared, and the silent-position count comes out wrong or negative.
-    admissibility = Admissibility(reference.by_cell, args.reference_thin_line, gated)
+    admissibility = Admissibility(reference.by_cell, gated)
 
     non_reference = floored.filter(~pl.col("tag").is_in(list(reference_tags))) if reference_tags else floored
     identities = combine_tags_to_identities(non_reference, grouping)
@@ -1663,7 +1661,6 @@ def main() -> None:
         "gateThreshold": args.gate_threshold,
         "highReferenceLine": args.high_reference_line,
         "panelMinMembers": args.panel_min_members,
-        "referenceThinLine": args.reference_thin_line,
         "roleColumn": args.role_column,
         "referenceValues": sorted(reference_values),
         "referenceTags": sorted(reference_tags),

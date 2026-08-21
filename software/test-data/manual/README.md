@@ -407,16 +407,21 @@ fewer tags, which is what makes *never asked* reachable.
 
 This bed plants background at 1–3 UMIs per barcode — **253 of 432 readings in a `tiny --panel-size 12`
 run sit below the shipped count floor of 4**. Neither shape declares a comparator, so the panel's own
-readings have to serve, and with the floor at 4 that background is zeroed, the panel median collapses to
-0, and 0 is below the reference thin line of 2. Every cell carrying signal then reads *impossible to
-compare*:
+readings have to serve, and with the floor at 4 that background is zeroed and the panel median collapses
+to 0.
 
-```
---floor 4   not bound 702, unreliable 260, bound 0      <- looks broken, is not
---floor 1   not bound 909, bound 27, unreliable 26
-```
+**The failure this causes has inverted, and the new one is more dangerous.** It used to be caught: a
+median of 0 fell below the reference thin line of 2, and every cell carrying signal read *impossible to
+compare*, which looks broken and is therefore investigated. `count-becomes-a-state` deleted that branch,
+so a median of 0 is now a real comparison — and any count that clears the floor, read against a
+reference of 0, scores near 100 and reads **bound**. The run no longer looks broken. It looks
+spectacularly successful.
 
 So set **Advanced → count floor = 1** in the block when uploading either shape. The two numbers are each
 defensible and simply do not compose: the bed's background is calibrated to a real 5k BEAM-T library,
 and the floor of 4 comes from the antibody-side lineage. A declared comparator would sidestep it, which
 is exactly what neither of these shapes can supply.
+
+The old `--floor 4` / `--floor 1` tallies recorded here have been removed rather than updated: they were
+measured against the thin-reference behaviour and no longer describe this bed. Re-measure them before
+citing any number for this shape.

@@ -119,10 +119,6 @@ def apply_floor(counts: pl.DataFrame, floor: int, reference_tags: set[str]) -> F
 # because nothing published sets any of them and a hard-coded line would pretend
 # to a basis nobody has.
 DEFAULT_PANEL_MIN_MEMBERS = 8
-# A reference reading below this is too thin to compare against: the position
-# reads *unreliable*, not *not bound* — the comparison could not be made, not
-# that it was made and failed.
-DEFAULT_REFERENCE_THIN_LINE = 2
 DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE = 100
 
 
@@ -277,10 +273,12 @@ def reference_by_cell(
             .agg(pl.col("umiCount").max().alias("ref"))
         )
     elif served is ReferenceChoice.PANEL:
-        # cast(Int64) truncates rather than rounds: a panel split between 1 and
-        # 2 medians to 1.5, cast to 1 — one below the default thin line of 2 —
-        # so that cell reads unreliable rather than being compared against a
-        # number resting on half a UMI.
+        # cast(Int64) truncates rather than rounds. This used to lean on the
+        # thin-reference line: a panel split between 1 and 2 medians to 1.5,
+        # truncated to 1, which fell below that line and made the cell read
+        # unreliable. That line is gone, so the choice now stands on its own —
+        # truncation keeps the comparator an integer count of UMIs, which is
+        # what every other reading in this module is.
         rows = scoped.group_by(CELL_KEY).agg(pl.col("umiCount").median().cast(pl.Int64).alias("ref"))
     else:
         # Reachable only if ReferenceChoice gains a member with no aggregation
@@ -348,7 +346,6 @@ class UnreliableReason(str, Enum):
 
     GATED = "cell set aside by the admissibility gate"
     NO_COMPARATOR = "no comparator for this cell"
-    THIN_COMPARATOR = "the comparator rests on too little to compare against"
 
 
 def combine_tags_to_identities(counts: pl.DataFrame, grouping: Grouping) -> pl.DataFrame:
@@ -440,20 +437,19 @@ def specificity_score(antigen_count, reference_count):
 
 
 class Admissibility(NamedTuple):
-    """The triple `read_states` and `silent_tally` must agree on to agree on
+    """The pair `read_states` and `silent_tally` must agree on to agree on
     what "cannot be compared" means for a cell.
 
     Sharing `_cell_admissibility_reason` makes both functions agree on the
     *rule*; it does nothing to make them agree on the *arguments* the rule is
-    applied to, since each call site built its own triple. Bundling the
-    triple here and passing the same one to both makes disagreement — e.g.
+    applied to, since each call site built its own pair. Bundling the
+    pair here and passing the same one to both makes disagreement — e.g.
     `read_states` given a reference restricted to observed cells while
     `silent_tally` gets the full one, which sends `silentUnreliable` wrong or
     negative — impossible by construction rather than by discipline.
     """
 
     reference: dict[tuple[str, str], int]
-    thin_line: int
     gated: set[tuple[str, str]]
 
 
@@ -470,28 +466,30 @@ def _cell_admissibility_reason(key: tuple[str, str], admissibility: Admissibilit
     `reference.get(key, 0)`: a missing key means no comparator existed for
     this cell, and defaulting it to 0 would read as "the comparator served
     and found nothing" — a settled comparison rather than the absence of one.
+
+    A LOW comparator reading is not a reason. `count-becomes-a-state` removed
+    the thin-reference branch rather than filling it in, because no published
+    line separates thin from usable: the comparison still runs, and every
+    cell's reference reading is emitted so a reader can see what a verdict
+    rested on.
     """
-    reference, thin_line, gated = admissibility
+    reference, gated = admissibility
     if key in gated:
         return UnreliableReason.GATED
     if key not in reference:
         return UnreliableReason.NO_COMPARATOR
-    if reference[key] < thin_line:
-        return UnreliableReason.THIN_COMPARATOR
     return None
 
 
 def read_states(identities: pl.DataFrame, admissibility: Admissibility, cutoff: float) -> pl.DataFrame:
     """Give every (cell, identity) row a state.
 
-    Three routes to UNRELIABLE and they mean different things, all recorded in
-    `unreliableReason`: the cell has no comparator; the comparator rests on
-    almost nothing, which is the absence of a comparison rather than a poor one;
-    or an admissibility gate set the cell aside. Gated cells stay in the frame —
-    dropping them made a set whose every cell was set aside read *never asked*
-    instead of *unreliable*. The gate is checked first: a cell the gate set
-    aside was not measured at all, so how thin its comparator is does not
-    matter and must not be the reason reported.
+    Two routes to UNRELIABLE and they mean different things, both recorded in
+    `unreliableReason`: the cell has no comparator, or an admissibility gate set
+    the cell aside. Gated cells stay in the frame — dropping them made a set
+    whose every cell was set aside read *never asked* instead of *unreliable*.
+    The gate is checked first: a cell the gate set aside was not measured at
+    all, so nothing about its comparator can be the reason reported.
 
     Emits umiCount and referenceCount, never the score. Re-derivation under a
     new grouping needs the counts, and no binding level may leave the block.
@@ -507,7 +505,7 @@ def read_states(identities: pl.DataFrame, admissibility: Admissibility, cutoff: 
     take a cell list to check against — and is silently dropped by
     `silent_tally`, which only counts cells it was told about.
     """
-    reference, _, _ = admissibility
+    reference, _ = admissibility
     keys = list(zip(identities["sampleId"].to_list(), identities["cellId"].to_list(), strict=True))
     reasons = [_cell_admissibility_reason(k, admissibility) for k in keys]
     refs = [reference.get(k) for k in keys]
@@ -552,7 +550,7 @@ def silent_tally(
     A silently admissible cell's count is 0, and specificity_score(0, r) is
     specificity_score(0, 0) ~= 0.0422 at r = 0 and smaller for every larger r.
     So a silent cell resolves to NOT_BOUND unless the cell itself cannot be
-    compared (gated, no comparator, or below the thin line), which is a
+    compared (gated or no comparator), which is a
     per-cell fact independent of which identity was silent — but only when
     `cutoff` is strictly above that ~0.0422 bound (see `specificity_score`).
     At or below it the dense oracle can call a silent admissible cell BOUND

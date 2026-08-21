@@ -76,8 +76,8 @@ const cellStyle: CSSProperties = {
 };
 
 // Why this mark is this colour, in the order a reader asks it: what the verdict is, what it rests on, and
-// - where the verdict is unsettled - which of the seven ways it failed to settle. The reason tokens are
-// machine values (`thin-comparator`, `tie`, ...), so each is expanded here rather than shown raw; a token
+// - where the verdict is unsettled - which of the six ways it failed to settle. The reason tokens are
+// machine values (`no-comparator`, `tie`, ...), so each is expanded here rather than shown raw; a token
 // is a key, not a sentence.
 // Each line reads as its own sentence, so each is capitalised at the source rather than by a transform
 // over `lines`. A blanket transform would also capitalise the antigen name, which is panel data — the
@@ -85,7 +85,6 @@ const cellStyle: CSSProperties = {
 const WHY_UNSETTLED: Record<string, string> = {
   "never-offered": "No sample holding these cells declared this antigen",
   "no-comparator": "No baseline reading existed for these cells",
-  "thin-comparator": "The baseline rested on too little to judge against",
   "all-cells-gated": "Every cell was set aside by the admissibility gate",
   tie: "The cells split evenly, so no majority settled it",
   "below-agreement-floor": "The cells agreed less than the run required",

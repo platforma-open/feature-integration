@@ -53,15 +53,14 @@ class SetUnreliableReason(str, Enum):
     reliability problem, but the same column carries it, so a reader always
     finds a reason there whenever the state is not BOUND or NOT_BOUND.
 
-    NO_COMPARATOR and THIN_COMPARATOR reuse the cell-level vocabulary's
-    concepts because they describe the same underlying fact, just observed
-    for a whole set rather than one cell: no settled vote exists because
-    every one of the set's asked cells individually failed the same
-    comparator check. ALL_CELLS_GATED is reported only when every asked cell
-    was gated with no other reason mixed in; a set with a mix of gated and
-    comparator-failed cells is reported by whichever comparator failure is
-    present, since an admissibility gate excluding only part of a set is not
-    by itself why the rest failed to settle.
+    NO_COMPARATOR reuses the cell-level vocabulary's concept because it
+    describes the same underlying fact, just observed for a whole set rather
+    than one cell: no settled vote exists because every one of the set's asked
+    cells individually had no comparator. ALL_CELLS_GATED is reported only when
+    every asked cell was gated with no other reason mixed in. A set with a mix
+    of gated and comparator-less cells is reported as NO_COMPARATOR, since an
+    admissibility gate excluding only part of a set is not by itself why the
+    rest failed to settle.
 
     TIE and BELOW_AGREEMENT_FLOOR both leave the identity UNRELIABLE, and
     look alike from the counts alone, but they call for different action and
@@ -76,7 +75,6 @@ class SetUnreliableReason(str, Enum):
 
     NEVER_OFFERED = "never-offered"
     NO_COMPARATOR = "no-comparator"
-    THIN_COMPARATOR = "thin-comparator"
     ALL_CELLS_GATED = "all-cells-gated"
     TIE = "tie"
     BELOW_AGREEMENT_FLOOR = "below-agreement-floor"
@@ -98,13 +96,13 @@ def _dominant_reason(asked_keys: list[tuple[str, str]], admissibility: Admissibi
     claim failing loudly and failing as a wrong answer. Without it, an
     admissible key slipping in here (the caller's vote-counting and its
     admissibility disagreeing about which cells were asked) reads a `None`
-    reason, matches neither of the two checks below, and falls through to
-    THIN_COMPARATOR -- reporting a comparator problem for a cell whose
+    reason, does not match the gated check below, and falls through to
+    NO_COMPARATOR -- reporting a missing comparator for a cell whose
     comparator is fine.
     """
     reasons = {_cell_admissibility_reason(k, admissibility) for k in asked_keys}
     # Raised rather than asserted: stripped under -O this does not crash, it falls through to
-    # THIN_COMPARATOR and reports a comparator problem for a cell whose comparator is fine -- the exact
+    # NO_COMPARATOR and reports a missing comparator for a cell whose comparator is fine -- the exact
     # wrong answer the docstring above says the check is here to turn into a loud failure.
     if None in reasons:
         raise ValueError(
@@ -115,9 +113,7 @@ def _dominant_reason(asked_keys: list[tuple[str, str]], admissibility: Admissibi
         )
     if reasons == {UnreliableReason.GATED}:
         return SetUnreliableReason.ALL_CELLS_GATED
-    if UnreliableReason.NO_COMPARATOR in reasons:
-        return SetUnreliableReason.NO_COMPARATOR
-    return SetUnreliableReason.THIN_COMPARATOR
+    return SetUnreliableReason.NO_COMPARATOR
 
 
 def _majority(counts: dict[str, int]) -> tuple[str, int, bool]:

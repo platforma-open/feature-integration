@@ -31,15 +31,14 @@ export { createPlDataTableStateV2 } from "@platforma-sdk/model";
 export type { PTableKey } from "@platforma-sdk/model";
 
 // The reading's shipped defaults. They restate the Python's own (verdict.py DEFAULT_FLOOR,
-// BOUND_CUTOFF, DEFAULT_PANEL_MIN_MEMBERS, DEFAULT_REFERENCE_THIN_LINE,
-// DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE, combine.py DEFAULT_MIN_VOTERS) so the value that produced a
+// BOUND_CUTOFF, DEFAULT_PANEL_MIN_MEMBERS, DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE,
+// combine.py DEFAULT_MIN_VOTERS) so the value that produced a
 // run is a value the user can see and change, not an argparse default nobody chose. Every one of them
 // is a declared default rather than a calibrated line: nothing published sets any of them.
 const DEFAULT_COUNT_FLOOR = 4;
 const DEFAULT_BOUND_CUTOFF = 75;
 const DEFAULT_MIN_VOTING_CELLS = 1;
 const DEFAULT_PANEL_REFERENCE_MIN_MEMBERS = 8;
-const DEFAULT_REFERENCE_THIN_LINE = 2;
 const DEFAULT_HIGH_REFERENCE_LINE = 100;
 
 // The punchcard's frame is keyed on the clonotype set alone, and each identity is a COLUMN rather than an
@@ -435,7 +434,6 @@ type BlockDataV2 = Omit<
   | "referenceValues"
   | "referenceSource"
   | "panelReferenceMinMembers"
-  | "referenceThinLine"
   | "countFloor"
   | "boundCutoff"
   | "minVotingCells"
@@ -495,7 +493,6 @@ const dataModel = new DataModelBuilder()
       boundCutoff: DEFAULT_BOUND_CUTOFF,
       minVotingCells: DEFAULT_MIN_VOTING_CELLS,
       panelReferenceMinMembers: DEFAULT_PANEL_REFERENCE_MIN_MEMBERS,
-      referenceThinLine: DEFAULT_REFERENCE_THIN_LINE,
       highReferenceLine: DEFAULT_HIGH_REFERENCE_LINE,
       verdictTableState: createPlDataTableStateV2(),
       antigenQcTableState: createPlDataTableStateV2(),
@@ -536,7 +533,6 @@ const dataModel = new DataModelBuilder()
     boundCutoff: DEFAULT_BOUND_CUTOFF,
     minVotingCells: DEFAULT_MIN_VOTING_CELLS,
     panelReferenceMinMembers: DEFAULT_PANEL_REFERENCE_MIN_MEMBERS,
-    referenceThinLine: DEFAULT_REFERENCE_THIN_LINE,
     highReferenceLine: DEFAULT_HIGH_REFERENCE_LINE,
     tableState: createPlDataTableStateV2(),
     qcSummaryTableState: createPlDataTableStateV2(),
@@ -759,7 +755,6 @@ export const platforma = BlockModelV3.create(dataModel)
       // it to none, so what this sends is what the run is answered under.
       referenceSource: resolveReferenceSource(data),
       panelReferenceMinMembers: Math.round(data.panelReferenceMinMembers),
-      referenceThinLine: Math.round(data.referenceThinLine),
       countFloor: Math.round(data.countFloor),
       boundCutoff: data.boundCutoff,
       minVotingCells: Math.round(data.minVotingCells),

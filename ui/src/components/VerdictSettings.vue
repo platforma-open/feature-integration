@@ -212,8 +212,8 @@ function removeContendingGroup(index: number) {
     clearable
   >
     <template #tooltip>
-      The clonotype sets each verdict is about. Leave it blank to run the block without verdicts.
-      The block still emits the tag counts, the per-cell values and the per-sample QC. The fifteen
+      The clonotypes each verdict is about. Leave it blank to run the block without verdicts. The
+      block still emits the tag counts, the per-cell values and the per-sample QC. The fifteen
       quality measurements and the panel-versus-reads check belong to the verdict stage. They need a
       dataset.
     </template>
@@ -317,17 +317,6 @@ function removeContendingGroup(index: number) {
       </template>
     </PlNumberField>
     <PlNumberField
-      v-model="app.model.data.referenceThinLine"
-      :min-value="0"
-      :step="1"
-      label="Minimum usable baseline reading"
-    >
-      <template #tooltip>
-        The lowest baseline count this block will judge against, in UMIs. Below it, the cell reads
-        unreliable and gives the reason. The block does not call it not bound.
-      </template>
-    </PlNumberField>
-    <PlNumberField
       v-model="app.model.data.highReferenceLine"
       :min-value="1"
       :step="1"
@@ -379,12 +368,12 @@ function removeContendingGroup(index: number) {
     </template>
   </PlDropdownMulti>
 
-  <PlNumberField v-model="app.model.data.countFloor" :min-value="0" :step="1" label="Count floor">
+  <PlNumberField v-model="app.model.data.countFloor" :min-value="0" :step="1" label="Minimum count">
     <template #tooltip>
       Counts below this are not evidence of binding. The block reads them as zero rather than as a
       small signal.<br /><br />
-      The floor does not apply to the baseline tag. A floor on the baseline would lower the level
-      every count is judged against, and push the whole run toward bound.<br /><br />
+      The minimum does not apply to the baseline tag. A minimum on the baseline would lower the
+      level every count is judged against, and push the whole run toward bound.<br /><br />
       The default is 4. It is a declared default, not a calibrated line.
     </template>
   </PlNumberField>
