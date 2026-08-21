@@ -103,6 +103,7 @@ from verdict import (
     UnreliableReason,
     apply_floor,
     cell_admissibility_reason,
+    cells_reading_nothing,
     combine_tags_to_identities,
     gate_cells,
     read_states,
@@ -604,15 +605,18 @@ def _cells_by_set(linker: pl.DataFrame) -> dict[str, list[CellKey]]:
     return {set_id: sorted(keys) for set_id, keys in sorted(members.items())}
 
 
-def set_aside_by_set(cells_by_set: dict[str, list], gated: set) -> dict[str, int]:
-    """How many of each clonotype's cells the gate set aside.
+def count_by_set(cells_by_set: dict[str, list], population: set) -> dict[str, int]:
+    """How many of each clonotype's cells fall in `population`.
 
-    One helper for two renderings. The CSV carries every clonotype including the zeros, because a
-    reader of a table must not have to tell "no gate" apart from "column missing". The run record
-    carries only the non-zeros, because it is parsed on every render and a dense map would cost one
-    entry per clonotype on every run.
+    Two populations use it: the cells a gate set aside, and the cells that read nothing at all. Both
+    are properties of the cell rather than of a position — a cell that answered nothing answered
+    nothing at every identity — so both are counted once for the clonotype rather than per position.
+
+    Every clonotype appears, zeros included, because a reader of a table must not have to tell "none
+    of them" apart from "column missing". A caller writing into the run record drops the zeros itself:
+    that file is parsed on every render, and a dense map would cost one entry per clonotype.
     """
-    return {set_id: sum(1 for key in cells if key in gated) for set_id, cells in sorted(cells_by_set.items())}
+    return {set_id: sum(1 for key in cells if key in population) for set_id, cells in sorted(cells_by_set.items())}
 
 
 def _pivot_identity_summary(verdicts: pl.DataFrame, universe: set[str]) -> tuple[pl.DataFrame, pl.DataFrame, bool]:
@@ -1289,9 +1293,19 @@ def main() -> None:
     # `cells_by_set` maps a set to its members, so this is a membership count over cells already read
     # rather than a second pass over the reference frame.
     per_set_gated = pl.DataFrame(
-        list(set_aside_by_set(cells_by_set, gated).items()),
+        list(count_by_set(cells_by_set, gated).items()),
         orient="row",
         schema={"setId": pl.String, "cellsSetAside": pl.Int64},
+    )
+    # Cells that read nothing at all, PER CLONOTYPE. `the-explore-readout` carries this beside the
+    # clonotype's cell count and not at every identity, because a cell with nothing left is empty at
+    # every identity and repeating the subtraction per position would report a per-identity failure
+    # that did not happen. It separates a negative resting on cells that read something from one
+    # resting on cells that read nothing, and it changes no verdict.
+    per_set_empty = pl.DataFrame(
+        list(count_by_set(cells_by_set, cells_reading_nothing(floored, linker_cells)).items()),
+        orient="row",
+        schema={"setId": pl.String, "cellsReadingNothing": pl.Int64},
     )
     counts_frame = (
         set_counts(verdicts)
@@ -1300,7 +1314,11 @@ def main() -> None:
         # so every set legitimately has nothing set aside and 0 is the true answer. A reader must not
         # have to tell "no gate" apart from "column missing".
         .join(per_set_gated, on="setId", how="left")
-        .with_columns(pl.col("cellsSetAside").fill_null(0))
+        # Filled for the same reason, and the reason bites harder here: this column ships off by
+        # default, so the reader who turns it on is the one asking the question, and a null would
+        # answer it with a blank where zero is the truth.
+        .join(per_set_empty, on="setId", how="left")
+        .with_columns(pl.col("cellsSetAside").fill_null(0), pl.col("cellsReadingNothing").fill_null(0))
     )
     # Every set comes FROM the linker, so every set has cells. Asserted rather than filled with zero:
     # a set with no cells is a contradiction, and writing 0 would report it as a real, empty clonotype.
@@ -1879,7 +1897,7 @@ def main() -> None:
         # a clonotype that lost nothing carries no entry, and an absent key reads as zero -- because
         # this file is parsed on every render.
         **(
-            {"cellsSetAsideBySet": {k: v for k, v in set_aside_by_set(cells_by_set, gated).items() if v > 0}}
+            {"cellsSetAsideBySet": {k: v for k, v in count_by_set(cells_by_set, gated).items() if v > 0}}
             if args.gate_threshold
             else {}
         ),

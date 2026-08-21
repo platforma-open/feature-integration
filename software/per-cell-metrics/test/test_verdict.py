@@ -14,6 +14,7 @@ from verdict import (
     State,
     UnreliableReason,
     apply_floor,
+    cells_reading_nothing,
     combine_tags_to_identities,
     densify,
     gate_cells,
@@ -923,3 +924,45 @@ def test_the_switch_changes_no_comparator():
         apply_floor(counts, 4, {"CTRL"}, apply_to_reference=switched_on)
         ref, _ = reference_by_cell(counts, {"CTRL"}, ReferenceChoice.DECLARED)
         assert ref[("S1", "c1")] == 2
+
+
+def _counts(rows):
+    return pl.DataFrame(
+        rows, orient="row", schema={"sampleId": pl.String, "cellId": pl.String, "tag": pl.String, "umiCount": pl.Int64}
+    )
+
+
+def test_a_cell_whose_comparator_survived_read_something():
+    # The whole discriminator. `support-travels-with-the-reading` says a cell whose antigen tags all
+    # fell below the minimum while its comparator survived took up reagent and none of it was antigen:
+    # a real negative and a real vote, not an empty cell. `cellsEmptied` cannot see this, because with
+    # the comparator exempt it is scoped to the readings the minimum was allowed to remove.
+    counts = _counts([("S1", "c1", "AAAA", 2), ("S1", "c1", "CTRL", 6)])
+    floored = apply_floor(counts, 4, {"CTRL"}).counts
+    assert floored.filter(pl.col("umiCount") > 0)["tag"].to_list() == ["CTRL"]
+    assert cells_reading_nothing(floored, {("S1", "c1")}) == set()
+
+
+def test_a_cell_with_nothing_left_anywhere_read_nothing():
+    # Same cell, same counts, the comparator now subject to the minimum. Only a cell with nothing
+    # anywhere read nothing -- so the switch moves this number, which is most of what it is for.
+    counts = _counts([("S1", "c1", "AAAA", 2), ("S1", "c1", "CTRL", 3)])
+    floored = apply_floor(counts, 4, {"CTRL"}, True).counts
+    assert cells_reading_nothing(floored, {("S1", "c1")}) == {("S1", "c1")}
+
+
+def test_a_cell_with_no_row_at_all_read_nothing():
+    # The frame is sparse, so a cell that read nothing anywhere produces no row rather than a row of
+    # zeros. Reading the population off the frame would miss exactly the cells it is looking for.
+    counts = _counts([("S1", "c1", "AAAA", 500)])
+    floored = apply_floor(counts, 4, set()).counts
+    assert cells_reading_nothing(floored, {("S1", "c1"), ("S1", "c2")}) == {("S1", "c2")}
+
+
+def test_the_universe_bounds_the_answer():
+    # A cell outside the universe does not belong here however it read. This is what keeps the count
+    # from ever exceeding the clonotype's own cell count.
+    counts = _counts([("S1", "c1", "AAAA", 500)])
+    floored = apply_floor(counts, 4, set()).counts
+    assert cells_reading_nothing(floored, set()) == set()
+    assert cells_reading_nothing(floored, {("S1", "c1")}) == set()

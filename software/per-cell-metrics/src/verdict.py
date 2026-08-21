@@ -140,6 +140,40 @@ def apply_floor(
     return Floored(out, {"readingsFloored": readings_floored, "cellsEmptied": cells_emptied})
 
 
+def cells_reading_nothing(floored: pl.DataFrame, cells: set[tuple[str, str]]) -> set[tuple[str, str]]:
+    """Of `cells`, the ones left with no count on any tag once the minimum has run.
+
+    This is not `cellsEmptied` under another name. That counter scopes itself to
+    the readings the minimum was allowed to remove, so while the comparator is
+    exempt it cannot observe the comparator at all. This population is every
+    tag, the comparator included, and `support-travels-with-the-reading` makes
+    that inclusion the whole discriminator: a cell whose antigen tags all fell
+    below the minimum while its comparator survived took up reagent and none of
+    it was antigen, which is a real negative and a real vote. Only a cell with
+    nothing anywhere read nothing.
+
+    So it reads the FLOORED frame and asks nothing about which tag is which. A
+    comparator exempt from the minimum keeps its count and its cell is not
+    empty; a comparator subject to the minimum can be zeroed like any other
+    reading, and then its cell can be. Moving `--minimum-applies-to-baseline`
+    moves this number, which is most of what that switch is for.
+
+    `cells` is passed in rather than read off the frame, because the frame is
+    sparse in both directions. A cell with no row at all read nothing on every
+    tag and belongs here; a cell outside the universe does not belong here
+    however it read. Passing the clonotypes' own membership is what keeps this
+    count from ever exceeding the clonotype's cell count.
+
+    It changes no verdict, and must not. Those cells vote *not bound* like any
+    other. Dropping them from the vote would shrink the denominator and turn a
+    minority into a majority, making verdicts more positive; filtering them out
+    of the cell list is the same effect by another route, and would derive the
+    cell list from the antigen counts.
+    """
+    reading = set(floored.filter(pl.col("umiCount") > 0).select(CELL_KEY).unique().rows())
+    return {key for key in cells if key not in reading}
+
+
 # Shipped defaults. Every one is a visible parameter rather than a constant,
 # because nothing published sets any of them and a hard-coded line would pretend
 # to a basis nobody has.

@@ -2101,6 +2101,63 @@ def test_run_meta_carries_set_aside_cells_per_clonotype(bed):
     assert by_set == {k: v for k, v in dense.items() if v > 0}
 
 
+def test_set_counts_carry_the_clonotype_s_cells_that_read_nothing(bed):
+    # `the-explore-readout` carries this per clonotype, not per identity: a cell with nothing left is
+    # empty at every identity, and repeating the subtraction per position would report a per-identity
+    # failure that did not happen.
+    #
+    # At the shipped minimum nothing in this bed falls -- 500, 600 and the comparator's 6 all clear it
+    # -- so the column has to be present and zero rather than absent.
+    _run(bed, *BASE)
+    counts = pl.read_csv(bed / "result_set_counts.csv")
+    assert "cellsReadingNothing" in counts.columns
+    assert counts["cellsReadingNothing"].to_list() == [0] * len(counts)
+
+
+def test_a_cell_carrying_only_its_comparator_has_not_read_nothing(bed):
+    # c3 was asked about AgA and read nothing of it, while its comparator read 6. That cell took up
+    # reagent and none of it was antigen, which `support-travels-with-the-reading` calls a real
+    # negative and a real vote. A minimum of 7 removes its AgA reading -- there is none to remove --
+    # and leaves the exempt comparator standing, so the cell is not empty.
+    _run(bed, *BASE, "--floor", "7")
+    counts = pl.read_csv(bed / "result_set_counts.csv")
+    assert counts["cellsReadingNothing"].to_list() == [0]
+
+
+def test_subjecting_the_baseline_to_the_minimum_empties_that_cell(bed):
+    # The same run with the comparator subject to the minimum. Now c3 holds nothing anywhere and is
+    # the one cell of three that read nothing. This is the whole visible effect of the switch: it
+    # moves the accounting and not a verdict.
+    _run(bed, *BASE, "--floor", "7", "--minimum-applies-to-baseline", "true")
+    counts = pl.read_csv(bed / "result_set_counts.csv")
+    assert counts["cellsReadingNothing"].to_list() == [1]
+    assert counts["cellCount"].to_list() == [3], "an emptied cell stays in the clonotype's cell count"
+
+
+def test_cells_that_read_nothing_change_no_verdict(bed):
+    # `support-travels-with-the-reading` forbids both shortcuts this number invites: dropping such
+    # cells from the vote shrinks the denominator and turns a minority into a majority, and filtering
+    # them out of the cell list is the same effect by another route. Flipping the switch changes which
+    # cells are counted as empty and must change nothing else in the run.
+    _run(bed, *BASE, "--floor", "7")
+    exempt = (bed / "result_verdicts.csv").read_bytes()
+    exempt_cells = (bed / "result_cell_counts.csv").read_bytes()
+    _run(bed, *BASE, "--floor", "7", "--minimum-applies-to-baseline", "true")
+    assert (bed / "result_verdicts.csv").read_bytes() == exempt
+    assert (bed / "result_cell_counts.csv").read_bytes() == exempt_cells
+    assert pl.read_csv(bed / "result_set_counts.csv")["cellsReadingNothing"].to_list() == [1]
+
+
+def test_a_clonotype_never_reads_nothing_in_more_cells_than_it_has(bed):
+    # The universe passed to the tally is the clonotype's own membership, so this cannot be violated
+    # by construction -- which is exactly why it is worth pinning: a later refactor that reads the
+    # population off the counts frame instead would break it silently.
+    _run(bed, *BASE, "--floor", "7", "--minimum-applies-to-baseline", "true")
+    counts = pl.read_csv(bed / "result_set_counts.csv")
+    for empty, total in zip(counts["cellsReadingNothing"].to_list(), counts["cellCount"].to_list()):
+        assert 0 <= empty <= total
+
+
 def test_run_meta_omits_set_aside_cells_per_clonotype_when_no_gate_is_declared(bed):
     # 206 shows the count only where a gate is declared. The key is ABSENT rather than an empty object,
     # so the UI branches on one thing -- was a gate declared -- and never has to tell "no gate" apart

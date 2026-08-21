@@ -652,7 +652,10 @@ verdictsImportSpec := func(setAxisSpec, identityAxisSpec, served) {
 // `settledCount` is emitted because set_counts() writes it; it always equals
 // offeredCount - unsettledCount, and it is cheaper to import than to make every reader re-derive.
 setCountsImportSpec := func(setAxisSpec, served) {
-	countCol := func(colName, name, label, order, description) {
+	// `visible` is a real parameter rather than a constant because one of these ships off by default,
+	// and `a` renders false as "optional" -- present in the table's column chooser, absent until a
+	// reader turns it on.
+	countCol := func(colName, name, label, order, visible, description) {
 		annotations := { "pl7.app/label": label, "pl7.app/min": "0" }
 		if description != "" {
 			annotations["pl7.app/description"] = description
@@ -664,7 +667,7 @@ setCountsImportSpec := func(setAxisSpec, served) {
 				name: name,
 				valueType: "Int",
 				domain: servedDomain(served),
-				annotations: a(order, true, annotations)
+				annotations: a(order, visible, annotations)
 			}
 		}
 	}
@@ -677,15 +680,22 @@ setCountsImportSpec := func(setAxisSpec, served) {
 			// apart. It does not vary by identity, which is exactly why it belongs here rather than in
 			// the card. How many of these cells could answer at a given identity is a different number
 			// and travels with that identity's verdict.
-			countCol("cellCount", "pl7.app/antigen/cellCount", "Cells", 96000,
+			countCol("cellCount", "pl7.app/antigen/cellCount", "Cells", 96000, true,
 				"How many cells this clonotype has. The verdicts rest on these cells; how many of them could answer at a given identity travels with that identity's verdict."),
-			countCol("boundCount", "pl7.app/antigen/boundCount", "Identities bound", 95000,
+			// Off by default, and that is the spec's own wording rather than a taste: `the-explore-readout`
+			// carries this per clonotype and not shown by default, for a reader who wants it. It
+			// qualifies the cell count directly above it -- forty cells of which thirty-eight read
+			// nothing is a different clonotype from forty that all read something -- so it is ordered
+			// next to it rather than among the identity counts below.
+			countCol("cellsReadingNothing", "pl7.app/antigen/cellsReadingNothing", "Cells that read nothing", 95500, false,
+				"How many of this clonotype's cells were left with no count on any tag, the baseline included, once the minimum count had run. It changes no verdict — those cells vote not bound like any other — and it separates a negative resting on cells that read something from one resting on cells that read nothing."),
+			countCol("boundCount", "pl7.app/antigen/boundCount", "Identities bound", 95000, true,
 				"How many distinct antigen identities this clonotype bound. Breadth, never strength: nothing here says how well it bound any of them."),
-			countCol("offeredCount", "pl7.app/antigen/offeredCount", "Identities offered", 94000,
+			countCol("offeredCount", "pl7.app/antigen/offeredCount", "Identities offered", 94000, true,
 				"How many identities this clonotype's cells were actually stained with — the denominator a rate must use, since a clone offered eight of ten and binding all eight failed nothing."),
-			countCol("settledCount", "pl7.app/antigen/settledCount", "Identities settled", 93500,
+			countCol("settledCount", "pl7.app/antigen/settledCount", "Identities settled", 93500, true,
 				"Of the identities offered, how many the data could settle either way."),
-			countCol("unsettledCount", "pl7.app/antigen/unsettledCount", "Identities unsettled", 93000,
+			countCol("unsettledCount", "pl7.app/antigen/unsettledCount", "Identities unsettled", 93000, true,
 				"Offered identities the data could not settle. They stay in the offered count and are reported here beside it, so one bad reading does not void every count in the run.")
 		],
 		storageFormat: "Parquet",
