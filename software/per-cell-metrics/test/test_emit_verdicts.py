@@ -1839,6 +1839,102 @@ def test_a_column_not_grouped_on_still_needs_agreement_across_the_identity_tags(
     assert "Channel" not in held["A"], "the two member tags disagree, so Channel does not hold"
 
 
+def _disagreements(inconsistent):
+    """The (column -> tag -> values) map the production call site builds."""
+    out: dict[str, dict[str, list[str]]] = {}
+    for tag, column, values in inconsistent:
+        out.setdefault(column, {})[tag] = sorted(values)
+    return out
+
+
+def test_a_member_that_contradicts_itself_blocks_the_property():
+    """The one that inverted a real panel, and the reason `disagreed` is threaded down at all.
+
+    T1 declares two Channels across its samples, so it has no agreed value of its
+    own. T2 declares one. Before the fix T1 reached the agreement test as the
+    empty string, was filtered out exactly like a member whose cell was blank,
+    and T2 then agreed with nobody but itself -- so the identity came back
+    carrying T2's Channel as though it held of both.
+
+    Measured on a real sixteen-row panel grouped on its role column: an identity
+    whose five member tags declared six different antigen names between them came
+    back carrying ONE member's name, because four of the five had contradicted
+    themselves into silence.
+
+    A member that contradicted itself is a disagreement, not a silence.
+    """
+    panel = pl.DataFrame(
+        {
+            "tag": ["T1", "T1", "T2"],
+            "sample": ["s1", "s2", "s1"],
+            "Identity": ["A", "A", "A"],
+            "Channel": ["PE", "APC", "FITC"],
+        }
+    )
+    cols = property_columns(panel)
+    props, inconsistent = consistent_properties(panel, cols)
+    assert props["T1"].get("Channel") is None, "T1 must have no agreed Channel or the bed proves nothing"
+    grouping, _, _, declared = _build_grouping(
+        {"by": "property", "column": "Identity"}, panel, props, reference_tags=set()
+    )
+
+    held = _identity_properties(grouping, props, cols, declared, _disagreements(inconsistent))
+    assert "Channel" not in held["A"], "T2's Channel was reported as the identity's"
+
+    # Without the disagreements the old answer is still reachable, which is what makes this a
+    # threading fix rather than a rewrite of the agreement rule.
+    assert _identity_properties(grouping, props, cols, declared)["A"]["Channel"] == "FITC"
+
+
+def test_a_member_that_declares_nothing_still_does_not_block_its_neighbours():
+    """The other silence, and it must keep behaving as it did.
+
+    T1 leaves the cell blank. It never declared anything to contradict, so it has
+    no disagreement to propagate and T2's value holds of the identity.
+    """
+    panel = pl.DataFrame(
+        {
+            "tag": ["T1", "T2"],
+            "sample": ["s1", "s1"],
+            "Identity": ["A", "A"],
+            "Channel": ["", "FITC"],
+        }
+    )
+    cols = property_columns(panel)
+    props, inconsistent = consistent_properties(panel, cols)
+    assert inconsistent == [], "a blank cell is not a disagreement"
+    grouping, _, _, declared = _build_grouping(
+        {"by": "property", "column": "Identity"}, panel, props, reference_tags=set()
+    )
+    held = _identity_properties(grouping, props, cols, declared, _disagreements(inconsistent))
+    assert held["A"]["Channel"] == "FITC"
+
+
+def test_a_contradicting_member_does_not_block_the_column_it_was_grouped_on():
+    """Grouped-on columns are settled by construction and stay that way.
+
+    A tag reaches an identity because of its value in the grouping column, so
+    that value is not open to an agreement test -- and a reused barcode has no
+    tag-grain agreement to test in the first place.
+    """
+    panel = pl.DataFrame(
+        {
+            "tag": ["T1", "T1"],
+            "sample": ["s1", "s2"],
+            "Identity": ["A", "A"],
+            "Channel": ["PE", "APC"],
+        }
+    )
+    cols = property_columns(panel)
+    props, inconsistent = consistent_properties(panel, cols)
+    grouping, _, _, declared = _build_grouping(
+        {"by": "property", "column": "Identity"}, panel, props, reference_tags=set()
+    )
+    held = _identity_properties(grouping, props, cols, declared, _disagreements(inconsistent))
+    assert held["A"]["Identity"] == "A"
+    assert "Channel" not in held["A"]
+
+
 def test_the_per_tag_grouping_declares_nothing_of_its_identities():
     # It groups on no column, so there is nothing to take by construction. Every property still
     # travels by the agreement rule.

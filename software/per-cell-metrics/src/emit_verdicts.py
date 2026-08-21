@@ -482,6 +482,7 @@ def _identity_properties(
     properties: dict[str, dict[str, str]],
     columns: list[str],
     declared: dict[str, dict[str, str]],
+    disagreed: dict[str, dict[str, list[str]]] | None = None,
 ) -> dict[str, dict[str, str]]:
     """Per identity, the panel declarations that hold of it.
 
@@ -511,6 +512,27 @@ def _identity_properties(
     declaration to travel. A tag that simply declares nothing does not block
     its neighbours, again as the row-grain rule has it.
 
+    `disagreed` is what separates those two silences, and without it they were
+    one. A tag whose own rows contradict each other has no agreed value, so it
+    reached the test below as the empty string and was filtered out exactly like
+    a tag whose cell was blank -- and a blank member is deliberately not allowed
+    to veto its neighbours. On a panel with barcode reuse that inverts the
+    outcome: measured on a real sixteen-row panel grouped on its role column,
+    an identity whose five member tags declared six different antigen names
+    between them came back carrying ONE member's name, because four of the five
+    had contradicted themselves into silence and the survivor then agreed with
+    nobody but itself.
+
+    A member that contradicted itself is a disagreement, not a silence, and it
+    blocks the property. That is the row-grain rule's own direction --
+    `consistent_properties` keeps disagreements rather than dropping them,
+    because with barcode reuse an inconsistent declaration is the expected case
+    and dropping it silently breaks the panel file's no-silent-drop rule. This
+    stops that guarantee being undone one grain higher.
+
+    Strictly more omission and never more assertion, which is the conservative
+    direction and the one `panel-file-authority` argues for.
+
     Reference tags need no exclusion here: `_build_grouping` keeps them out of
     the grouping, so no identity has one as a member.
     """
@@ -524,6 +546,7 @@ def _identity_properties(
         if tag not in members:
             members.append(tag)
 
+    conflicted = disagreed or {}
     held: dict[str, dict[str, str]] = {}
     for identity, tags in tags_of.items():
         # Seeded with what the identity was grouped on. Those columns are settled, so the agreement
@@ -531,6 +554,11 @@ def _identity_properties(
         agreed: dict[str, str] = dict(declared.get(identity, {}))
         for column in columns:
             if column in agreed:
+                continue
+            # A member that contradicted itself blocks the property. Checked BEFORE the values are
+            # gathered, because such a member contributes nothing to them and would otherwise be
+            # indistinguishable from a member that declared nothing at all.
+            if any(tag in conflicted.get(column, {}) for tag in tags):
                 continue
             values = {v for v in (properties.get(tag, {}).get(column, "") for tag in tags) if v}
             if len(values) == 1:
@@ -1431,7 +1459,7 @@ def main() -> None:
             "no consumer. Rename it in the panel file to have it travel with the verdicts.",
             file=sys.stderr,
         )
-    identity_properties = _identity_properties(grouping, properties, exportable, grouped_on)
+    identity_properties = _identity_properties(grouping, properties, exportable, grouped_on, disagreed_by_column)
     property_values = {
         column: sorted({held[column] for held in identity_properties.values() if column in held})
         for column in exportable
