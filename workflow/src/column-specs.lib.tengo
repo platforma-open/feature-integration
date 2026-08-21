@@ -199,7 +199,7 @@ perCellSummaryOutput := func(blockId, sampleAxisName) {
 				name: "pl7.app/feature/maxUmiCount",
 				valueType: "Int",
 				annotations: a(87000, true, {
-					"pl7.app/label": "Max Feature UMI count",
+					"pl7.app/label": "Max feature UMI count",
 					"pl7.app/description": "The cell's largest per-feature UMI count (the dominant feature's molecule count). The full per-feature counts are in the Feature breakdown column and the exported abundance matrix.",
 					"pl7.app/min": "0"
 				})
@@ -211,7 +211,7 @@ perCellSummaryOutput := func(blockId, sampleAxisName) {
 				name: "pl7.app/feature/maxFraction",
 				valueType: "Double",
 				annotations: a(86000, true, {
-					"pl7.app/label": "Max Feature Fraction",
+					"pl7.app/label": "Max feature fraction",
 					"pl7.app/description": "The cell's largest per-feature fraction (the dominant feature's share of the cell's total feature signal).",
 					"pl7.app/min": "0",
 					"pl7.app/max": "1",
@@ -468,7 +468,7 @@ qcEntityAxis := func(blockId) {
 		name: "pl7.app/antigen/qcEntity",
 		type: "String",
 		domain: { "pl7.app/blockId": blockId },
-		annotations: { "pl7.app/label": "Measured thing" }
+		annotations: { "pl7.app/label": "Measurement subject" }
 	}
 }
 
@@ -640,7 +640,12 @@ verdictsImportSpec := func(setAxisSpec, identityAxisSpec, served) {
 //
 // These are the family that actually reaches lead selection: a column carrying an axis the clonotype
 // anchor does not have is dropped there with no error, so nothing keyed (set, identity) is visible.
-// They count identities, never tags, and they are still not orderable — a count of verdicts is
+// They count identities, never tags -- and their LABELS now say so. They read "Antigens bound",
+// "Antigens offered" and so on, which named the wrong layer: `040-glossary` separates an identity, "a
+// group of tags read as one thing", from the antigen a tag carries, and the cell-grain sibling of the
+// first of these was already labelled "Identities bound". One concept had two nouns across two grains.
+// Labels are excluded from column identity, so nothing downstream re-binds.
+// and they are still not orderable — a count of verdicts is
 // derived from verdicts, and ordering by it is ordering by binding breadth. A downstream block
 // assembles a ranked list from these plus measurements from other assays.
 //
@@ -674,13 +679,13 @@ setCountsImportSpec := func(setAxisSpec, served) {
 			// and travels with that identity's verdict.
 			countCol("cellCount", "pl7.app/antigen/cellCount", "Cells", 96000,
 				"How many cells this clonotype has. The verdicts rest on these cells; how many of them could answer at a given identity travels with that identity's verdict."),
-			countCol("boundCount", "pl7.app/antigen/boundCount", "Antigens bound", 95000,
+			countCol("boundCount", "pl7.app/antigen/boundCount", "Identities bound", 95000,
 				"How many distinct antigen identities this clonotype bound. Breadth, never strength: nothing here says how well it bound any of them."),
-			countCol("offeredCount", "pl7.app/antigen/offeredCount", "Antigens offered", 94000,
+			countCol("offeredCount", "pl7.app/antigen/offeredCount", "Identities offered", 94000,
 				"How many identities this clonotype's cells were actually stained with — the denominator a rate must use, since a clone offered eight of ten and binding all eight failed nothing."),
-			countCol("settledCount", "pl7.app/antigen/settledCount", "Antigens settled", 93500,
+			countCol("settledCount", "pl7.app/antigen/settledCount", "Identities settled", 93500,
 				"Of the identities offered, how many the data could settle either way."),
-			countCol("unsettledCount", "pl7.app/antigen/unsettledCount", "Antigens unsettled", 93000,
+			countCol("unsettledCount", "pl7.app/antigen/unsettledCount", "Identities unsettled", 93000,
 				"Offered identities the data could not settle. They stay in the offered count and are reported here beside it, so one bad reading does not void every count in the run.")
 		],
 		storageFormat: "Parquet",
@@ -887,8 +892,12 @@ cellPunchImportSpec := func(sampleAxisSpec, cellAxisSpec, identities, groupingId
 				name: "pl7.app/antigen/boundIdentities",
 				valueType: "Int",
 				domain: servedDomain(served),
+				// Names its grain, because the clonotype-grain count carries the plain "Identities bound".
+				// The two are different numbers over different populations -- this one is one cell's, that
+				// one is a clonotype's majority across its cells -- and a reader meeting both under one
+				// name would take the smaller for a subset of the larger, which it is not.
 				annotations: a(95000, true, {
-					"pl7.app/label": "Identities bound",
+					"pl7.app/label": "Identities this cell bound",
 					"pl7.app/description": "How many identities this cell read as bound, over the identities its sample was stained for. A silent position counts as the not-bound it resolves to; a cell that could not be compared counts none.",
 					"pl7.app/min": "0"
 				})
@@ -963,8 +972,8 @@ cellScalarsImportSpec := func(sampleAxisSpec, cellAxisSpec, served) {
 		columns: [
 			scalarCol("referenceCount", "pl7.app/antigen/referenceCount", "Int",
 				a(79000, true, {
-					"pl7.app/label": "Reference count",
-					"pl7.app/description": "What this cell's reading was compared against. Empty where the run had no comparator for the cell.",
+					"pl7.app/label": "Baseline reading",
+					"pl7.app/description": "What this cell's reading was compared against. Empty where the run had no baseline for the cell.",
 					"pl7.app/min": "0"
 				})),
 			scalarCol("admissibility", "pl7.app/antigen/admissibility", "String",
@@ -1170,8 +1179,11 @@ samplePanelImportSpec := func(sampleAxisSpec) {
 			spec: {
 				name: "pl7.app/antigen/panelOfSample",
 				valueType: "String",
+				// Says WHICH panel a sample was stained with. The panel axis's own label column is the
+				// other "Panel", and it names the panel itself -- so both under one word would put two
+				// different things beside each other under one heading.
 				annotations: a(75000, false, {
-					"pl7.app/label": "Panel",
+					"pl7.app/label": "Panel used",
 					"pl7.app/isDiscreteFilter": "true"
 				})
 			}
