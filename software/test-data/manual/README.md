@@ -376,10 +376,219 @@ real BEAM-T run) — a non-regenerable fallback pool used only if the full list 
 - `design-and-schemas.md` — design rationale, the join-spine axis contract, per-arm file schemas, and the
   biology/coherence model.
 
+## Driving A Whole Run From A Real Panel File
+
+`reshape_panel.py` (below) makes a generated run *look* like a real panel. `--real-panel` does the other
+half: it takes a real panel file and generates the run **from** it, at cohort scale, so the panel's own
+samples, antigen names and feature barcodes are the ones in the reads.
+
+```bash
+python3 generate.py --real-panel /path/to/panel.csv --cells-per-sample 6000
+```
+
+Nothing about the panel is baked into this repository. The file is read from wherever it lives, copied
+into the run directory as `panel.csv`, and **everything under `runs/` is gitignored whatever its
+extension** — so a confidential panel can drive a run without any of it being committed. The one thing to
+keep out of a commit is a panel's own vocabulary: sample names, antigen names, catalogue ids, sequences
+and channel values belong in the file, never in a generator or a doc.
+
+The panel is expected in the **wide** shape — sample, name, catalogue id, barcode, channel, a constant,
+role — and four of those columns are read. Name them if they are spelled differently:
+
+| column | flag | default |
+|---|---|---|
+| sample | `--panel-sample-col` | `Samples` |
+| antigen name | `--panel-name-col` | `Name` |
+| barcode sequence | `--panel-seq-col` | `Sequence` |
+| role | `--panel-role-col` | `Type` |
+
+Role values are matched on their leading word, so `Target (Primary)` and `Target (Secondary)` both read
+as on-target while staying two distinct values. `--target-roles` / `--offtarget-roles` override the words.
+
+### What this path does that no preset does
+
+**Per-sample panels.** A wide panel says, per row, which sample offers which antigen. Reads are generated
+per sample against that sample's own panel, so a barcode sequence reused across samples under different
+antigen names is reused *in the data*, not only in the CSV. `sampleColumn` is therefore **required** in
+the block — without it the duplicate-barcode guard fires, correctly.
+
+**No declared comparator.** A real role column names what a member is to the question and carries no value
+meaning *negative control*, so this path plants none. Background lives on the panel's own members, and the
+off-target members are what a reading is compared against. See the comparator note in the generated
+`RUN.md`.
+
+**A reading-quality mix.** Every cell is planted at one of eight named tiers, and each tier is calibrated
+against the block's own rule — count floor 4, specificity cutoff 75, reference thin line 2, comparator =
+the **max** over the off-target members (≈5 UMIs at this background, which puts the line at ≈120 antigen
+UMIs).
+
+| tier | share | dominant UMIs | reads as |
+|---|---|---|---|
+| `strong` | 28% | 500–1400 | bound, with margin |
+| `good` | 20% | 150–500 | bound |
+| `medium` | 16% | 60–200 | **straddles the line** — about half bound, half not |
+| `weak` | 11% | 15–45 | not bound; a real reading, clear of the floor |
+| `noise` | 9% | 1–4 everywhere | not bound (floored), or unreliable where the comparator is too thin |
+| `crossreactive` | 6% | two targets co-dominant | bound on two identities at once |
+| `offtarget` | 6% | an off-target dominates | nothing bound, comparator high — no lead |
+| `gated` | 4% | comparator 400–1200 | set aside by the admissibility gate |
+
+Per-cell ground truth is `truth/expected-readings.tsv`: tier, dominant member, its UMI count, its role,
+and the state it should reach. A tier a sample's panel cannot support — `crossreactive` where the sample
+declares one target, `offtarget` where it declares none — degrades to `good`, and the truth records the
+tier the cell actually got.
+
+**Library quality is the other axis.** `--library-quality mixed` (default) deals `clean / good / fair /
+poor` across the samples; `uniform` makes every library clean; `spread` forces an OK/WARN/ALERT span.
+`truth/library-quality.tsv` carries each sample's matched and panel-assigned fractions and the Quality tag
+it should show. Reading tiers are about a cell's binding signal; library tiers are about whether the
+library read out at all. They are independent.
+
+**Real read geometry.** These are TotalSeq-C style antigen-capture barcodes, whose 15 nt barcode sits
+behind a 10 nt lead on Read 2, so R2 = 10 bp lead-in + 15 bp feature + tail and the block wants the
+**Custom feature-barcode kit** preset with **Read 2 offset = 10** (not the BEAM-Core preset, which assumes
+0). `--offset 0` generates the offset-0 geometry instead. Cell barcodes are real `737K-august-2016`
+members drawn per sample *independently*, so samples share some barcodes — which is what real GEM wells do,
+and what makes `(sampleId, cellId)` the load-bearing key. ~18% of reads are ambient, on off-cell barcodes;
+~1.5% carry a 1 bp feature-barcode error for tag refinement to correct.
+
+**A coherent V(D)J arm.** One AIRR single-cell TSV per sample (`cell_id, locus, v_call, j_call, c_call,
+junction, junction_aa, productive, duplicate_count`), paired IGH + IGK, every cell carrying the SAME bare
+16 nt barcode the antigen FASTQ carries — so the `[sampleId, cellId]` join is 100% by construction, not by
+luck. Clonotypes are built ON TOP of the antigen truth: a clonotype's cells bind the same antigen, which
+is what makes the per-clonotype verdict mean anything. `truth/truth_clonotypes.csv` carries every clone's
+target antigen, size, V/J/C genes and CDR3s.
+
+**How much clonal expansion is a measured question, and the two answers differ by 30x.**
+`--clonal-profile` picks the shape; `--clonal-mean-size` and `--clonal-singleton-cell-frac` tune it.
+
+| source | cells per clonotype | what it is |
+|---|---|---|
+| real in-vivo BEAM libraries | **1.05** | 4,549 IGHeavy clonotypes over 4,773 paired cells, and 3,707 over 3,716. Essentially all singletons. |
+| public 10x BEAM-T runs | 32–92 | both hold **deliberately expanded spike-ins** — one is 40% expanded anti-CMV T cells |
+| public 10x BEAM-Ab run | 15 | a **transgenic monoclonal** control: one clone is 90% of the cells |
+
+The `immunized` profile argues from first principles that a sorted, immunised repertoire must be
+expansion-heavy. That argument is sound and that real data still does not follow it, so the profile is
+no longer treated as the one true shape. `--regime shallow` sets the clonal knobs to the measured
+measured 1.05 (see **Regimes** below); `--regime deep` keeps the expanded shape.
+
+At 1.05 cells per clonotype a verdict rests on **one cell** almost everywhere, so the per-clonotype
+agreement rules — minimum voting cells, minimum agreement, a split vote — go unexercised. That is a fact
+about the data, not a gap in the bed: that real data does not exercise them either. Raise
+`--clonal-mean-size` when you want to test those rules on purpose.
+
+The V(D)J arm is the cheap half of a run — a few MB of TSV against hundreds of MB of FASTQ — and the half
+worth iterating on, so `--arm vdj` reshapes the repertoire over the antigen arm already on disk in
+seconds, without regenerating a read:
+
+```bash
+python3 generate.py --real-panel <csv> --arm vdj --clonal-mean-size 25
+```
+
+**Sample metadata.** `samples-metadata.tsv`, keyed by `Sample` so it joins to the sampleId the three arms
+share. `Donor` and `Condition` are invented — the panel names its samples and says nothing else about them
+— and exist to give downstream grouping something to split on. The other two are read from the panel and
+are the reason the file is worth having here: `LibraryQuality` is the tier each library was degraded to, so
+grouping the QC report on it should track the Quality tag; `PanelMembers` / `PanelTargets` vary per sample
+in a per-sample panel, and that variation is what makes *never asked* reachable.
+
+### Regimes — which library the bed stands in for
+
+`--regime` picks between two MEASURED calibrations. They disagree by more than an order of magnitude, and
+the difference is not a detail: it decides whether the bed tests the regime real in-vivo data occupies.
+
+| | `deep` (default) | `shallow` |
+|---|---|---|
+| stands in for | the public 10x BEAM runs | **real in-vivo BEAM libraries** |
+| source | 10x published output files | a production deployment, measured 2026-08-21 |
+| reads per distinct UMI | ~33 (97% saturation) | **2.7–5.8** |
+| UMIs per cell | median 200 | median **7** across barcodes clearing the floor |
+| dominance | median 0.995, near-mono | median **0.44** |
+| barcodes reported as cells | called cells only | the **raw universe** — 1.37M, median 1 UMI |
+| antigen aggregates | none | **5 barcodes holding 59%** of the library |
+| cells per clonotype | 25 | **1.05** |
+| readings coming back bound | most | **1–3%** |
+
+`deep` reproduces every run made before 2026-08-21 byte for byte, and the test suite asserts that. Use it
+when you need the block to reach a confident answer — a clean binder, a straddling line, a cross-reactive
+call. Use `shallow` when the question is what real in-vivo data actually shows.
+
+```bash
+python3 generate.py --real-panel <csv> --regime shallow
+```
+
+**Three things `shallow` does that change how the block must be configured.**
+
+1. **Leave the cell whitelist EMPTY.** The observed live configuration sets none, so the block consumes the raw
+   barcode universe and reports it as *cells detected*. A shallow run plants ~100x as many ambient
+   barcodes as real cells, so `cells detected` reads in the hundreds of thousands and `median UMIs / cell`
+   reads **1** — the numbers the scientists running it see. Setting a whitelist collapses the universe and hides
+   the effect. `--ambient-barcode-ratio 0` turns it off.
+2. **Antigen aggregates are present and unfiltered.** Five barcodes per library hold ~59% of its UMIs, the
+   largest ~18% alone. Cell Ranger removes this population before cell calling; this block does not.
+   Recorded in `truth/aggregates.tsv` so anything they distort can be traced to them.
+3. **Expect 1–3% of readings to come back bound.** That is the band that pipeline produces (1.4% and
+   2.9%). The validator asserts it. A shallow run showing a clean majority of confident binders has lost
+   the regime, and the validator will say so.
+
+Because the line is out of reach for most cells at this depth, the shallow validator does not assert that
+each tier reaches its promised state. It asserts the two things that still carry meaning: the bound share
+sits in the measured 1–3% band, and the bound rate falls **monotonically** from `strong` to `noise`. That
+catches an inverted score or a broken comparator without pretending to know where the line sits.
+
+Every regime-owned value is also a flag, so a regime is a starting point rather than a straitjacket:
+`--reads-per-umi`, `--ambient-barcode-ratio`, `--aggregates`, `--aggregate-umi-share`, `--unpaired-frac`,
+`--clonal-mean-size`, `--clonal-singleton-cell-frac`.
+
+### The narrow panel shape
+
+`--panel-shape` handles both shapes seen in production use, and defaults to auto-detecting from the
+header. The **wide** shape declares a role column. The **narrow** shape — `Sample,Sequence,Antigen` —
+declares none, and role is inferred from the antigen NAME instead.
+
+Narrow is not the exception: it is what the production in-vivo project uploads. Its antigen names
+carry the role in free text, and the comparator is chosen by naming one member, which `--control-feature`
+does (mirroring the block's own dropdown). A generator that assumes role lives in a column models the
+wrong half of real production work.
+
+Role inference is deliberately conservative: a member matching none of the generic off-target words comes
+back on-target, because mistaking a target for a comparator silently moves the line every reading in that
+sample is judged against.
+
+### Verified before any backend run
+
+`--real-panel` validates itself. Beyond geometry and per-sample barcode checks it does two things worth
+knowing about:
+
+- **Re-derives the planted UMI counts straight from the FASTQ pair.** Over-recovery is a hard failure (a
+  member reading more UMIs than were planted means the panel's members are not far enough apart);
+  under-recovery is bounded by the 1.5% barcode-error rate.
+- **Simulates every verdict.** The block's own reading rule — floor, comparator as the max over reference
+  tags, `specificity = (1 − I₀.₉₂₅(count+1, ref+3))·100`, cutoff — re-implemented in the standard library
+  (checked against scipy to 12 digits) and run over the truth tables, then checked against what each tier
+  promises. A tier whose magnitudes drift out of its verdict fails here rather than surfacing later as a
+  puzzling run.
+
+```
+tier            cells    bound  not bound  unreliable   bound on 2+
+strong            485      96%         0%          4%            0%
+good              389      96%         0%          4%            0%
+medium            288      45%        51%          4%            3%
+weak              188       0%        96%          4%            0%
+noise             128       0%        70%         30%            0%
+crossreactive      68      94%         0%          6%           94%
+offtarget         116       0%       100%          0%            0%
+gated              73       0%       100%          0%            0%
+whole grid: bound 16%, not bound 79%, unreliable 5%
+```
+
+Re-check an existing run with `--real-panel <csv> --validate-only`.
+
 ## The Two Shapes A Real Panel File Arrives In
 
 `generate.py` emits one panel shape: `tag,feature,Type,Species,Class`, one panel for every sample, with
-the control carrying its own `Decoy` role. Two other shapes were observed in use at one account at the
+the control carrying its own `Decoy` role. Two other shapes were observed in use in production at the
 same time, on two of its projects, and neither looks like that. `reshape_panel.py` rewrites a generated
 run's `tags.csv` into both, **keeping every barcode unchanged** so either can be uploaded against the
 same FASTQs:

@@ -33,6 +33,11 @@ software/test-data/manual/**
 software/test-data/manual/design-and-schemas.md
 software/test-data/manual/real-data-calibration.md
 !software/test-data/manual/assets/whitelist_cells.txt
+# Generated runs are ignored WHATEVER their extension. The `*.md` exception above exists for the
+# hand-written docs beside the generators, and a generated run carries its own RUN.md report — which
+# describes the panel that drove it, and that panel may be a real one supplied from outside the repo.
+# Nothing a generator writes is recipe, so nothing under runs/ is tracked.
+software/test-data/manual/runs/**
 
 # Local working docs / scratch — not version-controlled
 docs/superpowers/
