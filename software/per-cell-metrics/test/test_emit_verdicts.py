@@ -2019,3 +2019,167 @@ def test_run_meta_says_whether_the_cell_punch_was_emitted(silent_position_bed):
     meta = json.loads((silent_position_bed / "result_run_meta.json").read_text())
     assert meta["cellPunchEmitted"] is True
     assert meta["cellPunchCells"] == 2
+
+
+def test_the_panel_comparator_is_built_from_raw_counts(tmp_path):
+    """The production call site passes the raw frame, not the floored one.
+
+    The unit test in test_verdict.py pins what the two frames produce. This
+    pins which one production hands over, which is where the defect actually
+    was and which no assertion in this file reached: every fixture bed here
+    reads well clear of the minimum, so flooring changed no comparator and the
+    suite stayed green either way.
+
+    c1's five readings are 1, 1, 2, 9, 9. Raw they median to 2. Floored at the
+    shipped minimum of 4 they are 0, 0, 0, 9, 9 and median to 0 — which would
+    push every verdict in that cell toward *bound*, since a comparator of zero
+    is the easiest bar there is.
+    """
+    tags = ["AAAA", "CCCC", "GGGG", "TTTT", "ACAC"]
+    (tmp_path / "panel.csv").write_text(
+        "Sample,Antigen,Sequence\n" + "".join(f"S1,Ag{i},{t}\n" for i, t in enumerate(tags))
+    )
+    (tmp_path / "counts.csv").write_text(
+        "sampleId,cellId,tag,umiCount\n"
+        + "".join(f"S1,c1,{t},{n}\n" for t, n in zip(tags, [1, 1, 2, 9, 9], strict=True))
+    )
+    (tmp_path / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\n")
+
+    _run(tmp_path, *CUSTOMER_ARGS, "--panel-min-members", "5")
+
+    meta = json.loads((tmp_path / "result_run_meta.json").read_text())
+    assert meta["referenceChoice"] == ReferenceChoice.PANEL.value
+
+    counts = pl.read_csv(tmp_path / "result_cell_counts.csv")
+    refs = set(counts.filter(pl.col("cellId") == "c1")["referenceCount"].to_list())
+    assert refs == {2}, "the comparator was built from floored readings"
+
+
+DISTRIBUTION_ARGS = [
+    "counts.csv",
+    "panel.csv",
+    "--linker",
+    "linker.csv",
+    "--barcode-col",
+    "Sequence",
+    "--feature-col",
+    "Antigen",
+    "--sample-col",
+    "Sample",
+    "--reference-source",
+    "distribution",
+    "--output-prefix",
+    "result",
+]
+
+
+def _distribution_bed(root, n_cells=400, binder_rate=300, seed=7):
+    """A sample whose first tag separates and whose second does not.
+
+    Written from a seeded generator: the rung under test is a density, and a
+    handful of hand-written counts has no density. The seed is fixed, so the bed
+    is the same bytes on every run.
+
+    `SEP` binds in a fifth of the cells. `FLAT` is background everywhere, which
+    is a tag the panel declared and nothing bound -- the shape that must come
+    back with no comparator rather than an invented one.
+    """
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    n_binders = n_cells // 20
+    sep = np.concatenate([rng.poisson(2, n_cells - n_binders), rng.poisson(binder_rate, n_binders)])
+    flat = rng.poisson(2, n_cells)
+
+    rows = ["sampleId,cellId,tag,umiCount"]
+    for i in range(n_cells):
+        for tag, values in (("SEPS", sep), ("FLAT", flat)):
+            if values[i] > 0:
+                rows.append(f"S1,c{i},{tag},{values[i]}")
+    (root / "counts.csv").write_text("\n".join(rows) + "\n")
+    (root / "panel.csv").write_text("Sample,Antigen,Sequence\nS1,AgSep,SEPS\nS1,AgFlat,FLAT\n")
+    (root / "linker.csv").write_text("sampleId,cellId,setId\n" + "".join(f"S1,c{i},K{i % 4}\n" for i in range(n_cells)))
+    # The cell list is what fixes the fit's population, including the cells that
+    # read nothing for a tag. Without it the universe is only the observed cells.
+    (root / "cells.csv").write_text("sampleId,cellId\n" + "".join(f"S1,c{i}\n" for i in range(n_cells)))
+    return root
+
+
+def test_the_tag_distribution_rung_serves_and_says_so(tmp_path):
+    _distribution_bed(tmp_path)
+    _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
+
+    meta = json.loads((tmp_path / "result_run_meta.json").read_text())
+    assert meta["referenceChoice"] == ReferenceChoice.DISTRIBUTION.value
+    assert meta["referenceSourceRequested"] == ReferenceChoice.DISTRIBUTION.value
+    assert meta["distributionMinCells"] == 300
+
+
+def test_a_tag_that_did_not_separate_has_no_comparator_and_its_identity_alone_is_unreliable(tmp_path):
+    # The whole point of a comparator keyed by identity rather than by cell: one
+    # tag fails to fit and only the identities built from it lose their verdicts.
+    # Under a cell-keyed comparator this run would be all-or-nothing.
+    _distribution_bed(tmp_path)
+    _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
+
+    meta = json.loads((tmp_path / "result_run_meta.json").read_text())
+    assert list(meta["distributionUnfitted"]) == ["S1/FLAT"], meta["distributionUnfitted"]
+
+    # The panel declares no grouping column, so every barcode is its own
+    # identity and the identity names here are the barcodes.
+    v = pl.read_csv(tmp_path / "result_verdicts.csv", infer_schema_length=0)
+    states = {
+        identity: set(v.filter(pl.col("identity") == identity)["state"].to_list()) for identity in ("FLAT", "SEPS")
+    }
+    assert states["FLAT"] == {"unreliable"}
+    assert "unreliable" not in states["SEPS"], "the tag that separated must still be answerable"
+
+    # The set-level verdict is a majority of its cells, and only a twentieth of
+    # them bind, so every clonotype here reads *not bound* and reads it from a
+    # comparator that served. The binding is visible one level down, and the bed
+    # is worth nothing unless it is there.
+    punch = pl.read_csv(tmp_path / "result_cell_punch.csv", infer_schema_length=0)
+    assert any(x.startswith("bound|") for x in punch["SEPS"].to_list() if x is not None)
+
+
+def test_the_comparator_is_the_same_for_every_cell_of_a_sample(tmp_path):
+    # It is fitted per (sample, tag), so it cannot vary cell to cell. A per-cell
+    # comparator appearing here would mean the cell-keyed path served instead.
+    _distribution_bed(tmp_path)
+    _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
+
+    v = pl.read_csv(tmp_path / "result_cell_punch.csv", infer_schema_length=0)
+    assert v.height > 0
+    # Every position of the unfitted identity reads unreliable, and no position
+    # of the fitted one does. Under a cell-keyed comparator a cell is either
+    # comparable or not, so no run could produce this pair of columns.
+    flat = [x for x in v["FLAT"].to_list() if x is not None]
+    fitted = [x for x in v["SEPS"].to_list() if x is not None]
+    assert flat and all(x.startswith("unreliable|") for x in flat)
+    assert fitted and not any(x.startswith("unreliable|") for x in fitted)
+
+
+def test_a_sample_below_the_cell_condition_falls_to_no_comparator(tmp_path):
+    # 200 cells. Nothing can be fitted, so the run has no comparator at all --
+    # reported as the bottom rung rather than as a partly served one.
+    _distribution_bed(tmp_path, n_cells=200)
+    _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
+
+    meta = json.loads((tmp_path / "result_run_meta.json").read_text())
+    assert meta["referenceChoice"] == ReferenceChoice.NONE.value
+    assert meta["referenceSourceRequested"] == ReferenceChoice.DISTRIBUTION.value
+
+    v = pl.read_csv(tmp_path / "result_verdicts.csv", infer_schema_length=0)
+    assert set(v["state"].to_list()) == {"unreliable"}
+
+
+def test_the_gate_exposure_is_not_evaluated_where_no_cell_has_a_comparator(tmp_path):
+    # There is no per-cell comparator for a gate to read, so the count is not a
+    # measurement this run made. None, never 0 -- a zero would report a run with
+    # no high background rather than one where the question does not arise.
+    _distribution_bed(tmp_path)
+    _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
+
+    meta = json.loads((tmp_path / "result_run_meta.json").read_text())
+    assert meta["cellsHighReference"] is None
+    assert meta["cellsSetAside"] == 0

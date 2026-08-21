@@ -128,6 +128,14 @@ class ReferenceChoice(str, Enum):
     EMPTY_DROPLETS is deliberately absent: it needs gene expression and an
     empty-droplet population this block does not receive. Declaring a value the
     software cannot serve would put a crashing option in the dropdown.
+
+    DISTRIBUTION is the odd one and is handled outside this module. The other
+    two are keyed by cell and are built by `reference_by_cell`; DISTRIBUTION is
+    keyed by (sample, identity), because it fits one distribution per tag across
+    a sample's cells. Its two conditions -- enough cells, and counts that
+    actually separate -- cannot be checked before the fit runs, so
+    `served_source` has nothing to decide about it and `reference_by_cell`
+    refuses it loudly rather than inventing a per-cell answer for it.
     """
 
     # Machine tokens, not prose, and deliberately identical to the model's
@@ -143,6 +151,7 @@ class ReferenceChoice(str, Enum):
     # reader sees -- because nothing branches on it.
     DECLARED = "declared"
     PANEL = "panel"
+    DISTRIBUTION = "distribution"
     NONE = "none"
 
 
@@ -228,8 +237,16 @@ def reference_by_cell(
     analysis has a cell list, or a cell that was asked and read nothing will be
     missing rather than zero.
 
-    Receives the floored, sparse per-tag frame — before densification. The
-    PANEL median is a median of observed readings; on a densified frame every
+    Receives the RAW, sparse per-tag frame — before the minimum count and
+    before densification. Every rung computes its baseline from its own source
+    and inherits no other stage's preprocessing; the minimum count acts on the
+    identity's reading, which is the numerator, never on the comparator. Fed
+    the floored frame instead, the PANEL median mixed raw values (reference
+    tags, which the minimum exempts) with floored ones (every antigen tag)
+    inside a single median.
+
+    Sparseness matters for the same reason densification is excluded: the PANEL
+    median is a median of observed readings, and on a densified frame every
     manufactured zero would drag it toward zero and change the comparator for
     every cell, not just the ones that gained one.
 
@@ -440,7 +457,7 @@ class Admissibility(NamedTuple):
     """The pair `read_states` and `silent_tally` must agree on to agree on
     what "cannot be compared" means for a cell.
 
-    Sharing `_cell_admissibility_reason` makes both functions agree on the
+    Sharing `_admissibility_reason` makes both functions agree on the
     *rule*; it does nothing to make them agree on the *arguments* the rule is
     applied to, since each call site built its own pair. Bundling the
     pair here and passing the same one to both makes disagreement — e.g.
@@ -451,21 +468,28 @@ class Admissibility(NamedTuple):
 
     reference: dict[tuple[str, str], int]
     gated: set[tuple[str, str]]
+    by_identity: dict[tuple[str, str], int] | None = None
 
 
-def _cell_admissibility_reason(key: tuple[str, str], admissibility: Admissibility) -> UnreliableReason | None:
-    """Why this cell's comparison cannot be made, or None if it can be.
+def _admissibility_reason(key: tuple[str, str], identity: str, admissibility: Admissibility) -> UnreliableReason | None:
+    """Why this comparison cannot be made, or None if it can be.
 
-    Identity-independent: a cell that cannot be compared cannot be compared
-    against any identity, so this takes no identity and answers the same way
-    for every one the cell was asked about. `read_states` and `silent_tally`
-    both call this rather than each carrying its own copy of the same three
-    checks.
+    Takes an identity because one rung's comparator depends on it. Rungs
+    keyed by cell — the declared reagent, the panel's own readings — answer the
+    same way for every identity the cell was asked about: a cell with no
+    comparator has none against anything. The rung that fits a tag's own
+    distribution does not: it fits per (sample, tag), so a tag whose counts did
+    not separate leaves the identities built from it with no comparator while
+    every other identity in the same cell has one.
 
-    `key not in admissibility.reference` is deliberate, not
-    `reference.get(key, 0)`: a missing key means no comparator existed for
-    this cell, and defaulting it to 0 would read as "the comparator served
-    and found nothing" — a settled comparison rather than the absence of one.
+    `by_identity` is what distinguishes the two. When it is set it is the whole
+    comparator and `reference` is empty; when it is None the comparator is
+    keyed by cell. A caller must never merge them.
+
+    Membership is tested, never `get(..., 0)`: a missing key means no
+    comparator existed, and defaulting it to 0 would read as "the comparator
+    served and found nothing" — a settled comparison rather than the absence of
+    one.
 
     A LOW comparator reading is not a reason. `count-becomes-a-state` removed
     the thin-reference branch rather than filling it in, because no published
@@ -473,12 +497,41 @@ def _cell_admissibility_reason(key: tuple[str, str], admissibility: Admissibilit
     cell's reference reading is emitted so a reader can see what a verdict
     rested on.
     """
-    reference, gated = admissibility
+    reference, gated, by_identity = admissibility
     if key in gated:
         return UnreliableReason.GATED
+    if by_identity is not None:
+        return None if (key[0], identity) in by_identity else UnreliableReason.NO_COMPARATOR
     if key not in reference:
         return UnreliableReason.NO_COMPARATOR
     return None
+
+
+def cell_admissibility_reason(key: tuple[str, str], admissibility: Admissibility) -> UnreliableReason | None:
+    """The part of the reason that belongs to the CELL, whatever it was asked about.
+
+    An output keyed by cell rather than by position needs this: the per-cell
+    scalars, the punchcard's silent-position fallback, the set-level reason.
+    Where the comparator is keyed by cell this is the whole reason. Where it is
+    keyed by identity it is only the gate, because a cell whose identity has no
+    fitted background is a fine cell asked an unanswerable question -- calling
+    the CELL uncomparable there would report the wrong thing, and would report
+    it about every identity including the ones that fitted.
+    """
+    _reference, gated, by_identity = admissibility
+    if key in gated:
+        return UnreliableReason.GATED
+    if by_identity is None and key not in admissibility.reference:
+        return UnreliableReason.NO_COMPARATOR
+    return None
+
+
+def _comparator(key: tuple[str, str], identity: str, admissibility: Admissibility) -> int | None:
+    """The reading this comparison is made against, or None where none served."""
+    reference, _gated, by_identity = admissibility
+    if by_identity is not None:
+        return by_identity.get((key[0], identity))
+    return reference.get(key)
 
 
 def read_states(identities: pl.DataFrame, admissibility: Admissibility, cutoff: float) -> pl.DataFrame:
@@ -505,10 +558,10 @@ def read_states(identities: pl.DataFrame, admissibility: Admissibility, cutoff: 
     take a cell list to check against — and is silently dropped by
     `silent_tally`, which only counts cells it was told about.
     """
-    reference, _ = admissibility
     keys = list(zip(identities["sampleId"].to_list(), identities["cellId"].to_list(), strict=True))
-    reasons = [_cell_admissibility_reason(k, admissibility) for k in keys]
-    refs = [reference.get(k) for k in keys]
+    idents = identities["identity"].to_list()
+    reasons = [_admissibility_reason(k, i, admissibility) for k, i in zip(keys, idents, strict=True)]
+    refs = [_comparator(k, i, admissibility) for k, i in zip(keys, idents, strict=True)]
 
     df = identities.with_columns(
         pl.Series("referenceCount", refs, dtype=pl.Int64),
@@ -607,8 +660,10 @@ def silent_tally(
     # observed row (see the precondition above), this one is a legitimate
     # no-op to guard against, not a contract violation to surface.
     keys = list(dict.fromkeys(zip(cells["sampleId"].to_list(), cells["cellId"].to_list(), strict=True)))
-    inadmissible = {k for k in keys if _cell_admissibility_reason(k, admissibility) is not None}
     cell_keys = set(keys)
+
+    def inadmissible(key: tuple[str, str], identity: str) -> bool:
+        return _admissibility_reason(key, identity, admissibility) is not None
 
     obs_keys = list(zip(observed["sampleId"].to_list(), observed["cellId"].to_list(), strict=True))
     obs_identity = observed["identity"].to_list()
@@ -623,12 +678,18 @@ def silent_tally(
         # thousands of sets. `k[0]` is the sample directly — no need for a
         # cell->sample dict when every key already carries it.
         asked_count: dict[str, int] = {}
-        inadmissible_count: dict[str, int] = {}
+        gated_count: dict[str, int] = {}
+        no_comparator_count: dict[str, int] = {}
         for k in keys:
             sample = k[0]
             asked_count[sample] = asked_count.get(sample, 0) + 1
-            if k in inadmissible:
-                inadmissible_count[sample] = inadmissible_count.get(sample, 0) + 1
+            if k in admissibility.gated:
+                gated_count[sample] = gated_count.get(sample, 0) + 1
+            elif admissibility.by_identity is None and k not in admissibility.reference:
+                # Cell-keyed comparators only. Where the comparator is keyed by
+                # identity this term is not a property of the cell at all, and
+                # it is computed per identity in the loop below instead.
+                no_comparator_count[sample] = no_comparator_count.get(sample, 0) + 1
 
         observed_count: dict[tuple[str, str], int] = {}
         observed_inadmissible_count: dict[tuple[str, str], int] = {}
@@ -649,18 +710,37 @@ def silent_tally(
                 continue
             pair = (k[0], ident)
             observed_count[pair] = observed_count.get(pair, 0) + 1
-            if k in inadmissible:
+            if inadmissible(k, ident):
                 observed_inadmissible_count[pair] = observed_inadmissible_count.get(pair, 0) + 1
 
         for sample, offered in sorted(offered_by_sample.items()):
-            # asked and total_inadmissible are hoisted out of the identity
-            # loop below because a sample offers the same identities to every
-            # one of its cells, so neither term depends on which identity is
-            # being tallied. That precondition is what makes the hoist valid.
+            # `asked` is hoisted out of the identity loop because a sample
+            # offers the same identities to every one of its cells, so it does
+            # not depend on which identity is being tallied. That precondition
+            # is what makes the hoist valid, and it still holds.
+            #
+            # The inadmissible term no longer hoists in general. Where the
+            # comparator is keyed by cell it does, and the two counters below
+            # add up to the old one. Where it is keyed by identity, a tag whose
+            # counts did not separate takes out every cell of the sample for the
+            # identities built from it and none of the others, so the term is
+            # computed inside the loop -- from the same two per-sample counters,
+            # which is why this stays O(samples x identities) rather than
+            # becoming O(cells x identities).
             asked = asked_count.get(sample, 0)
-            total_inadmissible = inadmissible_count.get(sample, 0)
+            gated_here = gated_count.get(sample, 0)
+            uncomparable_here = no_comparator_count.get(sample, 0)
             for identity in sorted(offered):
                 pair = (sample, identity)
+                if admissibility.by_identity is None:
+                    total_inadmissible = gated_here + uncomparable_here
+                elif pair in admissibility.by_identity:
+                    total_inadmissible = gated_here
+                else:
+                    # No comparator for this identity anywhere in the sample, so
+                    # every cell of it is unreliable against this identity --
+                    # the gated ones included, already counted here once.
+                    total_inadmissible = asked
                 observed_n = observed_count.get(pair, 0)
                 observed_inadmissible_n = observed_inadmissible_count.get(pair, 0)
                 silent_unreliable = total_inadmissible - observed_inadmissible_n
@@ -705,17 +785,19 @@ def silent_tally(
                 continue
             pair = (group_by_cell[k], ident)
             observed_count[pair] = observed_count.get(pair, 0) + 1
-            if k in inadmissible:
+            if inadmissible(k, ident):
                 observed_inadmissible_count[pair] = observed_inadmissible_count.get(pair, 0) + 1
 
         for group in sorted(keys_by_group):
             asked_by_identity: dict[str, int] = {}
             inadmissible_by_identity: dict[str, int] = {}
             for k in keys_by_group[group]:
-                member_is_inadmissible = k in inadmissible
+                # Checked per identity rather than once per member: where the
+                # comparator is keyed by identity, whether this member can be
+                # compared depends on which identity is being asked about.
                 for identity in offered_by_sample.get(k[0], set()):
                     asked_by_identity[identity] = asked_by_identity.get(identity, 0) + 1
-                    if member_is_inadmissible:
+                    if inadmissible(k, identity):
                         inadmissible_by_identity[identity] = inadmissible_by_identity.get(identity, 0) + 1
 
             for identity in sorted(asked_by_identity):

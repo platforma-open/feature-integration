@@ -84,16 +84,25 @@ from qc_measures import (
     roll_up_panel,
     status_for,
 )
+from tag_distribution import (
+    DEFAULT_DISTRIBUTION_MIN_CELLS,
+    DEFAULT_SEPARATION_DEPTH,
+    TagBaseline,
+    fit_tag_baselines,
+    identity_baselines,
+)
 from verdict import (
     BOUND_CUTOFF,
     DEFAULT_FLOOR,
     DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE,
     DEFAULT_PANEL_MIN_MEMBERS,
     Admissibility,
+    Reference,
     ReferenceChoice,
     State,
-    _cell_admissibility_reason,
+    UnreliableReason,
     apply_floor,
+    cell_admissibility_reason,
     combine_tags_to_identities,
     gate_cells,
     read_states,
@@ -103,6 +112,28 @@ from verdict import (
 )
 
 CellKey = tuple[str, str]
+
+
+def _cell_keyed_reference(counts, reference_tags, source, analysed_cells, panel_size, args) -> Reference:
+    """The comparator for the rungs keyed by cell: a declared reagent, or the panel's own readings.
+
+    Raw counts, not floored. Each rung computes its baseline from its own
+    source, and the minimum count acts on the identity's reading -- the
+    numerator -- never on the comparator. Passing the floored frame here made
+    the panel rung's median a mixture of raw values (reference tags, which the
+    minimum exempts) and floored ones (every antigen tag), which is a property
+    nobody chose. The declared rung is unaffected either way, since a reference
+    tag's reading is already exempt.
+    """
+    return reference_by_cell(
+        counts,
+        reference_tags,
+        source,
+        cells=analysed_cells,
+        panel_size=panel_size,
+        min_members=args.panel_min_members,
+    )
+
 
 # A silent cell's count is zero, and a zero count's best possible score is
 # specificity_score(0, 0). At or below it the analytic silent count and the
@@ -654,9 +685,8 @@ def _pivot_cell_punch(
     read nothing, its count is zero, and a zero count resolves the same way
     every time: NOT_BOUND, unless the cell itself cannot be compared, in which
     case UNRELIABLE. That is `silent_tally`'s rule, and the reason it is not
-    re-derived here is that the deciding function -- `_cell_admissibility_reason`
-    -- is identity-independent and is the one both `read_states` and
-    `silent_tally` already call. Drawing a silent cell as an empty position
+    re-derived here is that the deciding function -- `_admissibility_reason`
+    -- is the one both `read_states` and `silent_tally` already call. Drawing a silent cell as an empty position
     would contradict the arithmetic that produced its set's verdict, where the
     same cell voted.
 
@@ -682,15 +712,17 @@ def _pivot_cell_punch(
         orient="row",
         schema={"sampleId": pl.String, "identity": pl.String},
     )
-    # Why the reason is carried per CELL and not per position: it answers "can this cell be compared at all",
-    # which no identity changes. One row per member, not one per member and identity.
+    # The cell's own half of the reason -- the admissibility gate -- is one row per member rather than one
+    # per member and identity, because no identity changes whether a cell was set aside. The other half,
+    # where a comparator is keyed by identity, is joined below as (sample, identity): a frame of samples by
+    # identities, which is thousands of rows against the grid's tens of millions.
     reasons = pl.DataFrame(
         [
             (
                 sample,
                 cell,
                 (lambda r: r.value if r is not None else None)(
-                    _cell_admissibility_reason((sample, cell), admissibility)
+                    cell_admissibility_reason((sample, cell), admissibility)
                 ),
             )
             for sample, cell, _ in members
@@ -701,6 +733,19 @@ def _pivot_cell_punch(
 
     # Joined to `offered` rather than crossed with the universe: a position no sample holding the cell
     # offered must not appear at all, or the silent rule below would resolve a question nobody asked.
+    # Where the comparator is keyed by identity, a (sample, identity) with no fitted background is
+    # uncomparable for every cell of that sample -- and only for that identity. Carried as the pairs that
+    # DID fit, so the missing ones fall out of a left join as nulls and need no second frame.
+    fitted = (
+        pl.DataFrame(
+            sorted(admissibility.by_identity),
+            orient="row",
+            schema={"sampleId": pl.String, "identity": pl.String},
+        ).with_columns(pl.lit(True).alias("_fitted"))
+        if admissibility.by_identity is not None
+        else None
+    )
+
     grid = (
         member_frame.join(offered_frame, on="sampleId", how="inner")
         .join(reasons, on=["sampleId", "cellId"], how="left")
@@ -709,20 +754,30 @@ def _pivot_cell_punch(
             on=["sampleId", "cellId", "identity"],
             how="left",
         )
-        .with_columns(
-            pl.when(pl.col("state").is_not_null())
-            .then(pl.col("state"))
-            .when(pl.col("cellReason").is_not_null())
-            .then(pl.lit(State.UNRELIABLE.value))
-            .otherwise(pl.lit(State.NOT_BOUND.value))
-            .alias("cellState"),
-            # The reason a POSITION is unreliable where one was recorded, and the cell's own reason where the
-            # position is silent. Never both: a recorded row already carries whichever applied.
-            pl.when(pl.col("unreliableReason").is_not_null())
-            .then(pl.col("unreliableReason"))
-            .otherwise(pl.col("cellReason"))
-            .alias("reason"),
+    )
+    if fitted is not None:
+        grid = grid.join(fitted, on=["sampleId", "identity"], how="left").with_columns(
+            pl.when(pl.col("cellReason").is_not_null())
+            .then(pl.col("cellReason"))
+            .when(pl.col("_fitted").is_null())
+            .then(pl.lit(UnreliableReason.NO_COMPARATOR.value))
+            .otherwise(None)
+            .alias("cellReason")
         )
+
+    grid = grid.with_columns(
+        pl.when(pl.col("state").is_not_null())
+        .then(pl.col("state"))
+        .when(pl.col("cellReason").is_not_null())
+        .then(pl.lit(State.UNRELIABLE.value))
+        .otherwise(pl.lit(State.NOT_BOUND.value))
+        .alias("cellState"),
+        # The reason a POSITION is unreliable where one was recorded, and the cell's own reason where the
+        # position is silent. Never both: a recorded row already carries whichever applied.
+        pl.when(pl.col("unreliableReason").is_not_null())
+        .then(pl.col("unreliableReason"))
+        .otherwise(pl.col("cellReason"))
+        .alias("reason"),
     )
 
     # How many identities this cell read BOUND, over the identities it was asked. Counted before the pivot,
@@ -872,10 +927,26 @@ def main() -> None:
     p.add_argument(
         "--reference-source",
         default=None,
-        choices=["declared", "panel", "none"],
+        # Derived from the enum rather than restated. The list was hard-coded and
+        # a new rung was rejected by the CLI while every layer above it accepted
+        # the value -- an argparse usage error, from a run that was configured
+        # correctly.
+        choices=[choice.value for choice in ReferenceChoice],
         help="which comparator to ask for; the run may serve 'none' instead, never a different one",
     )
     p.add_argument("--panel-min-members", type=int, default=DEFAULT_PANEL_MIN_MEMBERS)
+    p.add_argument(
+        "--distribution-min-cells",
+        type=int,
+        default=DEFAULT_DISTRIBUTION_MIN_CELLS,
+        help="cells a sample needs before a tag's own distribution may serve as its baseline",
+    )
+    p.add_argument(
+        "--distribution-separation",
+        type=float,
+        default=DEFAULT_SEPARATION_DEPTH,
+        help="how deep the trough between the two fitted components must be, against the smaller peak",
+    )
     p.add_argument("--floor", type=int, default=DEFAULT_FLOOR, help="zero every non-comparator reading below this")
     p.add_argument(
         "--cutoff", type=float, default=BOUND_CUTOFF, help="specificity score at or above which a cell binds"
@@ -1072,20 +1143,47 @@ def main() -> None:
     source = ReferenceChoice[args.reference_source.upper()] if args.reference_source else None
     if source is None:
         source = resolve_default_source(reference_tags, panel_size, args.panel_min_members)
-    reference = reference_by_cell(
-        floored,
-        reference_tags,
-        source,
-        cells=analysed_cells,
-        panel_size=panel_size,
-        min_members=args.panel_min_members,
-    )
+    tag_fits: dict[tuple[str, str], TagBaseline] = {}
+    if source is ReferenceChoice.DISTRIBUTION:
+        # Keyed by (sample, identity), not by cell: this rung fits one
+        # distribution per tag across a sample's cells, so its answer is the
+        # same number for every cell of a sample and a different one for every
+        # identity. `reference_by_cell` has nothing to return for it.
+        #
+        # Fitted over the RAW counts and over the FULL cell universe -- the
+        # cells that read nothing, and the cells a gate will later set aside.
+        # The second is `baseline-over-all-returned-cells`: a population
+        # narrowed by the gate is narrowed by the baseline's own consequences.
+        # Which is also why the fit runs here, before `gate_cells` below.
+        tag_fits = fit_tag_baselines(
+            counts, analysed_cells, panel, args.distribution_min_cells, args.distribution_separation
+        )
+        by_identity = identity_baselines(tag_fits, grouping, samples).baseline
+        # A run where no tag separated anywhere has no comparator at all, which
+        # is the bottom rung rather than a partially served one. Reported as
+        # NONE so the reader is told plainly, exactly as an unserviceable
+        # request for either other rung is.
+        reference = Reference({}, ReferenceChoice.DISTRIBUTION if by_identity else ReferenceChoice.NONE)
+        if not by_identity:
+            by_identity = None
+        tag_by_identity = identity_baselines(tag_fits, by_tag_grouping, samples).baseline or None
+    else:
+        by_identity = None
+        tag_by_identity = None
+        reference = _cell_keyed_reference(counts, reference_tags, source, analysed_cells, panel_size, args)
+
     gated, cells_high_reference = gate_cells(reference.by_cell, args.gate_threshold, args.high_reference_line)
+    if reference.served is ReferenceChoice.DISTRIBUTION:
+        # There is no per-cell comparator to read a gate against, so the gate
+        # sets nothing aside and the exposure count is not a measurement this
+        # run made. None, never 0: a zero here would report a run with no high
+        # background rather than a run where the question does not arise.
+        cells_high_reference = None
 
     # Built once and handed to every consumer. Two bundles built from two
     # reference dicts do not raise; they disagree about which cells cannot be
     # compared, and the silent-position count comes out wrong or negative.
-    admissibility = Admissibility(reference.by_cell, gated)
+    admissibility = Admissibility(reference.by_cell, gated, by_identity)
 
     non_reference = floored.filter(~pl.col("tag").is_in(list(reference_tags))) if reference_tags else floored
     identities = combine_tags_to_identities(non_reference, grouping)
@@ -1098,7 +1196,16 @@ def main() -> None:
     if grouping == by_tag_grouping:
         tag_states = states
     else:
-        tag_states = read_states(combine_tags_to_identities(non_reference, by_tag_grouping), admissibility, args.cutoff)
+        # A second bundle, because the per-tag read asks about different
+        # identities. Where the comparator is keyed by identity, the bundle
+        # built for the chosen grouping answers about identities this read
+        # never mentions and knows nothing about the tags it does.
+        tag_admissibility = (
+            Admissibility(reference.by_cell, gated, tag_by_identity) if by_identity is not None else admissibility
+        )
+        tag_states = read_states(
+            combine_tags_to_identities(non_reference, by_tag_grouping), tag_admissibility, args.cutoff
+        )
 
     offered_by_sample = {s: offered_identities(panel, grouping, [s]) for s in samples}
     tag_offered_by_sample = {s: offered_identities(panel, by_tag_grouping, [s]) for s in samples}
@@ -1184,7 +1291,7 @@ def main() -> None:
     )
 
     def _admissibility(key: CellKey) -> str:
-        reason = _cell_admissibility_reason(key, admissibility)
+        reason = cell_admissibility_reason(key, admissibility)
         return "admissible" if reason is None else reason.value
 
     # Admissibility is built HERE, in the same row as its own cell, and not attached to a later frame as a
@@ -1661,6 +1768,15 @@ def main() -> None:
         "gateThreshold": args.gate_threshold,
         "highReferenceLine": args.high_reference_line,
         "panelMinMembers": args.panel_min_members,
+        "distributionMinCells": args.distribution_min_cells,
+        "distributionSeparation": args.distribution_separation,
+        # Per (sample, tag), and only where that rung was asked for: which tags
+        # could not be fitted, and why. A tag missing here fitted; the reader
+        # needs both halves to tell a panel that mostly worked from one that
+        # mostly did not.
+        "distributionUnfitted": {
+            f"{sample}/{tag}": fit.reason for (sample, tag), fit in sorted(tag_fits.items()) if fit.reason
+        },
         "roleColumn": args.role_column,
         "referenceValues": sorted(reference_values),
         "referenceTags": sorted(reference_tags),

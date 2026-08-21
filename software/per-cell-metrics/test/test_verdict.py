@@ -793,3 +793,40 @@ def test_an_explicit_per_sample_declaration_beats_the_global_one():
     df = _counts([("S1", "c1", "AAAA", 5)])
     out = combine_tags_to_identities(df, {("AAAA", "*"): "GLOBAL", ("AAAA", "S1"): "MINE"})
     assert out["identity"].to_list() == ["MINE"]
+
+
+def test_the_comparator_is_computed_on_raw_counts_not_floored_ones(tmp_path):
+    """The minimum count acts on the numerator only; every rung reads its own source raw.
+
+    The bug this pins was at the call site, not in this module: production
+    handed `reference_by_cell` the FLOORED frame. Two consequences, and the
+    second is the sharper one.
+
+    A cell whose panel readings straddle the minimum medians differently before
+    and after: [1, 1, 2, 9, 9] medians to 2, and the same readings floored at 4
+    are [0, 0, 0, 9, 9], which medians to 0. A comparator of 0 rather than 2
+    moves every one of that cell's verdicts toward *bound*.
+
+    And the median was internally inconsistent wherever a reference tag was
+    also present, because the minimum exempts reference tags and floors every
+    antigen tag — so a single median ran over a mixture of raw and floored
+    values. Nobody chose that.
+    """
+    raw = _counts(
+        [
+            ("S1", "c1", "AAAA", 1),
+            ("S1", "c1", "CCCC", 1),
+            ("S1", "c1", "GGGG", 2),
+            ("S1", "c1", "TTTT", 9),
+            ("S1", "c1", "ACAC", 9),
+        ]
+    )
+    floored = apply_floor(raw, 4, set()).counts
+
+    on_raw, _ = reference_by_cell(raw, set(), ReferenceChoice.PANEL, panel_size=5, min_members=5)
+    on_floored, _ = reference_by_cell(floored, set(), ReferenceChoice.PANEL, panel_size=5, min_members=5)
+
+    assert on_raw[("S1", "c1")] == 2
+    # Held so the test fails loudly if the minimum ever stops biting here — the
+    # two frames must actually differ, or this proves nothing.
+    assert on_floored[("S1", "c1")] == 0

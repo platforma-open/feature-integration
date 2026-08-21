@@ -30,7 +30,7 @@ from __future__ import annotations
 from enum import Enum
 
 import polars as pl
-from verdict import Admissibility, State, UnreliableReason, _cell_admissibility_reason, silent_tally
+from verdict import Admissibility, State, UnreliableReason, _admissibility_reason, silent_tally
 
 # Both limits default permissively because the failure they would prevent is
 # visible and the failure they would cause is not. Requiring two voting cells
@@ -81,7 +81,9 @@ class SetUnreliableReason(str, Enum):
     TOO_FEW_VOTERS = "too-few-voters"
 
 
-def _dominant_reason(asked_keys: list[tuple[str, str]], admissibility: Admissibility) -> SetUnreliableReason:
+def _dominant_reason(
+    asked_keys: list[tuple[str, str]], identity: str, admissibility: Admissibility
+) -> SetUnreliableReason:
     """The one reason that explains why none of `asked_keys` settled.
 
     Called only when the set's tally has zero settled votes for the
@@ -100,7 +102,10 @@ def _dominant_reason(asked_keys: list[tuple[str, str]], admissibility: Admissibi
     NO_COMPARATOR -- reporting a missing comparator for a cell whose
     comparator is fine.
     """
-    reasons = {_cell_admissibility_reason(k, admissibility) for k in asked_keys}
+    # Takes the identity because one rung's comparator depends on it: a set can
+    # fail to settle one identity and settle every other, where the tag carrying
+    # it did not separate and the rest did.
+    reasons = {_admissibility_reason(k, identity, admissibility) for k in asked_keys}
     # Raised rather than asserted: stripped under -O this does not crash, it falls through to
     # NO_COMPARATOR and reports a missing comparator for a cell whose comparator is fine -- the exact
     # wrong answer the docstring above says the check is here to turn into a loud failure.
@@ -244,7 +249,7 @@ def combine_cells(
 
             if answered == 0:
                 asked_keys = [key for key in members if identity in offered.get(key[0], set())]
-                reason = _dominant_reason(asked_keys, admissibility)
+                reason = _dominant_reason(asked_keys, identity, admissibility)
                 rows.append(
                     {
                         "setId": set_id,
