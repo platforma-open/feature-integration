@@ -2288,3 +2288,42 @@ def test_the_gate_exposure_is_not_evaluated_where_no_cell_has_a_comparator(tmp_p
     meta = json.loads((tmp_path / "result_run_meta.json").read_text())
     assert meta["cellsHighReference"] is None
     assert meta["cellsSetAside"] == 0
+
+
+def test_the_baseline_minimum_switch_changes_the_accounting_and_not_one_verdict(wide_bed):
+    """The whole claim behind shipping this as a setting, checked end to end.
+
+    Each rung reads its own counts raw, so the comparator is built from the
+    unfloored frame whichever way the switch sits. What moves is the run's own
+    accounting -- what it reports as removed, and what it reports as emptied.
+
+    If a verdict ever moves here, the setting has stopped being an accounting
+    choice and become a scientific one, and it must not ship off-by-default as
+    though it were free.
+    """
+    assert _run(wide_bed, *_bed_args("panel_with_reference.csv"), "--output-prefix", "off").returncode == 0
+    assert (
+        _run(
+            wide_bed,
+            *_bed_args("panel_with_reference.csv"),
+            "--minimum-applies-to-baseline",
+            "true",
+            "--output-prefix",
+            "on",
+        ).returncode
+        == 0
+    )
+
+    for artifact in ("verdicts", "cell_counts", "cell_scalars"):
+        off = (wide_bed / f"off_{artifact}.csv").read_bytes()
+        on = (wide_bed / f"on_{artifact}.csv").read_bytes()
+        assert off == on, f"{artifact} moved, so the switch is not an accounting choice"
+
+    off_meta = json.loads((wide_bed / "off_run_meta.json").read_text())
+    on_meta = json.loads((wide_bed / "on_run_meta.json").read_text())
+    assert off_meta["minimumAppliesToBaseline"] is False
+    assert on_meta["minimumAppliesToBaseline"] is True
+    # The bed carries one below-minimum comparator reading, so switching it on
+    # must remove strictly more. Without this the test passes on a bed where the
+    # switch reaches nothing, and proves only that nothing happened.
+    assert on_meta["readingsFloored"] > off_meta["readingsFloored"]

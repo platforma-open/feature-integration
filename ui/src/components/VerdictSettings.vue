@@ -6,6 +6,7 @@ import type {
 import { groupingColumns } from "@platforma-open/milaboratories.feature-integration.model";
 import {
   PlAccordionSection,
+  PlCheckbox,
   PlAlert,
   PlBtnGhost,
   PlDropdown,
@@ -176,6 +177,16 @@ const shownSource = computed(() => app.model.outputs.effectiveReferenceSource);
 // answers "none" both for an explicit choice of no baseline and for no choice at all — the two look the
 // same to a run and are opposite things to say to a reader.
 const baselineUnchosen = computed(() => app.model.data.referenceSource === undefined);
+
+// A checkbox binds a boolean, and the field is optional in data so that a project which never touched
+// it carries no key at all. `undefined` reads as false here and the setter writes `undefined` back
+// rather than `false`, which keeps such a project's args vector unchanged.
+const minimumAppliesToBaseline = computed({
+  get: () => app.model.data.minimumAppliesToBaseline === true,
+  set: (on: boolean) => {
+    app.model.data.minimumAppliesToBaseline = on ? true : undefined;
+  },
+});
 
 function setBaselineSource(value: string | undefined) {
   app.model.data.referenceSource = value === undefined ? undefined : (value as ReferenceSource);
@@ -512,6 +523,18 @@ function removeContendingGroup(index: number) {
   -->
 
   <PlAccordionSection label="Advanced reading settings">
+    <PlCheckbox v-model="minimumAppliesToBaseline">
+      Apply the minimum count to the baseline tag
+      <template #tooltip>
+        By default the minimum count is not applied to the tag your panel marks as the baseline. The
+        minimum removes what is not evidence of binding, and the baseline is not evidence of binding
+        — it is what binding is measured against.<br /><br />
+        Turning this on changes no verdict. Each baseline source reads its own counts before the
+        minimum, so the level a count is judged against is the same either way. What changes is the
+        run's own accounting: how many readings it reports as removed, how many cells it reports as
+        emptied, and which of a clonotype's cells count as empty.
+      </template>
+    </PlCheckbox>
     <PlNumberField
       v-model="app.model.data.minAgreement"
       :min-value="0"

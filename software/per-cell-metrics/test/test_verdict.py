@@ -879,3 +879,47 @@ def test_the_comparator_is_computed_on_raw_counts_not_floored_ones(tmp_path):
     # Held so the test fails loudly if the minimum ever stops biting here — the
     # two frames must actually differ, or this proves nothing.
     assert on_floored[("S1", "c1")] == 0
+
+
+def test_the_minimum_spares_the_baseline_tag_by_default():
+    # The shipped behaviour. The minimum removes what is not evidence OF BINDING,
+    # and the comparator is not evidence of binding.
+    counts = _counts([("S1", "c1", "CTRL", 2), ("S1", "c1", "AAAA", 2)])
+    out, stats = apply_floor(counts, floor=4, reference_tags={"CTRL"})
+    by_tag = dict(zip(out["tag"].to_list(), out["umiCount"].to_list(), strict=True))
+    assert by_tag == {"CTRL": 2, "AAAA": 0}
+    assert stats["readingsFloored"] == 1
+
+
+def test_the_minimum_reaches_the_baseline_tag_when_it_is_switched_on():
+    # The same counts under the setting. Both readings go, and the count of
+    # removed readings follows.
+    counts = _counts([("S1", "c1", "CTRL", 2), ("S1", "c1", "AAAA", 2)])
+    out, stats = apply_floor(counts, floor=4, reference_tags={"CTRL"}, apply_to_reference=True)
+    by_tag = dict(zip(out["tag"].to_list(), out["umiCount"].to_list(), strict=True))
+    assert by_tag == {"CTRL": 0, "AAAA": 0}
+    assert stats["readingsFloored"] == 2
+
+
+def test_the_emptied_population_follows_the_same_switch():
+    # A cell holding ONLY a below-minimum comparator. With the comparator exempt
+    # it never had evidence of binding, so the minimum emptied nothing. With the
+    # comparator subject to the minimum it did, so the cell was emptied.
+    #
+    # Scoping the population one way while flooring the other reports a cell as
+    # keeping evidence it no longer has, or losing evidence it never had.
+    counts = _counts([("S1", "c1", "CTRL", 2)])
+    assert apply_floor(counts, 4, {"CTRL"}).stats["cellsEmptied"] == 0
+    assert apply_floor(counts, 4, {"CTRL"}, apply_to_reference=True).stats["cellsEmptied"] == 1
+
+
+def test_the_switch_changes_no_comparator():
+    # The claim the setting rests on, pinned at the source. Every rung reads its
+    # own counts raw, so the comparator is built from the unfloored frame and the
+    # switch cannot reach it. If this ever fails, the setting has stopped being
+    # an accounting choice and become a scientific one.
+    counts = _counts([("S1", "c1", "CTRL", 2), ("S1", "c1", "AAAA", 9)])
+    for switched_on in (False, True):
+        apply_floor(counts, 4, {"CTRL"}, apply_to_reference=switched_on)
+        ref, _ = reference_by_cell(counts, {"CTRL"}, ReferenceChoice.DECLARED)
+        assert ref[("S1", "c1")] == 2

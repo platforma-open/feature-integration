@@ -58,7 +58,9 @@ class Floored(NamedTuple):
     stats: dict[str, int]
 
 
-def apply_floor(counts: pl.DataFrame, floor: int, reference_tags: set[str]) -> Floored:
+def apply_floor(
+    counts: pl.DataFrame, floor: int, reference_tags: set[str], apply_to_reference: bool = False
+) -> Floored:
     """Zero every (cell, tag) count below `floor`, except the comparator's.
 
     A floored count contributes exactly as a count of zero does — the position
@@ -66,9 +68,23 @@ def apply_floor(counts: pl.DataFrame, floor: int, reference_tags: set[str]) -> F
     reading could not be settled; it is that a count that small is not
     distinguishable from none.
 
-    Reference tags are exempt. The floor removes what is not evidence *of
-    binding*; the comparator is not evidence of binding, and flooring it lowers
-    every denominator and shifts the whole run toward *bound*.
+    Reference tags are exempt by default, and `apply_to_reference` turns that
+    off. The exemption's ground is that the minimum removes what is not evidence
+    *of binding*, and the comparator is not evidence of binding.
+
+    **A second ground for it used to stand here and no longer holds: that
+    flooring the comparator "lowers every denominator and shifts the whole run
+    toward bound".** Since each rung reads its own source raw, the comparator is
+    built from the unfloored frame, so flooring here reaches no denominator at
+    all. Measured on the fixture bed: with the exemption removed, the verdicts,
+    the per-cell counts and the per-cell scalars are byte-identical, and only
+    `readingsFloored` moves.
+
+    So this switch does not change a single verdict. What it changes is the
+    ACCOUNTING -- how many readings the run reports as removed, how many cells it
+    reports as emptied, and through those, which cells a clonotype counts as
+    empty. That is the whole of its effect, and it is why it ships off with a
+    setting rather than being decided here.
 
     `reference_tags` is global by design, not by omission. `panel-file-authority`
     puts a tag's role as the reference with the RUN rather than in the panel file,
@@ -97,19 +113,28 @@ def apply_floor(counts: pl.DataFrame, floor: int, reference_tags: set[str]) -> F
     # reference is declared. The panel reader never emits one; this is a note
     # for anyone who feeds this an unvalidated frame.
     is_ref = pl.col("tag").is_in(list(reference_tags)) if reference_tags else pl.lit(False)
-    below = (pl.col("umiCount") < floor) & ~is_ref
+    exempt = is_ref & pl.lit(not apply_to_reference)
+    below = (pl.col("umiCount") < floor) & ~exempt
 
     readings_floored = int(counts.select(below.sum()).item())
     out = counts.with_columns(
         pl.when(below).then(pl.lit(0, dtype=pl.Int64)).otherwise(pl.col("umiCount")).alias("umiCount")
     )
 
-    # "Emptied" is scoped to non-reference readings: a cell holding only the
-    # comparator never had evidence of binding for the floor to remove.
+    # "Emptied" follows the same switch, and must. With the comparator exempt,
+    # it is scoped to non-reference readings: a cell holding only the comparator
+    # never had evidence of binding for the minimum to remove, and counting it
+    # as emptied would report a loss that did not happen. With the comparator
+    # subject to the minimum, the comparator IS one of the readings that can be
+    # removed, so a cell holding only a floored comparator has been emptied.
+    #
+    # Scoping the population one way while flooring the other would report a
+    # cell as keeping evidence it no longer has, or losing evidence it never had.
     # had_evidence deliberately does not filter on umiCount > 0 — that absence
     # is the sparse-frame assumption above, not an oversight to "symmetrise".
-    had_evidence = counts.filter(~is_ref).select(CELL_KEY).unique()
-    kept_evidence = out.filter(~is_ref & (pl.col("umiCount") > 0)).select(CELL_KEY).unique()
+    counted = ~exempt
+    had_evidence = counts.filter(counted).select(CELL_KEY).unique()
+    kept_evidence = out.filter(counted & (pl.col("umiCount") > 0)).select(CELL_KEY).unique()
     cells_emptied = had_evidence.join(kept_evidence, on=CELL_KEY, how="anti").height
 
     return Floored(out, {"readingsFloored": readings_floored, "cellsEmptied": cells_emptied})

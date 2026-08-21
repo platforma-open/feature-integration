@@ -37,6 +37,7 @@ PARAMETER_NAMES := [
 	"highReferenceLine",
 	"minAgreement",
 	"minVotingCells",
+	"minimumAppliesToBaseline",
 	"panelReferenceMinMembers",
 	"referenceSource",
 	"referenceValues",
@@ -120,6 +121,17 @@ build := func(params) {
 	add("--cutoff", string(_num(params.boundCutoff, DEFAULT_BOUND_CUTOFF)))
 	add("--min-voters", _intArg(_num(params.minVotingCells, DEFAULT_MIN_VOTING_CELLS)))
 	add("--high-reference-line", _intArg(_num(params.highReferenceLine, DEFAULT_HIGH_REFERENCE_LINE)))
+
+	// A switch, and it carries its value rather than standing alone. The vector is flag/value pairs --
+	// `valueOf` reads the next element, and the parity assertion at the end catches a dropped value --
+	// so a bare flag would make every later value read as the wrong one's.
+	//
+	// Present only when on. Off by default: the minimum removes what is not evidence of binding, and the
+	// comparator is not evidence of binding. Turning it on changes no verdict, because every rung reads
+	// its own source raw -- only what the run reports as removed and emptied.
+	if params.minimumAppliesToBaseline == true {
+		add("--minimum-applies-to-baseline", "true")
+	}
 
 	// Off by default, and off means absent rather than zero: a floor of 0 would make every majority pass
 	// the check instead of skipping the check, and the two are different claims about the reading.

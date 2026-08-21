@@ -951,6 +951,18 @@ def main() -> None:
     )
     p.add_argument("--floor", type=int, default=DEFAULT_FLOOR, help="zero every non-comparator reading below this")
     p.add_argument(
+        "--minimum-applies-to-baseline",
+        # A value rather than store_true. The workflow builds its vector as flag/value pairs and asserts
+        # the parity, so a bare flag there makes every later value read as the wrong flag's.
+        choices=["true", "false"],
+        default="false",
+        help=(
+            "also apply the minimum count to the declared baseline tag. Off by default. Changes no "
+            "verdict -- each rung reads its own source raw, so the comparator is built from unfloored "
+            "counts either way -- only what the run reports as removed and emptied"
+        ),
+    )
+    p.add_argument(
         "--cutoff", type=float, default=BOUND_CUTOFF, help="specificity score at or above which a cell binds"
     )
     p.add_argument("--min-voters", type=int, default=DEFAULT_MIN_VOTERS)
@@ -1127,10 +1139,16 @@ def main() -> None:
     # sample's own QC row. A cell key carries its sample, so partitioning is
     # exact on both counters and the run totals are their sums -- there is no
     # second implementation of the rule to drift from this one.
+    apply_minimum_to_baseline = args.minimum_applies_to_baseline == "true"
     floor_stats: dict[str, dict[str, int]] = {}
     parts = []
     for sample in samples:
-        floored_part = apply_floor(counts.filter(pl.col("sampleId") == sample), args.floor, reference_tags)
+        floored_part = apply_floor(
+            counts.filter(pl.col("sampleId") == sample),
+            args.floor,
+            reference_tags,
+            apply_minimum_to_baseline,
+        )
         parts.append(floored_part.counts)
         floor_stats[sample] = floored_part.stats
     floored = pl.concat(parts) if parts else counts
@@ -1765,6 +1783,7 @@ def main() -> None:
         "cellsInList": len(cell_list) if cell_list is not None else None,
         "cellsAnalysed": len(analysed_cells),
         "floor": args.floor,
+        "minimumAppliesToBaseline": apply_minimum_to_baseline,
         "cutoff": args.cutoff,
         "minVoters": args.min_voters,
         "minAgreement": args.min_agreement,

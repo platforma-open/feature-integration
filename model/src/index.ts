@@ -774,6 +774,9 @@ export const platforma = BlockModelV3.create(dataModel)
       distributionMinCells: Math.round(data.distributionMinCells),
       distributionSeparation: data.distributionSeparation,
       countFloor: Math.round(data.countFloor),
+      // A switch, so off means ABSENT rather than false — the same rule the two thresholds below
+      // follow. It keeps the args vector of every project that never touched it byte-identical.
+      minimumAppliesToBaseline: data.minimumAppliesToBaseline === true ? true : undefined,
       boundCutoff: data.boundCutoff,
       minVotingCells: Math.round(data.minVotingCells),
       // Off by default, and off means ABSENT: a minimum agreement of 0 passes every majority instead of
