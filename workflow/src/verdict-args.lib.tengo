@@ -30,6 +30,8 @@ PARAMETER_NAMES := [
 	"contendingGroups",
 	"countFloor",
 	"datasetRef",
+	"distributionMinCells",
+	"distributionSeparation",
 	"gateThreshold",
 	"grouping",
 	"highReferenceLine",
@@ -50,6 +52,8 @@ DEFAULT_BOUND_CUTOFF := 75
 DEFAULT_MIN_VOTING_CELLS := 1
 DEFAULT_PANEL_MIN_MEMBERS := 8
 DEFAULT_HIGH_REFERENCE_LINE := 100
+DEFAULT_DISTRIBUTION_MIN_CELLS := 300
+DEFAULT_DISTRIBUTION_SEPARATION := 0.5
 
 _num := func(value, fallback) {
 	return is_undefined(value) ? fallback : value
@@ -107,6 +111,11 @@ build := func(params) {
 	}
 
 	add("--panel-min-members", _intArg(_num(params.panelReferenceMinMembers, DEFAULT_PANEL_MIN_MEMBERS)))
+	// Both conditions on the tag-distribution rung. Passed on every run rather than only where that rung
+	// was asked for: the run record then states the numbers the reading would have used, so two runs
+	// answered by different rungs still compare their configurations.
+	add("--distribution-min-cells", _intArg(_num(params.distributionMinCells, DEFAULT_DISTRIBUTION_MIN_CELLS)))
+	add("--distribution-separation", string(_num(params.distributionSeparation, DEFAULT_DISTRIBUTION_SEPARATION)))
 	add("--floor", _intArg(_num(params.countFloor, DEFAULT_COUNT_FLOOR)))
 	add("--cutoff", string(_num(params.boundCutoff, DEFAULT_BOUND_CUTOFF)))
 	add("--min-voters", _intArg(_num(params.minVotingCells, DEFAULT_MIN_VOTING_CELLS)))

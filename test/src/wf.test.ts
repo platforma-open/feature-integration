@@ -172,6 +172,8 @@ blockTest.skip(
         boundCutoff: 75,
         minVotingCells: 1,
         panelReferenceMinMembers: 8,
+        distributionMinCells: 300,
+        distributionSeparation: 0.5,
         highReferenceLine: 100,
         tableState: createPlDataTableStateV2(),
         qcSummaryTableState: createPlDataTableStateV2(),

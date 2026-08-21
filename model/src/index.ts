@@ -39,6 +39,12 @@ const DEFAULT_COUNT_FLOOR = 4;
 const DEFAULT_BOUND_CUTOFF = 75;
 const DEFAULT_MIN_VOTING_CELLS = 1;
 const DEFAULT_PANEL_REFERENCE_MIN_MEMBERS = 8;
+// Both from the study the tag-distribution rung comes from. The first is its own bootstrapping
+// figure; the second has no published value at all -- that paper shows the trough in a figure and
+// never says how deep one has to be -- so it ships as a declared default a run can move and says it
+// moved. Mirrors DEFAULT_DISTRIBUTION_MIN_CELLS and DEFAULT_SEPARATION_DEPTH in tag_distribution.py.
+const DEFAULT_DISTRIBUTION_MIN_CELLS = 300;
+const DEFAULT_DISTRIBUTION_SEPARATION = 0.5;
 const DEFAULT_HIGH_REFERENCE_LINE = 100;
 
 // The punchcard's frame is keyed on the clonotype set alone, and each identity is a COLUMN rather than an
@@ -76,6 +82,7 @@ export const PUNCH_CELL_COUNT_COLUMN = "pl7.app/antigen/cellCount";
 export const REFERENCE_SOURCE_LABELS: Record<ReferenceSource, string> = {
   declared: "Declared baseline tag",
   panel: "The panel's own readings",
+  distribution: "Each tag's own distribution",
   none: "No baseline",
 };
 
@@ -307,6 +314,12 @@ function referenceRungsAvailable(data: BlockData): { declared: boolean; panel: b
   };
 }
 
+// The tag-distribution rung is deliberately absent from the two above, and it is not an omission.
+// Its conditions -- enough cells in the sample, and counts that actually separate -- are facts about
+// data this block has not read yet, and one of them is per tag. Nothing in `data` can answer them, so
+// the request is always serviceable and the RUN reports what it managed: which tags fitted, which did
+// not, and why. That is the same contract every other rung has, arrived at from the other direction.
+
 /**
  * The baseline rung a run made from this data reads against.
  *
@@ -335,6 +348,10 @@ export function resolveReferenceSource(data: BlockData): ReferenceSource {
   const available = referenceRungsAvailable(data);
   if (data.referenceSource === "declared" && available.declared) return "declared";
   if (data.referenceSource === "panel" && available.panel) return "panel";
+  // Passed through unconditionally, unlike the two above. Nothing here can tell whether it will
+  // serve, so there is no unserviceable state to ignore -- and falling back from it would send a
+  // different rung than the scientist asked for, which is the one thing this block never does.
+  if (data.referenceSource === "distribution") return "distribution";
   return available.declared ? "declared" : "panel";
 }
 
@@ -434,6 +451,8 @@ type BlockDataV2 = Omit<
   | "referenceValues"
   | "referenceSource"
   | "panelReferenceMinMembers"
+  | "distributionMinCells"
+  | "distributionSeparation"
   | "countFloor"
   | "boundCutoff"
   | "minVotingCells"
@@ -493,6 +512,8 @@ const dataModel = new DataModelBuilder()
       boundCutoff: DEFAULT_BOUND_CUTOFF,
       minVotingCells: DEFAULT_MIN_VOTING_CELLS,
       panelReferenceMinMembers: DEFAULT_PANEL_REFERENCE_MIN_MEMBERS,
+      distributionMinCells: DEFAULT_DISTRIBUTION_MIN_CELLS,
+      distributionSeparation: DEFAULT_DISTRIBUTION_SEPARATION,
       highReferenceLine: DEFAULT_HIGH_REFERENCE_LINE,
       verdictTableState: createPlDataTableStateV2(),
       antigenQcTableState: createPlDataTableStateV2(),
@@ -533,6 +554,8 @@ const dataModel = new DataModelBuilder()
     boundCutoff: DEFAULT_BOUND_CUTOFF,
     minVotingCells: DEFAULT_MIN_VOTING_CELLS,
     panelReferenceMinMembers: DEFAULT_PANEL_REFERENCE_MIN_MEMBERS,
+    distributionMinCells: DEFAULT_DISTRIBUTION_MIN_CELLS,
+    distributionSeparation: DEFAULT_DISTRIBUTION_SEPARATION,
     highReferenceLine: DEFAULT_HIGH_REFERENCE_LINE,
     tableState: createPlDataTableStateV2(),
     qcSummaryTableState: createPlDataTableStateV2(),
@@ -755,6 +778,8 @@ export const platforma = BlockModelV3.create(dataModel)
       // it to none, so what this sends is what the run is answered under.
       referenceSource: resolveReferenceSource(data),
       panelReferenceMinMembers: Math.round(data.panelReferenceMinMembers),
+      distributionMinCells: Math.round(data.distributionMinCells),
+      distributionSeparation: data.distributionSeparation,
       countFloor: Math.round(data.countFloor),
       boundCutoff: data.boundCutoff,
       minVotingCells: Math.round(data.minVotingCells),
@@ -1772,6 +1797,23 @@ export const platforma = BlockModelV3.create(dataModel)
           `Lower "Minimum panel size to serve as baseline" under "Baseline thresholds". You can ` +
           `also declare a baseline tag.`,
       );
+    // Always offered, and the only option here with no condition attached. Whether it can serve turns
+    // on the sample's cell count and on whether each tag's counts separate -- neither of which this
+    // block has read yet, and the second of which is answered per tag rather than per run. So the
+    // conditions live in the description and the RUN reports what happened: which tags fitted, which
+    // did not, and why. Offering it only where it will serve would mean deciding here, from data that
+    // cannot decide it.
+    options.push({
+      value: "distribution",
+      label: "Each tag's own distribution",
+      description:
+        `The block splits each tag's counts across a sample's cells into two components and judges ` +
+        `counts against the lower one. It needs at least ${Math.round(ctx.data.distributionMinCells)} ` +
+        `cells in the sample, and it needs that tag's counts to actually separate. A tag whose counts ` +
+        `do not separate gets no baseline, and only the antigens that tag carries read unreliable. ` +
+        `Pick this where your panel declares no baseline tag and is too small to stand in for one.`,
+    });
+
     // `none` is deliberately NOT offered. It is what the run REPORTS when neither rung can serve — the
     // third rung of `292-no-declared-reference`'s ordering — and never something a scientist asks for:
     // requesting it guarantees a run with no answers at all, every position unreliable. It was on this

@@ -507,7 +507,7 @@ MISMATCH_DIRECTIONS := string(json.encode(["declared-never-seen", "undeclared-in
 // RESOLVED, not what was requested: it degrades to `none` where it cannot serve,
 // which is why it reaches this module from the run-meta JSON as a template input rather than from the
 // block's arguments.
-// The domain value is the MACHINE token (`declared` / `panel` / `none`), which is what the run-meta JSON
+// The domain value is the MACHINE token (`declared` / `panel` / `distribution` / `none`), which is what the run-meta JSON
 // now carries. It was previously the same enum's display prose, so this changes column identity: a
 // verdict column emitted before this change and one emitted after do not union in a pool holding both.
 // That is the right trade rather than an accident — a domain value is a stable key that outlives any

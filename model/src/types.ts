@@ -6,7 +6,7 @@ import type { ImportFileHandle, PlDataTableStateV2, PlRef } from "@platforma-sdk
  * that happened. Undefined means the default for this panel — a declared reference tag where one
  * exists, and otherwise no comparator at all.
  */
-export type ReferenceSource = "declared" | "panel" | "none";
+export type ReferenceSource = "declared" | "panel" | "distribution" | "none";
 
 /**
  * How tags become identities. A RULE over declared properties, never a tag->identity map: a map is
@@ -78,6 +78,11 @@ export type BlockArgs = {
   referenceValues?: string[];
   referenceSource?: ReferenceSource;
   panelReferenceMinMembers: number; // members the panel needs before its own readings can serve
+  // The two conditions on reading a count against that tag's own distribution across the sample's
+  // cells. Both GATE rather than tune: below them the baseline the rung would produce is not
+  // conservative but wrong, which is why neither has an "off".
+  distributionMinCells: number; // cells a sample needs before the rung may serve
+  distributionSeparation: number; // how deep the trough between the two components must be (0-1)
   countFloor: number; // counts below this are not evidence of binding
   boundCutoff: number; // specificity score (0-100) at or above which a cell binds
   minVotingCells: number; // a verdict may rest on one cell and say so
@@ -137,6 +142,8 @@ export type BlockData = {
   referenceValues?: string[];
   referenceSource?: ReferenceSource;
   panelReferenceMinMembers: number;
+  distributionMinCells: number;
+  distributionSeparation: number;
   countFloor: number;
   boundCutoff: number;
   minVotingCells: number;

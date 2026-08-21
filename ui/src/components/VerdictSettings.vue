@@ -317,6 +317,36 @@ function removeContendingGroup(index: number) {
       </template>
     </PlNumberField>
     <PlNumberField
+      v-model="app.model.data.distributionMinCells"
+      :min-value="1"
+      :step="10"
+      label="Cells needed to fit a tag's own distribution"
+    >
+      <template #tooltip>
+        How many cells a sample needs before a tag's own distribution across those cells can serve
+        as the baseline. Below this, the block cannot fit the two components and every reading in
+        that sample is unreliable.<br /><br />
+        The default of 300 comes from the study this method comes from. Lowering it is a departure
+        from that method rather than a preference: below it the baseline is not conservative, it is
+        wrong.
+      </template>
+    </PlNumberField>
+    <PlNumberField
+      v-model="app.model.data.distributionSeparation"
+      :min-value="0.01"
+      :max-value="1"
+      :step="0.05"
+      label="Separation the two components must show"
+    >
+      <template #tooltip>
+        How deep the dip between the two fitted components must be, as a share of the smaller of the
+        two peaks around it. A tag whose counts do not separate this far gets no baseline, and only
+        the antigens that tag carries read unreliable.<br /><br />
+        No published work sets this line. The default of 0.5 is this block's choice, not a standard.
+        At 1 any dip counts, which would let a tag nothing bound stand in as its own background.
+      </template>
+    </PlNumberField>
+    <PlNumberField
       v-model="app.model.data.highReferenceLine"
       :min-value="1"
       :step="1"

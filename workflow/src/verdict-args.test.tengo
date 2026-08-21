@@ -17,6 +17,8 @@ _full := {
 	// would produce an identical vector, and this whole file would pass while the
 	// parameter never reached the exec.
 	panelReferenceMinMembers: 12,
+	distributionMinCells: 450,
+	distributionSeparation: 0.3,
 	countFloor: 7,
 	boundCutoff: 90,
 	minVotingCells: 3,
@@ -36,7 +38,8 @@ Test_every_flag_is_threaded := func() {
 	flags := [
 		"--linker", "--qc-summary",
 		"--barcode-col", "--feature-col", "--sample-col", "--role-column", "--reference-values",
-		"--reference-source", "--panel-min-members", "--floor", "--cutoff",
+		"--reference-source", "--panel-min-members", "--distribution-min-cells",
+		"--distribution-separation", "--floor", "--cutoff",
 		"--min-voters", "--min-agreement", "--gate-threshold", "--high-reference-line",
 		"--grouping", "--contending", "--capture-map", "--output-prefix"
 	]
@@ -53,6 +56,8 @@ Test_every_flag_is_threaded := func() {
 		"--sample-col": "Samples",
 		"--role-column": "Type",
 		"--panel-min-members": "12",
+		"--distribution-min-cells": "450",
+		"--distribution-separation": "0.3",
 		"--floor": "7",
 		"--cutoff": "90",
 		"--min-voters": "3",
@@ -109,6 +114,8 @@ Test_shaping_parameters_are_always_present := func() {
 	test.isEqual("1", va.valueOf(args, "--min-voters"), "the voter minimum is stated even when defaulted")
 	test.isEqual("8", va.valueOf(args, "--panel-min-members"), "the panel minimum is stated")
 	test.isEqual("100", va.valueOf(args, "--high-reference-line"), "the high-reference line is stated")
+	test.isEqual("300", va.valueOf(args, "--distribution-min-cells"), "the cell condition is stated")
+	test.isEqual("0.5", va.valueOf(args, "--distribution-separation"), "the separation condition is stated")
 }
 
 // argparse declares --floor, --min-voters, --panel-min-members,
@@ -118,11 +125,14 @@ Test_integer_flags_carry_no_decimal_point := func() {
 	args := va.build({
 		barcodeSeqColumn: "Sequence", featureNameColumn: "Name",
 		countFloor: 4.0, minVotingCells: 2.0, gateThreshold: 40.0,
-		panelReferenceMinMembers: 8.0, highReferenceLine: 100.0
+		panelReferenceMinMembers: 8.0, highReferenceLine: 100.0,
+		distributionMinCells: 300.0
 	})
 	test.isEqual("4", va.valueOf(args, "--floor"), "the count floor reaches argparse as an integer")
 	test.isEqual("2", va.valueOf(args, "--min-voters"), "the voter minimum reaches argparse as an integer")
 	test.isEqual("40", va.valueOf(args, "--gate-threshold"), "the gate reaches argparse as an integer")
+	test.isEqual("300", va.valueOf(args, "--distribution-min-cells"),
+		"the cell condition reaches argparse as an integer")
 }
 
 // The role values are comma-separated because that is what the CLI splits on, and they arrive already

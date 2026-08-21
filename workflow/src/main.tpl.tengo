@@ -405,6 +405,8 @@ wf.body(func(args) {
 		setParam("referenceValues", args.referenceValues)
 		setParam("referenceSource", args.referenceSource)
 		setParam("panelReferenceMinMembers", args.panelReferenceMinMembers)
+		setParam("distributionMinCells", args.distributionMinCells)
+		setParam("distributionSeparation", args.distributionSeparation)
 		setParam("countFloor", args.countFloor)
 		setParam("boundCutoff", args.boundCutoff)
 		setParam("minVotingCells", args.minVotingCells)
