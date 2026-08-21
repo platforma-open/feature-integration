@@ -1268,12 +1268,17 @@ def main() -> None:
         else []
     )
     label_column = grouping_columns[0] if len(grouping_columns) == 1 else args.feature_col
+    # Bound once and passed to both readers below. `_identity_labels` joins these names into the label a
+    # reader sees; the run record carries the same names apart so the readout can say WHY a label is
+    # joined. Deriving the second from the first -- splitting the label back on " / " -- would guess, and
+    # would guess wrong for a reagent whose own name contains a slash.
+    label_disagreements = disagreed_by_column.get(label_column or "", {})
     labels = _identity_labels(
         grouping,
         properties,
         args.feature_col,
         grouping_id,
-        disagreed_by_column.get(label_column or "", {}),
+        label_disagreements,
     )
     identity_labels = pl.DataFrame(
         [(identity, labels.get(identity, identity)) for identity in sorted(universe)],
@@ -1680,6 +1685,17 @@ def main() -> None:
         # dropped is labelled with the names it did declare, so the card shows a reagent rather than a
         # 15-mer; every other identity labels itself.
         "identityLabels": {identity: labels.get(identity, identity) for identity in sorted(universe)},
+        # Why a label above is two names joined. Keyed exactly as `_identity_labels` keys its own lookup,
+        # so an entry here appears for precisely the identities whose label was joined and for no others.
+        # Only genuine conflicts: one declared name is the ordinary case and is not a disagreement.
+        # The workflow turns each entry into the column's description annotation, which the table shows as
+        # a header tooltip -- otherwise a reader meets two antigen names in one header with nothing saying
+        # whether the barcode was shared, the panel was inconsistent, or the block merged something.
+        "identityNameConflicts": {
+            identity: sorted(names)
+            for identity in sorted(universe)
+            if len(names := label_disagreements.get(identity, [])) > 1
+        },
         # The declaration columns that reached result_identity_properties.csv, and the distinct values
         # each carries. Both are panel data: the workflow builds one p-column per name and annotates it
         # with its own value set, so without these the declarations import as nothing.

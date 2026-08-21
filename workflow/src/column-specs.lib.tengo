@@ -742,8 +742,25 @@ setCellCountImportSpec := func(setAxisSpec, served) {
 // missed it would render a column of raw barcodes and look like panel data.
 identityPivotColumns := func(identities, groupingId, served, colName, valueType, basePriority, idPrefix, visibility, extra) {
 	labels := is_undefined(served.identityLabels) ? {} : served.identityLabels
+	// Why a label is two names joined, for the identities where it is. The header alone shows a reader two
+	// antigen names in one column and leaves them to guess between three different stories — the barcode is
+	// shared, the panel is inconsistent, or the block merged two antigens — of which only the middle one is
+	// true. The description annotation is what PlAgDataTable renders as the header tooltip, so the
+	// explanation travels with the column into both punch faces rather than being written twice in the UI.
+	conflicts := is_undefined(served.identityNameConflicts) ? {} : served.identityNameConflicts
 	cols := []
 	for i, identity in identities {
+		note := {}
+		if !is_undefined(conflicts[identity]) {
+			// One barcode, several names, and the identity is unaffected: the KEY is the barcode, and the
+			// readings under this column are that one barcode's. Said plainly, because the reader's first
+			// worry on meeting a joined header is that two antigens were silently pooled.
+			note = { "pl7.app/description": "The panel gives this one barcode more than one name — " +
+				text.join(conflicts[identity], ", ") +
+				". Different samples name it differently, so every name it was given is shown. This is still a " +
+				"single barcode and a single identity; only the naming disagrees. Check the panel file if the " +
+				"names should have matched." }
+		}
 		cols = append(cols, {
 			column: identity,
 			id: idPrefix + strings.substituteSpecialCharacters(identity),
@@ -754,9 +771,11 @@ identityPivotColumns := func(identities, groupingId, served, colName, valueType,
 					"pl7.app/antigen/identityId": identity,
 					"pl7.app/antigen/groupingId": groupingId
 				}),
-				annotations: a(basePriority - i, visibility, maps.merge({
+				// `extra` last: a caller that sets a description for the whole family means it, and a
+				// per-identity note must not silently outrank it.
+				annotations: a(basePriority - i, visibility, maps.merge(maps.merge({
 					"pl7.app/label": is_undefined(labels[identity]) ? identity : labels[identity]
-				}, extra))
+				}, note), extra))
 			}
 		})
 	}
