@@ -344,10 +344,22 @@ function referenceRungsAvailable(data: BlockData): { declared: boolean; panel: b
  * because nothing here writes to `data`.
  *
  * Where NEITHER rung can serve there is nothing to fall to, and "panel" is returned so the software
- * degrades it to none — `292-no-declared-reference`'s third rung, where the run is still made and every
- * verdict reads not evaluated. `none` is never returned as a derived answer for the same reason it is
- * never offered in the dropdown: it is what a run REPORTS, not something this block asks for. A stored
- * `none` therefore falls through to the derived rung rather than being honoured.
+ * degrades it to none — the ladder's bottom rung, where the run is still made and every verdict that
+ * needs a baseline reads UNRELIABLE. Not "not evaluated": that is a quality-measurement status and is
+ * never a verdict state, and the two are opposite claims — one says a measurement was not produced, the
+ * other says the identity was put to those cells and the data cannot settle it.
+ *
+ * `none` is never returned as a derived answer for the same reason it is never offered in the dropdown:
+ * it is what a run REPORTS, not something this block asks for. A stored `none` therefore falls through
+ * to the derived rung rather than being honoured.
+ *
+ * DERIVING AT ALL IS A KNOWN DEVIATION. `what-plays-the-baseline` requires that the scientist selects
+ * among the rungs and that nothing selects for them. The software's own derivation is already gone, and
+ * --reference-source is now required there, so this function is the last one left and the value it
+ * returns is what every run is answered under. Removing it needs one ruling from the spec's author that
+ * the corpus does not settle: whether a run with nothing selected refuses to start, or completes with
+ * every verdict that needs a baseline reading unreliable. The two need different code here — a throw
+ * from `args()` against projecting "none" — which is why this still stands.
  */
 export function resolveReferenceSource(data: BlockData): ReferenceSource {
   const available = referenceRungsAvailable(data);

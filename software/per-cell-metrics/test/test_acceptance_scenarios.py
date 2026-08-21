@@ -65,6 +65,10 @@ BASE = [
     "Type",
     "--reference-values",
     "Control",
+    # Stated, because the CLI requires it: nothing below the model picks a rung for a scientist who
+    # did not. This bed declares a comparator tag, which is the rung every scenario here is read under.
+    "--reference-source",
+    "declared",
     "--output-prefix",
     "result",
 ]

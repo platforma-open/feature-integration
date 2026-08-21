@@ -107,7 +107,6 @@ from verdict import (
     gate_cells,
     read_states,
     reference_by_cell,
-    resolve_default_source,
     specificity_score,
 )
 
@@ -926,13 +925,16 @@ def main() -> None:
     p.add_argument("--reference-values", default="", help="comma-separated role values marking a comparator tag")
     p.add_argument(
         "--reference-source",
-        default=None,
+        required=True,
         # Derived from the enum rather than restated. The list was hard-coded and
         # a new rung was rejected by the CLI while every layer above it accepted
         # the value -- an argparse usage error, from a run that was configured
         # correctly.
         choices=[choice.value for choice in ReferenceChoice],
-        help="which comparator to ask for; the run may serve 'none' instead, never a different one",
+        help=(
+            "which comparator to ask for; the run may serve 'none' instead, never a different one. "
+            "Required: nothing here picks a rung for a scientist who did not"
+        ),
     )
     p.add_argument("--panel-min-members", type=int, default=DEFAULT_PANEL_MIN_MEMBERS)
     p.add_argument(
@@ -1140,9 +1142,10 @@ def main() -> None:
     # whether the panel is large enough to serve as its own comparator.
     panel_size = int(panel["tag"].n_unique())
 
-    source = ReferenceChoice[args.reference_source.upper()] if args.reference_source else None
-    if source is None:
-        source = resolve_default_source(reference_tags, panel_size, args.panel_min_members)
+    # No default and no derivation. The rung is the scientist's choice, and a run
+    # that did not carry one is a configuration error rather than a run to guess
+    # at: argparse refuses it above, so this never sees an empty value.
+    source = ReferenceChoice[args.reference_source.upper()]
     tag_fits: dict[tuple[str, str], TagBaseline] = {}
     if source is ReferenceChoice.DISTRIBUTION:
         # Keyed by (sample, identity), not by cell: this rung fits one

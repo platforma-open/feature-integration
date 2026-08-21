@@ -19,7 +19,7 @@ from verdict import (
     gate_cells,
     read_states,
     reference_by_cell,
-    resolve_default_source,
+    served_source,
     silent_tally,
     specificity_score,
 )
@@ -134,12 +134,28 @@ def test_a_reading_that_was_already_zero_still_counts_as_evidence_lost():
     assert stats["cellsEmptied"] == 1
 
 
-def test_default_source_is_declared_where_a_reference_tag_exists():
-    assert resolve_default_source({"CTRL"}) is ReferenceChoice.DECLARED
+def test_nothing_here_picks_a_rung():
+    # `resolve_default_source` used to, and its removal is the point rather than
+    # a cleanup. `what-plays-the-baseline` requires the scientist to select among
+    # the rungs and requires that nothing selects for them.
+    #
+    # A tripwire, not a permanent ban, and the same shape as the empty-droplets
+    # one below: if a default is ever wanted again it should be a deliberate act
+    # that deletes this test, not a helper that reappears in the layer furthest
+    # from the reader. The workflow omits --reference-source when the model's
+    # value is empty, so anything here that could pick a rung becomes the live
+    # rule the moment the model stops picking one.
+    import verdict
+
+    assert not hasattr(verdict, "resolve_default_source")
 
 
-def test_default_source_never_upgrades_itself():
-    assert resolve_default_source(set()) is ReferenceChoice.NONE
+def test_a_choice_that_cannot_serve_drops_to_none_and_never_to_another_rung():
+    # `served_source` survived the removal above and is a different thing: it
+    # never picks a rung, it only reports that the one asked for cannot serve.
+    assert served_source(ReferenceChoice.DECLARED, set(), 40, 25) is ReferenceChoice.NONE
+    assert served_source(ReferenceChoice.PANEL, {"CTRL"}, 3, 25) is ReferenceChoice.NONE
+    assert served_source(ReferenceChoice.DECLARED, {"CTRL"}, 3, 25) is ReferenceChoice.DECLARED
 
 
 def test_empty_droplets_is_not_offered():

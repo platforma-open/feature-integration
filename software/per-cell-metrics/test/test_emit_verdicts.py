@@ -52,6 +52,11 @@ BASE = [
     "Type",
     "--reference-values",
     "Control",
+    # Stated, because the CLI requires it and nothing below the model picks a rung. This bed declares a
+    # comparator tag, so the declared rung is the one it is about; a test that wants a different rung
+    # passes its own --reference-source, which argparse takes as the later value.
+    "--reference-source",
+    "declared",
     "--output-prefix",
     "result",
 ]
@@ -286,12 +291,17 @@ def test_the_key_only_frames_carry_a_value_column_so_they_can_become_columns(bed
     assert set(linker["1"].to_list()) == {"1"}
 
 
-def test_a_panel_with_no_declared_reference_falls_to_the_panel_not_to_nothing(bed):
-    # Three rungs in order: a declared reagent, else the panel's own readings
-    # where the panel carries enough members, else nothing. Skipping the middle
-    # rung makes every identity unreliable in a twenty-antigen run that could
-    # be read perfectly well -- which is the configuration the ordering exists
-    # for. Twenty-six tags here, against a shipped minimum of twenty-five.
+def test_asking_for_a_rung_that_cannot_serve_drops_to_none_and_never_to_another_rung(bed):
+    # There is no cascade any more, and its absence is the point. This bed declares no comparator tag
+    # and carries a panel large enough to stand in for one, which is exactly the shape a cascade would
+    # have rescued: ask for the declared rung and it drops to *none*, leaving every verdict unreliable,
+    # rather than quietly serving the panel instead.
+    #
+    # A baseline nobody chose is a methodology nobody knows they used. The scientist gets the rung they
+    # asked for or nothing, and the run says which.
+    #
+    # Twenty-six tags, against a shipped minimum of twenty-five, so the panel rung IS serviceable here
+    # and the second half of the test proves it -- otherwise "dropped to none" would prove nothing.
     tags = [f"T{i:02d}" for i in range(26)]
     (bed / "panel.csv").write_text(
         "Samples,Name,Sequence,Type\n" + "".join(f"S1,Ag{i},{t},Target\n" for i, t in enumerate(tags))
@@ -307,13 +317,23 @@ def test_a_panel_with_no_declared_reference_falls_to_the_panel_not_to_nothing(be
         rows.extend(f"S1,{cell},{t},10" for t in tags[1:])
     (bed / "counts.csv").write_text("\n".join(rows) + "\n")
 
+    # BASE asks for the declared rung, and this panel marks no tag as a comparator.
     r = _run(bed, *BASE)
     assert r.returncode == 0, r.stderr
     meta = json.loads((bed / "result_run_meta.json").read_text())
-    assert meta["referenceChoice"] == ReferenceChoice.PANEL.value
-
+    assert meta["referenceChoice"] == ReferenceChoice.NONE.value
+    assert meta["referenceSourceRequested"] == ReferenceChoice.DECLARED.value
     states = set(pl.read_csv(bed / "result_verdicts.csv", infer_schema_length=0)["state"].to_list())
-    assert states != {"unreliable"}, "the panel could serve as its own comparator and was not asked to"
+    assert states == {"unreliable"}
+
+    # The same counts, asked the other way: the panel rung serves them perfectly well. Which is what
+    # makes the drop above a choice the scientist made rather than a limit of the data.
+    r = _run(bed, *BASE, "--reference-source", "panel")
+    assert r.returncode == 0, r.stderr
+    meta = json.loads((bed / "result_run_meta.json").read_text())
+    assert meta["referenceChoice"] == ReferenceChoice.PANEL.value
+    states = set(pl.read_csv(bed / "result_verdicts.csv", infer_schema_length=0)["state"].to_list())
+    assert states != {"unreliable"}
 
 
 def test_a_panel_too_small_to_serve_still_falls_to_no_comparator(bed):
@@ -1064,7 +1084,7 @@ def test_the_bed_panel_without_a_declared_comparator_serves_as_its_own(wide_bed)
     # answer for one. What this test is about is what the rung DOES once it serves -- which comparator
     # it builds, and that the minimum count spares only a declared one.
     shape = _bed_shape(wide_bed)
-    stands_in = ["--panel-min-members", str(len(shape["antigens"]))]
+    stands_in = ["--reference-source", "panel", "--panel-min-members", str(len(shape["antigens"]))]
 
     r = _run(wide_bed, *_bed_args("panel.csv", *stands_in))
     assert r.returncode == 0, r.stderr
@@ -1232,6 +1252,10 @@ CUSTOMER_ARGS = [
     "Antigen",
     "--sample-col",
     "Sample",
+    # This bed's panel carries no role column, so it has no comparator tag to declare and the rung it is
+    # about is the panel's own readings.
+    "--reference-source",
+    "panel",
     "--output-prefix",
     "result",
 ]
@@ -1330,6 +1354,13 @@ def test_the_label_fallback_is_caused_by_the_disagreement_and_nothing_else(bed):
 NARROW_COLS = ["--barcode-col", "Sequence", "--feature-col", "Antigen", "--sample-col", "Sample"]
 WIDE_COLS = ["--barcode-col", "Sequence", "--feature-col", "Name", "--sample-col", "Samples"]
 
+# The seven-column bed is nine antigens, under the shipped minimum of twenty-five, so a run that wants
+# the panel rung asks for it and lowers the minimum to the panel it has. Neither number is the subject
+# of the tests below -- they are about the ROLE column -- but the CLI requires a rung to be named, and
+# naming one that cannot serve would leave every verdict unreliable and say nothing about roles.
+WIDE_PANEL_RUNG = ["--reference-source", "panel", "--panel-min-members", "9"]
+WIDE_DECLARED_RUNG = ["--reference-source", "declared"]
+
 
 def _wide_roles(bed):
     """tag -> the set of Type values it is declared with, from the seven-column panel."""
@@ -1356,6 +1387,8 @@ def test_the_narrow_shape_labels_every_barcode_the_samples_name_differently_with
         "--linker",
         "linker.csv",
         *NARROW_COLS,
+        "--reference-source",
+        "panel",
         "--panel-min-members",
         str(narrow_size),
         "--output-prefix",
@@ -1396,7 +1429,15 @@ def test_naming_the_off_target_role_as_the_comparator_deletes_the_off_target_que
 
     assert (
         _run(
-            wide_bed, "counts.csv", "panel_wide.csv", "--linker", "linker.csv", *WIDE_COLS, "--output-prefix", "plain"
+            wide_bed,
+            "counts.csv",
+            "panel_wide.csv",
+            "--linker",
+            "linker.csv",
+            *WIDE_COLS,
+            *WIDE_PANEL_RUNG,
+            "--output-prefix",
+            "plain",
         ).returncode
         == 0
     )
@@ -1410,6 +1451,7 @@ def test_naming_the_off_target_role_as_the_comparator_deletes_the_off_target_que
             "--linker",
             "linker.csv",
             *WIDE_COLS,
+            *WIDE_DECLARED_RUNG,
             "--role-column",
             "Type",
             "--reference-values",
@@ -1447,6 +1489,7 @@ def test_a_role_value_differing_only_in_case_is_not_matched(wide_bed):
             "--linker",
             "linker.csv",
             *WIDE_COLS,
+            *WIDE_DECLARED_RUNG,
             "--role-column",
             "Type",
             "--reference-values",
@@ -1866,6 +1909,8 @@ def test_a_role_column_the_reader_consumes_as_a_key_ends_the_run_with_no_role_va
         "Samples",
         "--role-column",
         "Sequence",
+        "--reference-source",
+        "declared",
         "--output-prefix",
         "result",
         expect_failure=True,
