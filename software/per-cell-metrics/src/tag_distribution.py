@@ -53,11 +53,11 @@ CELL_KEY = ("sampleId", "cellId")
 DEFAULT_DISTRIBUTION_MIN_CELLS = 300
 
 # Uncalibrated, and the only number here that is: the paper shows the trough in
-# a figure and never states how deep a trough has to be to count. A run may move
-# it, and one that did says so wherever its verdicts appear. Read as: the trough
-# between the two components must sit at or below this fraction of the SMALLER
-# of the two peaks flanking it. At 1.0 any dent counts and the rung would serve
-# a distribution that never separated.
+# a figure and never states how deep a trough must be to count. A run may move
+# it, and one that did says so wherever its verdicts appear. Read it as: the
+# trough between the two components must sit at or below this fraction of the
+# SMALLER of the two peaks flanking it. At 1.0 any dent counts, and the rung
+# would serve a distribution that never separated.
 DEFAULT_SEPARATION_DEPTH = 0.5
 
 # Evaluation grid for the density. Fixed rather than derived from the data so
@@ -71,15 +71,14 @@ _GRID_POINTS = 512
 # integer counts, so log2(n+1) lands on a comb -- 0, 1, 1.58, 2, 2.32 -- whose
 # widest gap is the 1.0 between a count of nothing and a count of one. Scott's
 # rule on a real panel picks a bandwidth near 0.2, which resolves those teeth as
-# separate modes: the two tallest peaks then both sit inside the background, the
-# split lands between a count of nothing and a count of one, and a tag with no
-# binders at all comes back "separated". Measured on synthetic panels, that
-# inverted the answer on every case -- a 3% binder population read as no
-# separation, and pure background read as separation.
-#
-# Smoothing across the widest tooth removes the artefact without touching a real
-# split, which sits several log2 units away. Above this floor Scott's rule
-# governs, so a broad distribution is not over-smoothed.
+# separate modes: both tallest peaks then sit inside the background, the split
+# lands between a count of nothing and a count of one, and a tag with no binders
+# at all comes back "separated". On synthetic panels that inverted the answer in
+# every case -- a 3% binder population read as no separation, and pure
+# background as separation. Smoothing across the widest tooth removes the
+# artefact without touching a real split, which sits several log2 units away.
+# Above this floor Scott's rule governs, so a broad distribution is not
+# over-smoothed.
 _MIN_BANDWIDTH_LOG2 = 0.75
 
 
@@ -141,15 +140,15 @@ def fit_tag_background(
 
     split = float(grid[split_index])
     background = counts[x <= split]
-    # Unreachable while the trough sits strictly between two peaks -- the lower
-    # peak's mass is below it -- but a comparator taken from an empty population
+    # Unreachable while the trough sits strictly between two peaks, since the
+    # lower peak's mass is below it. A comparator taken from an empty population
     # is the one failure that must never be silent.
     if background.size == 0:
         return TagBaseline(None, NO_SEPARATION, split, n)
 
-    # The median, and truncated toward zero for the same reason the panel rung's
-    # is: the comparator stays an integer count of UMIs, which is what every
-    # other reading in the pipeline is.
+    # The median, truncated toward zero for the same reason the panel rung's is:
+    # the comparator stays an integer count of UMIs, as every other reading in
+    # the pipeline is.
     return TagBaseline(int(np.median(background)), None, split, int(background.size))
 
 
@@ -180,7 +179,7 @@ def _deepest_admissible_trough(density: np.ndarray, separation_depth: float) -> 
 
     deepest = int(between[np.argmin(density[between])])
     # Against the SMALLER flanking peak. Against the larger, a tiny second mode
-    # sitting on the shoulder of a dominant one would clear any threshold.
+    # on the shoulder of a dominant one would clear any threshold.
     if density[deepest] > separation_depth * min(float(density[left]), float(density[right])):
         return None
     return deepest

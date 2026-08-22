@@ -183,7 +183,7 @@ def _load(
         )
     # Per-feature combine mode + member-barcode set, parsed once from the (small) mapping. Default is
     # "sum" (OR). A combine column lets a feature request "all" (AND) — see combine_barcode_counts. A
-    # blank cell means unset (defaults to "sum"); the non-blank rows of one feature must agree.
+    # blank cell means unset (defaults to "sum"). The non-blank rows of one feature must agree.
     feature_barcodes: dict[str, set[str]] = {}
     feature_modes_raw: dict[str, set[str]] = {}
     map_cols = [csv_barcode_col, csv_feature_col] + ([combine_col] if combine_col else [])
@@ -223,7 +223,7 @@ def _load(
         rename[csv_feature_col] = "feature"
 
     # Per-feature mode + expected member-barcode count, as a frame to join onto the aggregate. n_expected
-    # is how many DISTINCT barcodes map to the feature; the AND gate keeps a (cell, feature) group only
+    # is how many DISTINCT barcodes map to the feature. The AND gate keeps a (cell, feature) group only
     # when that many member barcodes fired in the cell. With no combine column every feature is "sum",
     # so the filter is a no-op and the result is identical to the historical sum-only behaviour.
     mode_df = pl.DataFrame(
@@ -299,7 +299,7 @@ def main() -> None:
     # joined frame -- so a --csv-feature-col that names ANY tag-stat column (e.g. `count`,
     # `totalWeight`, `unique_UMI`, or the CELL/FEATURE keys) would otherwise pass through the
     # join/group silently and put the WRONG data (e.g. numeric counts) into the output `feature`
-    # column; a collision on the cell key also crashes group_by/rename with a raw polars
+    # column. A collision on the cell key also crashes group_by/rename with a raw polars
     # DuplicateError. Read the real tag-stat header so we reject every collision, not just the three
     # flag-named columns.
     with open(args.tag_stat_tsv, newline="") as fh:

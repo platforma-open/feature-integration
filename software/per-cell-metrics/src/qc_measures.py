@@ -217,7 +217,7 @@ MEASUREMENTS: tuple[Measurement, ...] = (
 LINE_ROUTES: frozenset[str] = frozenset({"inherited", "categorical", "recommended-and-observed", "against-the-run"})
 
 # Three of the four routes put an absolute number on the measurement. The
-# fourth compares the run against itself and carries no number at all; see
+# fourth compares the run against itself and carries no number at all. See
 # `outlier_status`.
 NUMERIC_LINE_ROUTES: frozenset[str] = frozenset({"inherited", "categorical", "recommended-and-observed"})
 

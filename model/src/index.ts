@@ -25,65 +25,61 @@ export { allPresets, getPreset } from "./presets";
 export type { Preset } from "./presets";
 export type { BlockArgs, BlockData, GroupingRule, ReferenceSource } from "./types";
 
-// Re-exported so the UI can seed a grid state without depending on @platforma-sdk/model directly — the ui
-// package's only SDK dependency is ui-vue, which does not carry this factory.
+// Re-exported so the UI can seed a grid state without a direct @platforma-sdk/model dependency. The ui
+// package depends only on ui-vue, which does not carry this factory.
 export { createPlDataTableStateV2 } from "@platforma-sdk/model";
 export type { PTableKey } from "@platforma-sdk/model";
 
-// The reading's shipped defaults. They restate the Python's own (verdict.py DEFAULT_FLOOR,
-// BOUND_CUTOFF, DEFAULT_PANEL_MIN_MEMBERS, DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE,
-// combine.py DEFAULT_MIN_VOTERS) so the value that produced a
-// run is a value the user can see and change, not an argparse default nobody chose. Every one of them
-// is a declared default rather than a calibrated line: nothing published sets any of them.
+// The reading's shipped defaults. They restate the Python's own (verdict.py DEFAULT_FLOOR, BOUND_CUTOFF,
+// DEFAULT_PANEL_MIN_MEMBERS, DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE, combine.py DEFAULT_MIN_VOTERS) so
+// the user can see and change the value that produced a run. Each is a declared default, not a
+// calibrated line: nothing published sets any of them.
 const DEFAULT_COUNT_FLOOR = 4;
 const DEFAULT_BOUND_CUTOFF = 75;
 const DEFAULT_MIN_VOTING_CELLS = 1;
-// From one preprint, whose own panels held fifty and a hundred members; nothing validates it lower.
-// It GATES rather than tunes -- below it, a count compared against a handful of other antigens is not
-// a background estimate -- so lowering it is a departure rather than a preference. It was 8, which no
-// source supports and which put this rung within reach of an antibody panel; those kits cap at
-// fifteen tags, so such a panel now falls to the tag-distribution rung instead.
+// From one preprint, whose own panels held fifty and a hundred members. Nothing validates it lower. It
+// GATES rather than tunes: below it, a count compared against a handful of other antigens is not a
+// background estimate, so lowering it is a departure rather than a preference. Keep it above the
+// fifteen-tag cap of an antibody kit, so such a panel falls to the tag-distribution rung instead.
 const DEFAULT_PANEL_REFERENCE_MIN_MEMBERS = 25;
-// Both from the study the tag-distribution rung comes from. The first is its own bootstrapping
-// figure; the second has no published value at all -- that paper shows the trough in a figure and
-// never says how deep one has to be -- so it ships as a declared default a run can move and says it
-// moved. Mirrors DEFAULT_DISTRIBUTION_MIN_CELLS and DEFAULT_SEPARATION_DEPTH in tag_distribution.py.
+// Both from the study the tag-distribution rung comes from. The first is that study's own bootstrapping
+// figure. The second has no published value: the paper shows the trough in a figure and never says how
+// deep one must be, so it ships as a declared default a run can move and report moving. Mirrors
+// DEFAULT_DISTRIBUTION_MIN_CELLS and DEFAULT_SEPARATION_DEPTH in tag_distribution.py.
 const DEFAULT_DISTRIBUTION_MIN_CELLS = 300;
 const DEFAULT_DISTRIBUTION_SEPARATION = 0.5;
 const DEFAULT_HIGH_REFERENCE_LINE = 100;
 
-// The punchcard's frame is keyed on the clonotype set alone, and each identity is a COLUMN rather than an
-// axis value — which is what a punchcard needs and what a (set, identity) frame cannot give a table. The
-// identity therefore travels in the column's DOMAIN, which is how the model reads which identity a column
-// belongs to without parsing a label.
+// The punchcard's frame is keyed on the clonotype set alone, and each identity is a COLUMN rather than
+// an axis value: that is what a punchcard needs, and a (set, identity) frame cannot give it to a table.
+// The identity travels in the column's DOMAIN, so the model reads a column's identity without parsing a
+// label.
 //
-// One column per identity, its value carrying the state and both support counts together (see
-// identityPunchImportSpec). The pairing is inside the value because a grid pairs a cell with another
-// column's cell only by position, which no import guarantees.
+// One column per identity. Its value carries the state and both support counts together (see
+// identityPunchImportSpec), because a grid pairs one column's cell with another's by position alone,
+// which no import guarantees.
 //
-// The UI identifies a punch column by these two — the column's own name and the domain key its identity
-// travels under — read off the spec the grid hands back on `colDef.context`. It used to match the
-// identity against the column ID instead, and that was wrong twice over: an id is
-// `identityPunch_<substituteSpecialCharacters(identity)>`, so any identity carrying a hyphen or a space
-// never matched itself, and a substring test let `SpikeWT` match `SpikeWT_alt`'s column and name the
-// wrong antigen. Both id prefixes existed only to serve that match and are gone with it.
+// The UI identifies a punch column by these two — the column name and the domain key its identity
+// travels under — read off the spec the grid hands back on `colDef.context`. Never by the column id: an
+// id is mangled by `substituteSpecialCharacters`, and a substring test on it lets `SpikeWT` match
+// `SpikeWT_alt` and name the wrong antigen.
 export const PUNCH_COLUMN_NAME = "pl7.app/antigen/identityPunch";
 export const PUNCH_IDENTITY_DOMAIN = "pl7.app/antigen/identityId";
 // The by-cell face's punch column. Same identity domain key, so one column-matching helper serves both
-// cards; only the column NAME distinguishes a set's verdict from a cell's own reading.
+// cards. Only the column NAME separates a set's verdict from a cell's own reading.
 export const CELL_PUNCH_COLUMN_NAME = "pl7.app/antigen/cellPunch";
-// The clonotype's cell count, carried in the punchcard's own frame so the grid can read it: a
-// block's own exports are not in its own result pool, so the copy in the exported setCounts family
-// is unreachable from here.
+// The clonotype's cell count, carried in the punchcard's own frame so the grid can read it. A block's
+// own exports are not in its own result pool, so the copy in the exported setCounts family is
+// unreachable from here.
 export const PUNCH_CELL_COUNT_COLUMN = "pl7.app/antigen/cellCount";
 
-// How each comparator choice is written for a reader. The single place the wording lives: the Python
-// enum, the run-meta JSON and the p-column domain all carry the machine token, so rewording a sentence
-// here cannot break a branch anywhere. The three strings match the labels the `referenceSources` output
-// offers before a run, so the same choice does not change its name once it has served.
-// User-facing names only. The DATA layer keeps `declared`/`panel`/`none` — those tokens are the
-// p-column domain values, and domain is part of column identity, so renaming them would change what
-// every emitted column IS. Labels are free to say "baseline" where the data says "reference".
+// How each comparator choice is written for a reader, and the single place that wording lives. The
+// Python enum, the run-meta JSON and the p-column domain all carry the machine token, so rewording a
+// sentence here cannot break a branch. These strings match the labels `referenceSources` offers before a
+// run, so a choice does not change its name once it has served. User-facing names only: the DATA layer
+// keeps `declared`/`panel`/`none`, which are p-column domain values. Domain is part of column identity,
+// so renaming those would change what every emitted column IS. A label may say "baseline" where the
+// data says "reference".
 export const REFERENCE_SOURCE_LABELS: Record<ReferenceSource, string> = {
   declared: "Declared baseline tag",
   panel: "The panel's own readings",
@@ -92,7 +88,7 @@ export const REFERENCE_SOURCE_LABELS: Record<ReferenceSource, string> = {
 };
 
 // The run record emit_verdicts.py writes (result_run_meta.json), read as content. Only the fields the UI
-// states back to the user are typed here; the file carries every parameter the reading used.
+// states back to the user are typed here. The file carries every parameter the reading used.
 export type VerdictRunMeta = {
   /**
    * The comparator that actually SERVED — a request the panel cannot honour degrades to none. A
@@ -158,7 +154,7 @@ export type ReferenceSourceChoices = {
 };
 
 // Ordinal step key -> the step a sample is CURRENTLY on once that report has settled. A stepReports entry
-// appears when its step finishes, so the furthest-present report implies the next running step
+// appears when its step finishes, so the furthest-present report implies the next running step.
 export type SampleStep = "parsing" | "refining" | "counting" | "metrics";
 const STEP_AFTER: Record<string, SampleStep> = {
   "1-parse": "refining",
@@ -193,11 +189,10 @@ const PANEL_ASSIGNED_FLOOR = 0.5;
 // Tag→feature CSV metadata emitted by the prerun's single emit-csv-meta exec (emit_csv_meta.py): the
 // column headers (-> the barcode/feature column dropdowns) and each column's distinct values (-> the
 // negative-control dropdown, indexed by the chosen feature column). One upload-triggered exec feeds all
-// three CSV-derived dropdowns; picking the feature column is then a pure model recompute (no rerun).
-// rowCount (total data rows) is emitted by emit-csv-meta so the model can detect a feature barcode that
-// appears on more than one row (distinct barcode values < rowCount) — the sample-specific-mapping case
-// per_cell_metrics.py guards at the end of the run. Optional so a prerun output predating rowCount still
-// parses (the duplicate check then simply skips).
+// three CSV-derived dropdowns, so picking the feature column is a pure model recompute with no rerun.
+// rowCount (total data rows) lets the model detect a feature barcode on more than one row (distinct
+// barcode values < rowCount), the sample-specific-mapping case per_cell_metrics.py guards at the end of
+// the run. Optional, so a prerun output predating rowCount still parses and the duplicate check skips.
 type CsvMeta = {
   columns: string[];
   valuesByColumn: Record<string, string[]>;
@@ -274,8 +269,8 @@ function resolveSampleLabels(
 
 // Per-sample QC rows from qcJson (workflow saveFileContent -> inline JSON content, read synchronously),
 // filtered to settled samples (qcJson is the last per-sample step, so a present entry = that sample
-// finished). Shared by completedSamples / sampleQc / analysisLog. Returns [] when outputs haven't
-// settled; callers that need to distinguish "not started" map that to undefined themselves.
+// finished). Shared by completedSamples / sampleQc / analysisLog. Returns [] when outputs have not
+// settled. A caller that must tell "not started" apart maps that to undefined itself.
 function parseQcRows(ctx: BlockRenderCtx<BlockArgs, BlockData>) {
   const outputs = ctx.outputs;
   if (outputs === undefined) return [];
@@ -295,52 +290,42 @@ function readCsvMeta(ctx: BlockRenderCtx<BlockArgs, BlockData>): CsvMeta | undef
     ?.getDataAsJsonOrUndefined<CsvMeta>();
 }
 
-// The grouping columns a rule names, whichever shape it is stored in.
-//
-// A project saved before the rule took a list carries `column` rather than `columns`, and reading
-// both here costs one function. A data migration would have to run against every stored project to
-// avoid a failed run, which is a far worse trade for the same result. Every reader goes through this,
-// so nothing else needs to know two shapes exist.
+// The grouping columns a rule names, whichever shape it is stored in. A project saved before the rule
+// took a list carries `column` rather than `columns`. Reading both here costs one function, where a data
+// migration would have to run against every stored project. Every reader goes through this, so nothing
+// else needs to know two shapes exist.
 export function groupingColumns(rule: GroupingRule | undefined): string[] {
   if (rule === undefined || rule.by !== "property") return [];
   if (rule.columns !== undefined) return rule.columns.filter((c: string) => c !== "");
   return rule.column ? [rule.column] : [];
 }
 
-// Which rungs this data could read against, from data ALONE so `args()` may call it. These reproduce the
-// two `options` branches of the `referenceSources` output, which reads the same two facts from panel
-// metadata. `panelBarcodeDistinct` is the count that output calls `panelSize`, snapshotted by
-// MainPage.snapshotPanelCounts on the gesture that names the barcode column. Absent means the metadata
-// had not resolved then; the rung reads as unserviceable, which is the permissive direction here because
-// the fallback below is the same rung the software would have degraded to anyway.
 // `referenceRungsAvailable` stood here and is gone with the derivation it fed. Which rungs this data
-// could serve is still worth SAYING -- the dropdown's option list says it -- but it is no longer allowed
-// to decide anything, and a helper shared between a display and a projection is how the deciding crept
-// back in last time.
+// could serve is still worth SAYING -- the dropdown's option list says it -- but it must not decide
+// anything. A helper shared between a display and a projection is how the deciding crept back in.
 
 /**
  * The baseline rung this run is answered under: the scientist's choice, and nothing else.
  *
  * `what-plays-the-baseline` requires that the scientist selects among the rungs and that nothing selects
- * for them, because a baseline nobody chose is a methodology nobody knows they used — and two runs of one
- * experiment would otherwise be answered by different rules with nobody choosing either. This function
- * used to derive the rung from what the panel could serve. It no longer does, and the software's own
- * derivation is gone too, so there is now exactly one place a rung comes from: `data.referenceSource`.
+ * for them. A baseline nobody chose is a methodology nobody knows they used, and two runs of one
+ * experiment would otherwise be answered by different rules with nobody choosing either. There is
+ * exactly one place a rung comes from: `data.referenceSource`. Never derive it from what the panel can
+ * serve.
  *
  * An unselected run is not refused. It is answered under the ladder's bottom rung, where no baseline
  * exists and every verdict that needs one reads UNRELIABLE — the identity was put to those cells and the
  * data cannot settle it. A cell-level comparison yields only bound or not bound, so where no baseline
- * exists there is no comparison to yield anything, and *unreliable* is what marks its absence. The
- * clonotype verdict follows: a clonotype whose cells all read unreliable has no voters and reads
- * unreliable itself. Not *not evaluated* — that is a quality-measurement status and never a verdict
- * state, and the two are opposite claims.
+ * exists there is no comparison, and *unreliable* marks its absence. The clonotype verdict follows: a
+ * clonotype whose cells all read unreliable has no voters and reads unreliable itself. Not *not
+ * evaluated* — that is a quality-measurement status, never a verdict state, and the two are opposite
+ * claims.
  *
- * A stored choice is passed through even where this data cannot serve it — reading against a declared tag
- * after its values were cleared, say. `served_source` in the software degrades such a request to no
- * baseline at all and never substitutes a different rung, and the run record states both what was asked
- * for and what served. Falling to a rung that can serve would be the block choosing one, which is the
- * whole thing this stopped doing. Nothing here writes to `data`, so a choice that becomes serviceable
- * again revives on its own.
+ * A stored choice is passed through even where this data cannot serve it, such as a declared tag whose
+ * values were cleared. `served_source` in the software degrades such a request to no baseline and never
+ * substitutes a different rung, and the run record states both what was asked for and what served.
+ * Falling to a rung that can serve would be the block choosing one. Nothing here writes to `data`, so a
+ * choice that becomes serviceable again revives on its own.
  */
 export function resolveReferenceSource(data: BlockData): ReferenceSource {
   return data.referenceSource ?? "none";
@@ -349,11 +334,11 @@ export function resolveReferenceSource(data: BlockData): ReferenceSource {
 // A/C/G/T plus N (ambiguous base), case-insensitive.
 const isDnaValue = (v: string) => /^[ACGTN]+$/i.test(v);
 
-// Evidence that the chosen barcode-sequence column does NOT hold nucleotide sequences, or undefined when
-// it does (or when the CSV meta hasn't resolved and the question can't be answered yet). Blank cells are
-// ignored rather than counted against the column — a trailing empty row is a CSV artefact, not evidence
-// about the contents. Kept a module helper because a block output cannot read another output, and two
-// need this: barcodeAlphabetIssue reports it, and barcodeMappingIssue stays silent while it holds so the
+// Evidence that the chosen barcode-sequence column does NOT hold nucleotide sequences. Undefined when it
+// does, or when the CSV meta has not resolved and the question cannot be answered yet. Blank cells are
+// ignored rather than counted against the column: a trailing empty row is a CSV artefact, not evidence
+// about the contents. A module helper because a block output cannot read another output, and two need
+// this — barcodeAlphabetIssue reports it, and barcodeMappingIssue stays silent while it holds, so the
 // two never hand the reader contradictory fixes.
 function barcodeAlphabetProblem(
   ctx: BlockRenderCtx<BlockArgs, BlockData>,
@@ -381,7 +366,7 @@ function barcodeAlphabetProblem(
 }
 
 // The tag CSV column that looks like it names the dataset's samples, or undefined. A CSV is sample-aware
-// when the same barcode maps to different features per sample; the tell is a column whose distinct values
+// when the same barcode maps to different features per sample. The tell is a column whose distinct values
 // cover the dataset's sample names. Return the column whose distinct values are a SUPERSET of the dataset
 // sample names (preferring exact set-equality, then fewest extra values), excluding the columns already
 // bound to the barcode / feature roles. Shared by the suggestedSampleColumn output (UI suggestion) and
@@ -411,7 +396,7 @@ function suggestSampleColumn(ctx: BlockRenderCtx<BlockArgs, BlockData>): string 
     if (!isSuperset) continue;
     const exact = values.size === datasetNames.size;
     const extra = values.size - datasetNames.size;
-    // Prefer exact set-equality; among equals, prefer the fewest extra values.
+    // Prefer exact set-equality. Among equals, prefer the fewest extra values.
     if (
       best === undefined ||
       (exact && !best.exact) ||
@@ -423,9 +408,8 @@ function suggestSampleColumn(ctx: BlockRenderCtx<BlockArgs, BlockData>): string 
 }
 
 // v3 data shape: the reading's parameters, with the three grid states the two removed result views owned.
-// v4 replaced them with the punchcard's own state. `punchcardIdentities` is named in the Omit for history:
-// v4 introduced it and a later change removed it from BlockData, so the key is dead on the right-hand side
-// and harmless on the left.
+// v4 replaced them with the punchcard's own state. `punchcardIdentities` is dead on the right-hand side
+// of the Omit and harmless on the left.
 type BlockDataV3 = Omit<BlockData, "punchcardTableState" | "punchcardIdentities"> & {
   verdictTableState: PlDataTableStateV2;
   antigenQcTableState: PlDataTableStateV2;
@@ -472,7 +456,7 @@ type BlockDataV1 = Omit<BlockDataV2, "presetId" | "pattern"> & {
 const dataModel = new DataModelBuilder()
   .from<BlockDataV1>("v1")
   .migrate<BlockDataV2>("v2", ({ cellLen, umiLen, featureLen, ...rest }) => {
-    // The shipped default (16/10/15) maps to the fixed BEAM preset; any other geometry maps to the
+    // The shipped default (16/10/15) maps to the fixed BEAM preset. Any other geometry maps to the
     // generic preset carrying the assembled pattern (offset 0 — the only layout the v1 UI could express).
     const isBeamDefault = cellLen === 16 && umiLen === 10 && featureLen === 15;
     return isBeamDefault
@@ -490,11 +474,11 @@ const dataModel = new DataModelBuilder()
         };
   })
   // v2 -> v3: the dominance parameters go and the reading's own arrive. The three dropped fields are
-  // dropped rather than carried: the rule they parameterised no longer exists, and a field kept "just in
-  // case" would still travel in the args hash and stale the block on an edit that changes no computation.
-  // The new numeric parameters are seeded with the shipped defaults so a migrated project renders the
-  // same run a fresh one would — a parameter left undefined here would reach the CLI as its argparse
-  // default, which is the same number arrived at without anyone choosing it.
+  // dropped rather than carried, because a field kept "just in case" still travels in the args hash and
+  // stales the block on an edit that changes no computation. The new numeric parameters are seeded with
+  // the shipped defaults, so a migrated project renders the same run a fresh one would. A parameter left
+  // undefined here would reach the CLI as its argparse default, the same number arrived at without
+  // anyone choosing it.
   .migrate<BlockDataV3>(
     "v3",
     ({ dominanceThreshold: _d, offtargetProperty: _p, offtargetValues: _v, ...rest }) => ({
@@ -512,20 +496,18 @@ const dataModel = new DataModelBuilder()
     }),
   )
   // v3 -> v4: the flat verdict table and the quality-report tables are gone as VIEWS, and the punchcard
-  // takes their place. The three grid states go with them rather than being carried: a saved column set or
-  // filter is meaningful only against the frame it was saved on, and none of these three frames is on
-  // screen any more. The punchcard's own state starts fresh, on the whole panel — every identity column the
-  // pivot produced is drawn, and a reader hides or filters columns in the grid's own panels.
+  // takes their place. The three grid states go with them rather than being carried: a saved column set
+  // or filter is meaningful only against the frame it was saved on, and none of these three frames is on
+  // screen. The punchcard's own state starts fresh, on the whole panel — every identity column the pivot
+  // produced is drawn, and a reader hides or filters columns in the grid's own panels.
   //
   // What the removed pages showed is still EMITTED: the verdicts and the run's measurements are both
   // artifacts `verdict-block-interface` obliges this block to produce, and dropping a view does not
   // release it from producing them.
   //
-  // The run's measurements and the panel-versus-reads check now have a page again (Run quality), and its
-  // two grid states are `runQualityTableState` / `runQualityMismatchTableState` — NOT the two keys stripped
-  // here. That is deliberate: this strip is what the names below mean, so reusing them would make a saved
-  // column set and filter from a view removed several versions ago reappear under a grid it was never saved
-  // against, and would make this destructure read as if it were removing the live page's state.
+  // The Run quality page's two grid states are `runQualityTableState` / `runQualityMismatchTableState`,
+  // NOT the two keys stripped here. Never reuse a stripped key: a saved column set and filter from a
+  // removed view would reappear under a grid it was never saved against.
   .migrate<BlockData>(
     "v4",
     ({ verdictTableState: _v, antigenQcTableState: _q, panelMismatchTableState: _m, ...rest }) => ({
@@ -534,7 +516,7 @@ const dataModel = new DataModelBuilder()
     }),
   )
   .init(() => ({
-    runMode: "full" as const, // full run by default; "dry" = read-limited Preview
+    runMode: "full" as const, // full run by default. "dry" = read-limited Preview
     // Default preset = the geometry the block shipped with: 10x 5' v2 BEAM (16 / 10 / 15).
     presetId: "tenx-beam",
     cellWhitelist: "", // de-novo CELL correction by default
@@ -551,9 +533,9 @@ const dataModel = new DataModelBuilder()
     tableState: createPlDataTableStateV2(),
     qcSummaryTableState: createPlDataTableStateV2(),
     punchcardTableState: createPlDataTableStateV2(),
-    // No migration adds these two, and none is needed: a field absent from an older project's stored data
-    // is filled from these defaults on load, which is how qcSummaryTableState arrived as well. Their names
-    // avoid the two keys the v3 -> v4 migration strips — see the comment on those fields in types.ts.
+    // No migration adds these two, and none is needed: a field absent from an older project's stored
+    // data is filled from these defaults on load. Their names avoid the two keys the v3 -> v4 migration
+    // strips — see the comment on those fields in types.ts.
     runQualityTableState: createPlDataTableStateV2(),
     runQualityMismatchTableState: createPlDataTableStateV2(),
   }));
@@ -565,7 +547,7 @@ export const platforma = BlockModelV3.create(dataModel)
     if (!data.barcodeSeqColumn) throw new Error("Select the barcode-sequence column in the CSV");
     if (!data.featureNameColumn) throw new Error("Select the feature-name column in the CSV");
     // The barcode-sequence and feature-name roles must map to different CSV columns. The Python guards
-    // this too (per_cell_metrics.py), but only after the full mitool chain runs; rejecting it here
+    // this too (per_cell_metrics.py), but only after the full mitool chain runs. Rejecting it here
     // disables Run up front instead of burning the pipeline to fail at the end.
     if (data.barcodeSeqColumn === data.featureNameColumn)
       throw new Error("Barcode-sequence and feature-name columns must be different");
@@ -582,9 +564,9 @@ export const platforma = BlockModelV3.create(dataModel)
     }
     // Optional combine-mode column: its values are per-feature modes ("sum"/"all"), so it must be its
     // OWN CSV column — distinct from the barcode-sequence and feature-name roles, and not a reserved
-    // tag-stat column. Python guards this too, but only after the mitool chain runs; reject up front so a
-    // mis-picked column (e.g. the barcode column, whose values are DNA sequences) disables Run with a
-    // clear message instead of failing the pipeline at the end.
+    // tag-stat column. Python guards this too, but only after the mitool chain runs. Reject up front so
+    // a mis-picked column, such as the barcode column of DNA sequences, disables Run with a clear
+    // message instead of failing the pipeline at the end.
     if (data.combineColumn) {
       if (
         data.combineColumn === data.barcodeSeqColumn ||
@@ -602,10 +584,10 @@ export const platforma = BlockModelV3.create(dataModel)
     // clear message rather than start a run with no reads to cap.
     if (data.runMode === "dry" && (data.limitInput == null || data.limitInput < 1))
       throw new Error("Enter a read limit (≥ 1) for Preview mode, or switch to a full run");
-    // Read geometry: resolve the selected preset to its effective pattern (fixed preset owns it; the
-    // generic preset carries it in data.pattern), validate it loosely (the required CELL/UMI/FEATURE
-    // tags + R2 capture must be present — the workflow's refine-tags/tag-stat reference them by name;
-    // anything else is passed to mitool verbatim), then hand the string to the workflow directly.
+    // Read geometry: resolve the selected preset to its effective pattern (a fixed preset owns it, the
+    // generic preset carries it in data.pattern), validate it loosely, then hand the string to the
+    // workflow. Loose means only the CELL/UMI/FEATURE tags and the R2 capture must be present, since
+    // refine-tags/tag-stat reference them by name. Anything else goes to mitool verbatim.
     const preset = getPreset(data.presetId);
     if (!preset) throw new Error("Select a read-geometry preset");
     const pattern = preset.userConfigurable ? (data.pattern ?? "") : preset.pattern;
@@ -613,9 +595,9 @@ export const platforma = BlockModelV3.create(dataModel)
     if (patternError) throw new Error(patternError);
 
     // Sample-aware mapping (optional): when a sample column is chosen, the per-sample workflow body
-    // filters the CSV to its own sample's rows, so pass the column name + the sampleId→name snapshot it
-    // needs to translate its iteration key. The snapshot is taken on the same gesture that sets the
-    // column (MainPage.setSampleColumn); require it here so a stale/half-set state disables Run.
+    // filters the CSV to its own sample's rows. Pass the column name and the sampleId→name snapshot it
+    // needs to translate its iteration key. That snapshot is taken on the same gesture that sets the
+    // column (MainPage.setSampleColumn). Require it here so a half-set state disables Run.
     const sampleAware = !!data.sampleColumn;
     if (sampleAware) {
       if (!data.sampleLabelSnapshot || Object.keys(data.sampleLabelSnapshot).length === 0)
@@ -632,10 +614,10 @@ export const platforma = BlockModelV3.create(dataModel)
         );
     }
 
-    // A barcode on more than one row with no sample column is not a warning, it is a run that will stop:
+    // A barcode on more than one row with no sample column is not a warning. It is a run that will stop:
     // per_cell_metrics.py refuses to map one barcode to two antigens, and it refuses at the END, after
-    // every sample has been parsed. Blocking Run here spends the user a second instead of the whole run.
-    // Both numbers are snapshots taken when the barcode column was picked; absent means the meta had not
+    // every sample has been parsed. Blocking Run here costs the user a second instead of the whole run.
+    // Both numbers are snapshots taken when the barcode column was picked. Absent means the meta had not
     // resolved then, and the gate stays out of the way rather than guessing.
     if (
       !sampleAware &&
@@ -657,20 +639,18 @@ export const platforma = BlockModelV3.create(dataModel)
     if (data.boundCutoff < 0 || data.boundCutoff > 100)
       throw new Error("The bound cutoff is a score between 0 and 100");
     if (data.minVotingCells < 1) throw new Error("At least one cell must vote");
-    // A role column names WHERE each tag's role is written; the role values are what actually marks one.
+    // A role column names WHERE each tag's role is written. The role values are what actually marks one.
     // Named alone the column is inert: emit_verdicts.py reads it only under `if args.role_column and
-    // reference_values`, so it is validated as a real panel column, recorded in the run meta, and changes
-    // no number. The run then reads against the panel's own readings while the form says a baseline tag
-    // is declared — a wrong answer wearing the look of a configured one, which is the outcome this block
-    // exists to refuse. Requiring the values costs no expressiveness: a panel that declares no baseline
-    // is still served by leaving this column blank, which is the configuration `292-no-declared-reference`
-    // protects.
+    // reference_values`, so it is validated, recorded in the run meta, and changes no number. The run
+    // then reads against the panel's own readings while the form says a baseline tag is declared — a
+    // wrong answer wearing the look of a configured one. Requiring the values costs no expressiveness: a
+    // panel that declares no baseline leaves this column blank, the configuration
+    // `292-no-declared-reference` protects.
     //
     // The ONLY baseline gate, and it is about the ROLE COLUMN, never about which rung was chosen. An
     // unselected rung is not an invalid state: it is answered under the ladder's bottom rung, where every
     // verdict that needs a baseline reads unreliable and the run says so. Refusing to start would be this
-    // block deciding a scientist's methodology by withholding the run, which is the same act as choosing
-    // one for them.
+    // block deciding a scientist's methodology by withholding the run.
     if (data.roleColumn && !data.referenceValues?.length)
       throw new Error(
         `The panel column "${data.roleColumn}" declares each tag's role, but no value of it is marked ` +
@@ -678,11 +658,10 @@ export const platforma = BlockModelV3.create(dataModel)
           `choose at least one value, or clear the role column to read against the panel's own readings.`,
       );
     // Every panel column the verdict settings name, each with the label the user sees. Two different
-    // things can be wrong with one of these, so both checks below walk this same list.
-    //
-    // Each grouping column is checked on its own. A grouping may name several, and joining them into one
-    // string to check would compare "Identity, Channel" against the panel's headers and never match —
-    // which throws here and takes the whole block to Limbo, refs and all.
+    // things can be wrong with one of these, so both checks below walk this same list. Check each
+    // grouping column on its own: a grouping may name several, and joining them would compare
+    // "Identity, Channel" against the panel's headers, match nothing, throw here, and take the whole
+    // block to Limbo, refs and all.
     const named: [string, string | undefined][] = [
       ["Baseline role", data.roleColumn],
       ...groupingColumns(data.grouping).map((c): [string, string] => ["Grouping", c]),
@@ -690,14 +669,13 @@ export const platforma = BlockModelV3.create(dataModel)
 
     // First: a column the panel reader consumes as a KEY is not a property column, so naming one here
     // ends the run at the exec. emit_verdicts.py raises on a grouping column the panel does not declare,
-    // and on a role column wherever role values are set. Where they are NOT set it raises nothing, and
-    // the baseline falls back to the panel's own readings — a wrong answer rather than no answer, which
-    // is the outcome this block exists to refuse.
+    // and on a role column wherever role values are set. Where they are NOT set it raises nothing and
+    // the baseline falls back to the panel's own readings — a wrong answer rather than no answer.
     //
     // The way in is reassigning a key column WITHIN one panel file. The settings dropdowns stop offering
-    // the column, and the pick already stored survives, so the field reads empty while the data is not.
-    // Checked against data rather than the header snapshot because a key column IS a real header: the
-    // snapshot check below cannot see this case and correctly does not try to.
+    // it, the pick already stored survives, and the field reads empty while the data is not. Checked
+    // against data rather than the header snapshot, because a key column IS a real header and the
+    // snapshot check below cannot see this case.
     const keyColumns: [string, string | undefined][] = [
       ["barcode sequence", data.barcodeSeqColumn],
       ["sample", data.sampleColumn],
@@ -743,11 +721,11 @@ export const platforma = BlockModelV3.create(dataModel)
       featureNameColumn: data.featureNameColumn,
       controlFeature: data.controlFeature,
       // Optional multi-barcode antigen combine mode. combineColumn names a tag-CSV column giving each
-      // feature's mode (sum = OR, the default; all = AND, feature called only when every member barcode
-      // fires). Projected only when set so the workflow default (every feature OR) is untouched otherwise.
-      // minUmi is the AND per-barcode "fired" floor (integer >= 1; default 1 in the workflow/Python),
-      // projected only alongside combineColumn — the workflow passes --min-umi only with --combine-col,
-      // so without a combine mode it would only stale the block with no computational effect.
+      // feature's mode: sum = OR, the default, and all = AND, where a feature is called only when every
+      // member barcode fires. Projected only when set, so the workflow default (every feature OR) stands
+      // otherwise. minUmi is the AND per-barcode "fired" floor, an integer >= 1 defaulting to 1 in the
+      // workflow and Python. Projected only alongside combineColumn, because the workflow passes
+      // --min-umi only with --combine-col.
       ...(data.combineColumn ? { combineColumn: data.combineColumn } : {}),
       ...(data.combineColumn && typeof data.minUmi === "number" && data.minUmi >= 1
         ? { minUmi: Math.round(data.minUmi) }
@@ -764,11 +742,11 @@ export const platforma = BlockModelV3.create(dataModel)
       referenceValues: data.referenceValues?.length
         ? [...new Set(data.referenceValues)].sort()
         : undefined,
-      // Always concrete, because the software has no default left to fall back on: --reference-source is
-      // required there, and nothing below this line picks a rung. An unselected choice reaches the run as
-      // "none", which is a rung rather than a refusal. `served_source` never substitutes a different rung
-      // for one it was asked for, only drops it to none, so what this sends is what the run is answered
-      // under — and the run record carries both, so a drop is visible.
+      // Always concrete, because the software has no default: --reference-source is required there, and
+      // nothing below this line picks a rung. An unselected choice reaches the run as "none", which is a
+      // rung rather than a refusal. `served_source` only ever drops a rung to none, never substitutes a
+      // different one, so what this sends is what the run is answered under. The run record carries
+      // both, so a drop is visible.
       referenceSource: resolveReferenceSource(data),
       panelReferenceMinMembers: Math.round(data.panelReferenceMinMembers),
       distributionMinCells: Math.round(data.distributionMinCells),
@@ -800,7 +778,7 @@ export const platforma = BlockModelV3.create(dataModel)
           ? { by: "property" as const, columns: groupingColumns(data.grouping) }
           : data.grouping,
       contendingGroups: contendingGroups.length > 0 ? contendingGroups : undefined,
-      // Preview: cap reads only in dry mode; a full run omits it (all reads). Projected only when dry, so
+      // Preview: cap reads only in dry mode. A full run omits it (all reads). Projected only when dry, so
       // toggling back to full changes the args hash and re-runs on the complete input.
       ...(data.runMode === "dry" && data.limitInput
         ? { limitInput: Math.round(data.limitInput) }
@@ -824,21 +802,20 @@ export const platforma = BlockModelV3.create(dataModel)
     };
   })
   // Staging depends only on the CSV: emit-csv-meta emits every column's values in one exec, so the
-  // negative-control dropdown no longer needs a rerun when the feature column changes (the model indexes
-  // the already-emitted map). featureNameColumn is deliberately NOT a prerun arg — and neither is
-  // fbFastqRef: the CSV metadata is independent of the FASTQ, so keying staging on it would re-run the
-  // emit-csv-meta step and blank the column dropdowns (csvColumnsLoading → tagMappingDisabled) every time
-  // the FASTQ changes or a PlRef re-resolves on reload. Key on the CSV alone.
+  // negative-control dropdown needs no rerun when the feature column changes. The model indexes the
+  // already-emitted map. featureNameColumn is deliberately NOT a prerun arg, and neither is fbFastqRef.
+  // The CSV metadata is independent of the FASTQ, so keying staging on it would re-run emit-csv-meta and
+  // blank the column dropdowns (csvColumnsLoading → tagMappingDisabled) on every FASTQ change or PlRef
+  // re-resolve. Key on the CSV alone.
   .prerunArgs((data) => ({
     tagFeatureCsvHandle: data.tagFeatureCsvHandle,
   }))
-  // NOTE on enrichments (.enriches): intentionally NOT declared. `.enriches(args => PlRef[])` is for a
-  // block that produces columns sharing the key space of a ref it holds (clonotype-browser enriches its
-  // inputAnchor; cell-browser enriches its countsRef). This block introduces a NEW cell/feature key
-  // space [sampleId, cellId, featureId] off a FASTQ input, and holds no ref to the downstream VDJ
-  // dataset it would enrich — so there is nothing to enrich here. VDJ Multiomic Integration discovers
-  // these columns under its VDJ anchor via the pl7.app/sc/cellLinker (linker traversal), not via
-  // enrichment. Revisit only if the live cross-block discovery check shows otherwise.
+  // Enrichments (.enriches): intentionally NOT declared. `.enriches(args => PlRef[])` is for a block
+  // that produces columns sharing the key space of a ref it holds (clonotype-browser enriches its
+  // inputAnchor, cell-browser its countsRef). This block introduces a NEW cell/feature key space
+  // [sampleId, cellId, featureId] off a FASTQ input and holds no ref to the downstream VDJ dataset, so
+  // there is nothing to enrich. VDJ Multiomic Integration discovers these columns under its VDJ anchor
+  // through the pl7.app/sc/cellLinker, not through enrichment.
 
   // feature-barcode FASTQ options (file-valued sequencing columns, fastq / fastq.gz)
   .output("fastqOptions", (ctx) =>
@@ -877,11 +854,10 @@ export const platforma = BlockModelV3.create(dataModel)
   // to write it.
   .retentiveOutput("identityOptions", (ctx): { value: string; label: string }[] => {
     const grouped = groupingColumns(ctx.data.grouping);
-    // Nothing to offer under a grouping on SEVERAL columns. An identity is then the combination of
-    // their values, and the prerun CSV meta is column-wise: it carries each column's distinct values
-    // with no pairing between them. Crossing them would invent combinations the panel never declared,
-    // and offering a fabricated identity to the contending-groups editor is worse than offering none.
-    // The editor says so rather than showing a list built from a guess.
+    // Nothing to offer under a grouping on SEVERAL columns. An identity is then the combination of their
+    // values, and the prerun CSV meta is column-wise: each column's distinct values, with no pairing
+    // between them. Crossing them would invent combinations the panel never declared, and a fabricated
+    // identity is worse than none. The editor says so instead of showing a list built from a guess.
     if (grouped.length > 1) return [];
     const column = grouped[0] ?? ctx.data.barcodeSeqColumn;
     if (!column) return [];
@@ -889,7 +865,7 @@ export const platforma = BlockModelV3.create(dataModel)
   })
   // Suggested block label for the sidebar subtitle: "<dataset> / <barcode> - <feature>", derived from
   // the current inputs. Computed here (not in .subtitle) because the subtitle context has no result
-  // pool; a UI watchEffect copies this into data.defaultBlockLabel. Each part is dropped until set.
+  // pool. A UI watchEffect copies this into data.defaultBlockLabel. Each part is dropped until set.
   .output("suggestedBlockLabel", (ctx): string | undefined => {
     const parts: string[] = [];
     const ref = ctx.data?.fbFastqRef;
@@ -912,22 +888,22 @@ export const platforma = BlockModelV3.create(dataModel)
     }
     if (parts.length === 0) return undefined;
     // The default subtitle must never render with dots (Stan's request, S1). Periods come from a dotted
-    // dataset/file label; the " / " and " - " separators are a slash and hyphen, not periods, so
-    // stripping "." leaves them intact. Replace periods with spaces and collapse the doubles they create.
-    // A subtitle the user types in the sidebar is not routed through this output, so overrides are safe.
+    // dataset or file label. The " / " and " - " separators are a slash and a hyphen, so stripping "."
+    // leaves them intact. Replace periods with spaces and collapse the doubles that creates. A subtitle
+    // the user types in the sidebar does not pass through this output, so an override is safe.
     return parts.join(" / ").replace(/\./g, " ").replace(/ {2,}/g, " ").trim();
   })
-  // Negative-control dropdown options: the distinct values of the chosen feature-name
-  // column, from the prerun's emit-csv-meta valuesByColumn map. No rerun on column change — the map
-  // already carries every column's values, so picking the feature column just re-indexes here.
-  // Retentive avoids a flicker to [] on rerun; empty until the CSV is uploaded and staging completes.
+  // Negative-control dropdown options: the distinct values of the chosen feature-name column, from the
+  // prerun's emit-csv-meta valuesByColumn map. No rerun on a column change, because the map already
+  // carries every column's values and picking the feature column only re-indexes here. Retentive avoids
+  // a flicker to [] on rerun. Empty until the CSV is uploaded and staging completes.
   .retentiveOutput("controlOptions", (ctx): { value: string; label: string }[] => {
     const col = ctx.data.featureNameColumn;
     const names = col ? (readCsvMeta(ctx)?.valuesByColumn?.[col] ?? []) : [];
     return names.map((name) => ({ value: name, label: name }));
   })
-  // CSV column headers (from the prerun emit-csv-meta step) → the barcode/feature column dropdowns
-  // Retentive so the dropdowns don't blank on rerun; empty until the CSV is uploaded + parsed.
+  // CSV column headers (from the prerun emit-csv-meta step) → the barcode/feature column dropdowns.
+  // Retentive so the dropdowns do not blank on rerun. Empty until the CSV is uploaded and parsed.
   .retentiveOutput("csvColumnOptions", (ctx): { value: string; label: string }[] =>
     (readCsvMeta(ctx)?.columns ?? []).map((c) => ({ value: c, label: c })),
   )
@@ -951,10 +927,10 @@ export const platforma = BlockModelV3.create(dataModel)
     const fmt = (xs: string[]) => `${xs.slice(0, 5).join(", ")}${xs.length > 5 ? "…" : ""}`;
     const missing = [...datasetNames].filter((n) => !csvSamples.has(n));
     const extra = [...csvSamples].filter((s) => !datasetNames.has(s));
-    // One line per issue (the UI renders each on its own line). Missing samples block Run (args throws);
-    // extra CSV values are only informational (those rows are simply never used). Counted into a real
-    // plural rather than written "sample(s)": the reader has to resolve that form themselves, and these
-    // two lines are read while something is already wrong.
+    // One line per issue (the UI renders each on its own line). Missing samples block Run, because args
+    // throws. Extra CSV values are informational, since those rows are never used. Counted into a real
+    // plural rather than written "sample(s)": these two lines are read while something is already wrong,
+    // and the reader should not have to resolve that form.
     const lines: string[] = [];
     if (missing.length > 0)
       lines.push(
@@ -966,24 +942,24 @@ export const platforma = BlockModelV3.create(dataModel)
       );
     return lines.length > 0 ? lines : undefined;
   })
-  // The tag CSV column that looks like it names the dataset's samples (or undefined). The UI offers it as
-  // a one-click "use sample-aware mapping" suggestion. Purely advisory — the user must still pick it (a
-  // gesture that snapshots the sample map into data); this output never writes data. Excludes the columns
-  // already bound to the barcode / feature roles. See suggestSampleColumn for the superset/equality rule.
+  // The tag CSV column that looks like it names the dataset's samples, or undefined. The UI offers it as
+  // a one-click "use sample-aware mapping" suggestion. Purely advisory: the user must still pick it, the
+  // gesture that snapshots the sample map into data, and this output never writes data. Excludes the
+  // columns already bound to the barcode and feature roles. See suggestSampleColumn for the rule.
   .retentiveOutput("suggestedSampleColumn", (ctx): string | undefined => suggestSampleColumn(ctx))
-  // Alphabet check on the chosen barcode-sequence column. This is a UI warning only. mitool guards the
-  // same condition, but it guards it by failing refine-tags in the middle of the run.
+  // Alphabet check on the chosen barcode-sequence column, a UI warning only. mitool guards the same
+  // condition, but by failing refine-tags in the middle of the run.
   //
-  // A panel CSV often carries BOTH an identifier column and the nucleotide column. "Barcode" holds
-  // T0100 and "Sequence" holds CGATGCCGGACGATC. The identifier column has the name a user is more
-  // likely to select. That choice writes a panel.txt of non-nucleotide strings. The run then fails
-  // several stages later, inside barcode correction, with "Error while loading sequence set from
-  // ./panel.txt" and a Java stack trace. The reads are already parsed by then.
+  // A panel CSV often carries BOTH an identifier column and the nucleotide column: "Barcode" holds T0100
+  // and "Sequence" holds CGATGCCGGACGATC. The identifier column has the name a user is more likely to
+  // select, and that choice writes a panel.txt of non-nucleotide strings. The run then fails several
+  // stages later, inside barcode correction, with "Error while loading sequence set from ./panel.txt"
+  // and a Java stack trace, after the reads are parsed.
   //
-  // The args guard cannot catch this. It sees only `data`, and the values live in the prerun CSV meta.
-  // The check therefore fires here, at config time, as barcodeMappingIssue does for duplicate
-  // barcodes. It is deliberately not gated on sampleColumn. A per-sample filter narrows which rows
-  // reach the panel. It never turns an identifier into a sequence.
+  // The args guard cannot catch this: it sees only `data`, and the values live in the prerun CSV meta.
+  // The check therefore fires here, at config time, as barcodeMappingIssue does. Deliberately not gated
+  // on sampleColumn — a per-sample filter narrows which rows reach the panel, and never turns an
+  // identifier into a sequence.
   .retentiveOutput("barcodeAlphabetIssue", (ctx): string | undefined => {
     const problem = barcodeAlphabetProblem(ctx);
     if (problem === undefined) return undefined;
@@ -998,12 +974,12 @@ export const platforma = BlockModelV3.create(dataModel)
         : "Pick the column that holds the barcode nucleotide sequences.")
     );
   })
-  // Duplicate-barcode detection at config time (UI warning only; the Python guards it authoritatively at
-  // the end of the run). Fires when a CSV is uploaded, the barcode column is chosen, no sample column is
-  // set, and that barcode column has fewer distinct values than the CSV has data rows — i.e. some barcode
-  // maps on more than one row, which would fan the per-cell join and double molecule counts. Names the
-  // fix (set the Sample column, suggesting the likely one; else remove the duplicate rows). Skipped when
-  // rowCount is absent (prerun predates it) — then the check can't run and we defer to the Python guard.
+  // Duplicate-barcode detection at config time, a UI warning only. The Python guards it authoritatively
+  // at the end of the run. Fires when a CSV is uploaded, the barcode column is chosen, no sample column
+  // is set, and that barcode column has fewer distinct values than the CSV has data rows. Some barcode
+  // then maps on more than one row, which would fan the per-cell join and double molecule counts. Names
+  // the fix: set the Sample column, suggesting the likely one, or remove the duplicate rows. Skipped
+  // where rowCount is absent, which defers to the Python guard.
   .retentiveOutput("barcodeMappingIssue", (ctx): string | undefined => {
     if (!ctx.data.tagFeatureCsvHandle) return undefined;
     const barcodeCol = ctx.data.barcodeSeqColumn;
@@ -1026,18 +1002,17 @@ export const platforma = BlockModelV3.create(dataModel)
   })
   // The case the two checks either side of this one cannot see: a panel CSV that IS sample-keyed, with no
   // sample column set, and no barcode repeated to give it away. `barcodeMappingIssue` needs a duplicate
-  // barcode, which a partly-overlapping panel supplies but a fully disjoint one — sample A stained with
-  // one set, sample B with another — never does. `sampleMappingWarning` validates a column that has been
-  // chosen and returns nothing when none has. So the one arrangement that fails silently is exactly the
-  // one where the panels share no barcode at all.
+  // barcode, which a fully disjoint panel — sample A stained with one set, sample B with another — never
+  // supplies. `sampleMappingWarning` validates a column that has been chosen and returns nothing when
+  // none has. So the one arrangement that fails silently is where the panels share no barcode at all.
   //
   // The tell is a column whose values cover every dataset sample, which is what `suggestSampleColumn`
   // already looks for. Guarded against `barcodeMappingIssue`'s condition so the two never fire together:
-  // that one is the louder problem (an ambiguous mapping fans the per-cell join) and it already names
+  // that one is the louder problem, an ambiguous mapping fans the per-cell join, and it already names
   // this fix.
   //
-  // Why it is worth a warning rather than a line of tooltip: read as one panel, every sample is offered
-  // every antigen, so an antigen a sample was never stained with comes back NOT BOUND instead of NEVER
+  // Worth a warning rather than a tooltip because, read as one panel, every sample is offered every
+  // antigen. An antigen a sample was never stained with then comes back NOT BOUND instead of NEVER
   // ASKED. That is the collapse of a non-answer into a negative that the four-state verdict exists to
   // prevent, and nothing else on the page would say it happened.
   .retentiveOutput("unkeyedSamplePanel", (ctx): string | undefined => {
@@ -1057,32 +1032,32 @@ export const platforma = BlockModelV3.create(dataModel)
       "Sample column."
     );
   })
-  // True while the uploaded CSV is still being parsed by staging (handle set, but emit-csv-meta hasn't
-  // produced csvMeta yet) — lets the UI show a "reading columns…" state instead of silent empty
-  // dropdowns. NOT retentive: it must report the live loading state, including on a CSV swap.
   // Total data rows in the uploaded CSV, so the UI can snapshot it alongside the barcode column's
   // distinct count. Those two numbers are what args() needs to refuse a duplicate mapping, and args()
   // cannot reach the prerun meta itself.
   .retentiveOutput("csvRowCount", (ctx): number | undefined => readCsvMeta(ctx)?.rowCount)
+  // True while the uploaded CSV is still being parsed by staging: the handle is set, but emit-csv-meta
+  // has not produced csvMeta yet. Lets the UI show a "reading columns…" state instead of silent empty
+  // dropdowns. NOT retentive: it must report the live loading state, including on a CSV swap.
   .output(
     "csvColumnsLoading",
     (ctx): boolean => !!ctx.data.tagFeatureCsvHandle && readCsvMeta(ctx) === undefined,
   )
   // Drives the tag→feature CSV upload: getImportProgress() registers the import handle with the
-  // middle-layer upload driver so the CSV bytes are actually pushed; isActive keeps it computing even
-  // when the block isn't being viewed. Without this the CSV never uploads and every per-sample body
-  // hangs on __extra_tagsCsv (mirrors immune-assay-data index.ts / samples-and-data).
+  // middle-layer upload driver, so the CSV bytes are pushed. isActive keeps it computing while the block
+  // is not being viewed. Without this the CSV never uploads and every per-sample body hangs on
+  // __extra_tagsCsv (mirrors immune-assay-data index.ts / samples-and-data).
   .output(
     "tagFeatureCsvImportHandle",
     (ctx) => ctx.outputs?.resolve("tagFeatureCsvImportHandle")?.getImportProgress(),
     { isActive: true },
   )
-  // Same upload driver, but resolved from the PRERUN (staging) render — this is the one that fires
-  // before Run. The CSV-derived dropdowns (csvColumnOptions / controlOptions) are populated by the prerun
-  // reading the uploaded CSV, and their values are REQUIRED by args(). The main driver above only
-  // fires once args() passes, so on its own it deadlocks: no upload → empty dropdowns → args() throws
-  // → no main render → no upload. Driving the upload from staging breaks the cycle (mirrors
-  // samples-and-data's "Drives prerun file uploads" getImportProgress).
+  // Same upload driver, resolved from the PRERUN (staging) render, which is the one that fires before
+  // Run. The prerun reads the uploaded CSV to populate the CSV-derived dropdowns (csvColumnOptions /
+  // controlOptions), and args() REQUIRES their values. The main driver above fires only once args()
+  // passes, so on its own it deadlocks: no upload → empty dropdowns → args() throws → no main render →
+  // no upload. Driving the upload from staging breaks the cycle (mirrors samples-and-data's "Drives
+  // prerun file uploads" getImportProgress).
   .output(
     "tagFeatureCsvImportHandlePrerun",
     (ctx) =>
@@ -1091,8 +1066,8 @@ export const platforma = BlockModelV3.create(dataModel)
         ?.getImportProgress(),
     { isActive: true },
   )
-  // True while the main run is executing (no output/context field settled yet) — drives the block
-  // spinner via the app.ts progress callback.
+  // True while the main run is executing, with no output or context field settled yet. Drives the block
+  // spinner through the app.ts progress callback.
   .output("isRunning", (ctx) => ctx.outputs?.getIsReadyOrError() === false)
   // True once the main workflow has begun producing outputs (ctx.outputs settles) — lets the Main page
   // swap the static "run the block" hint for the live per-sample progress grid.
@@ -1125,14 +1100,14 @@ export const platforma = BlockModelV3.create(dataModel)
   })
   // Per-[sampleId, step] live log handles (parse / refine / tag-stat stdout streams), bound by the
   // per-sample Logs tab (PlLogView) so the user can read each mitool step's output as it runs. A no-match
-  // sample carries only its 1-parse entry (the map key set is variable — see fb-refine-tagstat).
+  // sample carries only its 1-parse entry, so the map key set is variable — see fb-refine-tagstat.
   .output("stepLogs", (ctx) =>
     ctx.outputs !== undefined
       ? parseResourceMap(ctx.outputs.resolve("stepLogs"), (acc) => acc.getLogHandle(), false)
       : undefined,
   )
   // Per-[sampleId] log handle for the Python per-cell-metrics step (the "4-metrics" step). Surfaced
-  // separately from stepLogs because it's produced after the mitool stepLogs map is built; the UI's
+  // separately from stepLogs because it is produced after the mitool stepLogs map is built. The UI's
   // per-step Logs panel reads it when the "4-metrics" step is selected.
   .output("metricsLog", (ctx) =>
     ctx.outputs !== undefined
@@ -1143,9 +1118,9 @@ export const platforma = BlockModelV3.create(dataModel)
         )
       : undefined,
   )
-  // Live per-sample parse progress (0–100%) — reads the flat parseLogStream Log, registered the moment
-  // the per-sample body runs (before parse finishes). Kept mainly as an EARLY roster signal (it appears
-  // before the stepLogs map fills); the per-step bar detail comes from stepProgress below.
+  // Live per-sample parse progress (0–100%), read from the flat parseLogStream Log, registered the
+  // moment the per-sample body runs and before parse finishes. Mainly an EARLY roster signal: it appears
+  // before the stepLogs map fills. The per-step bar detail comes from stepProgress below.
   .output("parseProgress", (ctx) =>
     ctx.outputs !== undefined
       ? parseResourceMap(
@@ -1169,8 +1144,8 @@ export const platforma = BlockModelV3.create(dataModel)
       : undefined,
   )
   // sampleIds whose per-sample pipeline has finished. qcJson is the LAST per-sample step and is inline
-  // JSON content, so getDataAsJsonOrUndefined reads it synchronously — the done-set drives the grid's
-  // "Done" state (a sample not in this set is still Processing).
+  // JSON content, so getDataAsJsonOrUndefined reads it synchronously. The done-set drives the grid's
+  // "Done" state: a sample not in this set is still Processing.
   .output("completedSamples", (ctx): string[] | undefined => {
     if (ctx.outputs === undefined) return undefined;
     return parseQcRows(ctx).map((e) => String(e.key[0]));
@@ -1185,30 +1160,30 @@ export const platforma = BlockModelV3.create(dataModel)
     return out;
   })
   // sampleId -> display name (upstream pl7.app/label), for the progress grid's Sample column. Shares
-  // resolveSampleLabels with analysisLog; kept as its own output because outputs cannot read one another.
+  // resolveSampleLabels with analysisLog. Kept as its own output because outputs cannot read one another.
   .output("sampleLabels", (ctx): Record<string, string> | undefined => resolveSampleLabels(ctx))
   // The block's single "Analysis logs" (lines shown in the UI's wide slide-over), built from the
   // per-sample QC JSON (qcJson), which settles incrementally as each sample's qc step finishes:
   //   - while the run is in progress → a live count of samples finished so far ("Processing… N …");
   //   - when every sample is done   → a run-level summary (aggregate reads/panel-assigned/cells +
   //     any samples flagged for a panel-assigned fraction below PANEL_ASSIGNED_FLOOR, by name).
-  // One area regardless of sample count; detailed per-sample stats live on the QC page (qcSummaryTable).
+  // One area regardless of sample count. Detailed per-sample stats live on the QC page (qcSummaryTable).
   .output("analysisLog", (ctx): string[] | undefined => {
     if (ctx.outputs === undefined) return undefined;
 
     // Sample labels (sampleId -> name) from the upstream pl7.app/label column — display names for
     // flagged samples. Shared resolver with the sampleLabels output.
     const labels = resolveSampleLabels(ctx);
-    // Per-sample QC metrics; each entry appears as that sample's qc step finishes (shared with
+    // Per-sample QC metrics. Each entry appears as that sample's qc step finishes (shared with
     // completedSamples / sampleQc). qcJson is inline JSON content read synchronously.
     const entries = parseQcRows(ctx);
     const done = entries.length;
     const running = ctx.outputs.getIsReadyOrError() === false;
 
-    // While the run is in progress → a live count of samples finished so far. No fixed denominator:
-    // the block only processes the samples present in its feature-barcode dataset, which isn't reliably
-    // known until the run completes (a project-wide sample total would over-count and make a finished
-    // run look stuck). On a crash the count freezes at how far it got, next to the block's error state.
+    // While the run is in progress → a live count of samples finished so far. No fixed denominator: the
+    // block processes only the samples present in its feature-barcode dataset, which is not reliably
+    // known until the run completes. A project-wide total would over-count and make a finished run look
+    // stuck. On a crash the count freezes where it got to, next to the block's error state.
     if (running) {
       return done === 0
         ? ["Processing…"]
@@ -1267,23 +1242,23 @@ export const platforma = BlockModelV3.create(dataModel)
     lines.push("", "Analysis complete. Full per-sample statistics are on the QC page.");
     return lines;
   })
-  // The Main table is ONE ROW PER CELL [sampleId, cellId]. The per-(cell x feature) rows
-  // moved OUT of this table into the collapsed workflow frame (consensus + the per-cell summary
-  // columns: Max Feature UMI count, Max Feature Fraction, Max Specificity score, and a "Feature
-  // breakdown" string listing every feature as "feature (fraction%, umi)" sorted by descending fraction). The
-  // per-feature matrix is not lost: it is still exported to the result pool (perCellFeatures, the
-  // per-cell export contract) for VDJ Multiomic Integration. This output resolves the workflow's collapsed
-  // perCellTable PFrame; undefined until the workflow emits it (guarded by the UI).
+  // The Main table is ONE ROW PER CELL [sampleId, cellId]. The collapsed workflow frame carries the
+  // per-cell summary columns: Max feature UMI count, Max feature fraction, and a "Feature breakdown"
+  // string listing every feature as "feature (fraction%, umi)" sorted by descending fraction. The
+  // per-feature matrix is still exported to the result pool (perCellFeatures, the per-cell export
+  // contract) for VDJ Multiomic Integration.
+  // This output resolves the workflow's collapsed perCellTable PFrame, undefined until the workflow
+  // emits it (guarded by the UI).
   //
   // Uses createPlDataTableV2 (columns passed directly via getPColumns), NOT V3. This frame is our OWN
-  // self-contained, non-batch processColumn output. createPlDataTableV3's discovery cannot render it:
-  // the object (scoped-sources) form returns undefined for this frame regardless of anchor/maxHops
-  // config, and the array-columns form runs discoverLabelColumnVariants over the
-  // ENTIRE result pool and hangs forever on the upstream Samples&Data FASTQ File-dataset
-  // (no_data:<sndBlock>:pf.dataset.*). V2 takes the columns as-is and auto-joins the sampleId label —
-  // the pattern blocks/peptide-extraction uses for the same non-batch processColumn + samples-and-data
-  // setup. retentive avoids blanking the grid on recompute; withStatus feeds PlAgDataTableV2 the
-  // OutputWithStatus envelope it renders loading/error from.
+  // self-contained, non-batch processColumn output, and createPlDataTableV3's discovery cannot render
+  // it: the object (scoped-sources) form returns undefined whatever the anchor/maxHops config, and the
+  // array-columns form runs discoverLabelColumnVariants over the ENTIRE result pool and hangs forever on
+  // the upstream Samples&Data FASTQ File-dataset (no_data:<sndBlock>:pf.dataset.*). V2 takes the columns
+  // as-is and auto-joins the sampleId label, the pattern blocks/peptide-extraction uses for the same
+  // non-batch processColumn plus samples-and-data setup. retentive avoids blanking the grid on
+  // recompute. withStatus feeds PlAgDataTableV2 the OutputWithStatus envelope it renders loading and
+  // error from.
   .output(
     "perCellTable",
     (ctx) => {
@@ -1295,10 +1270,9 @@ export const platforma = BlockModelV3.create(dataModel)
   )
   // Per-sample QC summary table: reads parsed/matched, cells/features detected, UMI totals, and
   // panel-assigned fraction. Uses createPlDataTableV2 (columns passed directly via getPColumns) like
-  // perCellTable. The earlier V3 form used selector { mode: "enrichment", maxHops: 0 },
-  // which never traverses to the upstream pl7.app/label column — so the sampleId axis rendered the raw
-  // sample hash instead of the human sample name. createPlDataTableV2 runs getAllLabelColumns over the
-  // result pool and auto-joins the matching sampleId label, giving the real sample name.
+  // perCellTable, because it runs getAllLabelColumns over the result pool and auto-joins the matching
+  // sampleId label. A V3 selector of { mode: "enrichment", maxHops: 0 } never traverses to the upstream
+  // pl7.app/label column, and the sampleId axis then renders the raw sample hash.
   .output(
     "qcSummaryTable",
     (ctx) => {
@@ -1309,15 +1283,15 @@ export const platforma = BlockModelV3.create(dataModel)
     { retentive: true, withStatus: true },
   )
   // Every combined identity the punchcard could show, in the order the workflow gave them, each with the
-  // label the workflow put on its column. Two things on the card read this, and neither narrows anything.
-  // The punch hover reads it because a reader who hovers a dot far down a long grid cannot see the header
-  // row at all. The card's empty state reads it to tell "the pivot emitted no identity columns" apart
-  // from "this run has no rows at all".
+  // label the workflow put on its column. Two things on the card read it, and neither narrows anything.
+  // The punch hover reads it, because a reader hovering a dot far down a long grid cannot see the header
+  // row. The card's empty state reads it to tell "the pivot emitted no identity columns" apart from
+  // "this run has no rows at all".
   //
-  // Read from the pivot's own columns rather than from the run record's identity list, because the two can
-  // disagree in exactly one way that matters — the pivot is size-gated upstream, so a run over a large
-  // panel names its identities in the record and emits no columns at all. Reading the columns means this
-  // lists what the punchcard can actually draw, which is what makes the empty state trustworthy.
+  // Read from the pivot's own columns, not from the run record's identity list. The pivot is size-gated
+  // upstream, so a run over a large panel names its identities in the record and emits no columns at
+  // all. Reading the columns lists what the punchcard can actually draw, which is what makes the empty
+  // state trustworthy.
   .retentiveOutput("punchcardIdentityOptions", (ctx): { value: string; label: string }[] => {
     const pCols = ctx.outputs
       ?.resolve({ field: "antigenPunchcardTable", allowPermanentAbsence: true })
@@ -1331,38 +1305,33 @@ export const platforma = BlockModelV3.create(dataModel)
       if (identity === undefined || seen.has(identity)) continue;
       seen.add(identity);
       // The label the workflow put on the column, which for a merged identity is the joined name rather
-      // than the barcode. The identity itself is a raw sequence under the per-tag grouping, so carrying the
-      // label is what keeps the punch hover naming an antigen the reader recognises.
+      // than the barcode. The identity itself is a raw sequence under the per-tag grouping, so carrying
+      // the label is what keeps the punch hover naming an antigen the reader recognises.
       const label = c.spec.annotations?.["pl7.app/label"];
       options.push({ value: identity, label: label ?? identity });
     }
     return options;
   })
   // The punchcard: one row per clonotype set, one column per identity, each cell carrying the four-state
-  // verdict and the count of cells that answered it. The pivoted shape comes from the workflow because a
+  // verdict and the count of cells that answered it. The pivoted shape comes from the workflow, because a
   // table cannot pivot a (set, identity) frame into columns.
   //
-  // The whole panel, every time. A reader who wants fewer columns hides them in the grid's columns panel or
-  // filters in its filters panel; this output does not second-guess either.
+  // The whole panel, every time. A reader who wants fewer columns hides them in the grid's columns panel
+  // or filters in its filters panel, and this output second-guesses neither.
   //
-  // V3 here, and V2 everywhere else in this block, for a reason particular to this table.
+  // V3 here, and V2 everywhere else in this block, for a reason particular to this table. V2 cannot build
+  // it at all: `Cannot produce a Vec1 with a length of zero`. These columns are keyed on ONE axis,
+  // `pl7.app/vdj/scClonotypeKey`, and the result pool holds a label column for exactly that axis (the
+  // clonotyping block publishes it). V2 discovers the label, the frame's only axis is consumed, and the
+  // engine is handed an empty key vector. One axis is inherent to a punchcard, so there is nothing to
+  // tune. V3's `primaryColumns` form takes the columns as given and runs NO data-column discovery, so it
+  // never walks the result pool and cannot hang on the upstream Samples & Data FASTQ dataset — the hazard
+  // the other tables here chose V2 to avoid, and the reason this is not a blanket migration. V3 still
+  // resolves label columns for the axes it was handed, which is wanted: a clonotype row reads better
+  // under its clonotype label than under a raw key.
   //
-  // V2 could not build it at all: `Cannot produce a Vec1 with a length of zero`. These columns are keyed
-  // on ONE axis, `pl7.app/vdj/scClonotypeKey`, and the result pool holds a label column for exactly that
-  // axis (the clonotyping block publishes it). V2 discovers the label, the frame's only axis is consumed,
-  // and the engine is handed an empty key vector. Verified by instrumented build: a SINGLE punch column
-  // fails identically, so it is not the 13-way join or the shared column name. The flat verdict table this
-  // view replaced survived only because it carried a second axis that nothing labelled — one axis is
-  // inherent to a punchcard, so there was nothing to tune.
-  //
-  // V3's `primaryColumns` form is the explicit one: it takes the columns as given and runs NO data-column
-  // discovery, so it does not walk the result pool and cannot hang on the upstream Samples & Data FASTQ
-  // dataset — which is the hazard the other tables here chose V2 to avoid, and the reason this is not a
-  // blanket migration. V3 does still resolve label columns for the axes it was handed, which is wanted:
-  // a clonotype row reads better under its clonotype label than under a raw key.
-  //
-  // V2 is deprecated SDK-side in favour of this call, so the rest of this model's tables will follow
-  // eventually; each needs its own check against the discovery hazard first.
+  // V2 is deprecated SDK-side in favour of this call, so the rest of this model's tables will follow.
+  // Each needs its own check against the discovery hazard first.
   .output(
     "punchcardTable",
     (ctx) => {
@@ -1382,32 +1351,24 @@ export const platforma = BlockModelV3.create(dataModel)
       // this list safe: a column carrying an axis the others lack would widen the join.
       const cellCount = pCols.filter((c) => c.spec.name === PUNCH_CELL_COUNT_COLUMN);
       // Alphabetical by the name a READER sees. The workflow emits these sorted by identity, which under
-      // the per-tag grouping is the barcode — and a panel's names never sort the same as its sequences, so
-      // the card opened in an order that looked arbitrary to the only person reading it. Numeric collation
-      // so `antigen_9` precedes `antigen_10` rather than following it. The clonotype column is not among
-      // these (`columns: null` brings it in separately), so it keeps its place at the front.
+      // the per-tag grouping is the barcode, and a panel's names never sort the same as its sequences.
+      // Numeric collation, so `antigen_9` precedes `antigen_10`. The clonotype column is not among these
+      // (`columns: null` brings it in separately), so it keeps its place at the front.
       const labelOf = (c: (typeof cols)[number]) =>
         c.spec.annotations?.["pl7.app/label"] ?? (identityOf(c) as string);
       const ordered = [...cols].sort((a, b) =>
         labelOf(a).localeCompare(labelOf(b), undefined, { sensitivity: "base", numeric: true }),
       );
-      // Headers carry the identity's full name. A cut to 20 characters was applied here before, so that
-      // one long label could not auto-size its column and move the rest of the card off screen.
+      // Headers carry the identity's full name, never a truncation: which identity a column is, is the
+      // one thing a reader needs from a header. Correct a too-long label where it is produced.
       //
-      // That cut removed the one thing a reader needs from a header: which identity the column is. It
-      // also applied only to the joined labels a tag receives when its rows disagree about the grouping
-      // column. Correct those labels where they are produced. Do not hide them behind an ellipsis.
-      // Column ORDER here comes from the `pl7.app/table/orderPriority` annotation on each spec, and
-      // from nothing else. The cell count carries 96000, between the clonotype label's 100000 and the
+      // Column ORDER comes from the `pl7.app/table/orderPriority` annotation on each spec, and from
+      // nothing else. The cell count carries 96000, between the clonotype label's 100000 and the
       // punches' 92000, and lands at position 3: row number, clonotype, cell count, then the identities.
-      //
-      // Verified by A/B against the live grid: a `displayOptions.ordering` rule and this array's own
-      // order are BOTH inert — inverting the rule's priority and moving the cell count to the end of
-      // `primaryColumns` each left it at position 3. Neither lever was added; if you are here to fix a
-      // column that "renders last", measure before you change anything, and measure with
-      // `aria-colindex`. `querySelectorAll('[role="columnheader"]')` returns AG Grid's recycled header
-      // nodes in an order that has nothing to do with column position, and reading it that way is what
-      // produced a bug report against this line when the placement was already correct.
+      // A `displayOptions.ordering` rule and this array's own order are BOTH inert here. If you are
+      // fixing a column that "renders last", measure first, and measure with `aria-colindex`.
+      // `querySelectorAll('[role="columnheader"]')` returns AG Grid's recycled header nodes in an order
+      // unrelated to column position.
       return createPlDataTableV3(ctx, {
         primaryColumns: [...cellCount, ...ordered].map((c) => DataColumn.fromColumn(c)),
         columns: null,
@@ -1416,13 +1377,12 @@ export const platforma = BlockModelV3.create(dataModel)
     },
     { retentive: true, withStatus: true },
   )
-  // The clonotype axis id, DERIVED from an emitted column rather than written out by hand.
-  //
-  // The page hangs the expansion's row button on this axis, and `showCellButtonForAxisId` is matched with
-  // `isJsonEqual` — exact JSON equality, domain and all. A hand-written `{type, name}` misses the domain
-  // this axis carries, matches nothing, and renders no button with no error to say why. Deriving it from
-  // the same spec the filter reads also makes the two provably agree, which is the property that matters:
-  // a button on a row whose key the filter cannot resolve is worse than no button.
+  // The clonotype axis id, DERIVED from an emitted column and never written out by hand. The page hangs
+  // the expansion's row button on this axis, and `showCellButtonForAxisId` is matched with `isJsonEqual`
+  // — exact JSON equality, domain and all. A hand-written `{type, name}` misses the domain this axis
+  // carries, matches nothing, and renders no button and no error. Deriving it from the same spec the
+  // filter reads also makes the two provably agree: a button on a row whose key the filter cannot
+  // resolve is worse than no button.
   .output("clonotypeAxisId", (ctx): AxisId | undefined => {
     const pCols = ctx.outputs
       ?.resolve({ field: "antigenPunchcardTable", allowPermanentAbsence: true })
@@ -1435,20 +1395,18 @@ export const platforma = BlockModelV3.create(dataModel)
   // those verdicts rest on, which is where a number belongs. A number in every position of the card would
   // compete with reading it across, so this is where cellsBound and the support counts surface.
   //
-  // Reads `antigenVerdictsTable`: the LONG verdicts family at (set, identity) grain. That output already
-  // existed, held open by main.tpl for exactly this ("the first page that wants the verdicts unpivoted —
-  // a per-identity list, say — reads it without a workflow change"), so this page costs no workflow
-  // change and no second import. Its rows are identities, which is the shape the expansion wants and the
-  // shape a pivot cannot give it.
+  // Reads `antigenVerdictsTable`: the LONG verdicts family at (set, identity) grain, held open by
+  // main.tpl for exactly this, so this page costs no workflow change and no second import. Its rows are
+  // identities, the shape the expansion wants and the shape a pivot cannot give it.
   //
   // NOT gated on the identity count that gates the card's pivots. That gate exists because a pivot costs
   // a COLUMN per identity and sits well under the thousand-plus a pMHC panel carries. Here an identity
-  // costs a ROW, and only one clonotype's rows are ever fetched — so a panel too wide for the card is
+  // costs a ROW, and only one clonotype's rows are ever fetched, so a panel too wide for the card is
   // precisely where this view still reads.
   //
   // The filter is pushed down, not applied after the fact: `createPlDataTableV3` puts it in the PTable
   // def, `createPTableDefV3` wraps the join in a `{type:"filter", predicate}` query node, and the engine
-  // lowers that into the data query (pframes-rs `visit_filter`). So one clonotype's rows are what crosses
+  // lowers that into the data query (pframes-rs `visit_filter`). One clonotype's rows are what crosses
   // the boundary, whatever the run's size.
   .output(
     "expansionTable",
@@ -1466,16 +1424,16 @@ export const platforma = BlockModelV3.create(dataModel)
       // carried panels that differ — NAMED explicitly, which is the whole correctness of this call.
       // `antigenVerdictsTable` surfaces the entire export frame, whose families are keyed on five
       // different axes: tag, panel, sample, set, and (set, identity). Handing all of them to one table is
-      // a malformed join, and the SDK answers with `discoverColumns failed` out of `discoverLabelColumns`,
+      // a malformed join, and the SDK answers `discoverColumns failed` out of `discoverLabelColumns`,
       // which reads as an SDK fault and is not one. Only the (set, identity) family belongs here.
       //
       // The identity's readable name comes FIRST, and it has to be named here rather than left to
       // `columns: null`. That option resolves label columns from the result pool, and this label lives
-      // in `exportFb` — a block's own exports are not in its own result pool. Measured before this
-      // existed: 17 rows all printing the same clonotype with nothing telling them apart.
+      // in `exportFb` — a block's own exports are not in its own result pool. Without it every row
+      // prints the same clonotype with nothing telling them apart.
       //
       // Could-answer is CONDITIONAL. Under one panel it is the clonotype's own cell count at every
-      // identity, which the grid already carries beside its name — so a column of it repeats one number
+      // identity, which the grid already carries beside its name, so a column of it repeats one number
       // down the page and teaches a reader to ignore it. The whole argument for carrying the number is
       // that a verdict from three cells and one from forty print the same word, and a number that never
       // varies defeats that argument.
@@ -1488,11 +1446,9 @@ export const platforma = BlockModelV3.create(dataModel)
       // Absent reads as one panel: a run record written before the field existed has no opinion, and one
       // panel is the ordinary case 206 calls the default.
       const panelsDiffer = (runMeta?.samplePanelCount ?? 1) > 1;
-      //
-      // Not-bound is deliberately absent. A cell's vote is exactly one of bound or not-bound -- the
-      // combine step settles on that pair and nothing else -- so a third column is `answered - bound`
-      // printed out, and the reader who wants it can do the subtraction from two numbers already on the
-      // row. It stays in the EXPORT, which has its own readers; only this panel drops it.
+      // Not-bound is deliberately absent. A cell's vote is exactly one of bound or not-bound, so a third
+      // column is `answered - bound` printed out, and a reader who wants it subtracts two numbers already
+      // on the row. It stays in the EXPORT, which has its own readers. Only this panel drops it.
       const WANTED = [
         "pl7.app/label",
         "pl7.app/antigen/verdict",
@@ -1512,21 +1468,19 @@ export const platforma = BlockModelV3.create(dataModel)
               (c.spec.axesSpec.length === 1 && c.spec.axesSpec[0].name === identityAxisName)),
         ),
       );
-      // The identity's name has to be one of them, and a count is not enough to know that. If only the
-      // label failed to match — an axis name drifting at export time is all it would take — the verdict
-      // and bound columns still match, the count is still non-zero, and the panel renders 17 anonymous
-      // rows again with nothing to say it regressed. No panel is a visible failure; a nameless one reads
-      // as working. The verdict column is required too, and the setAxis guard below catches its absence.
+      // The identity's name has to be one of them, and a count is not enough to know that. Where only the
+      // label fails to match — an axis name drifting at export time is all it takes — the verdict and
+      // bound columns still match, the count is still non-zero, and the panel renders anonymous rows with
+      // nothing to say it regressed. No panel is a visible failure. A nameless one reads as working. The
+      // verdict column is required too, and the setAxis guard below catches its absence.
       if (!pCols.some((c) => c.spec.name === "pl7.app/label")) return undefined;
-      // The set axis is the first of the (set, identity) pair, taken from the verdict column rather than
-      // from `pCols[0]`: the identity label column now sorts first and carries only the identity axis, so
-      // reading `pCols[0].spec.axesSpec[0]` here would hand the filter that axis instead of the set axis
-      // and resolve nothing. An axis assembled here would also be a lookalike with a different identity
-      // and would filter nothing.
+      // The set axis is the first of the (set, identity) pair, taken from the verdict column and not from
+      // `pCols[0]`: the identity label column sorts first and carries only the identity axis, so
+      // `pCols[0].spec.axesSpec[0]` would hand the filter that axis and resolve nothing. An axis
+      // assembled here would be a lookalike with a different identity and filter nothing.
       const verdictCol = pCols.find((c) => c.spec.name === "pl7.app/antigen/verdict");
-      // Checked directly, and before `setAxis` is derived from it: the filter below reads
-      // `verdictCol.id`, and narrowing only `setAxis` to defined would leave `verdictCol` itself typed
-      // as possibly undefined at that use.
+      // Checked directly, and before `setAxis` is derived from it: the filter below reads `verdictCol.id`,
+      // and narrowing only `setAxis` would leave `verdictCol` typed as possibly undefined at that use.
       if (verdictCol === undefined) return undefined;
       const setAxis = verdictCol.spec.axesSpec[0];
       if (setAxis === undefined) return undefined;
@@ -1534,18 +1488,17 @@ export const platforma = BlockModelV3.create(dataModel)
         primaryColumns: pCols.map((c) => DataColumn.fromColumn(c)),
         columns: null,
         tableState: ctx.data.expansionTableState,
-        // The identity's own name, made visible. `identityLabelsImportSpec` annotates it hidden, which is
-        // the right convention for a `pl7.app/label` column: a table CONSUMES a label column to name its
-        // axis rather than rendering it as data. That convention fails here for one reason — the identity
-        // axis is invented by this block, so its label column can never sit in this block's own result
-        // pool, and the pool is the only place the table looks. Measured before this rule: 17 rows all
-        // printing the same clonotype with nothing telling them apart.
+        // The identity's own name, made visible. `identityLabelsImportSpec` annotates it hidden, the
+        // right convention for a `pl7.app/label` column: a table CONSUMES a label column to name its axis
+        // rather than rendering it as data. That convention fails here for one reason — the identity axis
+        // is invented by this block, so its label column can never sit in this block's own result pool,
+        // and the pool is the only place the table looks.
         //
-        // Overriding visibility here rather than in the workflow spec, because that column is an EXPORT
-        // with downstream readers, and making it default-visible would change their tables to fix ours.
-        // This is how clonotype-browser adjusts a column it did not annotate.
-        // Two rules, and the order matters — the first match wins. Both columns the table would show as
-        // a name are called `pl7.app/label`, so they are told apart by the axis each one labels.
+        // Overridden here rather than in the workflow spec, because that column is an EXPORT with
+        // downstream readers, and making it default-visible would change their tables to fix ours. This
+        // is how clonotype-browser adjusts a column it did not annotate. Two rules, and the order
+        // matters — the first match wins. Both columns the table would show as a name are called
+        // `pl7.app/label`, so they are told apart by the axis each one labels.
         displayOptions: {
           visibility: [
             // The identity's name, promoted out of hidden. This is the row's subject.
@@ -1558,34 +1511,25 @@ export const platforma = BlockModelV3.create(dataModel)
               visibility: "default",
             },
             // Any other label column here labels the CLONOTYPE axis, and the panel is about one
-            // clonotype: printing its name down all 17 rows is repetition, and the reader chose the
-            // clonotype by clicking it. Optional rather than hidden, so the Columns picker can bring it
-            // back for anyone who wants the name on screen.
+            // clonotype, which the reader chose by clicking it. Printing its name down every row is
+            // repetition. Optional rather than hidden, so the Columns picker can bring it back.
             { match: { name: "^pl7\\.app/label$" }, visibility: "optional" },
           ],
-          // Cells-that-answered sits LAST, behind the count it contains. Its annotation puts it at
-          // 98000, ahead of cells-that-read-bound at 97500, and that is the right default everywhere
-          // else: a denominator reads before the number it divides. In this panel the bound count is
-          // what the reader came for and the answered count is the context, so the two swap.
+          // Cells-that-answered sits LAST, behind the count it contains. Its annotation puts it at 98000,
+          // ahead of cells-that-read-bound at 97500, which is the right default everywhere else: a
+          // denominator reads before the number it divides. In this panel the bound count is what the
+          // reader came for and the answered count is the context, so the two swap. Overridden here
+          // rather than in the workflow spec because those columns are EXPORTS with downstream readers,
+          // and a priority is global.
           //
-          // Overridden here rather than in the workflow spec for the same reason the visibility rules
-          // are: those columns are EXPORTS with downstream readers, and a priority is global.
-          //
-          // This rule only reaches a clonotype the grid has not drawn before, and that is not a caveat
-          // about the rule -- it is where the punchcard's "ordering is INERT" note above comes from.
+          // This rule only reaches a clonotype the grid has not drawn before.
           // `expansionTableState.stateCache` keeps one grid state PER `sourceId`, and `sourceId` here is
           // the expanded clonotype, so every clonotype opened once has its own frozen
           // `columnOrder.orderedColIds`. A stored order is an explicit list of column ids and it beats
-          // anything the model asks for. Measured: five cached entries on the live project, one of them
-          // still listing `cellsNotBound`, a column this panel no longer has.
-          //
-          // So a reorder that has to reach already-opened clonotypes needs the cache invalidated -- the
-          // device the v3 -> v4 migration used when the frames under those grids changed. Not done here:
-          // the order is a preference, and resetting every reader\'s saved columns and filters to move one
-          // column right is the more expensive mistake.
-          //
-          // Measure with `aria-colindex`. `querySelectorAll(\'[role="columnheader"]\')` returns AG Grid\'s
-          // recycled header nodes in an order that has nothing to do with column position.
+          // anything the model asks for. A reorder that has to reach already-opened clonotypes therefore
+          // needs the cache invalidated, the device the v3 -> v4 migration used when the frames under
+          // those grids changed. Not done here: the order is a preference, and resetting every reader's
+          // saved columns and filters to move one column right is the more expensive mistake.
           ordering: [{ match: { name: "^pl7\\.app/antigen/cellsAnswered$" }, priority: 90000 }],
         },
         filters: {
@@ -1596,9 +1540,9 @@ export const platforma = BlockModelV3.create(dataModel)
               // The FULL axis id, domain included. Dropping the domain leaves an id that
               // `remapFilterColumnIds` cannot resolve against the table's columns, and the SDK's
               // unresolved-leaf path calls `console`, which does not exist in the model's QuickJS
-              // sandbox — so the symptom is `ReferenceError: 'console' is not defined` from deep inside
-              // the SDK rather than anything naming the filter. Worth knowing: that error means an
-              // unresolvable filter column, not a logging problem.
+              // sandbox. The symptom is then `ReferenceError: 'console' is not defined` from deep inside
+              // the SDK, naming nothing about the filter. That error means an unresolvable filter
+              // column, not a logging problem.
               column: {
                 type: "axis",
                 id:
@@ -1624,17 +1568,17 @@ export const platforma = BlockModelV3.create(dataModel)
   )
   // The expansion's BY-CELL face: one row per cell of the chosen clonotype, one column per identity,
   // carrying that cell's own reading rather than its set's verdict. This is where a reader sees WHY a
-  // verdict came out as it did -- an `unreliable` on the card is cells disagreeing, and nothing but this
+  // verdict came out as it did: an `unreliable` on the card is cells disagreeing, and nothing but this
   // shows the disagreement.
   //
-  // Filtered on `setId`, which is a COLUMN here rather than an axis. The frame is keyed (sampleId, cellId)
-  // because that is what a cell is, and the clonotype is a property of the row. So the filter leaf is a
-  // `{type: "column"}` one, and `PColumn.id` is the `ColumnUniversalId` it wants -- no hand-built id, which
-  // is the same discipline the axis filter above follows for the same reason.
+  // Filtered on `setId`, a COLUMN here rather than an axis. The frame is keyed (sampleId, cellId) because
+  // that is what a cell is, and the clonotype is a property of the row. So the filter leaf is a
+  // `{type: "column"}` one, and `PColumn.id` is the `ColumnUniversalId` it wants. Never a hand-built id,
+  // the same discipline the axis filter above follows.
   //
-  // Same push-down as the by-identity face: `createPlDataTableV3` puts the filter in the PTable def and the
-  // engine lowers it into the data query, so one clonotype's cells are what crosses the boundary. That
-  // matters more here than there -- the frame's grain is every cell of the run, not every clonotype.
+  // Same push-down as the by-identity face: `createPlDataTableV3` puts the filter in the PTable def and
+  // the engine lowers it into the data query, so one clonotype's cells are what crosses the boundary.
+  // That matters more here, where the frame's grain is every cell of the run.
   .output(
     "cellExpansionTable",
     (ctx) => {
@@ -1646,22 +1590,18 @@ export const platforma = BlockModelV3.create(dataModel)
       if (frame === undefined || frame.length === 0) return undefined;
       // The set column has to be found before anything else: without it there is no filter, and an
       // unfiltered table here is every cell in the run against every identity. Absent means the software
-      // gated the pivot away, which is a legitimate state and not an error -- so no table, and the page
-      // says why from the run record.
+      // gated the pivot away, a legitimate state and not an error. So no table, and the page says why
+      // from the run record.
       const setCol = frame.find((c) => c.spec.name === "pl7.app/antigen/cellSetId");
       if (setCol === undefined) return undefined;
       const punchCols = frame.filter((c) => c.spec.name === "pl7.app/antigen/cellPunch");
       if (punchCols.length === 0) return undefined;
       const boundCount = frame.filter((c) => c.spec.name === "pl7.app/antigen/boundIdentities");
-      // No ordering rule. The bound count sits immediately right of the axes because its own annotation
-      // priority (95000) already outranks every identity column (94000 and down), and that is where it
-      // belongs: it is the one number that summarises the row, and a matrix seventeen columns wide -- or
-      // a hundred -- puts its far edge off screen. A rule pushing it last was tried and removed for
-      // exactly that reason.
-      //
-      // Stated because it looks like an omission next to the by-identity face, which does carry a rule:
-      // there, cells-answered had to be moved because its annotation put it in the wrong place. Here the
-      // annotation is right, so the correct amount of code is none.
+      // No ordering rule, deliberately. The bound count sits immediately right of the axes because its
+      // own annotation priority (95000) outranks every identity column (94000 and down), and that is
+      // where it belongs: it is the one number that summarises the row, and a matrix a hundred columns
+      // wide puts its far edge off screen. The by-identity face carries a rule only because there the
+      // annotation put cells-answered in the wrong place. Here the annotation is right.
       return createPlDataTableV3(ctx, {
         primaryColumns: [setCol, ...boundCount, ...punchCols].map((c) => DataColumn.fromColumn(c)),
         columns: null,
@@ -1683,18 +1623,17 @@ export const platforma = BlockModelV3.create(dataModel)
   // The run's own quality report: every declared measurement with its status, the coverage triple behind
   // it, and — where nothing computed it — the reason it was deferred. This block is obliged to produce the
   // run-level measurements, and the obligation is that every measurement that CAN be computed is computed
-  // and SHOWN; a measurement computed on every run and read by nobody satisfies half of that. Read from
-  // `outputs` rather than from the exports, because a block's own exports are not in its own result pool.
+  // and SHOWN. Read from `outputs` and not from the exports, because a block's own exports are not in its
+  // own result pool.
   //
   // `allowPermanentAbsence` for the same reason punchcardTable needs it: the whole verdict stage is gated
-  // on a V(D)J dataset being picked, so on a run without one this field never appears at all, and a resolve
-  // that treats a permanent absence as a pending one leaves the output waiting forever instead of returning
-  // undefined for the page to explain.
+  // on a V(D)J dataset being picked, so on a run without one this field never appears, and a resolve that
+  // treats a permanent absence as a pending one waits forever instead of returning undefined for the page
+  // to explain.
   //
-  // A frame with no rows is deliberately NOT folded into undefined here. Absent means the verdict stage did
-  // not run; empty means it ran and had nothing to report, which for the mismatch check is the good
-  // outcome. Collapsing the two would make the page unable to tell them apart, so the distinction is kept
-  // and the page says which it is meeting.
+  // A frame with no rows is deliberately NOT folded into undefined. Absent means the verdict stage did
+  // not run. Empty means it ran and had nothing to report, which for the mismatch check is the good
+  // outcome. Collapsing the two would leave the page unable to tell them apart.
   .output(
     "runQualityTable",
     (ctx) => {
@@ -1709,8 +1648,8 @@ export const platforma = BlockModelV3.create(dataModel)
   // The panel-versus-reads check: every barcode the panel declared that no read carried, and every barcode
   // the reads carried that the panel never declared. Both directions are in the one frame, told apart by
   // the direction column, which carries a discrete filter so either half is reachable on its own. A
-  // mismatch report the user cannot see defeats its purpose — that is the whole reason the workflow emits
-  // it into `outputs` and not only into the exports.
+  // mismatch report the user cannot see defeats its purpose, which is why the workflow emits it into
+  // `outputs` and not only into the exports.
   .output(
     "runQualityMismatchTable",
     (ctx) => {
@@ -1731,16 +1670,16 @@ export const platforma = BlockModelV3.create(dataModel)
       ?.resolve({ field: "antigenRunMeta", allowPermanentAbsence: true })
       ?.getDataAsJsonOrUndefined<VerdictRunMeta>(),
   )
-  // The comparator sources this panel can serve, with a line for each it cannot. Both facts are knowable
-  // before a run, from the panel metadata staging already emits: the panel's size is the count of distinct
-  // barcodes, and a declared comparator needs a role column and values of it that the column actually
-  // carries. Offering a source the run would silently degrade would record a choice the user never gets.
   // The rung the run WILL be answered under, for the settings field to show. The same call `args()`
-  // projects, so the field cannot show one rule while the workflow receives another. Now that nothing
-  // derives, that is a near-identity — and it is kept precisely because the last divergence between a
-  // shown rung and a sent one came from two copies of one rule, so there is still only one. The UI reads
-  // it the way it reads any other output; nothing writes back, so there is no hairpin.
+  // projects, so the field cannot show one rule while the workflow receives another. Keep it that way:
+  // the last divergence between a shown rung and a sent one came from two copies of one rule. The UI
+  // reads it the way it reads any other output. Nothing writes back, so there is no hairpin.
   .output("effectiveReferenceSource", (ctx): ReferenceSource => resolveReferenceSource(ctx.data))
+  // The comparator sources this panel can serve, with a line for each it cannot. Both facts are knowable
+  // before a run, from the panel metadata staging already emits: the panel's size is the count of
+  // distinct barcodes, and a declared comparator needs a role column and values of it that the column
+  // actually carries. Offering a source the run would silently degrade would record a choice the user
+  // never gets.
   .retentiveOutput("referenceSources", (ctx): ReferenceSourceChoices => {
     const meta = readCsvMeta(ctx);
     const barcodeColumn = ctx.data.barcodeSeqColumn;
@@ -1752,12 +1691,10 @@ export const platforma = BlockModelV3.create(dataModel)
     const roleValues = new Set(roleColumn ? (meta?.valuesByColumn?.[roleColumn] ?? []) : []);
     const declaredTags = (ctx.data.referenceValues ?? []).filter((v) => roleValues.has(v));
 
-    // The two messages this output feeds used to both fire in one state, saying the same thing. Whenever a
-    // control feature is marked and no tag is the baseline, `controlNotBaseline` below fires AND the
-    // "Declared baseline tag" line here fires, because both test declaredTags being empty — so a reader saw
-    // a warning and an info block one above the other, each telling them to set the role column and its
-    // values. The warning wins that overlap: it says the same fix plus what is serving instead and that the
-    // marker does not set the baseline. This line stands down rather than repeating it.
+    // Where a control feature is marked and no tag is the baseline, `controlNotBaseline` below and the
+    // "Declared baseline tag" line here would both fire, since both test declaredTags being empty. The
+    // warning wins that overlap: it gives the same fix plus what is serving instead, and says the marker
+    // does not set the baseline. This line stands down rather than repeating it.
     const markerWithoutBaseline = !!ctx.data.controlFeature && declaredTags.length === 0;
 
     const options: ReferenceSourceChoices["options"] = [];
@@ -1792,12 +1729,10 @@ export const platforma = BlockModelV3.create(dataModel)
           `Lower "Minimum panel size to serve as baseline" under "Baseline thresholds". You can ` +
           `also declare a baseline tag.`,
       );
-    // Always offered, and the only option here with no condition attached. Whether it can serve turns
-    // on the sample's cell count and on whether each tag's counts separate -- neither of which this
-    // block has read yet, and the second of which is answered per tag rather than per run. So the
-    // conditions live in the description and the RUN reports what happened: which tags fitted, which
-    // did not, and why. Offering it only where it will serve would mean deciding here, from data that
-    // cannot decide it.
+    // Always offered, and the only option with no condition attached. Whether it can serve turns on the
+    // sample's cell count and on whether each tag's counts separate. This block has read neither, and
+    // the second is answered per tag rather than per run. So the conditions live in the description, and
+    // the RUN reports which tags fitted, which did not, and why.
     options.push({
       value: "distribution",
       label: "Each tag's own distribution",
@@ -1809,14 +1744,12 @@ export const platforma = BlockModelV3.create(dataModel)
         `Pick this where your panel declares no baseline tag and is too small to stand in for one.`,
     });
 
-    // `none` IS offered, and it used to be deliberately withheld. The reasoning then was that requesting
-    // it guarantees a run with no answers at all, so nobody would choose it. That was right about the
-    // consequence and wrong about the status: the ladder's bottom rung is a legitimate position, held in
-    // print by scientists who argue that a tag declared to be bound by nothing is not truly negative and
-    // that a reference chosen that way lends false confidence. On that view the absence is a design
-    // choice rather than an omission, and a block that will not let a scientist state it is choosing for
-    // them. It is also what an unselected run is answered under, so withholding it made that state
-    // unnameable in the one control that is about it.
+    // `none` IS offered, though requesting it guarantees a run with no answers. The ladder's bottom rung
+    // is a legitimate position, held in print by scientists who argue that a tag declared to be bound by
+    // nothing is not truly negative, and that a reference chosen that way lends false confidence. On
+    // that view the absence is a design choice, and a block that will not let a scientist state it is
+    // choosing for them. It is also what an unselected run is answered under, so withholding it would
+    // leave that state unnameable in the one control that is about it.
     options.push({
       value: "none",
       label: "No baseline",
@@ -1827,13 +1760,12 @@ export const platforma = BlockModelV3.create(dataModel)
         "and how often clonotypes contradict themselves.",
     });
 
-    // What an unselected run is answered under. Not a "fallback" any more, and the word is gone with the
-    // thing: nothing falls anywhere. This states the consequence of leaving the field alone.
+    // What an unselected run is answered under. Nothing falls anywhere, so this states the consequence
+    // of leaving the field alone rather than naming a fallback.
     const fallback = "no baseline — every verdict that needs one reads unreliable";
 
     // A warning and never a block. A panel that declares no baseline is a legitimate configuration, so
-    // this flags a likely mistake rather than an invalid state — and it no longer claims another rung
-    // steps in, because none does.
+    // this flags a likely mistake rather than an invalid state. No other rung steps in.
     const controlNotBaseline = markerWithoutBaseline
       ? "You marked a control feature, but no tag is the baseline. The control feature marker only " +
         "labels that feature in the output. It does not set the level a count must exceed. Unless you " +
@@ -1851,9 +1783,9 @@ export const platforma = BlockModelV3.create(dataModel)
   // reads `ctx.data`. Guard `ctx.data` — it can be undefined before block storage is parsed.
   .subtitle((ctx) => ctx.data?.defaultBlockLabel || "Feature-barcode - per-cell antigen counts")
   // Main (the per-sample progress grid) is always shown. The result tabs — Per-sample QC and the
-  // per-cell results table — appear only once the block has produced outputs, so a fresh/unrun block
-  // shows only Main. ctx.outputs settles when the workflow starts emitting (the same signal as the
-  // `started` output). The Graph and Raw tag-stat views were removed.
+  // per-cell results table — appear only once the block has produced outputs, so an unrun block shows
+  // only Main. ctx.outputs settles when the workflow starts emitting, the same signal as the `started`
+  // output.
   .sections((ctx) => {
     const hasRun = ctx.outputs !== undefined;
     return [
@@ -1863,13 +1795,13 @@ export const platforma = BlockModelV3.create(dataModel)
             { type: "link" as const, href: "/qc" as const, label: "Per-sample QC" },
             { type: "link" as const, href: "/results" as const, label: "Per-cell results" },
             // Shown for every run, including one with no V(D)J dataset. That run produces no antigen
-            // columns at all, and the page saying so is the only place a user learns why — hiding the
-            // tab would leave the absence unexplained.
+            // columns, and the page saying so is the only place a user learns why. Hiding the tab would
+            // leave the absence unexplained.
             { type: "link" as const, href: "/punchcard" as const, label: "Explore readout" },
-            // Shown for every run too, and for the same reason as the explore readout: a run with no V(D)J
-            // dataset computes no quality report, and this page saying so is the only place a user
+            // Shown for every run too, and for the same reason as the explore readout: a run with no
+            // V(D)J dataset computes no quality report, and this page saying so is the only place a user
             // learns why. Labelled "Run quality" and not "QC" so it cannot be read as another view of
-            // the per-sample mitool stats above — that page is per sample, this one is per run.
+            // the per-sample mitool stats above. That page is per sample, this one is per run.
             { type: "link" as const, href: "/antigen-qc" as const, label: "Run quality" },
           ]
         : []),

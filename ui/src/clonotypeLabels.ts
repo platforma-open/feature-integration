@@ -43,16 +43,16 @@ export function useClonotypeLabels(
       strictlyCompatible: false,
       names: [columnName],
     });
-    // One axis, and it has to be OUR axis. This frame carries other one-axis columns keyed on other
-    // things, and a map built from the wrong axis would attach names to keys that are not clonotypes.
+    // One axis, and it has to be OUR axis. This frame carries other one-axis columns keyed on other things,
+    // and a map built from the wrong axis would attach names to keys that are not clonotypes.
     const match = cols.find(
       (c) => c.spec.axesSpec.length === 1 && c.spec.axesSpec[0].name === axis.name,
     );
     if (match === undefined) return {};
     const { axesData, data } = await getSingleColumnData(handle, match.columnId);
     const axisKeys = Object.values(axesData)[0];
-    // Paired by position, so a length mismatch means these are not the same rows and every value would
-    // land on the wrong clonotype. Nothing beats a confidently wrong name.
+    // Paired by position, so a length mismatch means these are not the same rows and every value would land
+    // on the wrong clonotype. Nothing is worse than a confidently wrong name.
     if (axisKeys === undefined || axisKeys.length !== data.length) return {};
     const out: Record<string, string> = {};
     for (let i = 0; i < axisKeys.length; i++) {
@@ -79,7 +79,7 @@ export function useClonotypeLabels(
         labels.value = resolvedLabels;
         cellCounts.value = resolvedCounts;
       } catch (err) {
-        // A failed lookup costs a title, not the panel. Logged rather than swallowed: a name that never
+        // A failed lookup costs a title, never the panel. Logged rather than swallowed: a name that never
         // resolves means the driver call is wrong, and someone should be able to see that.
         console.warn("clonotype label lookup failed", err);
         labels.value = {};

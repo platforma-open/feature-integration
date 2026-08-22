@@ -41,21 +41,21 @@ export const PUNCH_PAINT: Record<PunchGlyph, CSSProperties> = {
   bound: { background: "#1a7f37" },
   "not-bound": { background: "#d94438" },
   unreliable: { background: "#9aa3ae" },
-  // Not a verdict — a value the renderer could not read. Marked rather than left blank, because blank
+  // Not a verdict, but a value the renderer could not read. Marked rather than left blank, because blank
   // already means "never asked" on this card.
   unknown: { border: "1.5px dotted #d94438", opacity: "0.7" },
 };
 
 // ONE decoder for the punch value, shared by the grid cell and the clonotype expansion. The value is a
-// single `|`-joined string because a grid pairs a cell with another column's cell only by position and
-// no import guarantees that -- so everything a position needs travels together. Two readers of one
-// format would be two chances to disagree about it, which is why this lives here and not in a component.
+// single `|`-joined string because a grid pairs a cell with another column's cell only by position, and no
+// import guarantees that, so everything a position needs travels together. Two readers of one format would
+// be two chances to disagree about it, which is why this lives here rather than in a component.
 //
 //   state | cellsAnswered | cellsCouldAnswer | agreement | unreliableReason | cellsBound
 //
-// `cellsBound` is the sixth field and was appended, so a value written before it existed has five and
-// still decodes. Anything that does not decode is reported as such rather than guessed at: an
-// unreadable value must never pass for an answer.
+// `cellsBound` is the sixth field and was appended, so a value written before it existed has five and still
+// decodes. Anything that does not decode is reported as such rather than guessed at: an unreadable value
+// must never pass for an answer.
 export const VERDICT_STATES = ["bound", "not bound", "unreliable", "never asked"] as const;
 export type VerdictState = (typeof VERDICT_STATES)[number];
 
@@ -81,8 +81,8 @@ export function parsePunch(raw: unknown): Punch {
   const c = Number(couldAnswer);
   if (known === undefined || !Number.isFinite(a) || !Number.isFinite(c))
     return { kind: "unparsed" };
-  // Empty is carried as absent rather than as zero. A settled verdict has no reason, a set nobody could
-  // ask has no agreement, and a zero agreement would read as total disagreement.
+  // Empty is carried as absent rather than as zero. A settled verdict has no reason, a set nobody could ask
+  // has no agreement, and a zero agreement would read as total disagreement.
   const ag = agreement === "" ? undefined : Number(agreement);
   const b = bound === undefined || bound === "" ? undefined : Number(bound);
   return {

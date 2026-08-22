@@ -1,14 +1,15 @@
 // Export column + axis specs for the Feature Integration block.
 //
-// Two layers live here. The per-cell/per-feature contract (pl7.app/feature/*) is the block's original
-// surface and is unchanged. The verdict stage, in the second half of the file, describes what
-// emit_verdicts.py writes and keys on its own axes; the two never share an axis.
+// Two layers live here. The per-cell and per-feature contract (pl7.app/feature/*) is the block's
+// original surface. The verdict stage, in the second half, describes what emit_verdicts.py writes. The
+// two never share an axis.
 //
-// Centralised here (mirrors blocks/peptide-extraction column-specs.lib.tengo and
-// blocks/mixcr-clonotyping calculate-export-specs.lib.tengo) so main.tpl.tengo stays readable and the
-// per-cell contract columns carry the full standard annotation set (abundance flags, order priority,
-// table visibility). Annotations do NOT affect p-column identity (name + domain + axes do), so the
-// downstream discovery contract is unchanged by anything in this file.
+// Centralised so main.tpl.tengo stays readable and every column carries the full annotation set:
+// abundance flags, order priority, table visibility. Mirrors blocks/peptide-extraction
+// column-specs.lib.tengo and blocks/mixcr-clonotyping calculate-export-specs.lib.tengo.
+//
+// COLUMN IDENTITY is name + domain + axes. Annotations are excluded from it. Every note below that says
+// "in the domain, not the annotations" rests on this one fact.
 
 ll := import("@platforma-sdk/workflow-tengo:ll")
 maps := import("@platforma-sdk/workflow-tengo:maps")
@@ -17,17 +18,14 @@ strings := import("@platforma-sdk/workflow-tengo:strings")
 json := import("json")
 text := import("text")
 
-// No column this block emits may be orderable. A binding verdict is a statement about what the
-// experiment could establish, and a count of verdicts is derived from that statement — neither is a
-// magnitude, so neither may be ranked. `pl7.app/isScore` and the `pl7.app/score/*` family are what
-// make a column rankable downstream (lead selection discovers its rank options by exactly those
-// annotations), so they are refused here rather than reviewed for later. Ordinary filter annotations
-// — `pl7.app/isDiscreteFilter`, `pl7.app/discreteValues` — are untouched by this rule.
+// No column this block emits may be orderable. A verdict states what the experiment could establish, and
+// a count of verdicts is derived from that statement. Neither is a magnitude, so neither may be ranked.
+// `pl7.app/isScore` and the `pl7.app/score/*` family are what make a column rankable downstream, so this
+// refuses them outright. Ordinary filter annotations are untouched.
 //
-// The guard runs over every annotation map this module builds, so a reintroduction fails the workflow
-// render instead of shipping. It catches a computed key as well as a literal one; what it cannot see
-// is a column built outside this module, which is why the same assertion is also made against the
-// block's emitted columns in the block test.
+// The guard runs over every annotation map this module builds, catching a computed key as well as a
+// literal one, so a reintroduction fails the workflow render instead of shipping. It cannot see a column
+// built outside this module, which the block test asserts instead.
 SCORE_ANNOTATION := "pl7.app/isScore"
 SCORE_FAMILY_PREFIX := "pl7.app/score/"
 LEGACY_FEATURE_AXIS := "pl7.app/feature/featureId"
@@ -42,17 +40,13 @@ guardNoScore := func(annotations) {
 	return annotations
 }
 
-/* The legacy per-cell contract keys features by name on pl7.app/feature/featureId, and those columns
-   stay exactly as they are. What must never happen is a NEW column keying on that same axis while
-   carrying barcode sequences as its values: the axis identity would be unchanged and its value space
-   inverted, so no downstream query would fail — joins would simply return wrong rows, which is the
-   worst way for this to break. Every antigen axis is therefore minted under its own name, and this
-   asserts it for the axis sets the verdict families are built from.
-
-   A stronger check — that no EMITTED column does this — needs a running workflow, and lives in the
-   block test. That test is deliberately the last task, so this is the only guard until then. */
-// Split from the assertion below so it can be tested both ways: tengo has no try/catch, so a predicate
-// is the only part of a guard a test can actually exercise.
+/* The legacy per-cell contract keys features by name on pl7.app/feature/featureId, and those columns stay
+   as they are. A NEW column must never key on that axis while carrying barcode sequences: the axis
+   identity would be unchanged and its value space inverted, so no query would fail and joins would return
+   wrong rows. Every antigen axis is therefore minted under its own name. The block test asserts the same
+   over EMITTED columns, which needs a running workflow. */
+// Split from the assertion below so it can be tested both ways. Tengo has no try/catch, so a predicate
+// is the only part of a guard a test can exercise.
 usesLegacyFeatureAxis := func(axesSpec) {
 	for axis in axesSpec {
 		if axis.spec.name == LEGACY_FEATURE_AXIS {
@@ -80,7 +74,7 @@ a := func(order, defaultVisibility, spec) {
 }
 
 // --- Axes (per-cell contract: [pl7.app/sampleId, pl7.app/sc/cellId, pl7.app/feature/featureId]) ---
-// The sample axis is prepended by processColumn from the iteration key; these are the per-sample axes.
+// The sample axis is prepended by processColumn from the iteration key. These are the per-sample axes.
 
 // cellAxis: the single-cell barcode. `parents` records the sampleId axis it nests under (the sample
 // axis name is inherited verbatim from the input FASTQ column).
@@ -96,7 +90,8 @@ cellAxis := func(sampleAxisName) {
 	}
 }
 
-// featureAxis: the feature/antigen name (block-scoped domain so distinct blocks' features don't collide).
+// featureAxis: the feature or antigen name. The domain is block-scoped so two blocks' features cannot
+// collide.
 featureAxis := func(blockId) {
 	return {
 		name: "pl7.app/feature/featureId",
@@ -108,15 +103,11 @@ featureAxis := func(blockId) {
 
 // valueOutputs: the per-cell contract value columns, as processColumn `Xsv` output declarations.
 //
-// The consensus/dominant-feature column and the Cell Ranger specificity score are both gone: the
-// dominance rule they reported was removed from per_cell_metrics.py, which no longer writes either CSV,
-// and a specificity score is a binding magnitude — the thing a four-state verdict replaces. The negative
-// control that once gated the specificity output therefore gates nothing here, and this function no
-// longer takes it.
+// No consensus or dominant-feature column, and no specificity score: a specificity score is a binding
+// magnitude, the thing a four-state verdict replaces. Nothing here takes the negative control.
 //
-// umiCount is the primary abundance (abundance/isPrimary). It is deliberately NOT isAnchor: this
-// column is meant to be DISCOVERED under the downstream VDJ single-cell anchor (via the cellLinker),
-// not to be an anchor itself, so marking it isAnchor would be semantically wrong here.
+// umiCount is the primary abundance (abundance/isPrimary), and deliberately NOT isAnchor. It is meant to
+// be DISCOVERED under the downstream VDJ single-cell anchor, through the cellLinker.
 valueOutputs := func(blockId, sampleAxisName) {
 	cell := cellAxis(sampleAxisName)
 	feat := featureAxis(blockId)
@@ -180,15 +171,13 @@ valueOutputs := func(blockId, sampleAxisName) {
 	return [abundance, fractions]
 }
 
-// perCellSummaryOutput: the TABLE-ONLY per-cell collapse (one row per [sampleId, cellId]) produced by
-// per_cell_metrics.py's result_per_cell_summary.csv. Its columns are the cell's max feature UMI count
-// and max feature fraction plus a "feature (fraction%, umi), ..." summary string sorted by descending
-// fraction. This drives the Main results table INSTEAD of the per-(cell x feature) matrix; the per-cell
-// export contract (abundance/fractions) is unchanged. The "Max ..." labels distinguish these aggregates
-// from the exported per-feature columns. The max-specificity aggregate went with the per-feature
-// specificity column: per_cell_metrics.py stopped writing it, and it read a binding magnitude.
-// With it went the negative control this function used to take, which gated nothing else.
-// Keyed [cellId]; the sample axis is prepended by processColumn.
+// perCellSummaryOutput: the TABLE-ONLY per-cell collapse, one row per [sampleId, cellId], from
+// per_cell_metrics.py's result_per_cell_summary.csv. Columns: the cell's max feature UMI count, its max
+// feature fraction, and a "feature (fraction%, umi), ..." string sorted by descending fraction. Drives the
+// Main results table INSTEAD of the per-(cell x feature) matrix, leaving the per-cell export contract
+// unchanged. The "Max ..." labels separate these aggregates from the exported per-feature columns. No
+// max-specificity aggregate: it read a binding magnitude. Keyed [cellId], sample axis prepended by
+// processColumn.
 perCellSummaryOutput := func(blockId, sampleAxisName) {
 	cell := cellAxis(sampleAxisName)
 
@@ -221,8 +210,8 @@ perCellSummaryOutput := func(blockId, sampleAxisName) {
 		}
 	]
 
-	// The "all features" summary string (mirrors antibody-sequence-liabilities' pl7.app/isSummary
-	// column). Listed last (lowest orderPriority) so the headline aggregates read first.
+	// The "all features" summary string, mirroring antibody-sequence-liabilities' pl7.app/isSummary
+	// column. Listed last, at the lowest orderPriority, so the headline aggregates read first.
 	cols = append(cols, {
 		column: "featureSummary", id: "featureSummary",
 		spec: {
@@ -251,14 +240,12 @@ perCellSummaryOutput := func(blockId, sampleAxisName) {
 }
 
 // qcFileMapOutput: collect the per-sample QC CSV (fb-pipeline `qc` output) into a resource map keyed
-// [sampleId]. A per-sample QC row is a SCALAR (0 within-sample axes); an xsv import cannot emit that
-// (it requires >=1 within-file axis: xsv-import-file.lib.tengo asserts partitionKeyLength < len(axes)),
-// which is why the old empty-axes Xsv output crashed the SHARED processColumn render and took the whole
-// perCellTable down with it. Instead the per-sample one-row CSVs are concatenated (real sampleId
-// injected per row) and imported ONCE, keyed [sampleId], by qc-summary.tpl.tengo. `type: "Resource"`
-// yields a [sampleId] -> file map (same mechanism as blocks/mixcr-clonotyping's `clns`/`qc` outputs);
-// the default path ["qc"] matches the fb-pipeline body's `qc:` return (the old path ["qcSummary"] was
-// itself wrong — no such body output exists). Not part of the per-cell export contract; outputs-only.
+// [sampleId]. A per-sample QC row is a SCALAR, and an xsv import cannot emit one: xsv-import-file
+// .lib.tengo asserts partitionKeyLength < len(axes), so it needs a within-file axis. An empty-axes Xsv
+// output here crashes the SHARED processColumn render and takes perCellTable down with it. So
+// qc-summary.tpl.tengo concatenates the one-row CSVs, injects the real sampleId per row, and imports them
+// ONCE. `type: "Resource"` yields a [sampleId] -> file map, as blocks/mixcr-clonotyping's `clns`/`qc` do.
+// The default path ["qc"] matches the fb-pipeline body's `qc:` return. Outputs-only.
 qcFileMapOutput := func(blockId) {
 	return {
 		type: "Resource",
@@ -273,18 +260,16 @@ qcFileMapOutput := func(blockId) {
 }
 
 // featurePropertyImportColumns: the xsv.importFile `columns` for the per-feature property CSV
-// (emit_feature_properties.py). One column per EXTRA tag-CSV header (every column beyond the mapped
-// barcode-sequence + feature-name roles — A-0026), imported generically with NO hardcoded schema. Each
-// is a String p-column keyed on the shared feature axis (the caller supplies `axes` = [featureAxis]), so
-// the property rides pl7.app/feature/featureId into VDJ Multiomic Integration's per-feature outputs and
-// lead selection with no re-import.
+// (emit_feature_properties.py). One String column per EXTRA tag-CSV header — every column beyond the
+// mapped barcode-sequence and feature-name roles (A-0026) — with NO hardcoded schema, keyed on the shared
+// feature axis the caller supplies as `axes` = [featureAxis]. The property therefore rides
+// pl7.app/feature/featureId into VDJ Multiomic Integration and lead selection with no re-import.
 //
-// Identity: a single fixed name (pl7.app/feature/property) with the raw header carried in the domain
-// (pl7.app/feature/propertyName) so distinct properties never collide and two different properties are
-// distinct p-columns (name + domain + axes define identity; annotations do not). Each column is marked
-// isDiscreteFilter and carries its distinct values (discreteValues) so downstream can group / filter
-// features by it (e.g. pool all human vs all cyno antigens — A-0015). Values are imported verbatim as
-// strings: Feature Integration imports "as given" and neither validates nor interprets them (A-0026).
+// One fixed name (pl7.app/feature/property) with the raw header in the domain
+// (pl7.app/feature/propertyName), so two properties are distinct p-columns and never collide. Each is
+// marked isDiscreteFilter and carries its distinct values, so downstream can pool all human against all
+// cyno antigens (A-0015). Values are imported verbatim: this block imports "as given" and neither
+// validates nor interprets them (A-0026).
 featurePropertyImportColumns := func(propertyColumns, valuesByColumn) {
 	cols := []
 	for i, name in propertyColumns {
@@ -296,8 +281,8 @@ featurePropertyImportColumns := func(propertyColumns, valuesByColumn) {
 				name: "pl7.app/feature/property",
 				valueType: "String",
 				domain: { "pl7.app/feature/propertyName": name },
-				// order by header position (earlier headers rank higher); optional visibility so imported
-				// properties don't crowd downstream tables by default.
+				// Order by header position, so earlier headers rank higher. Optional visibility, so imported
+				// properties do not crowd downstream tables by default.
 				annotations: a(50000 - i, false, {
 					"pl7.app/label": name,
 					"pl7.app/isDiscreteFilter": "true",
@@ -309,11 +294,11 @@ featurePropertyImportColumns := func(propertyColumns, valuesByColumn) {
 	return cols
 }
 
-// qcSummaryColumnsSpec: the xsv.importFile spec for the COMBINED per-sample QC table (one row per
-// sample), used by qc-summary.tpl.tengo. Keyed [sampleId] with the axis spec inherited verbatim from
-// the block's sampleId axis, so the QC table's sampleId axis unifies with the per-cell contract columns.
-// Each metric keeps its own valueType/label/orderPriority/format. Not part of the per-cell export
-// contract; outputs-only.
+// qcSummaryColumnsSpec: the xsv.importFile spec for the COMBINED per-sample QC table, one row per
+// sample, used by qc-summary.tpl.tengo. Keyed [sampleId] with the axis spec inherited verbatim from the
+// block's sampleId axis, so the QC table's sampleId axis unifies with the per-cell contract columns. Each
+// metric keeps its own valueType, label, orderPriority and format. Not part of the per-cell export
+// contract, outputs-only.
 qcSummaryColumnsSpec := func(sampleAxisSpec) {
 	numCol := func(id, colName, label, order, fmt, ...desc) {
 		spec := {
@@ -346,13 +331,12 @@ qcSummaryColumnsSpec := func(sampleAxisSpec) {
 	}
 }
 
-// negativeControlColumn: the xsv.importFile `columns` entry for the dedicated negative-control marker CSV
-// (emit_feature_properties.py `<prefix>_negative_control.csv`, a feature/value CSV with value "true" for
-// the control). One String p-column (pl7.app/feature/negativeControl) keyed on the shared feature axis
-// (the caller supplies `axes` = [featureAxis]). Hidden and NOT a discrete filter: it is not a user-facing
-// property — it exists only so the control rides pl7.app/feature/featureId into VDJ Multiomic Integration,
-// which removes the control from its antigen metrics (control-aware restriction index / breadth / fraction
-// columns / dominant call). Distinct from the generic pl7.app/feature/property import (A-0026).
+// negativeControlColumn: the xsv.importFile `columns` entry for the negative-control marker CSV
+// (emit_feature_properties.py `<prefix>_negative_control.csv`, holding "true" for the control). One String
+// p-column (pl7.app/feature/negativeControl) on the shared feature axis. Hidden and NOT a discrete filter:
+// it is not a user-facing property. It exists so the control rides pl7.app/feature/featureId into VDJ
+// Multiomic Integration, which removes the control from its restriction index, breadth, fraction columns
+// and dominant call. Distinct from the generic pl7.app/feature/property import (A-0026).
 negativeControlColumn := func() {
 	return {
 		column: "value",
@@ -371,25 +355,24 @@ negativeControlColumn := func() {
 // =====================================================================================
 // The verdict stage
 //
-// Everything below describes what emit_verdicts.py writes: twelve CSVs plus a run-meta JSON.
-// One function per CSV, each returning a complete xsv.importFile spec, so the file that names a
-// column is also the file that says which CSV column it comes from.
+// Everything below describes what emit_verdicts.py writes: twelve CSVs plus a run-meta JSON. One
+// function per CSV, each returning a complete xsv.importFile spec, so the file that names a column is
+// also the file that says which CSV column it comes from.
 // =====================================================================================
 
 // --- Axes -----------------------------------------------------------------------------
 //
-// Four axes are minted rather than reused. The tempting shortcut — putting tag keys on the block's
-// existing pl7.app/feature/featureId axis — would ship an axis whose identity is unchanged while its
-// value space inverts: feature names before, barcode sequences here. No downstream query would fail
-// and no join would error; joins would simply return rows for the wrong thing. The legacy
-// pl7.app/feature/* columns above are therefore left exactly as they are — not re-keyed, not
-// re-pointed — and the verdict stage keys on its own vocabulary.
+// Four axes are minted rather than reused. Putting tag keys on the existing pl7.app/feature/featureId
+// axis would leave the axis identity unchanged while inverting its value space, from feature names to
+// barcode sequences. No query would fail and no join would error. Joins would return rows for the wrong
+// thing. The legacy pl7.app/feature/* columns are left as they are, and the verdict stage keys on its own
+// vocabulary.
 
 // tagAxis: one declared barcode sequence.
 //
-// `tagType` sits in the domain rather than in the name because a second kind of tag (surface markers)
-// is then a branch inside one vocabulary instead of a second vocabulary. blockId keeps two blocks'
-// tags from colliding, exactly as it does for featureAxis.
+// `tagType` sits in the domain rather than in the name, so a second kind of tag such as surface markers
+// is a branch inside one vocabulary instead of a second vocabulary. blockId keeps two blocks' tags from
+// colliding, exactly as it does for featureAxis.
 tagAxis := func(blockId) {
 	return {
 		name: "pl7.app/antigen/tagId",
@@ -404,10 +387,10 @@ tagAxis := func(blockId) {
 // identityAxis: the thing a verdict is about — one tag, or a group of tags read as one antigen.
 //
 // `groupingId` is in the DOMAIN, and ships even though v1 only ever sets "per-tag". Domain is part of
-// axis identity and annotations are not, so without it the axis would keep one identity while its
-// values changed meaning under a regrouping: a saved downstream filter would silently match nothing,
-// or match something else. With it, one run can carry several groupings side by side as distinct
-// axes. `segmentedBy` tells a reader which domain key separates them.
+// axis identity and annotations are not, so without it the axis would keep one identity while its values
+// changed meaning under a regrouping, and a saved downstream filter would match nothing or match
+// something else. With it, one run can carry several groupings side by side as distinct axes.
+// `segmentedBy` tells a reader which domain key separates them.
 identityAxis := func(blockId, groupingId) {
 	return {
 		name: "pl7.app/antigen/identityId",
@@ -435,12 +418,12 @@ panelAxis := func(blockId) {
 	}
 }
 
-// captureAxis: the physical capture a sample came off. Minted now, before any capture assignment
-// reaches the block, because adding an axis to a released QC column changes that column's identity
-// while adding a value to an existing axis does not. Every capture presently rolls up as "not
-// evaluated", which is the honest reading — a non-evaluation is never rendered as an absence.
-// No emitted column is keyed on it yet: the capture rollup travels as a row in the QC frame, and the
-// axis is exported so the sample->capture map can be added without re-identifying anything.
+// captureAxis: the physical capture a sample came off. Minted before any capture assignment reaches the
+// block, because adding an axis to a released QC column changes that column's identity, where adding a
+// value to an existing axis does not. Every capture presently rolls up as "not evaluated", the honest
+// reading: a non-evaluation is never rendered as an absence. No emitted column is keyed on it yet. The
+// capture rollup travels as a row in the QC frame, and the axis is exported so the sample->capture map
+// can be added without re-identifying anything.
 captureAxis := func(blockId) {
 	return {
 		name: "pl7.app/antigen/captureId",
@@ -450,10 +433,10 @@ captureAxis := func(blockId) {
 }
 
 // The QC key is three axes, not two. emit_verdicts.py writes result_qc.csv keyed
-// (level, entity, measurement), and `entity` is load-bearing rather than incidental: under the
-// default per-tag grouping a tag id and an identity id are the SAME string, so without a part of the
-// key naming which kind of thing the row is about, a tag row and an identity row for the same barcode
-// collide. A measurement is an axis VALUE, so the fifteenth measurement costs a row, not a column.
+// (level, entity, measurement), and `entity` is load-bearing. Under the default per-tag grouping a tag id
+// and an identity id are the SAME string, so without a part of the key naming which kind of thing the row
+// is about, a tag row and an identity row for the same barcode collide. A measurement is an axis VALUE,
+// so the fifteenth measurement costs a row, not a column.
 qcLevelAxis := func(blockId) {
 	return {
 		name: "pl7.app/antigen/qcLevel",
@@ -483,9 +466,9 @@ qcMeasurementAxis := func(blockId) {
 
 // --- Value vocabularies ---------------------------------------------------------------
 //
-// Each mirrors a closed enum in the software, so a filter offers every value the data can take.
-// There is deliberately no default cutoff: the whole score family is refused, and a default cutoff
-// is part of it. All four states stay reachable through the ordinary discrete filter.
+// Each mirrors a closed enum in the software, so a filter offers every value the data can take. There is
+// deliberately no default cutoff: the whole score family is refused, and a default cutoff is part of it.
+// All four states stay reachable through the ordinary discrete filter.
 VERDICT_STATES := string(json.encode(["bound", "not bound", "never asked", "unreliable"]))
 BOOL_VALUES := string(json.encode(["true", "false"]))
 UNRELIABLE_REASONS := string(json.encode([
@@ -500,19 +483,14 @@ MISMATCH_DIRECTIONS := string(json.encode(["declared-never-seen", "undeclared-in
 
 // servedDomain: which comparator and which cell list actually served this run.
 //
-// In the DOMAIN, not the annotations. Annotations are excluded from column identity, so two runs
-// served by different comparators would otherwise emit columns of identical identity and be silently
-// unioned in a pool holding both — and a verdict compared against a declared reference tag is not the
-// same reading as one compared against the panel's own signal. `served` is what emit_verdicts.py
-// RESOLVED, not what was requested: it degrades to `none` where it cannot serve,
-// which is why it reaches this module from the run-meta JSON as a template input rather than from the
-// block's arguments.
-// The domain value is the MACHINE token (`declared` / `panel` / `distribution` / `none`), which is what the run-meta JSON
-// now carries. It was previously the same enum's display prose, so this changes column identity: a
-// verdict column emitted before this change and one emitted after do not union in a pool holding both.
-// That is the right trade rather than an accident — a domain value is a stable key that outlives any
-// wording, and a column whose identity moves whenever a sentence is reworded is worse than one that moves
-// once, on an unreleased branch, to stop being a sentence at all.
+// In the DOMAIN, not the annotations. Two runs served by different comparators would otherwise emit
+// columns of identical identity and be silently unioned in a pool holding both, and a verdict read against
+// a declared reference tag is not the same reading as one read against the panel's own signal. `served` is
+// what emit_verdicts.py RESOLVED, not what was requested: it degrades to `none` where it cannot serve,
+// which is why it arrives from the run-meta JSON rather than from the block's arguments.
+//
+// The domain value is the MACHINE token (`declared` / `panel` / `distribution` / `none`). Never put display
+// prose here: a domain value must outlive any wording.
 servedDomain := func(served) {
 	return {
 		"pl7.app/antigen/referenceChoice": served.referenceChoice,
@@ -520,9 +498,9 @@ servedDomain := func(served) {
 	}
 }
 
-// servedNotes: the floor and the cutoff, which stay ANNOTATIONS.
-// They are informational — they move where the line falls, not what a reading means — so a change to
-// them must not fork column identity the way a change of comparator does.
+// servedNotes: the floor and the cutoff, which stay ANNOTATIONS. They are informational, moving where
+// the line falls rather than what a reading means, so a change to them must not fork column identity the
+// way a change of comparator does.
 servedNotes := func(served) {
 	return {
 		"pl7.app/antigen/countFloor": string(served.floor),
@@ -532,12 +510,12 @@ servedNotes := func(served) {
 
 // --- Verdicts: result_verdicts.csv, keyed (setId, identity) -----------------------------
 //
-// The set axis is taken VERBATIM from the cell linker's third axis (linkerCol.spec.axesSpec[2]) so
-// the verdicts land on the very clonotype key the clonotyping run produced; rebuilding it here would
-// produce a lookalike axis that joins to nothing.
+// The set axis is taken VERBATIM from the cell linker's third axis (linkerCol.spec.axesSpec[2]), so the
+// verdicts land on the very clonotype key the clonotyping run produced. Rebuilding it here would produce
+// a lookalike axis that joins to nothing.
 verdictsImportSpec := func(setAxisSpec, identityAxisSpec, served) {
-	// The importer builds each column's axesSpec from the `axes` list below, so only the domain — which
-	// every column in this family shares — is added here.
+	// The importer builds each column's axesSpec from the `axes` list below, so only the domain is added
+	// here. Every column in this family shares it.
 	verdictCol := func(colName, id, spec) {
 		spec.domain = servedDomain(served)
 		return { column: colName, id: id, spec: spec }
@@ -581,10 +559,10 @@ verdictsImportSpec := func(setAxisSpec, identityAxisSpec, served) {
 					"pl7.app/min": "0"
 				})
 			}),
-			// How many of the set's cells read BOUND here, which is neither of the two counts above and is
-			// not recoverable from `agreement`: that is the majority's share, and the majority is not
-			// always bound. A position where three of ten read bound and the verdict is "not bound" still
-			// carries three, and `the-explore-readout` puts exactly that number in the expansion.
+			// How many of the set's cells read BOUND here. Neither of the two counts above, and not
+			// recoverable from `agreement`, which is the majority's share, and the majority is not always
+			// bound. A position where three of ten read bound and the verdict is "not bound" still carries
+			// three, and `the-explore-readout` puts exactly that number in the expansion.
 			verdictCol("cellsBound", "cellsBound", {
 				name: "pl7.app/antigen/cellsBound",
 				valueType: "Int",
@@ -593,10 +571,9 @@ verdictsImportSpec := func(setAxisSpec, identityAxisSpec, served) {
 					"pl7.app/min": "0"
 				})
 			}),
-			// The other half of the same pair: SETTLED holds only bound and not-bound, so the two
-			// together always exhaust cellsAnswered. Reported alongside cellsBound rather than left for
-			// a reader to derive, because a not-bound reading with no count beside it looks like it has
-			// nothing behind it.
+			// The other half of the same pair. SETTLED holds only bound and not-bound, so the two together
+			// always exhaust cellsAnswered. Reported alongside cellsBound rather than left for a reader to
+			// derive, because a not-bound reading with no count beside it looks unsupported.
 			verdictCol("cellsNotBound", "cellsNotBound", {
 				name: "pl7.app/antigen/cellsNotBound",
 				valueType: "Int",
@@ -638,23 +615,22 @@ verdictsImportSpec := func(setAxisSpec, identityAxisSpec, served) {
 
 // --- Set counts: result_set_counts.csv, keyed (setId) -----------------------------------
 //
-// These are the family that actually reaches lead selection: a column carrying an axis the clonotype
-// anchor does not have is dropped there with no error, so nothing keyed (set, identity) is visible.
-// They count identities, never tags -- and their LABELS now say so. They read "Antigens bound",
-// "Antigens offered" and so on, which named the wrong layer: `040-glossary` separates an identity, "a
-// group of tags read as one thing", from the antigen a tag carries, and the cell-grain sibling of the
-// first of these was already labelled "Identities bound". One concept had two nouns across two grains.
-// Labels are excluded from column identity, so nothing downstream re-binds.
-// and they are still not orderable — a count of verdicts is
-// derived from verdicts, and ordering by it is ordering by binding breadth. A downstream block
-// assembles a ranked list from these plus measurements from other assays.
+// The family that actually reaches lead selection: a column carrying an axis the clonotype anchor does
+// not have is dropped there with no error, so nothing keyed (set, identity) is visible.
 //
-// `settledCount` is emitted because set_counts() writes it; it always equals
-// offeredCount - unsettledCount, and it is cheaper to import than to make every reader re-derive.
+// They count identities, never tags, and their LABELS say so — "Identities bound", "Identities offered".
+// Never label them "Antigens ...": `040-glossary` separates an identity, "a group of tags read as one
+// thing", from the antigen a tag carries.
+//
+// Still not orderable. A count of verdicts is derived from verdicts, and ordering by it is ordering by
+// binding breadth. A downstream block builds the ranked list, from these plus other assays.
+//
+// `settledCount` is emitted because set_counts() writes it. It always equals
+// offeredCount - unsettledCount, and importing it is cheaper than every reader re-deriving it.
 setCountsImportSpec := func(setAxisSpec, served) {
-	// `visible` is a real parameter rather than a constant because one of these ships off by default,
-	// and `a` renders false as "optional" -- present in the table's column chooser, absent until a
-	// reader turns it on.
+	// `visible` is a real parameter rather than a constant because one of these ships off by default, and
+	// `a` renders false as "optional": present in the table's column chooser, absent until a reader turns
+	// it on.
 	countCol := func(colName, name, label, order, visible, description) {
 		annotations := { "pl7.app/label": label, "pl7.app/min": "0" }
 		if description != "" {
@@ -674,19 +650,18 @@ setCountsImportSpec := func(setAxisSpec, served) {
 	return {
 		axes: [{ column: "setId", spec: setAxisSpec }],
 		columns: [
-			// Beside the clonotype's name, and default-visible. `the-explore-readout` puts the
-			// clonotype's own cell count there and keeps numbers out of every position: a verdict from
-			// three cells and one from forty print the same word, so the count is what tells them
-			// apart. It does not vary by identity, which is exactly why it belongs here rather than in
-			// the card. How many of these cells could answer at a given identity is a different number
-			// and travels with that identity's verdict.
+			// Beside the clonotype's name, and default-visible. `the-explore-readout` puts the clonotype's
+			// own cell count there and keeps numbers out of every position: a verdict from three cells and
+			// one from forty print the same word, so the count is what tells them apart. It does not vary
+			// by identity, which is why it belongs here rather than in the card. How many of these cells
+			// could answer at a given identity is a different number, and travels with that identity's
+			// verdict.
 			countCol("cellCount", "pl7.app/antigen/cellCount", "Cells", 96000, true,
 				"How many cells this clonotype has. The verdicts rest on these cells; how many of them could answer at a given identity travels with that identity's verdict."),
-			// Off by default, and that is the spec's own wording rather than a taste: `the-explore-readout`
-			// carries this per clonotype and not shown by default, for a reader who wants it. It
-			// qualifies the cell count directly above it -- forty cells of which thirty-eight read
-			// nothing is a different clonotype from forty that all read something -- so it is ordered
-			// next to it rather than among the identity counts below.
+			// Off by default, which is `the-explore-readout`'s own wording: carried per clonotype, not shown
+			// by default, for a reader who wants it. It qualifies the cell count directly above it — forty
+			// cells of which thirty-eight read nothing is a different clonotype from forty that all read
+			// something — so it is ordered next to it rather than among the identity counts below.
 			countCol("cellsReadingNothing", "pl7.app/antigen/cellsReadingNothing", "Cells that read nothing", 95500, false,
 				"How many of this clonotype's cells were left with no count on any tag, the baseline included, once the minimum count had run. It changes no verdict — those cells vote not bound like any other — and it separates a negative resting on cells that read something from one resting on cells that read nothing."),
 			countCol("boundCount", "pl7.app/antigen/boundCount", "Identities bound", 95000, true,
@@ -706,12 +681,12 @@ setCountsImportSpec := func(setAxisSpec, served) {
 // --- The clonotype's cell count, for the punchcard's OWN frame ---------------------------
 //
 // The same column setCountsImportSpec carries, imported again into the card's frame. A block's own
-// exports are not in its own result pool — the reason the punchcard is an output rather than an export
-// — so the count sitting in the exported setCounts family is unreadable by the very grid that has to
-// show it. The number was computed and rendered nowhere until this existed.
+// exports are not in its own result pool, which is why the punchcard is an output rather than an export,
+// so the count sitting in the exported setCounts family is unreadable by the very grid that has to show
+// it.
 //
 // Only the cell count. The other four set counts are identity counts, and putting them here would add
-// four numeric columns to a card whose whole argument is that numbers do not belong in every position:
+// four numeric columns to a card whose whole argument is that numbers do not belong in every position.
 // `the-explore-readout` puts the clonotype's cell count beside its name and keeps the rest to the
 // expansion.
 setCellCountImportSpec := func(setAxisSpec, served) {
@@ -738,35 +713,34 @@ setCellCountImportSpec := func(setAxisSpec, served) {
 
 // --- Per-identity summary: result_identity_summary.csv, keyed (setId) --------------------
 //
-// The same verdicts pivoted onto the set axis alone, one column per identity, so a per-antigen state
-// sits on the clonotype trunk where lead selection can see it. The identity travels in the DOMAIN —
-// the pattern this block already uses for pl7.app/feature/property — so two identities are two
-// distinct p-columns rather than one column with a colliding name.
+// The same verdicts pivoted onto the set axis alone, one column per identity, so a per-antigen state sits
+// on the clonotype trunk where lead selection can see it. The identity travels in the DOMAIN, as
+// pl7.app/feature/property does, so two identities are two distinct p-columns rather than one colliding
+// name.
 //
-// Size-gated upstream: emit_verdicts.py writes only setId when the identity count passes its limit,
-// and records both the limit and whether it emitted in the run meta. Callers pass the identities the
-// CSV actually carries, so an empty list here yields no columns rather than a failed import.
+// Size-gated upstream: emit_verdicts.py writes only setId once the identity count passes its limit, and
+// records the limit and whether it emitted in the run meta. Callers pass the identities the CSV actually
+// carries, so an empty list yields no columns rather than a failed import.
 //
-// The label is the identity string itself. The readable name lives in result_identity_labels.csv,
-// which is imported as a column rather than read as a value, so it is not available while these
-// specs are built.
+// The label is the identity string itself. The readable name lives in result_identity_labels.csv, which is
+// imported as a column rather than read as a value, so it is unavailable while these specs are built.
 
-// One column per identity, shared by every pivot regardless of what its rows are keyed on. Factored out
-// rather than copied because the label rule below is the part that goes wrong quietly: a second copy that
-// missed it would render a column of raw barcodes and look like panel data.
+// One column per identity, shared by every pivot whatever its rows are keyed on. Factored out rather
+// than copied because the label rule below is the part that goes wrong quietly: a second copy that missed
+// it would render a column of raw barcodes and look like panel data.
 identityPivotColumns := func(identities, groupingId, served, colName, valueType, basePriority, idPrefix, visibility, extra) {
 	labels := is_undefined(served.identityLabels) ? {} : served.identityLabels
 	// Why a label is two names joined, for the identities where it is. The header alone shows a reader two
-	// antigen names in one column and leaves them to guess between three different stories — the barcode is
-	// shared, the panel is inconsistent, or the block merged two antigens — of which only the middle one is
-	// true. The description annotation is what PlAgDataTable renders as the header tooltip, so the
-	// explanation travels with the column into both punch faces rather than being written twice in the UI.
+	// antigen names in one column and leaves them to guess between three stories: the barcode is shared,
+	// the panel is inconsistent, or the block merged two antigens. Only the middle one is true. The
+	// description annotation is what PlAgDataTable renders as the header tooltip, so the explanation
+	// travels with the column into both punch faces rather than being written twice in the UI.
 	conflicts := is_undefined(served.identityNameConflicts) ? {} : served.identityNameConflicts
 	cols := []
 	for i, identity in identities {
 		note := {}
 		if !is_undefined(conflicts[identity]) {
-			// One barcode, several names, and the identity is unaffected: the KEY is the barcode, and the
+			// One barcode, several names, and the identity is unaffected. The KEY is the barcode, and the
 			// readings under this column are that one barcode's. Said plainly, because the reader's first
 			// worry on meeting a joined header is that two antigens were silently pooled.
 			note = { "pl7.app/description": "The panel gives this one barcode more than one name — " +
@@ -786,7 +760,7 @@ identityPivotColumns := func(identities, groupingId, served, colName, valueType,
 					"pl7.app/antigen/groupingId": groupingId
 				}),
 				// `extra` last: a caller that sets a description for the whole family means it, and a
-				// per-identity note must not silently outrank it.
+				// per-identity note must not outrank it.
 				annotations: a(basePriority - i, visibility, maps.merge(maps.merge({
 					"pl7.app/label": is_undefined(labels[identity]) ? identity : labels[identity]
 				}, note), extra))
@@ -796,25 +770,25 @@ identityPivotColumns := func(identities, groupingId, served, colName, valueType,
 	return cols
 }
 
-// Both identity pivots — the state and the support behind it — are keyed the same way, carry the same
-// column order and the same labels, and differ only in what a column holds. One builder produces both so
-// the pair cannot drift: the punchcard pairs a state with its support by identity, and a divergence in
-// naming or ordering here would pair a state with a different identity's support with nothing to signal it.
-// The id prefix differs between the two families because both frames name their columns after the same
-// identities, and the punchcard frame holds BOTH at once: one prefix would give a state column and its
-// support column the same id inside one frame, where one of the pair silently wins.
+// Both identity pivots — the state and the support behind it — are keyed the same way and carry the same
+// column order and labels, differing only in what a column holds. One builder produces both so the pair
+// cannot drift: the punchcard pairs a state with its support by identity, and a divergence here would pair
+// a state with another identity's support and signal nothing.
+//
+// The id prefix differs because both frames name their columns after the same identities and the punchcard
+// frame holds BOTH at once. One prefix would give a state column and its support column the same id inside
+// one frame, where one of the pair silently wins.
 //
 // `visibility` differs too, and it is the difference between a punchcard and an empty grid. The punch
-// family is DEFAULT-visible: every antigen is a column of the card, and a table that hides them until
-// asked is not the view. The exported state family stays optional, because lead selection picks the few
-// identities it ranks on out of a panel that may run to hundreds.
+// family is DEFAULT-visible: every antigen is a column of the card. The exported state family stays
+// optional, because lead selection ranks on a few identities out of a panel that may run to hundreds.
 
 identityPivotImportSpec := func(setAxisSpec, identities, groupingId, served, colName, valueType, basePriority, idPrefix, visibility, extra) {
 	// The column header is the identity's LABEL where the run record carries one, and the identity itself
 	// otherwise. They differ for exactly one kind of identity: a tag whose rows disagreed about the
-	// grouping column has no value to group on and stands alone under its raw barcode, which among antigen
-	// names is the least readable thing this can emit. The software labels those with the names they did
-	// declare, joined. The identity — the KEY — is untouched; only what a reader sees changes.
+	// grouping column has no value to group on and stands alone under its raw barcode, the least readable
+	// thing this can emit. The software labels those with the names they did declare, joined. The identity
+	// — the KEY — is untouched. Only what a reader sees changes.
 	return {
 		axes: [{ column: "setId", spec: setAxisSpec }],
 		columns: identityPivotColumns(identities, groupingId, served, colName, valueType, basePriority, idPrefix, visibility, extra),
@@ -826,17 +800,17 @@ identityPivotImportSpec := func(setAxisSpec, identities, groupingId, served, col
 
 // --- The punchcard's pivot: result_identity_punch.csv, keyed (setId) --------------------
 //
-// One column per identity whose value carries the state AND everything behind it, `state|answered|
+// One column per identity whose value carries the state AND everything behind it, as `state|answered|
 // couldAnswer|agreement|reason`. The UI reads all five from the one cell: the state picks the punch's
-// colour, the two counts its size, and all five its hover panel. `agreement` and `reason` are empty
-// where they do not apply — a settled verdict has no reason, and a set nobody could ask has no
-// agreement — so the field count is fixed at five and a shorter value is not a valid punch.
+// colour, the two counts its size, and all five its hover panel. `agreement` and `reason` are empty where
+// they do not apply, since a settled verdict has no reason and a set nobody could ask has no agreement.
+// The field count is therefore fixed at five, and a shorter value is not a valid punch.
 //
 // Compound rather than three columns because `support-travels-with-the-reading` requires both counts to
-// travel with the verdict wherever it appears — a punch showing state alone would make a reading resting
-// on three cells look like one resting on forty — and a grid can only pair a cell with another column's
-// cell by position, which no import guarantees. Carrying it as an opaque String is also why this family is
-// kept out of the exported frame: lead selection filters the state pivot, and a compound value would not.
+// travel with the verdict wherever it appears. A punch showing state alone would make a reading resting on
+// three cells look like one resting on forty, and a grid can pair a cell with another column's cell only
+// by position, which no import guarantees. Carrying it as an opaque String is also why this family is kept
+// out of the exported frame: lead selection filters the state pivot, and a compound value would not.
 identityPunchImportSpec := func(setAxisSpec, identities, groupingId, served) {
 	return identityPivotImportSpec(setAxisSpec, identities, groupingId, served,
 		"pl7.app/antigen/identityPunch", "String", 92000, "identityPunch_", true, {})
@@ -852,42 +826,37 @@ identitySummaryImportSpec := func(setAxisSpec, identities, groupingId, served) {
 
 // --- Re-derivation material -------------------------------------------------------------
 //
-// The block emits no dense per-cell-per-identity table: on a realistic run it is the largest artifact
-// the block would produce, and a pMHC panel does not fit at all. The sparse per-tag counts plus the
-// per-cell scalars carry every per-cell state at a small fraction of that size.
+// The block emits no dense per-cell-per-identity table. On a realistic run it is the largest artifact the
+// block would produce, and a pMHC panel does not fit at all. The sparse per-tag counts plus the per-cell
+// scalars carry every per-cell state at a small fraction of that size.
 //
 // Both stay INSIDE the block, as outputs rather than exports. Reading the same experiment under another
 // grouping is another execution of this block, not a re-derivation a reader performs, so no consumer
-// across the boundary wants them — labelling and lead selection read verdicts, never cells. What makes
-// re-execution cheap is where the grouping is consumed: it enters after the counting, so a second run
-// over unchanged reads and an unchanged panel file reuses the cached counts and pays for the verdicts
-// alone.
+// across the boundary wants them: labelling and lead selection read verdicts, never cells. What makes
+// re-execution cheap is where the grouping is consumed. It enters after the counting, so a second run over
+// unchanged reads and an unchanged panel file reuses the cached counts and pays for the verdicts alone.
 
-// result_cell_counts.csv, keyed (sampleId, cellId, tag).
-// The CSV also repeats referenceCount and inCellList on every tag row. They are per-CELL facts and
-// are imported once, at their own grain, from result_cell_scalars.csv; importing them here as well
-// would put one fact in two columns at two different keys.
 // The per-cell punchcard: one row per cell, one column per identity, that cell's own reading.
 //
 // Same identity columns as the set-level punch, from the same builder, so the two cards name and order
-// their columns identically -- a reader moving between the tabs is looking at one panel, and a column
-// that moved between them would read as a different antigen.
+// their columns identically. A reader moving between the tabs is looking at one panel, and a column that
+// moved between them would read as a different antigen.
 //
-// The value is `state|reason`, two fields where the set-level punch carries six. A verdict rests on
-// counts a reader needs beside it; a cell IS the evidence, so there is nothing to report about how much
-// of it there was.
+// The value is `state|reason`, two fields where the set-level punch carries six. A verdict rests on counts
+// a reader needs beside it. A cell IS the evidence, so there is nothing to report about how much of it
+// there was.
 //
 // `setId` is a COLUMN, not an axis. The readout shows one clonotype at a time and filters on it, and a
 // cell belongs to exactly one set, so this is a property of the row rather than part of its key. As an
-// axis it would also have to agree with the clonotype axis the rest of the block uses, which is a
-// domain-carrying axis this frame has no reason to reconstruct.
+// axis it would also have to agree with the clonotype axis the rest of the block uses, a domain-carrying
+// axis this frame has no reason to reconstruct.
 cellPunchImportSpec := func(sampleAxisSpec, cellAxisSpec, identities, groupingId, served) {
 	cols := [
 		{
 			column: "setId",
 			id: "setId",
 			// Not default-visible: the readout filters on it, and a column repeating one clonotype id down
-			// every row of a panel about that clonotype is the repetition the expansion already removed once.
+			// every row of a panel about that clonotype is repetition the expansion already removed once.
 			spec: {
 				name: "pl7.app/antigen/cellSetId",
 				valueType: "String",
@@ -903,9 +872,9 @@ cellPunchImportSpec := func(sampleAxisSpec, cellAxisSpec, identities, groupingId
 				valueType: "Int",
 				domain: servedDomain(served),
 				// Names its grain, because the clonotype-grain count carries the plain "Identities bound".
-				// The two are different numbers over different populations -- this one is one cell's, that
-				// one is a clonotype's majority across its cells -- and a reader meeting both under one
-				// name would take the smaller for a subset of the larger, which it is not.
+				// The two are different numbers over different populations — this one is one cell's, that one
+				// is a clonotype's majority across its cells — and a reader meeting both under one name would
+				// take the smaller for a subset of the larger, which it is not.
 				annotations: a(95000, true, {
 					"pl7.app/label": "Identities this cell bound",
 					"pl7.app/description": "How many identities this cell read as bound, over the identities its sample was stained for. A silent position counts as the not-bound it resolves to; a cell that could not be compared counts none.",
@@ -929,6 +898,11 @@ cellPunchImportSpec := func(sampleAxisSpec, cellAxisSpec, identities, groupingId
 	}
 }
 
+// result_cell_counts.csv, keyed (sampleId, cellId, tag).
+//
+// The CSV also repeats referenceCount and inCellList on every tag row. Those are per-CELL facts and are
+// imported once, at their own grain, from result_cell_scalars.csv. Importing them here as well would put
+// one fact in two columns at two different keys.
 cellTagCountsImportSpec := func(sampleAxisSpec, cellAxisSpec, tagAxisSpec) {
 	return {
 		axes: [
@@ -958,9 +932,10 @@ cellTagCountsImportSpec := func(sampleAxisSpec, cellAxisSpec, tagAxisSpec) {
 }
 
 // result_cell_scalars.csv, keyed (sampleId, cellId).
+//
 // The comparator is in the domain for the same reason it is on the verdicts: referenceCount and
-// admissibility ARE the comparator's own output, so two runs served differently do not carry the
-// same reading under one identity.
+// admissibility ARE the comparator's own output, so two runs served differently do not carry the same
+// reading under one identity.
 cellScalarsImportSpec := func(sampleAxisSpec, cellAxisSpec, served) {
 	scalarCol := func(colName, name, valueType, annotations) {
 		return {
@@ -1007,11 +982,11 @@ cellScalarsImportSpec := func(sampleAxisSpec, cellAxisSpec, served) {
 
 // --- Scope: which identities each sample was stained with --------------------------------
 //
-// result_offered.csv, keyed (sampleId, identity). The one piece of per-sample scope the block
-// computes and would otherwise throw away: without it "never asked" is a claim a reader cannot check.
-// Sparse — a row exists only where the sample's panel offered the identity.
+// result_offered.csv, keyed (sampleId, identity). The one piece of per-sample scope the block computes
+// and would otherwise throw away: without it, "never asked" is a claim a reader cannot check. Sparse, so
+// a row exists only where the sample's panel offered the identity.
 //
-// The value is a constant "true": a file of key columns alone imports as nothing, because columns are
+// The value is a constant "true". A file of key columns alone imports as nothing, because columns are
 // built from value columns, so the fact the frame records would never leave the block.
 offeredImportSpec := func(sampleAxisSpec, identityAxisSpec) {
 	return {
@@ -1040,28 +1015,23 @@ offeredImportSpec := func(sampleAxisSpec, identityAxisSpec) {
 
 // --- tag -> identity linker: result_tag_identity.csv --------------------------------------
 //
-// One row per (tag, identity), and MANY-TO-MANY: under per-sample grouping one barcode feeds a
-// different identity in each sample's panel, and every one of those pairs is real. This is what lets a
-// reader put a tag's count next to its verdict without either layer knowing about the other: the linker
-// carries both axes and its value is irrelevant, so it is a constant column, matching
-// pl7.app/sc/cellLinker's shape. Order priority 0 and no default visibility: it is infrastructure and
-// is hidden in tables.
+// One row per (tag, identity), and MANY-TO-MANY: under per-sample grouping one barcode feeds a different
+// identity in each sample's panel, and every pair is real. This is what lets a reader put a tag's count
+// next to its verdict without either layer knowing about the other. The linker carries both axes and its
+// value is irrelevant, so it is a constant column, matching pl7.app/sc/cellLinker's shape. Order priority
+// 0 and no default visibility: it is infrastructure, hidden in tables.
 //
-// Deliberately NOT keyed by sample. The reason is the join, not the declaration.
+// Deliberately NOT keyed by sample, and the reason is the join. Neither side carries a sample: verdicts
+// are (set, identity) over clonotypes spanning whatever samples their cells came from, and the tag-keyed
+// figures are run-level. A sample axis here is an axis no participating table has. It does not sharpen the
+// join, it makes the join malformed, and SDK label discovery then refuses to build a spec frame over it.
+// Where a sample-level distinction is wanted, panelMismatch keys by PANEL, a declared tag set.
 //
-// Neither side of this join carries a sample. Verdicts are (set, identity) over clonotypes that span
-// whatever samples their cells came from. The tag-keyed figures are run-level. A sample axis here is
-// an axis no participating table has. It does not sharpen the join. It makes the join malformed, and
-// the SDK label discovery then refuses to build a spec frame over it. A sample-level distinction
-// already exists where one is wanted: panelMismatch keys by PANEL, which is a declared tag set.
+// Several rows per tag are therefore expected, and `qc-measurement-set` asks for that shape. The SAME pair
+// must not appear twice: duplicate axis keys break a grid silently, so the emitter writes distinct pairs.
 //
-// Several rows per tag are therefore expected. `qc-measurement-set` asks for that shape: it shows the
-// identity figures for the identities a tag feeds, plural. The SAME pair must not appear twice.
-// Duplicate axis keys break a grid silently, so the emitter writes distinct pairs.
-//
-// The value column is named "1" and holds 1, matching the cell-linker convention used elsewhere in the
-// platform, and it exists for the same reason the offered frame's does: a key-only file imports as no
-// column at all.
+// The value column is named "1" and holds 1, the platform's cell-linker convention, and exists for the
+// same reason the offered frame's does: a key-only file imports as no column at all.
 tagIdentityLinkerImportSpec := func(tagAxisSpec, identityAxisSpec) {
 	return {
 		axes: [
@@ -1088,10 +1058,10 @@ tagIdentityLinkerImportSpec := func(tagAxisSpec, identityAxisSpec) {
 // --- Labels -------------------------------------------------------------------------------
 //
 // A label column is satisfied only by a column NAMED pl7.app/label carrying exactly one axis. The
-// pl7.app/isLabel annotation is not read by the consumers that matter, so it cannot stand in for the
-// name. Two identities must never share a label: where two tags carry the same consistent name,
-// emit_verdicts.py appends the tag, which is where the name map lives and the only place the
-// collision is visible.
+// consumers that matter do not read the pl7.app/isLabel annotation, so it cannot stand in for the name.
+// Two identities must never share a label: where two tags carry the same consistent name,
+// emit_verdicts.py appends the tag. That is where the name map lives and the only place the collision is
+// visible.
 identityLabelsImportSpec := func(identityAxisSpec) {
 	return {
 		axes: [{ column: "identity", spec: identityAxisSpec }],
@@ -1113,23 +1083,20 @@ identityLabelsImportSpec := func(identityAxisSpec) {
 //
 // `panel-file-authority` requires whatever the panel file says consistently about an identity's tags to
 // travel with that identity's verdicts, so a reader sees the declaration wherever the reading appears.
-// These are the columns that carry it, and they are EXPORTED: without them a downstream reader can see
-// that an identity was bound and cannot see what the scientist declared it to be, so a statement about a
-// declared group — binds the target and nothing in the control set — cannot be made at all.
+// These columns carry it, and they are EXPORTED: without them a downstream reader sees that an identity
+// was bound and not what the scientist declared it to be, so "binds the target and nothing in the control
+// set" cannot be stated at all.
 //
-// Identity follows featurePropertyImportColumns: one fixed name with the raw header in the DOMAIN, so
-// two properties are two distinct p-columns rather than one column that collides with itself. Domain
-// rather than annotation because annotations do not take part in column identity.
+// Identity follows featurePropertyImportColumns: one fixed name with the raw header in the DOMAIN, so two
+// properties are two distinct p-columns rather than one that collides with itself. The names are panel
+// data, unknown until the software runs, so they arrive through the run record as `identities` does. Each
+// is String and a discrete filter over its own value set, which lets a reader pool every human antigen or
+// every one in the control group. Optional visibility: a wide panel declares many properties and none of
+// them is the reading.
 //
-// The names are panel data, unknown until the software runs, so they arrive through the run record —
-// as `identities` does for the pivots. Each is String and marked as a discrete filter with its own
-// value set, which is what lets a reader pool every human antigen or every one in the control group.
-// Optional visibility: a wide panel declares many properties and none of them is the reading.
-//
-// This keys on the antigen identity axis and never on pl7.app/feature/featureId. The per-feature
-// property columns already ride the feature-NAME axis, and the same declaration reached from a verdict
-// has to arrive on the barcode-valued axis every verdict-stage column uses — which is why this exists
-// rather than a tag->feature linker back to those. guardNoLegacyFeatureAxis enforces it at import.
+// Keys on the antigen identity axis and never on pl7.app/feature/featureId. The per-feature property
+// columns ride the feature-NAME axis, and the same declaration reached from a verdict has to arrive on the
+// barcode-valued axis every verdict-stage column uses. guardNoLegacyFeatureAxis enforces it at import.
 identityPropertyImportSpec := func(identityAxisSpec, propertyColumns, valuesByColumn) {
 	cols := []
 	for i, name in propertyColumns {
@@ -1157,8 +1124,8 @@ identityPropertyImportSpec := func(identityAxisSpec, propertyColumns, valuesByCo
 	}
 }
 
-// A panel has no name in any real panel file, so its label is built from what a reader can recognise
-// it by: how many tags it declares and which samples came off it.
+// A panel has no name in any real panel file, so its label is built from what a reader can recognise it
+// by: how many tags it declares, and which samples came off it.
 panelLabelsImportSpec := func(panelAxisSpec) {
 	return {
 		axes: [{ column: "panelId", spec: panelAxisSpec }],
@@ -1190,7 +1157,7 @@ samplePanelImportSpec := func(sampleAxisSpec) {
 				name: "pl7.app/antigen/panelOfSample",
 				valueType: "String",
 				// Says WHICH panel a sample was stained with. The panel axis's own label column is the
-				// other "Panel", and it names the panel itself -- so both under one word would put two
+				// other "Panel", and it names the panel itself, so one word for both would put two
 				// different things beside each other under one heading.
 				annotations: a(75000, false, {
 					"pl7.app/label": "Panel used",
@@ -1205,10 +1172,10 @@ samplePanelImportSpec := func(sampleAxisSpec) {
 
 // --- Panel versus reads: result_panel_mismatch.csv ------------------------------------------
 //
-// Keyed (panelId, tag), because a per-tag failure is a property of the declared tag set rather than
-// of any one sample carrying it; the samples that reported it travel in the row so nothing about
-// where it was seen is lost. Emitted as a p-column rather than a raw file: a mismatch report the user
-// cannot see defeats its purpose.
+// Keyed (panelId, tag), because a per-tag failure is a property of the declared tag set rather than of
+// any one sample carrying it. The samples that reported it travel in the row, so nothing about where it
+// was seen is lost. Emitted as a p-column rather than a raw file: a mismatch report the user cannot see
+// defeats its purpose.
 panelMismatchImportSpec := func(panelAxisSpec, tagAxisSpec) {
 	return {
 		axes: [
@@ -1247,22 +1214,19 @@ panelMismatchImportSpec := func(panelAxisSpec, tagAxisSpec) {
 
 // --- Quality measurements: result_qc.csv, keyed (level, entity, measurement) ------------------
 //
-// Every declared measurement keeps its place whether or not this run could compute it: a measurement
-// nothing computed reads "not evaluated" with its reason rather than being absent, so a reader can
-// never mistake "nothing computed this yet" for "this was checked and found fine". A row that belongs
-// to no panel — every sample-level and capture-level row — leaves `panelId` empty.
-/* The panel is part of the KEY, not a value column beside it. A barcode
-   recurring across panels -- the ordinary case, since the same reagent is
-   stained into several samples -- writes one row per panel at the same
-   (level, entity, measurement). With the panel as a value column those rows
-   share an axis key, which is a duplicate-key import: it does not raise, it
-   silently keeps one row and loses the rest, so a reagent misbehaving in one
-   panel and not another reads as whichever row survived. Measured on the
-   committed fixture bed, 22 of 122 QC rows collided this way.
-
-   Sample-level and capture-level rows carry an empty panel, which is honest:
-   a per-sample measurement belongs to no single panel. Per-tag QC keyed by
-   (panel, tag) is also what the architecture already required. */
+// Every declared measurement keeps its place whether or not this run could compute it. A measurement
+// nothing computed reads "not evaluated" with its reason rather than being absent, so a reader can never
+// mistake "nothing computed this yet" for "this was checked and found fine".
+//
+// The panel is part of the KEY, never a value column beside it. A barcode recurring across panels is the
+// ordinary case, since the same reagent is stained into several samples, and it writes one row per panel
+// at the same (level, entity, measurement). With the panel as a value column those rows share an axis
+// key, which is a duplicate-key import: it does not raise, it silently keeps one row and loses the rest,
+// so a reagent misbehaving in one panel and not another reads as whichever row survived.
+//
+// A row that belongs to no panel — every sample-level and capture-level row — leaves `panelId` empty,
+// which is honest: a per-sample measurement belongs to no single panel. Per-tag QC keyed by (panel, tag)
+// is what the architecture requires.
 qcImportSpec := func(levelAxisSpec, entityAxisSpec, measurementAxisSpec, panelAxisSpec) {
 	col := func(colName, name, valueType, label, order, visible, annotations) {
 		return {
@@ -1283,10 +1247,10 @@ qcImportSpec := func(levelAxisSpec, entityAxisSpec, measurementAxisSpec, panelAx
 			{ column: "measurement", spec: measurementAxisSpec }
 		],
 		columns: [
-			// The measurement's readable name, ordered ahead of the value so a row reads as a sentence:
-			// what was measured, then what it came to. The `measurement` AXIS carries the id, which has to
-			// stay stable because it is part of column identity; this carries the name a reader recognises.
-			// Without it the page showed `antigenCountDistribution` to a scientist.
+			// The measurement's readable name, ordered ahead of the value so a row reads as a sentence: what
+			// was measured, then what it came to. The `measurement` AXIS carries the id, which must stay
+			// stable because it is part of column identity. This carries the name a reader recognises.
+			// Without it the page shows a scientist `antigenCountDistribution`.
 			col("label", "pl7.app/antigen/qcLabel", "String", "Measurement name", 73000, true, {}),
 			col("value", "pl7.app/antigen/qcValue", "Double", "Value", 72000, true, {}),
 			col("detail", "pl7.app/antigen/qcDetail", "String", "Detail", 71000, true, {}),
@@ -1295,24 +1259,23 @@ qcImportSpec := func(levelAxisSpec, entityAxisSpec, measurementAxisSpec, panelAx
 				"pl7.app/discreteValues": QC_STATUSES,
 				"pl7.app/description": "'unjudged' means no line exists to judge this against; 'not evaluated' means nothing computed it. Neither is a pass."
 			}),
-			// The coverage triple is shown by default, beside the status rather than folded into it: a
-			// status says whether what was checked is wrong, and the triple says how much of the level was
-			// checked at all. Hiding the triple behind the column chooser would leave "nothing here is
-			// wrong" and "almost nothing here was checkable" looking identical on the page.
+			// The coverage triple is shown by default, beside the status rather than folded into it. A status
+			// says whether what was checked is wrong, and the triple says how much of the level was checked
+			// at all. Hiding the triple behind the column chooser would leave "nothing here is wrong" and
+			// "almost nothing here was checkable" looking identical on the page.
 			col("judged", "pl7.app/antigen/qcJudged", "Int", "Judged", 69000, true, { "pl7.app/min": "0" }),
 			col("unjudged", "pl7.app/antigen/qcUnjudged", "Int", "Unjudged", 68000, true, { "pl7.app/min": "0" }),
 			col("notEvaluated", "pl7.app/antigen/qcNotEvaluated", "Int", "Not evaluated", 67000, true, { "pl7.app/min": "0" }),
 			// Shown by default, both of them. Every measurement is obliged to carry what it counts and, where
-			// a line exists, what a bad value means -- and the stated reason that text exists is that the
-			// reader who meets a row is not the person who built the run. Hiding it behind the column chooser
-			// satisfied the obligation in the data and defeated it on the page: a reader met
-			// `antigenCountDistribution 637.5 0:13.0|10:75.4|...` with no way to learn that those are deciles
-			// of the total antigen count per cell barcode, which is written right here and was not shown.
+			// a line exists, what a bad value means, because the reader who meets a row is not the person who
+			// built the run. Behind the column chooser they satisfy the obligation in the data and defeat it
+			// on the page: a reader meets `antigenCountDistribution 637.5 0:13.0|10:75.4|...` with no way to
+			// learn that those are deciles of the total antigen count per cell barcode.
 			col("counts", "pl7.app/antigen/qcCounts", "String", "What it counts", 66000, true, {}),
 			col("implies", "pl7.app/antigen/qcImplies", "String", "What a bad value means", 65000, true, {}),
-			// Also shown by default. A row reading "not evaluated" carries the reason nothing computed it,
-			// and a deferral whose reason is one click away is a blank cell to everyone who does not click —
-			// which reads as "checked, and fine", the one thing this vocabulary exists to prevent.
+			// Also shown by default. A row reading "not evaluated" carries the reason nothing computed it, and
+			// a deferral whose reason is one click away is a blank cell to everyone who does not click. That
+			// reads as "checked, and fine", the one thing this vocabulary exists to prevent.
 			col("reason", "pl7.app/antigen/qcReason", "String", "Why deferred", 64000, true, {})
 		],
 		storageFormat: "Parquet",

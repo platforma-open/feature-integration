@@ -206,7 +206,7 @@ def test_per_antigen_measures_reports_signal_above_and_median():
 
 def test_per_antigen_measures_differs_between_tag_and_identity_grain():
     # T1 and T2 both feed one identity. As tags, T1 shows one weak cell (one
-    # bound of two); as the combined identity, the same cells collapse to one
+    # bound of two). As the combined identity, the same cells collapse to one
     # row and T1's weak showing is no longer visible on its own.
     tag_grain = pl.DataFrame(
         {
@@ -585,11 +585,11 @@ def test_the_minimum_peer_count_is_satisfied_at_the_named_value():
 
 # --- corrupt numbers must never read green -------------------------------------------
 #
-# Every `<` and `>` comparison against NaN is False, so before this was fixed a NaN
-# value fell through to `bad = False` and the measurement read ACCEPTABLE -- and a NaN
-# among the peers made np.quantile return NaN fences, with the same result. For QC
-# code, corrupt-input-reads-green is the worst available failure mode: it is the one
-# state a reader will not investigate.
+# Every `<` and `>` comparison against NaN is False, so an unguarded NaN value falls
+# through to `bad = False` and the measurement reads ACCEPTABLE. A NaN among the peers
+# makes np.quantile return NaN fences, with the same result. For QC code,
+# corrupt-input-reads-green is the worst available failure mode: it is the one state a
+# reader will not investigate.
 
 
 def test_a_nan_value_is_not_evaluated_rather_than_acceptable():
@@ -610,7 +610,7 @@ def test_a_nan_value_is_not_evaluated_against_its_peers():
 
 
 def test_nan_among_the_peers_leaves_the_comparison_unjudged():
-    # The value is a real number here; what cannot be defended is the distribution it
+    # The value is a real number here. What cannot be defended is the distribution it
     # would be measured against. That is unjudged, not not-evaluated -- the
     # measurement was computed, and only the comparison is unavailable.
     assert outlier_status(0.9, [0.1, float("nan"), 0.3, 0.4]) is Status.UNJUDGED

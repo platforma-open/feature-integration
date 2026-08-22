@@ -4,28 +4,28 @@ import { computed } from "vue";
 import type { SampleResult } from "../results";
 
 // The Visual Report tab: where this sample's reads went. RecoveryBar is already the settings object a
-// stacked bar wants ({ title, data: [{ label, value, color, description }] }), so this tab is a
-// presentation of data results.ts has been building for the grid all along.
+// stacked bar wants ({ title, data: [{ label, value, color, description }] }), so this tab presents data
+// results.ts builds for the grid anyway.
 //
-// PlChartStackedBar (not PlAgChartStackedBarCell) is the component used here: the Ag* one is an ag-grid
-// cell renderer that takes ICellRendererParams, so using it outside a grid would mean fabricating a
-// fake cell params object. PlChartStackedBar is the same chart's standalone form — the grid's cell
-// renderer is itself only a thin wrapper around the compact variant of it.
+// PlChartStackedBar, never PlAgChartStackedBarCell. The Ag* one is an ag-grid cell renderer taking
+// ICellRendererParams, so using it outside a grid would mean fabricating a fake cell params object.
+// PlChartStackedBar is the same chart's standalone form, and the grid's cell renderer is a thin wrapper
+// around its compact variant.
 const props = defineProps<{
   sampleData: SampleResult | undefined;
 }>();
 
-// The chart's own legend gives colour and label only. The segment meanings are spelled out below the
-// chart instead, so the legend would be a redundant second colour key.
+// The chart's own legend gives colour and label only. The segment meanings are spelled out below the chart
+// instead, so the legend would be a redundant second colour key.
 const settings = computed(() => {
   const recovery = props.sampleData?.recovery;
   return recovery === undefined ? undefined : { ...recovery, showLegends: false };
 });
 
 // Read counts and shares per segment, for the written breakdown under the chart. The descriptions
-// results.ts attaches to each segment are otherwise reachable only by hovering the bar, and the
-// equivalent prose in the grid only by hovering the column header — a reader who does neither should
-// still learn what the segments mean.
+// results.ts attaches to each segment are otherwise reachable only by hovering the bar, and the equivalent
+// prose in the grid only by hovering the column header. A reader who does neither should still learn what
+// the segments mean.
 const segments = computed(() => {
   const recovery = props.sampleData?.recovery;
   if (recovery === undefined) return undefined;
@@ -33,8 +33,8 @@ const segments = computed(() => {
   return recovery.data.map((segment) => ({
     label: segment.label,
     color: segment.color.toString(),
-    // The description results.ts builds carries the label and the read count on their own lines; those
-    // are shown as fields here, so keep only the explanatory middle line.
+    // The description results.ts builds carries the label and the read count on their own lines. Those are
+    // shown as fields here, so keep only the explanatory middle line.
     meaning: segment.description.split("\n")[1] ?? "",
     printedValue:
       total > 0

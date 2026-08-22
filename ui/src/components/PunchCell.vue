@@ -14,19 +14,17 @@ import { PUNCH_DIAMETER_PX, PUNCH_PAINT, parsePunch } from "./punchMarks";
 // This departs from `assets/punch-card.svg`, which fills a dot for bound, leaves the cell blank for not
 // bound, and rings it for never-offered. Operator decision, taken after reading a live card: the figure's
 // blank-for-negative is unreadable at real density, because a clonotype binds one antigen out of the panel
-// and the grid is therefore ~92% negative before anything goes wrong. Here blank is reserved for the one
-// state that genuinely has no answer in it - a position the experiment never put to this clonotype.
+// and the grid is therefore ~92% negative before anything goes wrong. Blank is reserved for the one state
+// that genuinely has no answer in it, a position the experiment never put to this clonotype. The three
+// states that ARE answers read as dots of one family, so the card is a field of colour and a reader is
+// never asked to tell a shape from an absence.
 //
-// The three states that ARE answers all read as dots of one family, so the card is a field of colour and a
-// reader is never asked to tell a shape from an absence.
-//
-// EVERY mark is one size, and a large one. The card used to size bound and not-bound by the share of a
-// clonotype\'s cells that answered; that is gone. `support-travels-with-the-reading` is a DELIVERY
-// obligation -- it fixes that the scientist is handed the two counts, not that a dot encode them -- and
-// they are handed over twice already, in this component\'s own tooltip and as columns in the clonotype
-// expansion. What the encoding cost was legibility of the thing the card is for: at panel density a reader
-// scans for WHERE the colour is, and a grid of dots at eight different diameters reads as noise long
-// before anyone measures one against another.
+// EVERY mark is one size, and a large one. Never size a mark by the share of a clonotype's cells that
+// answered. `support-travels-with-the-reading` is a DELIVERY obligation: it fixes that the scientist is
+// handed the two counts, not that a dot encode them, and they are handed over twice already, in this
+// component's own tooltip and as columns in the clonotype expansion. The encoding costs legibility of the
+// thing the card is for: at panel density a reader scans for WHERE the colour is, and a grid of dots at
+// eight different diameters reads as noise long before anyone measures one against another.
 //
 // The cell's value carries everything needed to explain itself, in ONE value because a grid pairs a cell
 // with another column's cell only by position and no import guarantees that. The format and its decoder
@@ -77,7 +75,7 @@ const cellStyle: CSSProperties = {
 
 // Why this mark is this colour, in the order a reader asks it: what the verdict is, what it rests on, and
 // - where the verdict is unsettled - which of the six ways it failed to settle. The reason tokens are
-// machine values (`no-comparator`, `tie`, ...), so each is expanded here rather than shown raw; a token
+// machine values (`no-comparator`, `tie`, ...), so each is expanded here rather than shown raw. A token
 // is a key, not a sentence.
 // Each line reads as its own sentence, so each is capitalised at the source rather than by a transform
 // over `lines`. A blanket transform would also capitalise the antigen name, which is panel data — the

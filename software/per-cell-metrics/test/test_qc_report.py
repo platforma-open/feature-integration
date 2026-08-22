@@ -43,7 +43,7 @@ def _run(tmp_path, tagstat, parse_report, refine_report=None):
 
 def test_qc_metrics_from_parse_report_and_tagstat(tmp_path):
     tagstat = tmp_path / "tagstat.tsv"
-    # two cells; cell1 has 2 features (3+1 UMIs), cell2 has 1 feature (4 UMIs)
+    # two cells. Cell1 has 2 features (3+1 UMIs), cell2 has 1 feature (4 UMIs)
     tagstat.write_text(
         "CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\n"
         "cell1\tAAAA\t7\t7\t3\n"

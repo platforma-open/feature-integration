@@ -57,7 +57,7 @@ def test_no_extra_columns_yields_empty_meta(tmp_path):
 
 
 def test_many_barcodes_one_feature_deduped(tmp_path):
-    # A feature reached by several barcodes appears once; its (consistent) property is carried through.
+    # A feature reached by several barcodes appears once. Its (consistent) property is carried through.
     meta, rows = _run(tmp_path, "tag,feature,species\nAAAA,AGX,human\nTTTT,AGX,human\nCCCC,BGX,cyno\n")
     assert meta["columns"] == ["species"]
     assert rows[1:] == [["AGX", "human"], ["BGX", "cyno"]]
@@ -76,7 +76,7 @@ def test_sample_column_excluded(tmp_path):
 
 
 def test_custom_role_column_names(tmp_path):
-    # Roles are configurable: whichever columns the user maps are excluded; the rest pass through.
+    # Roles are configurable: whichever columns the user maps are excluded. The rest pass through.
     meta, _ = _run(
         tmp_path,
         "barcode,antigen,pool\nAAAA,AgX,p1\nCCCC,AgY,p2\n",

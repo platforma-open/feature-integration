@@ -122,16 +122,15 @@ TIER_NAMES = [t[0] for t in TIERS]
 #   deep    - the public 10x BEAM runs. Antigen libraries sequenced to ~97% saturation: ~33 reads per
 #             recovered UMI, a median of 200 antigen UMIs per called cell, near-mono dominance
 #             (median 0.995), and cell CALLING applied before anything is reported.
-#   shallow - real in-vivo BEAM libraries, measured from a production in-vivo deployment on
-#             2026-08-21. 2.7-5.8 reads per distinct UMI; a median of 7 UMIs across the barcodes that
-#             clear a floor of 4; dominance around 0.44; no cell calling and no whitelist, so the raw
-#             barcode universe is what the block sees; and unfiltered antigen aggregates holding most
-#             of the library.
+#   shallow - real in-vivo BEAM libraries, measured from a production in-vivo deployment on 2026-08-21:
+#             2.7-5.8 reads per distinct UMI, a median of 7 UMIs across the barcodes clearing a floor of
+#             4, dominance around 0.44, no cell calling and no whitelist, so the raw barcode universe is
+#             what the block sees, and unfiltered antigen aggregates holding most of the library.
 #
-# `deep` is kept because it reproduces every run made before 2026-08-21 byte for byte. `shallow` is
-# the one that stands in for real production data. Neither is right on its own: a bed carrying only `deep`
-# tests a regime real in-vivo data never occupies, and a bed carrying only `shallow` cannot show the
-# block reaching a confident answer at all.
+# `deep` is kept because it reproduces every run made before 2026-08-21 byte for byte. `shallow` stands in
+# for real production data. Neither is right on its own: a bed carrying only `deep` tests a regime real
+# in-vivo data never occupies, and one carrying only `shallow` cannot show the block reaching a confident
+# answer at all.
 #
 # MAGNITUDES entries are the inclusive (lo, hi) UMI range a tier plants on its dominant member.
 MAGNITUDES_DEEP = {
@@ -1097,7 +1096,7 @@ def write_run_report(run_dir, info, panel_csv, quality_profile, gate_hint=True):
         "## Feature Barcode Profiling",
         "",
         # Named as the block shows them, and ORDERED as the settings drawer shows them, top to bottom.
-        # A reader configures the block by walking the drawer; a table in any other order makes them hunt
+        # A reader configures the block by walking the drawer. A table in any other order makes them hunt
         # for each control, and a control named by its internal argument cannot be found at all.
         "Named and ordered as they appear in the settings drawer, top to bottom. Rows marked *default* "
         "need no change — they are listed so the drawer can be read straight through.",
@@ -1333,7 +1332,7 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
         ok(os.path.exists(r1p) and os.path.exists(r2p), f"{sample}: FASTQ pair exists")
         if not (os.path.exists(r1p) and os.path.exists(r2p)):
             continue
-        # offset is whatever position the panel barcodes actually sit at; read it off the first
+        # offset is whatever position the panel barcodes actually sit at. Read it off the first
         # structurally valid read rather than trusting an argument.
         seen = {}
         n_reads = 0
@@ -1359,25 +1358,24 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
                         break
         ok(n_reads > 0, f"{sample}: FASTQ is non-empty ({n_reads} reads)")
         ok(len(offsets) == 1, f"{sample}: one feature offset in the file (found {sorted(offsets)})")
-        # Every planted (cell, member) must be recoverable from the reads, and NOTHING must be
-        # recoverable that was not planted. Two separate claims, because they fail for different
-        # reasons and only one of them tolerates slack:
+        # Every planted (cell, member) must be recoverable from the reads, and NOTHING must be recoverable
+        # that was not planted. Two claims, because they fail for different reasons and only one tolerates
+        # slack:
         #
-        #   over-recovery is bounded near zero — a member reading MORE distinct UMIs than were planted
-        #   is either a panel whose members are close enough that a 1 bp error turns one into another
-        #   (which the >= 3 bp check above rules out), or an AMBIENT read whose random 16-mer cell
-        #   barcode happened to equal a real one. The second is real and unavoidable: at ~1M ambient
-        #   reads against ~7k cells it lands about twice per sample (n_ambient * n_cells / 4^16), and a
-        #   real library does exactly this. So the bar is a rate, not zero, and a rate this small can
-        #   only be met by ambient collision.
+        #   over-recovery is bounded near zero. A member reading MORE distinct UMIs than were planted is
+        #   either a panel whose members are close enough that a 1 bp error turns one into another, which
+        #   the >= 3 bp check above rules out, or an AMBIENT read whose random 16-mer cell barcode happened
+        #   to equal a real one. The second is real and unavoidable: at ~1M ambient reads against ~7k cells
+        #   it lands about twice per sample (n_ambient * n_cells / 4^16), as a real library does. So the bar
+        #   is a rate rather than zero, and a rate this small can only be met by ambient collision.
         #
-        #   under-recovery is expected, and how much is expected depends on the sample's LIBRARY tier.
-        #   A UMI is lost when every one of its reads is unrecoverable — either it took a feature-barcode
-        #   error (1.5% of reads) or it was rewritten onto an off-panel barcode (whatever the tier's
-        #   panel-assigned fraction leaves). Multi-read UMIs survive better than reads do, so recovery
-        #   sits ABOVE the panel-assigned fraction, never below it, and never above 1. Those two are the
-        #   bound. Checked in aggregate rather than per pair: per pair the loss is a coin toss, in
-        #   aggregate it is the rate, and the rate is the thing worth asserting.
+        #   under-recovery is expected, and how much depends on the sample's LIBRARY tier. A UMI is lost
+        #   when every one of its reads is unrecoverable, whether it took a feature-barcode error (1.5% of
+        #   reads) or was rewritten onto an off-panel barcode (whatever the tier's panel-assigned fraction
+        #   leaves). Multi-read UMIs survive better than reads do, so recovery sits ABOVE the panel-assigned
+        #   fraction, never below it and never above 1. Those two are the bound. Checked in aggregate rather
+        #   than per pair: per pair the loss is a coin toss, and in aggregate it is the rate worth
+        #   asserting.
         n_pairs = sum(1 for key in planted if key[0] == sample)
         over = [key for key, k in planted.items()
                 if key[0] == sample and len(seen.get((key[1], key[2]), ())) > k]
@@ -1502,14 +1500,14 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
 
     grid_bound = totals.get("bound", 0) / max(1, grid)
     if chosen == "none":
-        # No rung could serve, so EVERY reading is unreliable for want of a comparator. That is the
-        # correct answer for this panel under the current rule, not a defect in the bed, and asserting
-        # the regime's bound share here would fail a run that is behaving exactly as the block would.
+        # No rung could serve, so EVERY reading is unreliable for want of a comparator. The correct answer
+        # for this panel under the current rule rather than a defect in the bed, so asserting the regime's
+        # bound share here would fail a run behaving exactly as the block would.
         #
-        # It happens because the baseline is global BY TAG while a per-sample panel's comparators are
-        # per sample: `declared` refuses several tags, `panel` needs PANEL_MIN_MEMBERS, and a small
-        # per-sample panel satisfies neither. Name one tag with --baseline-tag to read on `declared`,
-        # accepting that cells in samples not offering that tag still have no comparator.
+        # It happens because the baseline is global BY TAG while a per-sample panel's comparators are per
+        # sample: `declared` refuses several tags, `panel` needs PANEL_MIN_MEMBERS, and a small per-sample
+        # panel satisfies neither. Name one tag with --baseline-tag to read on `declared`, accepting that
+        # cells in samples not offering that tag still have no comparator.
         ok(totals.get("unreliable", 0) == grid,
            f"no rung serves this panel, so every reading is unreliable ({totals.get('unreliable', 0)}"
            f"/{grid})")
@@ -1537,17 +1535,17 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
         ok(share(gated_tier, "gated", "unreliable") >= 0.95,
            f"gated is set aside with the gate at 300 ({share(gated_tier, 'gated', 'unreliable'):.0%})")
     else:
-        # SHALLOW asserts something different, because at this depth the block's line is not reachable
-        # from most cells and asserting that it is would be asserting a fiction. Two things are checked
-        # instead, and both are properties of real measured output rather than of the bed.
+        # SHALLOW asserts something different, because at this depth the block's line is not reachable from
+        # most cells and asserting that it is would assert a fiction. Two things are checked instead, both
+        # properties of real measured output rather than of the bed.
         #
-        # 1. The bound share of the whole grid stays in the band a real pipeline actually produces:
-        #    1.4% and 2.9% across the two measured libraries. A shallow run coming back with 20% bound has
-        #    lost the regime, and one that comes back with 0% has nothing to test against.
+        # 1. The bound share of the whole grid stays in the band a real pipeline produces: 1.4% and 2.9%
+        #    across the two measured libraries. A shallow run coming back with 20% bound has lost the
+        #    regime, and one coming back with 0% has nothing to test against.
         # 2. Signal ORDERING holds. Absolute rates are all low, so the invariant that carries meaning is
-        #    monotonicity: a tier planted with more signal must never read bound LESS often than one
-        #    planted with less. That catches a broken comparator or an inverted score without pretending
-        #    to know where the line sits.
+        #    monotonicity: a tier planted with more signal must never read bound LESS often than one planted
+        #    with less. That catches a broken comparator or an inverted score without pretending to know
+        #    where the line sits.
         ok(all(totals.get(k, 0) > 0 for k in ("bound", "not bound")),
            "both settled states occur in the run")
         cell_bound = cells_bound / max(1, n_cells_sim)
@@ -1588,14 +1586,14 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
 
 FLOOR = 4
 CUTOFF = 75
-# The thin-reference line is GONE from the block (`count-becomes-a-state` removed the branch rather than
-# filling it in). A low comparator is no longer a reason to call a reading unreliable: the comparison
-# runs, and a comparator of 0 is a real comparison that any count clearing the floor beats. Simulating
-# the old line here would model a rule the block no longer has — and would hide the new failure, which is
-# the opposite one: a run that used to look broken now looks spectacularly successful.
+# There is no thin-reference line in the block, and this must not simulate one. A low comparator is not a
+# reason to call a reading unreliable: the comparison runs, and a comparator of 0 is a real comparison that
+# any count clearing the floor beats. Simulating such a line models a rule the block does not have, and
+# hides the failure that matters, which is the opposite one: a run that looks broken reads as spectacularly
+# successful.
 #
-# The panel rung instead GATES on how many members the panel holds. Below the minimum, comparing a count
-# against a handful of other antigens is not a background estimate, so the rung refuses to serve at all.
+# The panel rung GATES on how many members the panel holds instead. Below the minimum, comparing a count
+# against a handful of other antigens is not a background estimate, so the rung refuses to serve.
 PANEL_MIN_MEMBERS = 25
 
 
@@ -1736,7 +1734,7 @@ def simulate_verdicts(run_dir, panels, floor=FLOOR, cutoff=CUTOFF, gate=None,
         if served == "none":
             reference = None
         elif served == "declared":
-            # Offered but unread is a reading of zero; not offered at all is no comparator. The block
+            # Offered but unread is a reading of zero. Not offered at all is no comparator. The block
             # tests membership rather than defaulting to 0 for exactly this reason.
             reference = max((per.get(n, 0) for n in local_baseline), default=None) if local_baseline else None
         else:  # panel

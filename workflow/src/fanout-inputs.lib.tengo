@@ -1,20 +1,20 @@
 // What may reach the per-sample mitool fan-out, as a closed list.
 //
 // The block runs in two stages, and the whole value of the split is that the expensive stage does not
-// notice the cheap one. When only the reading's parameters change — a different grouping, a different
-// floor — the body re-executes and processColumn is re-declared with identical inputs, so every
-// per-sample mitool body is recovered from cache and only the verdict stage re-runs. That holds exactly
-// as long as no verdict-stage parameter and no resolved clonotype linker enters `extra` or `metaExtra`,
-// because both are part of each per-sample body's identity: one added key costs every user a full re-run
-// of parse, refine-tags and tag-stat, and nothing in the render or the logs says why.
+// notice the cheap one. Where only the reading's parameters change — a different grouping, a different
+// floor — the body re-executes and processColumn is re-declared with identical inputs, so every per-sample
+// mitool body is recovered from cache and only the verdict stage re-runs. That holds exactly as long as no
+// verdict-stage parameter and no resolved clonotype linker enters `extra` or `metaExtra`. Both are part of
+// each per-sample body's identity, so one added key costs every user a full re-run of parse, refine-tags
+// and tag-stat, and neither the render nor the logs says why.
 //
-// The eight-field extra-input block in main.tpl.tengo is precisely where a convenience addition lands, so
-// the list is closed here and checked at render time rather than reviewed later.
+// The extra-input block in main.tpl.tengo is where a convenience addition lands, so the list is closed
+// here and checked at render time rather than reviewed later.
 
 maps := import("@platforma-sdk/workflow-tengo:maps")
 
 // Every key main.tpl.tengo may pass as a per-sample body input. All of these describe how one sample's
-// reads are parsed and counted; none of them describes how the counts are read.
+// reads are parsed and counted. None describes how the counts are read.
 EXTRA_INPUT_KEYS := [
 	"barcodeSeqColumn",
 	"cellWhitelist",
@@ -30,8 +30,8 @@ EXTRA_INPUT_KEYS := [
 	"tagsCsv"
 ]
 
-// The per-sample resource meta. A distinct meta when the user overrides RAM is correct — an overridden
-// run must not dedup with the formula-sized one — but nothing else belongs here.
+// The per-sample resource meta. A distinct meta where the user overrides RAM is correct, because an
+// overridden run must not dedup with the formula-sized one. Nothing else belongs here.
 META_EXTRA_KEYS := [
 	"mitoolBaseMemGB",
 	"mitoolCPUs",
@@ -49,8 +49,8 @@ _contains := func(list, value) {
 
 // unlisted: the keys of `m` that the allowlist does not cover, sorted.
 //
-// Iterated with maps.forEach, whose key order is sorted, so the message a render fails with is the same
-// on every run rather than depending on map layout.
+// Iterated with maps.forEach, whose key order is sorted, so the message a render fails with is the same on
+// every run rather than depending on map layout.
 unlisted := func(m, allowed) {
 	offenders := []
 	maps.forEach(m, func(key, _) {

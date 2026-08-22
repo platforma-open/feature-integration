@@ -1,20 +1,19 @@
 // One sparse count table for the whole run, gathered from the per-sample tag-stat tables.
 //
-// emit_verdicts.py reads every sample at once: a panel is a property of the declared tag set rather than
-// of one sample, the panel-versus-reads check runs in both directions across the run, and the QC rollup
-// spans samples. So the per-sample [sampleId] -> tag-stat file map produced by the fan-out is concatenated
-// here into a single (sampleId, cellId, tag, umiCount) CSV.
+// emit_verdicts.py reads every sample at once: a panel is a property of the declared tag set rather than of
+// one sample, the panel-versus-reads check runs in both directions across the run, and the QC rollup spans
+// samples. So the per-sample [sampleId] -> tag-stat file map the fan-out produces is concatenated here into
+// one (sampleId, cellId, tag, umiCount) CSV.
 //
-// The real sampleId is injected from the resource-map key, exactly as qc-summary.tpl.tengo does: the
-// per-sample execs are handed a constant sample id, so the tables themselves cannot say which sample they
-// came from.
+// The real sampleId is injected from the resource-map key, exactly as qc-summary.tpl.tengo does. The
+// per-sample execs are handed a constant sample id, so the tables cannot say which sample they came from.
 //
 // Rendered as a separate template because the resource map must be awaited before its per-sample keys can
-// be iterated, which cannot be done in main's body.
+// be iterated, which main's body cannot do.
 //
 // The keys are taken through maps.getKeys, which returns them sorted. A bare `for k, v in` over a map has
-// no defined order in Tengo, so the concatenated file's resource handle would vary from run to run — and
-// every node downstream of it silently loses deduplication, with nothing reported.
+// no defined order in Tengo, so the concatenated file's resource handle would vary from run to run, and
+// every node downstream of it would silently lose deduplication.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 ll := import("@platforma-sdk/workflow-tengo:ll")
@@ -27,7 +26,7 @@ self.defineOutputs("countsFile")
 
 self.body(func(inputs) {
 	tagstatData := inputs.tagstatData // ResourceMap: [sampleId] -> per-sample tag-stat TSV
-	tags := inputs.tags // { cell, umi, feature } — the mitool tag names, so the headers are known
+	tags := inputs.tags // { cell, umi, feature }: the mitool tag names, so the headers are known
 
 	inputsMap := tagstatData.inputs()
 	ll.assert(len(inputsMap) > 0, "no per-sample tag-stat tables to gather")
@@ -35,13 +34,13 @@ self.body(func(inputs) {
 	// The gather reads every sample's distinct-UMI table, which scales with the run rather than with one
 	// sample, so it is not a light-queue job.
 	//
-	// A FLAT grant on a step whose input grows with the sample count, which is the shape that OOMs late and
-	// on someone else's run. It is flat because the sizing formulas `exec.builder().resources()` takes are
-	// not reachable from this builder — `pt.workflow().mem()` hands a plain amount to the process template
-	// — so there is nothing here to make it track `size(...)` the way the verdict exec beside it does.
-	// Raised to the same 16 GiB floor that exec uses rather than left at 8, which buys headroom without
-	// pretending to be a formula. Not observed failing; the risk is stated here so the next run that does
-	// fail has somewhere to land.
+	// A FLAT grant on a step whose input grows with the sample count, the shape that OOMs late and on
+	// someone else's run. It is flat because the sizing formulas `exec.builder().resources()` takes are not
+	// reachable from this builder: `pt.workflow().mem()` hands a plain amount to the process template. So
+	// nothing here can make it track `size(...)` the way the verdict exec beside it does. Raised to the same
+	// 16 GiB floor that exec uses rather than left at 8, which buys headroom without pretending to be a
+	// formula. Not observed failing, and the risk is stated so the next run that does fail has somewhere to
+	// land.
 	wf := pt.workflow().cpu(2).mem("16GiB")
 
 	dfs := []
@@ -50,7 +49,7 @@ self.body(func(inputs) {
 		df := wf.frame(inputsMap[key], { xsvType: "tsv", inferSchema: false })
 		// tag-stat -u writes one row per (cell, feature barcode) with the distinct-UMI count under
 		// "unique_<umi tag>". The FEATURE tag holds the barcode SEQUENCE, corrected against the panel by
-		// refine-tags, which is the key emit_verdicts.py joins the panel on.
+		// refine-tags, and that is the key emit_verdicts.py joins the panel on.
 		dfs = append(dfs, df.select([
 			pt.lit(sampleId).alias("sampleId"),
 			pt.col(tags.cell).alias("cellId"),

@@ -11,7 +11,7 @@ export type SampleResult = {
   sampleId: string;
   label: string;
   progress: ProgressCell;
-  // Populated once the sample's QC has settled (i.e. it has finished) — drive the Quality + Read
+  // Populated once the sample's QC has settled, meaning the sample finished, to drive the Quality and Read
   // recovery columns. Absent while the sample is still running.
   quality?: QcStatus;
   recovery?: RecoveryBar;
@@ -29,15 +29,15 @@ export type RecoveryBar = {
   data: { label: string; value: number; color: Color; description: string }[];
 };
 
-// One QC check on a sample: what was measured, how it is judged, the value as the reader should see it,
-// and prose explaining what the metric means. The sample report panel renders one row per check, so the
-// reader learns *which* metric is bad — the grid's single tag can only say that something is.
+// One QC check on a sample: what was measured, how it is judged, the value as the reader should see it, and
+// prose explaining what the metric means. The sample report panel renders one row per check, so the reader
+// learns *which* metric is bad, where the grid's single tag can only say that something is.
 //
-// status is undefined when the metric could not be evaluated at all. That is a real state, not a
-// failure: panelAssignedFraction is "" whenever no refine report was produced, and calling that "OK"
-// would report a passing verdict on a measurement that never happened. PlStatusTag renders nothing for
-// an absent type, and the worst-of roll-up below skips these rows, so an unevaluated check stays silent
-// everywhere instead of being quietly counted as a pass.
+// status is undefined where the metric could not be evaluated at all. That is a real state rather than a
+// failure: panelAssignedFraction is "" whenever no refine report was produced, and calling that "OK" would
+// report a passing verdict on a measurement that never happened. PlStatusTag renders nothing for an absent
+// type, and the worst-of roll-up below skips these rows, so an unevaluated check stays silent everywhere
+// rather than being counted as a pass.
 export type QcCheck = {
   label: string;
   status: QcStatus | undefined;
@@ -47,22 +47,22 @@ export type QcCheck = {
 
 const percent = (fraction: number) => `${(fraction * 100).toFixed(1)}%`;
 
-// The per-sample QC checks (proposed cutoffs; tune them here and nowhere else). These mirror the
-// analysisLog flags: zero cells detected or a very low panel-assigned fraction → ALERT; a low
-// panel-assigned or pattern-match fraction → WARN; otherwise OK.
+// The per-sample QC checks, with proposed cutoffs. Tune them here and nowhere else. They mirror the
+// analysisLog flags: zero cells detected or a very low panel-assigned fraction gives ALERT, a low
+// panel-assigned or pattern-match fraction gives WARN, and otherwise OK.
 //
-// This is the single definition of the sample's quality. The grid's one-tag Quality column is the worst
-// of these statuses (qualityStatus below), so the tag and the panel's rows can never disagree about the
-// same sample — which they would if each carried its own copy of the thresholds.
+// The single definition of the sample's quality. The grid's one-tag Quality column is the worst of these
+// statuses (qualityStatus below), so the tag and the panel's rows can never disagree about one sample,
+// which they would if each carried its own copy of the thresholds.
 export function qcChecks(qc: QcRow): QcCheck[] {
   const paf = typeof qc.panelAssignedFraction === "number" ? qc.panelAssignedFraction : undefined;
 
   return [
     {
       label: "Cells detected",
-      // Zero cells means nothing downstream of this sample can be computed, so it is the hardest fail
-      // the per-sample QC has. Any non-zero count is left unjudged as OK: how many cells a sample
-      // *should* yield depends on the experiment, so there is no cutoff we could defend here.
+      // Zero cells means nothing downstream of this sample can be computed, so it is the hardest fail the
+      // per-sample QC has. Any non-zero count is left unjudged as OK: how many cells a sample *should* yield
+      // depends on the experiment, so no cutoff here is defensible.
       status: qc.cellsDetected === 0 ? "ALERT" : "OK",
       printedValue: qc.cellsDetected.toLocaleString(),
       description:
@@ -87,8 +87,8 @@ export function qcChecks(qc: QcRow): QcCheck[] {
     },
     {
       label: "Reads matching the read pattern",
-      // Below this the sample is still usable but the library is losing most of its reads before any
-      // feature barcode is even read, which is worth a look — hence WARN rather than ALERT.
+      // Below this the sample is still usable, but the library loses most of its reads before any feature
+      // barcode is read, which is worth a look. Hence WARN rather than ALERT.
       status: qc.matchedFraction < 0.8 ? "WARN" : "OK",
       printedValue: `${percent(qc.matchedFraction)} (${qc.readsMatched.toLocaleString()} of ${qc.readsTotal.toLocaleString()})`,
       description:
@@ -99,9 +99,8 @@ export function qcChecks(qc: QcRow): QcCheck[] {
   ];
 }
 
-// The Quality column's single tag: the worst status across the checks above. Checks that could not be
-// evaluated (status undefined) contribute nothing, exactly as an unreported panel-assigned fraction
-// contributed nothing when this rule was written out by hand.
+// The Quality column's single tag: the worst status across the checks above. A check that could not be
+// evaluated, with status undefined, contributes nothing.
 const STATUS_SEVERITY: Record<QcStatus, number> = { OK: 0, WARN: 1, ALERT: 2 };
 
 function qualityStatus(qc: QcRow): QcStatus {
@@ -113,11 +112,11 @@ function qualityStatus(qc: QcRow): QcStatus {
   return worst;
 }
 
-// Read-recovery funnel: split each sample's reads into usable (matched the pattern AND kept after the
-// feature-barcode panel correction) / off-panel (matched but dropped) / no pattern match. Values are
-// read counts summing to readsTotal; PlAgChartStackedBarCell renders them proportionally. When no
-// refine report is available (panelAssignedFraction === "") the off-panel split is unknown, so only
-// usable (= matched) and no-match are shown.
+// Read-recovery funnel, splitting each sample's reads three ways: usable, meaning matched the pattern AND
+// kept after the feature-barcode panel correction; off-panel, meaning matched but dropped; and no pattern
+// match. The values are read counts summing to readsTotal, and PlAgChartStackedBarCell renders them
+// proportionally. Where no refine report is available (panelAssignedFraction === "") the off-panel split is
+// unknown, so only usable, which is then matched, and no-match are shown.
 const RECOVERY_COLORS = {
   usable: Gradient("viridis").getNthOf(2, 5),
   offPanel: Gradient("magma").getNthOf(4, 9),
@@ -183,14 +182,14 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
   const qcBySample = app.model.outputs.sampleQc ?? {};
   const sampleStep = app.model.outputs.sampleStep;
 
-  // Early roster signal: the flat parseLogStream registers per sample the moment parse starts — before
-  // any step report settles — so a sample appears in the grid immediately. (The bar detail comes from
-  // stepProgress below; this is just "does this sample exist yet".)
+  // Early roster signal. The flat parseLogStream registers per sample the moment parse starts, before any
+  // step report settles, so a sample appears in the grid immediately. This answers only "does this sample
+  // exist yet". The bar detail comes from stepProgress below.
   const parseProgress = app.model.outputs.parseProgress;
   const earlyRosterIds = parseProgress ? parseProgress.data.map((p) => String(p.key[0])) : [];
 
-  // Per-[sampleId, step] live progress lines (parse / refine / tag-stat). Index by sampleId → step →
-  // progressLine so deriveProgress can pull the line for whichever step the sample is currently on.
+  // Per-[sampleId, step] live progress lines (parse / refine / tag-stat). Indexed by sampleId → step →
+  // progressLine, so deriveProgress can pull the line for whichever step the sample is on.
   const stepProgress = app.model.outputs.stepProgress;
   const lineBySampleStep = new Map<string, string | undefined>();
   if (stepProgress) {
@@ -199,9 +198,8 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
       lineBySampleStep.set(`${String(p.key[0])} ${String(p.key[1])}`, v?.progressLine);
     }
   }
-  // All streaming steps' live lines for a sample, so deriveProgress can pick the furthest one actually
-  // streaming (rather than the report-derived step, which advances a beat early and flashed the next
-  // step's label during the gap).
+  // Every streaming step's live line for a sample, so deriveProgress can pick the furthest one actually
+  // streaming. The report-derived step advances a beat early and flashes the next step's label in the gap.
   const liveLinesFor = (sampleId: string): Record<string, string | undefined> => ({
     "1-parse": lineBySampleStep.get(`${sampleId} 1-parse`),
     "2-refine": lineBySampleStep.get(`${sampleId} 2-refine`),
@@ -216,7 +214,7 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
     ...Object.keys(sampleStep ?? {}),
     ...earlyRosterIds,
   ]);
-  // Roster not enumerated yet → keep the grid's loading overlay rather than flashing an empty table.
+  // Roster not enumerated yet, so keep the grid's loading overlay rather than flashing an empty table.
   if (sampleIds.size === 0) return undefined;
 
   return [...sampleIds]

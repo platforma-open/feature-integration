@@ -21,8 +21,9 @@ from typing import NamedTuple
 
 import polars as pl
 
-# Stands for "every sample" when the panel carries no sample column. The unkeyed
-# case is this rule with the sample component constant, not a separate rule.
+# Stands for "every sample" where the panel carries no sample column. The
+# unkeyed case is this rule with the sample component constant, not a separate
+# rule.
 ANY_SAMPLE = "*"
 
 
@@ -64,13 +65,12 @@ def read_panel(csv_path: str, roles: dict[str, str]) -> Panel:
     if sample_col and sample_col not in raw.columns:
         raise SystemExit(f"panel file has no sample column {sample_col!r}; columns are {raw.columns}")
 
-    # Two roles on one column silently makes "sample" a copy of "tag" — the
+    # Two roles on one column silently makes "sample" a copy of "tag": the
     # barcode alias below runs first and overwrites it, so the sample
-    # expression then reads barcodes: per-sample keying gone, with no error and
-    # no duplicate to catch it. The name-vs-role guard further down does not
-    # catch this either, because it is name-independent and reproduces with
-    # any column name. Reachable from the UI today — the Sample-column
-    # dropdown is unfiltered.
+    # expression then reads barcodes. Per-sample keying is gone, with no error
+    # and no duplicate to catch it. The name-vs-role guard further down misses
+    # this too, being name-independent and reproducing with any column name.
+    # Reachable from the UI, whose Sample-column dropdown is unfiltered.
     bound = [("barcode", barcode_col), ("feature", roles["feature"])]
     if sample_col:
         bound.append(("sample", sample_col))
@@ -85,18 +85,15 @@ def read_panel(csv_path: str, roles: dict[str, str]) -> Panel:
 
     # A role column may be named after the column IT ITSELF produces, and after
     # nothing else. emit_panel.py in this package defaults --tag-col to "tag",
-    # so a barcode column called "tag" must stay legal — alias() replaces the
-    # same-named source column rather than duplicating it.
-    #
-    # The exclusion cannot be widened to "bound to any role". A SAMPLE column
-    # named "tag" is fatal precisely because the barcode alias runs first and
-    # overwrites it, so the sample expression then reads barcodes and "sample"
-    # silently becomes a copy of "tag" — per-sample keying, the load-bearing
-    # property of this whole design, collapsing with no error and no duplicate
-    # to catch it. The mirror (a barcode column named "sample") happens to
-    # produce correct output today, but only because the barcode alias is
-    # applied before the sample alias; it is refused rather than left resting
-    # on that.
+    # so a barcode column called "tag" must stay legal, and alias() replaces
+    # the same-named source column rather than duplicating it. The exclusion
+    # cannot be widened to "bound to any role". A SAMPLE column named "tag" is
+    # fatal because the barcode alias runs first and overwrites it, so the
+    # sample expression reads barcodes and "sample" becomes a copy of "tag",
+    # collapsing per-sample keying with no error and no duplicate to catch it.
+    # The mirror, a barcode column named "sample", produces correct output only
+    # because the barcode alias is applied before the sample alias, and is
+    # refused rather than left resting on that ordering.
     reserved = set()
     if "tag" in raw.columns and barcode_col != "tag":
         reserved.add("tag")
@@ -110,9 +107,10 @@ def read_panel(csv_path: str, roles: dict[str, str]) -> Panel:
             "'tag' and 'sample' are what this reader produces."
         )
 
-    # fill_null is load-bearing, not defensive: under infer_schema_length=0 a
-    # bare empty field parses to null while a quoted one parses to "", so the
-    # two spellings of blank would otherwise take different branches below.
+    # fill_null is load-bearing rather than defensive. Under
+    # infer_schema_length=0 a bare empty field parses to null while a quoted
+    # one parses to "", so the two spellings of blank would otherwise take
+    # different branches below.
     panel = raw.with_row_index("_row").with_columns(pl.col(barcode_col).str.strip_chars().fill_null("").alias("tag"))
     panel = panel.with_columns(
         pl.col(sample_col).str.strip_chars().fill_null("").alias("sample")
@@ -120,19 +118,19 @@ def read_panel(csv_path: str, roles: dict[str, str]) -> Panel:
         else pl.lit(ANY_SAMPLE).alias("sample")
     )
 
-    # Blank barcodes are separated FIRST, and the order is the whole point.
-    # polars materializes a trailing blank line as a real all-null row, so a
-    # panel whose only flaw is a stray newline at EOF would otherwise die on
-    # the blank-sample check below — telling the user to remove a sample column
-    # that is not the problem. An empty line is a dropped row, not an ambiguous
-    # cell. Blank barcodes are returned rather than filtered away: dropping a
-    # malformed row silently is the failure the no-silent-drop rule exists to
-    # prevent, and worse, because nothing downstream can tell the panel was short.
+    # Blank barcodes are separated FIRST, and the order is the whole point. polars
+    # materializes a trailing blank line as a real all-null row, so a panel whose
+    # only flaw is a stray newline at EOF would otherwise die on the blank-sample
+    # check below, telling the user to remove a sample column that is not the
+    # problem. An empty line is a dropped row, not an ambiguous cell. Blank
+    # barcodes are returned rather than filtered away, because dropping a
+    # malformed row silently leaves nothing downstream able to tell the panel was
+    # short.
     dropped = [_csv_line(r) for r in panel.filter(pl.col("tag") == "")["_row"]]
     panel = panel.filter(pl.col("tag") != "")
 
     # A blank sample cell on a row that IS otherwise real is fatal, never
-    # ANY_SAMPLE. "*" means the panel declares no sample dimension at all;
+    # ANY_SAMPLE. "*" means the panel declares no sample dimension at all, so
     # reading an empty cell that way would widen one malformed row into a claim
     # over every sample in the run.
     if sample_col:
@@ -146,7 +144,7 @@ def read_panel(csv_path: str, roles: dict[str, str]) -> Panel:
 
         # ANY_SAMPLE is what this reader writes when there is no sample column,
         # not a sample name a caller can declare. Accepting it in an explicit
-        # sample column would let one row claim every sample; downstream, a
+        # sample column would let one row claim every sample. Downstream, a
         # frame mixing "*" with real sample names is exactly what turns the
         # panel-versus-reads check blind.
         star = panel.filter(pl.col("sample") == ANY_SAMPLE)
@@ -291,7 +289,7 @@ def panel_read_mismatch(panel: pl.DataFrame, seen: pl.DataFrame) -> pl.DataFrame
     no sample dimension has no per-sample declaration to compare against.
     """
     # Neither side can place a row with no sample or no barcode, and a null is
-    # not a usable p-column key. The reader never emits one; this keeps the
+    # not a usable p-column key. The reader never emits one. This keeps the
     # promise true for a caller that builds a frame directly, as the star
     # branch below does for the same reason.
     panel = panel.filter(pl.col("sample").is_not_null() & pl.col("tag").is_not_null())

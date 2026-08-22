@@ -134,7 +134,7 @@ def test_two_populations_too_close_together_do_not_separate():
 
 
 def test_the_baseline_is_the_background_not_the_split_point():
-    # The published use of the split is a threshold; nothing here thresholds.
+    # The published use of the split is a threshold. Nothing here thresholds.
     # The comparator is the middle of the background, which is far below the
     # split -- reporting the split instead would make every score harder to
     # clear than the method it came from intends.
@@ -154,7 +154,7 @@ def test_the_baseline_is_an_integer_count():
 
 def test_the_fit_is_deterministic():
     # Two runs over the same counts return the same split to the bit. The grid
-    # is fixed for this reason; a data-derived one would not be.
+    # is fixed for this reason. A data-derived one would not be.
     counts = _mixture(1940, 2, 60, 300)
     assert fit_tag_background(counts) == fit_tag_background(counts)
 

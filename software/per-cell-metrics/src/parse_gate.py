@@ -33,14 +33,14 @@ def main() -> None:
 
     with open(args.parse_report) as fh:
         rep = json.load(fh)
-    # mitool writes {"parseReport": {"total", "matched", ...}, ...}; tolerate an unwrapped report too.
+    # mitool writes {"parseReport": {"total", "matched", ...}, ...}. Tolerate an unwrapped report too.
     pr = rep.get("parseReport", rep)
     total = int(pr.get("total", 0))
     matched = int(pr.get("matched", 0))
     should_continue = matched > 0
 
     if not should_continue:
-        # Surfaced in the exec's stderr; the block's analysis log separately flags the zero-cell sample.
+        # Surfaced in the exec's stderr. The block's analysis log separately flags the zero-cell sample.
         print(
             f"[parse-gate] parse matched {matched} of {total} reads — no features will be extracted "
             f"for this sample; check the read geometry / tag pattern against the data",

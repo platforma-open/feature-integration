@@ -18,40 +18,39 @@ import {
 import { computed } from "vue";
 import { useApp } from "../app";
 
-// The settings for the binding reading. Rendered in the Main page's Settings drawer and again in the
-// Explore readout page's own — one component, one set of controls, both writing the same data. A scientist who
-// meets a card of grey punches can change the rule that produced it without leaving the page.
+// The settings for the binding reading. Rendered in the Main page's Settings drawer and again in the Explore
+// readout page's own: one component, one set of controls, both writing the same data. A scientist who meets
+// a card of grey punches can change the rule that produced it without leaving the page.
 //
 // Everything this component EDITS is below the "binding reading" line in BlockArgs, so a change here
-// recovers every per-sample mitool body from cache and re-runs the verdict stage alone. That is what
-// makes it safe to offer from a results page. It also READS three fields it must never edit —
-// tagFeatureCsvHandle, barcodeSeqColumn, sampleColumn — to tell whether the panel has loaded and to keep
+// recovers every per-sample mitool body from cache and re-runs the verdict stage alone. That is what makes
+// it safe to offer from a results page. It also READS three fields it must never edit —
+// tagFeatureCsvHandle, barcodeSeqColumn, sampleColumn — to tell whether the panel has loaded, and to keep
 // a role or grouping setting from naming a column the panel reader consumes as a key. Those three force
-// the whole per-sample fan-out to re-run, and they belong to the Main page alone; adding a control for
-// one of them here would make the explore readout's drawer silently expensive.
+// the whole per-sample fan-out to re-run and belong to the Main page alone. A control for one of them
+// here would make the explore readout's drawer silently expensive.
 //
-// VOCABULARY, and the split is deliberate. Everything a USER reads says "baseline": the level a count
-// must exceed, measured in the same cell from a tag declared to bind nothing. The DATA layer keeps
-// `reference` — `ReferenceSource`, the run-meta keys, and the p-column domain values — and those cannot
-// follow, because domain is part of column identity and renaming one would change what every emitted
-// column IS. Code comments here describe the data layer, so they still say reference and comparator.
+// VOCABULARY, and the split is deliberate. Everything a USER reads says "baseline": the level a count must
+// exceed, measured in the same cell from a tag declared to bind nothing. The DATA layer keeps `reference`
+// — `ReferenceSource`, the run-meta keys, the p-column domain values — and those cannot follow, because
+// domain is part of column identity and renaming one would change what every emitted column IS. Code
+// comments here describe the data layer, so they still say reference and comparator.
 //
-// The UI used four words for this one thing (reference, comparator, "read against", self-comparison),
-// and none of them was the word a scientist reaches for, which is "control". That collided with the
-// separate `controlFeature` field on the Main page — a marker for downstream readers that changes no
-// number and no verdict. So "control" now belongs to that field alone and never appears here.
+// One user-facing word, never four. "control" is not it: that word belongs to the separate `controlFeature`
+// field on the Main page, a marker for downstream readers that changes no number and no verdict, and it
+// must never appear here.
 const app = useApp();
 
 // The panel-derived dropdowns have nothing to offer until the panel file is uploaded and staging has read
-// its columns; disabled + dimmed so their empty state reads as "waiting" rather than "nothing found".
+// its columns. Disabled and dimmed, so their empty state reads as "waiting" rather than "nothing found".
 const panelUnread = computed(
   () => !app.model.data.tagFeatureCsvHandle || app.model.outputs.csvColumnsLoading === true,
 );
 
-// The panel's PROPERTY columns: every header except the ones the panel reader consumes as keys — the
-// barcode column, and the sample column where one is set. This mirrors panel.py's own rule. A column the
-// reader strips is not one the role or grouping setting may name, and emit_verdicts.py ends the run
-// rather than degrading when it is handed one.
+// The panel's PROPERTY columns: every header except the ones the panel reader consumes as keys, which are
+// the barcode column and the sample column where one is set. Mirrors panel.py's own rule. A column the
+// reader strips is not one the role or grouping setting may name, and emit_verdicts.py ends the run rather
+// than degrading when handed one.
 const panelPropertyOptions = computed(() =>
   (app.model.outputs.csvColumnOptions ?? []).filter(
     (o) => o.value !== app.model.data.barcodeSeqColumn && o.value !== app.model.data.sampleColumn,
@@ -68,30 +67,27 @@ const roleValueOptions = computed(() => {
   }));
 });
 
-// The panel's headers as they stand right now. Snapshotted into data on the gesture that names a panel
-// column, so args() can refuse a column the panel does not carry without reaching outside data — the same
-// reason the sample column snapshots its values. Left to a watcher this would be an output written back
-// into data, which two open clients would race to write.
+// The panel's headers as they stand now. Snapshotted into data on the gesture that names a panel column,
+// so args() can refuse a column the panel does not carry without reaching outside data, the same reason
+// the sample column snapshots its values. Left to a watcher this would be an output written back into
+// data, which two open clients would race to write.
 function snapshotPanelColumns() {
   app.model.data.panelColumnSnapshot = (app.model.outputs.csvColumnOptions ?? []).map(
     (o) => o.value,
   );
 }
 
-// Changing the role column drops the values chosen under the old one: they designate values of THIS
-// column, and left behind they would mark no tag at all while still reading as a configured comparator.
+// Changing the role column drops the values chosen under the old one. They designate values of THIS column,
+// and left behind they would mark no tag while still reading as a configured comparator.
 //
 // Declaring a baseline is also what the baseline CHOICE was made against, so changing the declaration
-// drops the choice too. An override means "I want this rung given what I have declared" — it is not a
-// standing instruction that outlives the declaration it answered. Left behind, marking a baseline tag
-// could not move the field onto it, which reads as the block ignoring the thing you just declared.
+// drops the choice too. An override means "I want this rung given what I have declared", not a standing
+// instruction that outlives the declaration it answered. Left behind, marking a baseline tag could not
+// move the field onto it, which reads as the block ignoring what you just declared.
 //
-// This is the same rule the two settings either side of it already follow: the role values go when the
-// role column changes, and `contendingGroups` goes when the grouping rule changes. A setting does not
-// outlive the thing it was chosen against.
-//
-// Only on a GESTURE, never from a watcher — a watcher on a model output writing back into data is the
-// hairpin, and two clients with the project open would race on it.
+// The same rule the two settings either side of it follow: a setting does not outlive the thing it was
+// chosen against. Only on a GESTURE, never from a watcher — a watcher on a model output writing back into
+// data is the hairpin, and two clients with the project open would race on it.
 function clearBaselineChoice() {
   app.model.data.referenceSource = undefined;
 }
@@ -108,15 +104,15 @@ function setReferenceValues(values: string[]) {
   clearBaselineChoice();
 }
 
-// One control for the whole rule, and it takes SEVERAL columns: an identity is the distinct
-// combination of the named columns' values, so naming antigen and concentration together makes the
-// same antigen at two concentrations two identities.
+// One control for the whole rule, taking SEVERAL columns: an identity is the distinct combination of the
+// named columns' values, so naming antigen and concentration together makes the same antigen at two
+// concentrations two identities.
 //
-// The barcode column sits in the same list as the property columns, because naming it IS a grouping —
-// the finest one available, one identity per barcode — rather than a mode beside grouping. It cannot be
-// offered as a property column: the panel reader consumes it as the `tag` key, so it never appears in
-// the panel's property columns. It therefore maps to the `tag` rule, which produces exactly that
-// reading. A sentinel value stands for it, prefixed with a space so no real column name can collide.
+// The barcode column sits in the same list as the property columns, because naming it IS a grouping — the
+// finest one available, one identity per barcode — rather than a mode beside grouping. It cannot be offered
+// as a property column, since the panel reader consumes it as the `tag` key, so it maps to the `tag` rule,
+// which produces exactly that reading. A sentinel value stands for it, prefixed with a space so no real
+// column name can collide.
 const TAG_GROUPING_VALUE = " tag";
 
 const groupingSelection = computed<string[]>(() => {
@@ -137,17 +133,16 @@ const groupingOptions = computed(() => [
 function setGrouping(selected: string[] | undefined) {
   const picked = (selected ?? []).filter((c) => c !== "");
   // The barcode column is the finest grouping there is, so it does not combine with a coarser one: a
-  // combination that includes it is already one identity per barcode. Picking it therefore wins alone.
-  // Picking nothing leaves the rule absent, which reads the same way.
+  // combination including it is already one identity per barcode. Picking it therefore wins alone, and
+  // picking nothing leaves the rule absent, which reads the same way.
   const rule: GroupingRule | undefined = picked.includes(TAG_GROUPING_VALUE)
     ? { by: "tag" }
     : picked.length > 0
       ? { by: "property", columns: picked }
       : undefined;
   app.model.data.grouping = rule;
-  // The identities ARE the values of the grouping columns, so groups declared under the previous rule
-  // name things that no longer exist. Cleared on the gesture that invalidates them rather than left to
-  // fail.
+  // The identities ARE the values of the grouping columns, so groups declared under the previous rule name
+  // things that no longer exist. Cleared on the gesture that invalidates them rather than left to fail.
   app.model.data.contendingGroups = undefined;
   snapshotPanelColumns();
 }
@@ -160,27 +155,26 @@ const referenceSources = computed(() => app.model.outputs.referenceSources);
 // The rungs this panel can serve, and the rung the run will be answered under. Both come from model
 // outputs: the option list from `referenceSources`, the shown value from `effectiveReferenceSource`.
 //
-// The shown value USED to be derived here, which is what made the field lie. The same rule was written
-// twice — once in this component to decide what to display, once in `args()` to decide what to send — and
-// a stored choice that had stopped being serviceable sat between the two copies. Clearing the role values
-// left a dead "declared" behind: this component re-rendered as "the panel's own readings" while the data
-// still held "declared", so the form showed a scientist the exact value they were being asked to supply
-// while Run stayed greyed out, and only re-picking the already-shown value fixed it.
+// NEVER derive the shown value here. Writing the rule twice — once to decide what to display, once in
+// `args()` to decide what to send — makes the field lie the moment a stored choice stops being
+// serviceable. Clearing the role values then leaves a dead "declared" behind: this component re-renders as
+// "the panel's own readings" while the data still holds "declared", so the form shows a scientist the
+// exact value they are being asked to supply while Run stays greyed out, and only re-picking the
+// already-shown value fixes it.
 //
-// There is now no derivation anywhere — the block does not choose a baseline, because a baseline nobody
-// chose is a methodology nobody knows they used. `effectiveReferenceSource` is the stored choice, or the
-// bottom rung where none was made. Reading an output to display it is not a hairpin: nothing here writes
-// back, and this component must not acquire a rule of its own again.
+// No derivation exists anywhere. The block does not choose a baseline, because a baseline nobody chose is
+// a methodology nobody knows they used. `effectiveReferenceSource` is the stored choice, or the bottom
+// rung where none was made. Reading an output to display it is not a hairpin: nothing here writes back.
 const serviceableSources = computed(() => referenceSources.value?.options ?? []);
 const shownSource = computed(() => app.model.outputs.effectiveReferenceSource);
 // Whether the scientist has actually chosen. Read from data rather than from the output above, which
-// answers "none" both for an explicit choice of no baseline and for no choice at all — the two look the
+// answers "none" both for an explicit choice of no baseline and for no choice at all. The two look the
 // same to a run and are opposite things to say to a reader.
 const baselineUnchosen = computed(() => app.model.data.referenceSource === undefined);
 
-// A checkbox binds a boolean, and the field is optional in data so that a project which never touched
-// it carries no key at all. `undefined` reads as false here and the setter writes `undefined` back
-// rather than `false`, which keeps such a project's args vector unchanged.
+// A checkbox binds a boolean, and the field is optional in data so a project that never touched it carries
+// no key. `undefined` reads as false here, and the setter writes `undefined` back rather than `false`,
+// which keeps such a project's args vector unchanged.
 const minimumAppliesToBaseline = computed({
   get: () => app.model.data.minimumAppliesToBaseline === true,
   set: (on: boolean) => {
@@ -194,10 +188,10 @@ function setBaselineSource(value: string | undefined) {
 
 // The identities the contending-groups editor picks from, live from the uploaded panel.
 const identityOptions = computed(() => app.model.outputs.identityOptions ?? []);
-// Grouped on the barcode column, an identity id IS a feature barcode. The panel metadata staging emits
-// is column-wise — each column's distinct values, with no pairing between a barcode and the name beside
-// it — so the identity names cannot be offered here. Said in the editor rather than left for the user
-// to discover from a list of 15-mers.
+// Grouped on the barcode column, an identity id IS a feature barcode. The panel metadata staging emits is
+// column-wise, carrying each column's distinct values with no pairing between a barcode and the name
+// beside it, so the identity names cannot be offered here. Said in the editor rather than left for the
+// user to discover from a list of 15-mers.
 const identitiesAreBarcodes = computed(() => app.model.data.grouping?.by !== "property");
 
 const contendingGroups = computed(() => app.model.data.contendingGroups ?? []);

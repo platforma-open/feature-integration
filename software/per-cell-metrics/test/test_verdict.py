@@ -136,16 +136,15 @@ def test_a_reading_that_was_already_zero_still_counts_as_evidence_lost():
 
 
 def test_nothing_here_picks_a_rung():
-    # `resolve_default_source` used to, and its removal is the point rather than
-    # a cleanup. `what-plays-the-baseline` requires the scientist to select among
-    # the rungs and requires that nothing selects for them.
+    # `what-plays-the-baseline` requires the scientist to select among the rungs
+    # and requires that nothing selects for them.
     #
-    # A tripwire, not a permanent ban, and the same shape as the empty-droplets
-    # one below: if a default is ever wanted again it should be a deliberate act
-    # that deletes this test, not a helper that reappears in the layer furthest
-    # from the reader. The workflow omits --reference-source when the model's
-    # value is empty, so anything here that could pick a rung becomes the live
-    # rule the moment the model stops picking one.
+    # A tripwire rather than a permanent ban, the same shape as the empty-droplets
+    # one below: wanting a default again should be a deliberate act that deletes
+    # this test, not a helper that reappears in the layer furthest from the
+    # reader. The workflow omits --reference-source where the model's value is
+    # empty, so anything here that could pick a rung becomes the live rule the
+    # moment the model stops picking one.
     import verdict
 
     assert not hasattr(verdict, "resolve_default_source")
@@ -167,12 +166,12 @@ def test_empty_droplets_is_not_offered():
 
 
 def test_several_reference_tags_are_refused_rather_than_combined():
-    # This used to take the highest of them. `baseline-scope` states that
-    # references are never combined, and taking the highest is a combination.
+    # Never take the highest of them: `baseline-scope` states that references are
+    # never combined, and taking the highest is a combination.
     #
     # Refused rather than given a different rule, because the atom's construct
     # scopes each reference to a group of antigens by a declared property, and
-    # this version of the block has no group-by half -- so it cannot say WHICH
+    # this version of the block has no group-by half, so it cannot say WHICH
     # antigens a second comparator belongs to. It is also what the field does:
     # the ordinary antibody run rejects a second control outright.
     counts = _counts([("S1", "c1", "CTRL1", 3), ("S1", "c1", "CTRL2", 11)])
@@ -310,7 +309,7 @@ def test_the_panel_median_truncates_rather_than_rounds():
     # and polars' round-half-to-even gives 2. At a median of 2.5 both give 2,
     # so a fixture there cannot tell them apart — and the difference matters,
     # because a comparator of 1 and one of 2 give different scores. Truncation is
-    # the behaviour; this pins it.
+    # the behaviour. This pins it.
     counts = _counts(
         [
             ("S1", "c1", "AAAA", 1),
@@ -349,7 +348,7 @@ def test_a_named_cell_with_no_reference_reading_is_zero_not_missing():
 
 
 def test_the_panel_source_also_respects_the_given_cell_list():
-    # Two branches now share the cell-list rule; only one is covered above.
+    # Two branches now share the cell-list rule. Only one is covered above.
     counts = _counts([("S1", "c1", "AAAA", 9), ("S1", "c2", "AAAA", 3)])
     ref, choice = reference_by_cell(
         counts, set(), ReferenceChoice.PANEL, cells=[("S1", "c1")], panel_size=8, min_members=5
@@ -500,7 +499,7 @@ def test_no_line_separates_a_thin_comparator_from_a_usable_one():
 def test_no_comparator_is_unreliable_but_a_comparator_reading_zero_is_scored():
     # The two must not collapse. served=NONE (modelled here as an empty
     # reference dict, per reference_by_cell's contract) means no comparison
-    # existed; a comparator present and reading 0 is a real comparison and
+    # existed. A comparator present and reading 0 is a real comparison and
     # scores normally -- a positive antigen count against a zero reference is
     # This also subsumes the plain no-comparator-is-unreliable check: nothing
     # else in the suite needs a weaker, reason-blind version of this.
@@ -542,7 +541,7 @@ def test_duplicated_observed_rows_are_rejected_not_silently_wrong():
     # combination silently returned silentUnreliable == -1 (a duplicated
     # observed row for an inadmissible cell is counted twice against a total
     # that counts the cell once). `observed` must be unique on
-    # (cell, identity); this input violates that, so the function must now
+    # (cell, identity). This input violates that, so the function must now
     # refuse it loudly instead of emitting a negative count.
     cells = _cells([("S1", "c1")])
     admissibility = Admissibility({}, set())  # no comparator for c1: inadmissible

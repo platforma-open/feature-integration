@@ -113,7 +113,7 @@ def test_blank_sample_cell_is_fatal(tmp_path):
 
 def test_trailing_blank_line_is_not_a_blank_sample_cell(tmp_path):
     # polars materializes a trailing newline as a real all-null row. A stray
-    # newline at EOF is the commonest shape a panel file arrives in; it must
+    # newline at EOF is the commonest shape a panel file arrives in. It must
     # not read as an ambiguous sample cell.
     p = tmp_path / "panel.csv"
     p.write_text("Samples,Name,Sequence,Type\nS1,AgA,AAAA,Target\n\n")
@@ -329,7 +329,7 @@ def test_undeclared_barcode_is_reported_per_sample():
 
 def test_a_barcode_declared_in_another_sample_does_not_pass_silently():
     # The failure this whole check exists to prevent: AAAA is declared for S3
-    # only; it is read in S1, where nothing declares it. A global check would
+    # only. It is read in S1, where nothing declares it. A global check would
     # let S3's declaration excuse it there too.
     panel = pl.DataFrame({"tag": ["CCCC", "AAAA"], "sample": ["S1", "S3"], "Name": ["c", "a"]})
     seen = _counts([("S1", "c1", "CCCC", 1), ("S1", "c1", "AAAA", 1)])

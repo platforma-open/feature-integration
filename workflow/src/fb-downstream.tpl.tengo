@@ -1,16 +1,17 @@
 // Downstream per-sample QC + per-cell metrics sub-template (render.create boundary).
 //
-// The final consumers of the mitool chain: the QC-report exec (parsed/matched + cell/feature/UMI +
-// panel-assigned fraction) and the per-cell-metrics Python (collapse to the per-cell (cell x feature)
-// outputs). They consume tagstat.tsv (fb-tagstat) plus the parse/refine JSON reports (fb-parse /
-// fb-refine). Running them inside this render.create boundary returns their per-sample outputs as render
-// outputs that flatten cleanly. Mirrors blocks/peptide-extraction downstream-pipeline.tpl.tengo.
+// The final consumers of the mitool chain: the QC-report exec, giving parsed and matched reads plus the
+// cell, feature and UMI metrics and the panel-assigned fraction, and the per-cell-metrics Python, which
+// collapses to the per-cell (cell x feature) outputs. Both consume tagstat.tsv from fb-tagstat plus the
+// parse and refine JSON reports. Running them inside this render.create boundary returns their per-sample
+// outputs as render outputs that flatten cleanly. Mirrors blocks/peptide-extraction
+// downstream-pipeline.tpl.tengo.
 //
-// Nothing here knows about the binding verdicts. The verdict stage reads the run as a whole — a panel is a
-// property of a declared tag set rather than of one sample, and the quality rollup spans samples — so it
-// runs once, after this fan-out, on the gathered counts. Keeping every one of its parameters out of this
-// template is what lets a change to the reading recover each per-sample body from cache instead of
-// re-running parse, refine-tags and tag-stat.
+// Nothing here knows about the binding verdicts. The verdict stage reads the run as a whole, because a
+// panel is a property of a declared tag set rather than of one sample and the quality rollup spans
+// samples, so it runs once after this fan-out on the gathered counts. Keeping every one of its parameters
+// out of this template is what lets a change to the reading recover each per-sample body from cache
+// instead of re-running parse, refine-tags and tag-stat.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
@@ -29,18 +30,18 @@ self.body(func(inputs) {
 	tagsCsv := inputs.tagsCsv
 	barcodeSeqColumn := inputs.barcodeSeqColumn
 	featureNameColumn := inputs.featureNameColumn
-	// Optional multi-barcode antigen combine mode. "" = off (per_cell_metrics defaults every feature to
-	// OR/sum). When set, it names the tag-CSV column giving each feature's mode (sum | all); minUmi is the
-	// AND per-barcode "fired" floor.
+	// Optional multi-barcode antigen combine mode. "" = off, and per_cell_metrics then defaults every
+	// feature to OR/sum. Where set, it names the tag-CSV column giving each feature's mode, sum or all.
+	// minUmi is the AND per-barcode "fired" floor.
 	combineColumn := is_undefined(inputs.combineColumn) ? "" : inputs.combineColumn
 	minUmi := is_undefined(inputs.minUmi) ? 1 : inputs.minUmi
 
-	// Per-sample QC summary: reads parsed/matched (parse JSON report) + cell/feature/UMI metrics
-	// (tag-stat) + best-effort panel-assigned fraction (refine JSON report).
+	// Per-sample QC summary: reads parsed and matched from the parse JSON report, the cell, feature and UMI
+	// metrics from tag-stat, and a best-effort panel-assigned fraction from the refine JSON report.
 	qc := exec.builder().
 		software(qcReportSw).
 		cpu(1).mem("2GiB").
-		// polars sizes its pool to all host cores by default; cap it to the granted CPU.
+		// polars sizes its pool to all host cores by default. Cap it to the granted CPU.
 		envWithVar("POLARS_MAX_THREADS", "{system.cpu}").
 		addFile("tagstat.tsv", tagstatTsv).
 		addFile("parse_report.json", parseReport).
@@ -56,10 +57,10 @@ self.body(func(inputs) {
 		saveFileContent("result_qc.json").
 		run()
 
-	// Per-cell metrics (Python). sampleId is irrelevant here — processColumn prepends the real sample
-	// axis from the iteration key, so we pass a constant and the CSV's sampleId column is ignored by the
-	// import. The distinct-UMI polars read scales with input volume, so size RAM from the tagstat.tsv blob
-	// (tag "tagstat") on a floor instead of a fixed request.
+	// Per-cell metrics (Python). sampleId is irrelevant here: processColumn prepends the real sample axis
+	// from the iteration key, so this passes a constant and the import ignores the CSV's sampleId column.
+	// The distinct-UMI polars read scales with input volume, so size RAM from the tagstat.tsv blob, tagged
+	// "tagstat", on a floor rather than as a fixed request.
 	metricsBaseGB := 16
 	// workflow-tengo 6.7.0 fluent formula API fed via .resources({ onCPU }) (see fb-parse for the note).
 	formula := exec.formula
@@ -73,7 +74,7 @@ self.body(func(inputs) {
 		saveStdoutStream().
 		software(metricsSw).
 		resources({ onCPU: { cpu: 2, ram: metricsMemFormula } }).
-		// polars sizes its pool to all host cores by default; cap it to the granted CPU.
+		// polars sizes its pool to all host cores by default. Cap it to the granted CPU.
 		envWithVar("POLARS_MAX_THREADS", "{system.cpu}").
 		addFile("tagstat.tsv", tagstatTsv, { tag: "tagstat" }).
 		addFile("tags.csv", tagsCsv).
@@ -88,31 +89,30 @@ self.body(func(inputs) {
 		saveFile("result_abundance.csv").
 		saveFile("result_fractions.csv").
 		saveFile("result_per_cell_summary.csv")
-	// Multi-barcode antigen combine mode (optional). Only pass --combine-col when a column is configured;
-	// otherwise per_cell_metrics defaults every feature to OR/sum (unchanged behaviour). --min-umi is the
-	// AND per-barcode "fired" floor and is harmless when no combine column is set.
+	// Multi-barcode antigen combine mode (optional). Pass --combine-col only where a column is configured.
+	// Otherwise per_cell_metrics defaults every feature to OR/sum. --min-umi is the AND per-barcode "fired"
+	// floor, and is harmless where no combine column is set.
 	if combineColumn != "" {
 		metrics = metrics.arg("--combine-col").arg(combineColumn).arg("--min-umi").arg(string(minUmi))
 	}
 	metrics = metrics.run()
 
-	// The consensus (dominant-feature) and Cell Ranger specificity tables are gone with the dominance rule
-	// they reported: per_cell_metrics.py no longer writes either, and no longer takes the four flags that
-	// drove them (--control, --dominance-threshold, --offtarget-col, --offtarget-values). The binding
-	// question is now asked of every antigen independently in the verdict stage, so a cell that bound three
-	// antigens carries three verdicts rather than one winner and two absences. The negative-control
-	// designation survives as a per-feature marker column, emitted outside this fan-out.
+	// No consensus (dominant-feature) or Cell Ranger specificity table. per_cell_metrics.py writes neither
+	// and takes none of the four flags that drove them (--control, --dominance-threshold, --offtarget-col,
+	// --offtarget-values). The verdict stage asks the binding question of every antigen independently, so a
+	// cell that bound three antigens carries three verdicts rather than one winner and two absences. The
+	// negative-control designation survives as a per-feature marker column, emitted outside this fan-out.
 	return {
 		abundance: metrics.getFile("result_abundance.csv"),
 		fractions: metrics.getFile("result_fractions.csv"),
 		perCellSummary: metrics.getFile("result_per_cell_summary.csv"),
 		qc: qc.getFile("result_qc.csv"),
 		qcJson: qc.getFileContent("result_qc.json"), // inline content (saveFileContent) so the model can read it
-		// per-cell-metrics (Python) stdout — the "4-metrics" step log. Surfaced separately (not in the
-		// mitool stepLogs map, which fb-refine-tagstat builds before this step runs). Capturing it here is
-		// CID-safe via the content-hash persist of these metrics intermediates in main.tpl.tengo: the File
-		// outputs above ARE resolved downstream, so that persist loop (not any avoidance of resolution) is
-		// what keeps re-capturing this stdout stream from re-triggering CIDConflictError.
+		// per-cell-metrics (Python) stdout: the "4-metrics" step log. Surfaced separately rather than in the
+		// mitool stepLogs map, which fb-refine-tagstat builds before this step runs. Capturing it here is
+		// CID-safe through the content-hash persist of these metrics intermediates in main.tpl.tengo. The
+		// File outputs above ARE resolved downstream, so that persist loop, and not any avoidance of
+		// resolution, is what keeps this stdout capture from re-triggering CIDConflictError.
 		metricsLogStream: metrics.getStdoutStream()
 	}
 })

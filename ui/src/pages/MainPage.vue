@@ -42,10 +42,10 @@ import {
 } from "../results";
 
 const app = useApp();
-// Auto-open Settings for a fresh block (no FASTQ chosen yet); stay closed once configured.
+// Auto-open Settings for a fresh block, with no FASTQ chosen yet. Stays closed once configured.
 const settingsOpen = ref(app.model.data.fbFastqRef === undefined);
-// Close the Settings drawer once a run starts. Watching an output → writing a local ref is not a
-// hairpin (no write to server-stored data).
+// Close the Settings drawer once a run starts. Watching an output and writing a local ref is not a
+// hairpin, since nothing writes to server-stored data.
 watch(
   () => app.model.outputs.isRunning,
   (running) => {
@@ -54,18 +54,18 @@ watch(
 );
 
 // The block's "Analysis logs": a live completed-sample heartbeat while the run is in progress, then a
-// run-level summary when it finishes (the model builds the lines from the per-sample QC). Shown in a
-// wide slide-over as one text area; detailed per-sample statistics live on the QC page.
+// run-level summary once it finishes. The model builds the lines from the per-sample QC. Shown in a wide
+// slide-over as one text area. Detailed per-sample statistics live on the QC page.
 const analysisLog = computed(() => app.model.outputs.analysisLog ?? []);
-// First line of the Analysis-logs drawer: point users at the richer per-sample logs, which live behind a
-// double-click on each sample row (the run-level analysisLog below is only a summary heartbeat).
+// First line of the Analysis-logs drawer, pointing the user at the richer per-sample logs behind a
+// double-click on each sample row. The run-level analysisLog below is only a summary heartbeat.
 const LOGS_HINT =
   "Tip: double-click any sample in the progress table to open its own detailed per-step logs (parse, refine tags, count UMIs).";
 const logText = computed(() => [LOGS_HINT, "", ...analysisLog.value].join("\n"));
 const logsOpen = ref(false);
 
-// Per-sample report slide-over (live per-step mitool logs). Opened by double-clicking a grid row; the
-// modal is shown whenever a sample is selected.
+// Per-sample report slide-over of live per-step mitool logs. Opened by double-clicking a grid row, and
+// shown whenever a sample is selected.
 const selectedSample = ref<string | undefined>(undefined);
 const sampleReportOpen = computed({
   get: () => selectedSample.value !== undefined,
@@ -79,30 +79,30 @@ const selectedSampleLabel = computed(() =>
     : "",
 );
 
-// No-negative-control info note in the Settings drawer: appears once the tag-feature CSV is added,
-// and hides as soon as a negative control feature is selected.
+// No-negative-control info note in the Settings drawer. Appears once the tag-feature CSV is added, and
+// hides as soon as a negative control feature is selected.
 const controlInfoVisible = computed(
   () => !!app.model.data.tagFeatureCsvHandle && !app.model.data.controlFeature,
 );
 
-// True while staging is still parsing the uploaded tag-feature CSV (handle set, but the column/value
-// metadata hasn't resolved yet). Drives a "reading columns…" note and disables the CSV-derived
+// True while staging is still parsing the uploaded tag-feature CSV: the handle is set, but the column and
+// value metadata have not resolved. Drives a "reading columns…" note and disables the CSV-derived
 // dropdowns, so their empty state reads as "loading" rather than "no columns found".
 const csvProcessing = computed(() => app.model.outputs.csvColumnsLoading === true);
 
 // The CSV-derived tag-mapping dropdowns (barcode / feature / control / sample columns) have nothing to
-// offer until a tag-feature CSV is uploaded AND its columns are parsed. Disable + dim them when no CSV
-// handle exists yet, or while staging is still reading its columns — so their empty state reads as
-// "waiting for a CSV" rather than "no columns found". Reuses the SDK disabled/dimmed affordance already
-// used for the parse window (csvProcessing).
+// offer until a tag-feature CSV is uploaded AND its columns are parsed. Disable and dim them while no CSV
+// handle exists, or while staging is still reading its columns, so their empty state reads as "waiting for
+// a CSV" rather than "no columns found". Reuses the SDK disabled and dimmed affordance the parse window
+// (csvProcessing) already uses.
 const tagMappingDisabled = computed(
   () => !app.model.data.tagFeatureCsvHandle || csvProcessing.value,
 );
 
 // CSV columns not already bound to the barcode-sequence or feature-name roles. A column holding DNA
-// barcodes or antigen names is not a sample column, and offering it only invites a mis-pick: the data
-// layer refuses two roles on one column, but it refuses it at the end of the run. The model's args() also
-// rejects the collision; filtering here prevents the mistake up front.
+// barcodes or antigen names is not a sample column, and offering it invites a mis-pick. The data layer
+// refuses two roles on one column, but only at the end of the run. The model's args() rejects the
+// collision too, and filtering here prevents the mistake up front.
 const roleFreeColumnOptions = computed(() =>
   (app.model.outputs.csvColumnOptions ?? []).filter(
     (o) =>
@@ -111,10 +111,10 @@ const roleFreeColumnOptions = computed(() =>
 );
 
 // Visible reason when the Combine-mode column is invalid, so a disabled Run button is explained rather
-// than mysterious. The model's args() is the authoritative gate (it throws and greys out Run); this
-// mirrors the same condition into an inline alert the user actually sees. The selector itself is not
-// offered today, but a project saved while it was — or migrated — can still carry a value that collides
-// with the barcode/feature roles, and without this the Run button would simply be grey.
+// than mysterious. The model's args() is the authoritative gate, throwing and greying out Run, and this
+// mirrors the same condition into an inline alert the user sees. The selector is not offered today, but a
+// project saved while it was, or migrated, can still carry a value that collides with the barcode or
+// feature roles, and without this the Run button would simply be grey.
 const combineColumnError = computed(() => {
   const c = app.model.data.combineColumn;
   if (!c) return undefined;
@@ -128,15 +128,15 @@ const combineColumnError = computed(() => {
   return undefined;
 });
 
-// Run mode: read-limited Preview (dry run) vs full run — same PlBtnGroup pattern as mixcr-clonotyping /
-// demultiplex-fastq (Preview first). Feature-barcode is single-cell + shallow per cell, so the dry-run
-// default matches mixcr's single-cell recommendation (500k reads/sample).
+// Run mode: read-limited Preview (dry run) against a full run. The same PlBtnGroup pattern
+// mixcr-clonotyping and demultiplex-fastq use, Preview first. Feature-barcode is single-cell and shallow
+// per cell, so the dry-run default matches mixcr's single-cell recommendation of 500k reads per sample.
 const runModeOptions = [
   { label: "Preview", value: "dry" as const },
   { label: "Full run", value: "full" as const },
 ];
 const DRY_RUN_READS_DEFAULT = 500_000;
-// Auto-fill the read limit when the user switches to Preview and hasn't set one (mirrors mixcr).
+// Auto-fill the read limit where the user switches to Preview and has set none. Mirrors mixcr.
 watch(
   () => app.model.data.runMode,
   (mode) => {
@@ -146,30 +146,28 @@ watch(
 );
 
 // A negative control is one of the feature-name column's values, so changing the CSV or the feature-name
-// column can make the current selection reference a feature that no longer exists. Clear it on that user
-// gesture. This is a data→data write on an explicit gesture — NOT a watcher on the controlOptions output
-// (that would be the spec-facts-resync hairpin; see hairpin.md). Left stale, args() would still send it
-// and the workflow would silently score specificity against a zero control (inflated scores, no error).
-// If the control is still valid after the change the user re-picks — cheaper than snapshotting the valid
+// column can leave the current selection naming a feature that no longer exists. Clear it on that user
+// gesture. A data-to-data write on an explicit gesture, and never a watcher on the controlOptions output,
+// which is the spec-facts-resync hairpin (see hairpin.md). Left stale, args() would still send it and the
+// workflow would silently score specificity against a zero control: inflated scores, no error. Where the
+// control is still valid after the change the user re-picks, which is cheaper than snapshotting the valid
 // set into data to validate in args().
 function clearControlOnInputChange() {
   app.model.data.controlFeature = undefined;
 }
 
-// A GESTURE IS NOT A CHANGE, and every clear below used to treat the two as the same thing. Each ran on
-// `@update:model-value` with no argument and no comparison, so a control re-emitting the value it already
-// held — a user re-picking the dataset they had picked, or a re-render after the block pack was
-// updated — silently discarded configuration nobody had touched.
+// A GESTURE IS NOT A CHANGE. Every clear below must compare the new value against the old one: a control
+// re-emitting the value it already held — a user re-picking the dataset they had picked, or a re-render
+// after the block pack was updated — otherwise discards configuration nobody touched.
 //
-// That is not hypothetical. Re-emitting an UNCHANGED FASTQ ref wiped `sampleColumn`, and the run then
-// reached per_cell_metrics.py with no `--sample-col`, where its duplicate-barcode guard refused a
-// sample-keyed panel. The user met that as a QuickJS stack trace minutes after a gesture that had
-// changed nothing. `clearOnCsvChange` is the same shape over nine more fields, including the whole
-// binding reading, so the same re-emit there would cost far more.
+// Concretely: re-emitting an UNCHANGED FASTQ ref wipes `sampleColumn`, the run reaches
+// per_cell_metrics.py with no `--sample-col`, and its duplicate-barcode guard refuses a sample-keyed
+// panel. The user meets that as a QuickJS stack trace minutes after a gesture that changed nothing.
+// `clearOnCsvChange` is the same shape over nine more fields, the whole binding reading included.
 //
-// The previous value has to be remembered HERE: `v-model` writes the new one into data before the
-// handler runs, so data holds the "after" on both sides of any comparison made inside it. Keyed by
-// JSON so a ref object and a file handle compare the same way.
+// The previous value has to be remembered HERE: `v-model` writes the new one into data before the handler
+// runs, so data holds the "after" on both sides of any comparison made inside it. Keyed by JSON, so a ref
+// object and a file handle compare the same way.
 const keyOf = (v: unknown) => (v === undefined || v === null ? "" : JSON.stringify(v));
 const seenFastqRef = ref(keyOf(app.model.data.fbFastqRef));
 const seenCsvHandle = ref(keyOf(app.model.data.tagFeatureCsvHandle));
@@ -183,9 +181,9 @@ function changed(seen: { value: string }, next: unknown): boolean {
   return true;
 }
 
-// Sample-aware mapping (optional). Picking the sample column snapshots the CURRENT dataset's
-// sampleId→name map into data, so the args projection stays pure (model.md) and the per-sample workflow
-// body can translate its iteration key.
+// Sample-aware mapping (optional). Picking the sample column snapshots the CURRENT dataset's sampleId→name
+// map into data, so the args projection stays pure (model.md) and the per-sample workflow body can
+// translate its iteration key.
 function setSampleColumn(col: string | undefined) {
   app.model.data.sampleColumn = col || undefined;
   // Snapshot both the dataset's sampleId→name map AND the chosen column's CSV values, so args() can both
@@ -194,17 +192,16 @@ function setSampleColumn(col: string | undefined) {
   app.model.data.sampleColumnValues = col
     ? (app.model.outputs.csvValuesByColumn?.[col] ?? [])
     : undefined;
-  // Clearing the sample column is what makes a duplicate barcode illegal again, so the numbers args()
-  // gates on have to be refreshed here rather than assumed to be present from an earlier gesture.
+  // Clearing the sample column is what makes a duplicate barcode illegal again, so the numbers args() gates
+  // on are refreshed here rather than assumed present from an earlier gesture.
   snapshotPanelCounts();
   clearVerdictSettingsNaming(col || undefined);
 }
 
-// The snapshot goes stale if the dataset changes (different sampleId→name) or the CSV changes (different
-// columns/values), so clear the sample-aware selection on those gestures — the user re-picks.
-//
-// Split from its gesture handler because `clearOnCsvChange` calls it too, and THAT path must clear
-// unconditionally: a new panel file invalidates the sample selection whatever the FASTQ ref is doing.
+// The snapshot goes stale where the dataset changes, giving a different sampleId→name, or the CSV changes,
+// giving different columns and values. Clear the sample-aware selection on those gestures and let the user
+// re-pick. Split from its gesture handler because `clearOnCsvChange` calls it too, and THAT path must
+// clear unconditionally: a new panel file invalidates the sample selection whatever the FASTQ ref does.
 function clearSampleAwareState() {
   app.model.data.sampleColumn = undefined;
   app.model.data.sampleLabelSnapshot = undefined;
@@ -217,15 +214,15 @@ function onFastqRefChanged(next: unknown) {
 }
 
 // Picking the barcode column is what makes a duplicate mapping knowable, so it is where the two numbers
-// args() needs get snapshotted. args() is data-only and the CSV meta lives on ctx.prerun, so without this
+// args() needs are snapshotted. args() is data-only and the CSV meta lives on ctx.prerun, so without this
 // the model can see the problem and still not refuse the run.
 const seenBarcodeColumn = ref(keyOf(app.model.data.barcodeSeqColumn));
 
-// Called from every gesture that can make a duplicate mapping RELEVANT, not just from the one that makes
-// it knowable. Taking it on the barcode-column pick alone left the gate inert in the case that actually
+// Called from every gesture that can make a duplicate mapping RELEVANT, not only from the one that makes
+// it knowable. Taken on the barcode-column pick alone, the gate is inert in the case that actually
 // happens: the barcode column was picked long ago, and what changes now is the SAMPLE column being
-// cleared — which is precisely what turns a legal sample-keyed panel into an illegal duplicate one.
-// Idempotent, so calling it from three places costs nothing.
+// cleared, which is what turns a legal sample-keyed panel into an illegal duplicate one. Idempotent, so
+// calling it from three places costs nothing.
 function snapshotPanelCounts() {
   const col = app.model.data.barcodeSeqColumn;
   app.model.data.panelRowCount = col ? app.model.outputs.csvRowCount : undefined;
@@ -234,12 +231,12 @@ function snapshotPanelCounts() {
     : undefined;
 }
 
-// Claiming a column as a key invalidates any verdict setting that names it: the panel reader strips the
-// barcode and sample columns before the properties are read, so the setting would name a column that is
-// no longer a property. args() refuses the run in that state, which is a blocked Run button rather than a
-// dead run — but the user still has to find the stale pick in a dropdown that has stopped offering it.
-// Clearing it on the gesture that invalidates it is the same treatment clearOnCsvChange gives the panel
-// swap. This is the reassignment case, which reaches the same stale pick by a different gesture.
+// Claiming a column as a key invalidates any verdict setting that names it. The panel reader strips the
+// barcode and sample columns before the properties are read, so the setting would name a column that is no
+// longer a property. args() refuses the run in that state, which is a blocked Run button rather than a
+// dead run, but the user still has to find the stale pick in a dropdown that stopped offering it. Clearing
+// it on the gesture that invalidates it is the treatment clearOnCsvChange gives the panel swap. This is
+// the reassignment case, reaching the same stale pick by a different gesture.
 function clearVerdictSettingsNaming(column: string | undefined) {
   if (!column) return;
   if (app.model.data.roleColumn === column) {
@@ -249,12 +246,12 @@ function clearVerdictSettingsNaming(column: string | undefined) {
   }
   const remaining = groupingColumns(app.model.data.grouping).filter((c) => c !== column);
   if (remaining.length !== groupingColumns(app.model.data.grouping).length) {
-    // A grouping may name several columns, so losing one leaves the others standing. Losing the last one
-    // leaves no rule, which reads as one identity per tag — the same state as never having set it.
+    // A grouping may name several columns, so losing one leaves the others standing. Losing the last leaves
+    // no rule, which reads as one identity per tag: the same state as never having set it.
     app.model.data.grouping =
       remaining.length > 0 ? { by: "property", columns: remaining } : undefined;
-    // The identities ARE the values of the grouping columns, so declared groups now name things that no
-    // longer exist. Cleared here for the same reason setGrouping clears them.
+    // The identities ARE the values of the grouping columns, so declared groups now name things that do not
+    // exist. Cleared here for the same reason setGrouping clears them.
     app.model.data.contendingGroups = undefined;
   }
 }
@@ -303,13 +300,14 @@ function clearOnCsvChange() {
 // values matching no dataset sample). Only present once a sample column is chosen.
 const sampleMappingWarning = computed(() => app.model.outputs.sampleMappingWarning);
 
-// Sample-aware mapping is auto-selected. When the model spots a CSV column whose distinct values match
-// the dataset's sample names (suggestedSampleColumn), pre-populate the Sample column dropdown with it via
-// setSampleColumn (which snapshots the sample map into data). Guarded to run only while NO column is set,
-// so a manual clear or a manual pick is never overridden. Safe from the reactive-write hairpin the block
-// otherwise avoids: suggestedSampleColumn is derived from the CSV meta + sample labels only — it does not
-// depend on sampleColumn or the snapshot fields setSampleColumn writes, so applying it can't re-trigger
-// the suggestion. Clearing (X) sticks; a CSV/dataset change re-clears (clearOnCsvChange) then re-suggests.
+// Sample-aware mapping is auto-selected. Where the model spots a CSV column whose distinct values match
+// the dataset's sample names (suggestedSampleColumn), pre-populate the Sample column dropdown with it
+// through setSampleColumn, which snapshots the sample map into data. Guarded to run only while NO column
+// is set, so a manual clear or a manual pick is never overridden. Safe from the reactive-write hairpin the
+// block otherwise avoids: suggestedSampleColumn derives from the CSV meta and sample labels alone, and
+// depends on neither sampleColumn nor the snapshot fields setSampleColumn writes, so applying it cannot
+// re-trigger the suggestion. Clearing with X sticks. A CSV or dataset change re-clears through
+// clearOnCsvChange, then re-suggests.
 const suggestedSampleColumn = computed(() => app.model.outputs.suggestedSampleColumn);
 watch(
   suggestedSampleColumn,
@@ -332,8 +330,8 @@ const defaultColumnDef: ColDef = {
   sortable: false,
 };
 
-// The progress grid is now always shown (the results-table view is retired — see template). Before the
-// run starts, show the "not-ready" overlay; once it begins, show "running" until the sample roster loads.
+// The progress grid is always shown. Before the run starts, show the "not-ready" overlay. Once it begins,
+// show "running" until the sample roster loads.
 const loadingOverlayParams = computed(() =>
   app.model.outputs.started
     ? { variant: "running" as const, runningText: "Preparing sample list" }
@@ -363,11 +361,11 @@ const columnDefs: ColDef<SampleResult>[] = [
         "and the per-step logs (parse, refine tags, count UMIs).",
     } satisfies PlAgHeaderComponentParams,
     flex: 2,
-    // results.ts already produces the cell config (status / percent / text / suffix); pass it through.
+    // results.ts already produces the cell config (status / percent / text / suffix). Pass it through.
     progress: (value) => value,
   }),
-  // Quality status tag (OK / WARN / ALERT), worst-case per sample from the QC metrics (results.ts).
-  // Blank while the sample is still running (quality is undefined until its QC settles).
+  // Quality status tag (OK / WARN / ALERT), worst-case per sample from the QC metrics (results.ts). Blank
+  // while the sample is still running, since quality is undefined until its QC settles.
   createAgGridColDef<SampleResult, QcStatus | undefined>({
     colId: "quality",
     field: "quality",
@@ -386,7 +384,7 @@ const columnDefs: ColDef<SampleResult>[] = [
         ? { component: PlAgCellStatusTag, params: { type: params.data.quality } }
         : undefined,
   }),
-  // Read recovery: a compact stacked bar (usable / off-panel / no pattern match). Blank until QC settles.
+  // Read recovery: a compact stacked bar of usable, off-panel and no-pattern-match. Blank until QC settles.
   createAgGridColDef<SampleResult, RecoveryBar | undefined>({
     colId: "recovery",
     field: "recovery",

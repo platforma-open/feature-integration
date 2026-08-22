@@ -4,7 +4,7 @@ import QcSection from "../components/QcSection.vue";
 import { qcChecks, type SampleResult } from "../results";
 
 // The Quality Checks tab: the per-sample QC status broken out into one row per check. The Main grid's
-// Quality column can only show the worst of these; here the reader sees which metric produced it.
+// Quality column can only show the worst of these. Here the reader sees which metric produced it.
 const props = defineProps<{
   sampleData: SampleResult | undefined;
 }>();

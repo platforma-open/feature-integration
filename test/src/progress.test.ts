@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ProgressPrefix } from "@platforma-open/milaboratories.feature-integration.model";
-// deriveProgress lives in the block UI package; imported directly (pure function, model-only deps).
+// deriveProgress lives in the block UI package, and is imported directly: a pure function with model-only
+// deps.
 import { deriveProgress } from "../../ui/src/progress";
 
 const S = "SAMPLE1";
@@ -8,8 +9,8 @@ const line = (stage: string) => `${ProgressPrefix}${stage}`;
 
 describe("deriveProgress — label follows the live stream, not the report step", () => {
   it("does not flash 'Counting UMIs' while refine is still the furthest live step", () => {
-    // Report step already advanced to "counting", but only refine has a live line → label must stay
-    // on refine (the pre-fix bug flashed "Counting UMIs" here).
+    // The report step has advanced to "counting" while only refine has a live line, so the label must stay
+    // on refine. Following the report step flashes "Counting UMIs" here.
     const cell = deriveProgress(
       S,
       new Set(),
@@ -24,7 +25,7 @@ describe("deriveProgress — label follows the live stream, not the report step"
   });
 
   it("shows a Counting UMIs variant once tag-stat streams", () => {
-    // Now tag-stat is the furthest step with a live line → label follows it.
+    // tag-stat is now the furthest step with a live line, so the label follows it.
     const cell = deriveProgress(
       S,
       new Set(),
@@ -38,7 +39,7 @@ describe("deriveProgress — label follows the live stream, not the report step"
   });
 
   it("keeps the bar monotonic — never below the reported step floor", () => {
-    // Report floor for "counting" is 50; refine's within-band fill must not drag the bar below it.
+    // The report floor for "counting" is 50, and refine's within-band fill must not drag the bar below it.
     const cell = deriveProgress(
       S,
       new Set(),

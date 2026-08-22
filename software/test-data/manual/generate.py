@@ -50,7 +50,7 @@ PRESETS = {
     "whitelist737k": dict(samples=24, cells=2000, panel_size=15, barcode_source="whitelist737k"),
 }
 
-# Antigen-only scenarios. errors/offpanel/multilane/control run through antigen.build; the rest have
+# Antigen-only scenarios. errors/offpanel/multilane/control run through antigen.build. The rest have
 # their own generators. Default scenario scale = small (tiny), overridable with --samples/etc.
 ANTIGEN_SCENARIOS = ["errors", "offpanel", "multilane", "control"]
 SPECIAL_SCENARIOS = ["degraded", "panel-swap", "multisample", "libraseq"]

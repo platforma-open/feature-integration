@@ -206,7 +206,7 @@ def build(
                             reads.append([f"{sample}_read{read_no}", cell + umi, r2, 1])
                 else:
                     # Multi-barcode antigen (only in a --multibarcode run): combine="all" fires EVERY
-                    # member at ~k (AND); combine="sum" splits k across the members. Same UMI/dup shape.
+                    # member at ~k (AND). Combine="sum" splits k across the members. Same UMI/dup shape.
                     if combine.get(feat, "sum") == "all":
                         shares = [k] * len(member_bcs)
                     else:
@@ -251,7 +251,7 @@ def build(
         w.writerow(["sample", "cellId", "planted_consensus"])
         w.writerows(consensus_rows)
 
-    # vdj.build needs a `feature`-column CSV for load_clear_antigens; write a plain flat view for it.
+    # vdj.build needs a `feature`-column CSV for load_clear_antigens. Write a plain flat view for it.
     vdj_tags = os.path.join(run_dir, "_vdj_tags.csv")
     with open(vdj_tags, "w", newline="") as f:
         w = csv.writer(f)

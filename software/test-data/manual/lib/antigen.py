@@ -198,7 +198,7 @@ def build_sample(rng, panel, sample, cells, nonbinder_frac=0.0, crossreactive_fr
             else:
                 # Multi-barcode antigen (only present in a --multibarcode panel; single-barcode runs
                 # never take this branch, so they stay byte-identical). combine="all" fires EVERY
-                # member barcode at ~k UMIs (AND / dual-probe); combine="sum" splits the k UMIs across
+                # member barcode at ~k UMIs (AND / dual-probe). Combine="sum" splits the k UMIs across
                 # the members so the per-feature sum stays ~k. Same UMI/dup shape as the single path.
                 mode = panel.combine.get(feat, "sum")
                 if mode == "all":
@@ -359,7 +359,7 @@ def write_metadata(shared_dir, panel, samples, multibarcode=False, messy=False):
         # tag,feature stay first (backward-compatible role mapping); Type/Species/Class mirror a real
         # panel so downstream off-target-call and species-grouping have synthetic inputs. A
         # --multibarcode panel adds `combine` (between feature and Type) and emits one row PER member
-        # barcode; single-barcode runs keep the exact prior header + one row per feature (byte-stable).
+        # barcode. Single-barcode runs keep the exact prior header + one row per feature (byte-stable).
         if multibarcode:
             w.writerow(["tag", "feature", "combine", "Type", "Species", "Class"])
             for name, bcs in panel.features.items():
@@ -383,7 +383,7 @@ def write_metadata(shared_dir, panel, samples, multibarcode=False, messy=False):
         w.writerow(["id", "name", "read", "pattern", "sequence", "feature_type"])
         for name, bcs in panel.features.items():
             for j, bc in enumerate(bcs):
-                # per-member id `<feat>_<n>` when a feature has >1 barcode; bare feature name otherwise
+                # per-member id `<feat>_<n>` when a feature has >1 barcode. Bare feature name otherwise
                 # (so single-barcode feature_reference.csv is byte-identical to before).
                 bc_id = f"{name}_{j + 1}" if len(bcs) > 1 else name
                 w.writerow([bc_id, name, "R2", "^(BC)", bc, "Antigen Capture"])

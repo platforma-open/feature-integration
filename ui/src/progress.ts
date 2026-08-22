@@ -2,9 +2,9 @@ import type { SampleStep } from "@platforma-open/milaboratories.feature-integrat
 import { ProgressPrefix } from "@platforma-open/milaboratories.feature-integration.model";
 import { parseProgressString } from "./parseProgress";
 
-// Progress-cell config for the Main grid's Progress column. Maps onto the SDK's ColDefProgress:
-// status → stage, percent → bar fill (undefined = indeterminate), text → label, suffix → right-hand text
-// (set "" to suppress the SDK's default "0%" on an indeterminate bar).
+// Progress-cell config for the Main grid's Progress column, mapping onto the SDK's ColDefProgress: status →
+// stage, percent → bar fill where undefined is indeterminate, text → label, and suffix → right-hand text.
+// Set suffix to "" to suppress the SDK's default "0%" on an indeterminate bar.
 export type ProgressCell = {
   status: "not_started" | "running" | "done";
   percent?: number;
@@ -13,11 +13,11 @@ export type ProgressCell = {
 };
 
 // The per-sample pipeline runs four stages: parse → refine → tag-stat → per-cell metrics (Python). Each
-// stage owns a quarter-band of the overall bar (parse 0–25, refine 25–50, tag-stat 50–75, metrics
-// 75–100). A stage's own live % fills WITHIN its band; indeterminate phases hold at the band floor. The
-// band floor comes from the deterministic sampleStep (report presence, which only advances), so the bar
-// is MONOTONIC — it never resets to zero when a new step starts (the pre-scrap version drove the full bar
-// per step, which caused that reset). The rich per-step text still comes from the live mitool stdout.
+// stage owns a quarter-band of the overall bar: parse 0-25, refine 25-50, tag-stat 50-75, metrics 75-100. A
+// stage's own live % fills WITHIN its band, and an indeterminate phase holds at the band floor. That floor
+// comes from the deterministic sampleStep, which is report presence and only advances, so the bar is
+// MONOTONIC and never resets to zero when a new step starts. Never drive the full bar per step, which is
+// what causes that reset. The rich per-step text comes from the live mitool stdout.
 const STEP_ORDINAL: Record<SampleStep, number> = {
   parsing: 0,
   refining: 1,
@@ -31,7 +31,7 @@ const BAND = 100 / TOTAL_STEPS;
 // that currently has a live line (see deriveProgress) — NOT the report-derived sampleStep, which advances
 // a beat early (a step's report settles before the next step's live stream starts). Driving the label off
 // reports made the bar flash the next step's name ("Counting UMIs") during that gap while refine was still
-// streaming; keying off the live stream keeps the label honest to what is actually running.
+// streaming. Keying off the live stream keeps the label honest to what is actually running.
 const WF_STEPS = ["1-parse", "2-refine", "3-tagstat"] as const;
 const WF_ORDINAL: Record<string, number> = { "1-parse": 0, "2-refine": 1, "3-tagstat": 2 };
 
@@ -85,7 +85,7 @@ function stepDisplay(
       };
     }
     // Global phases keep the stable "Refining barcodes" prefix so the label doesn't jump. mitool's
-    // lead-in is "Initialization"; the wrap-up stages collapse to ": Finalizing".
+    // lead-in is "Initialization". The wrap-up stages collapse to ": Finalizing".
     if (REFINE_INIT_LABEL.test(stage)) return { text: "Refining barcodes", suffix: "" };
     return { text: "Refining barcodes: Finalizing", suffix: "" };
   }

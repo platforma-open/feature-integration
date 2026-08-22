@@ -1,8 +1,8 @@
 test := import("@platforma-sdk/workflow-tengo:test")
 va := import(":verdict-args")
 
-// A fully configured reading. Every optional parameter is set, so a flag missing from the built vector is
-// a threading defect rather than an intentional omission.
+// A fully configured reading. Every optional parameter is set, so a flag missing from the built vector is a
+// threading defect rather than a deliberate omission.
 _full := {
 	hasLinker: true,
 	hasQcSummary: true,
@@ -12,9 +12,9 @@ _full := {
 	roleColumn: "Type",
 	referenceValues: ["Control", "Isotype"],
 	referenceSource: "declared",
-	// Every number here differs from the library's own default for it. With the
+	// Every number here differs from the library's own default for it. On the
 	// defaults, a builder that ignored the block's value and emitted its fallback
-	// would produce an identical vector, and this whole file would pass while the
+	// would produce an identical vector, and this file would pass while the
 	// parameter never reached the exec.
 	panelReferenceMinMembers: 12,
 	distributionMinCells: 450,
@@ -32,7 +32,7 @@ _full := {
 }
 
 // Every flag emit_verdicts.py declares, checked against the built vector. An unthreaded parameter fails
-// nothing at render or exec time — the CLI defaults it — so this list is the only place the omission
+// nothing at render or exec time, because the CLI defaults it, so this list is the only place the omission
 // shows up.
 Test_every_flag_is_threaded := func() {
 	args := va.build(_full)
@@ -49,8 +49,8 @@ Test_every_flag_is_threaded := func() {
 	}
 
 	// Presence is not threading. A flag can appear carrying the library's own
-	// fallback while the block's value is dropped on the floor, which is the
-	// same silence this file exists to break, one step further in.
+	// fallback while the block's value is dropped, which is the same silence
+	// this file exists to break, one step further in.
 	expected := {
 		"--barcode-col": "Sequence",
 		"--feature-col": "Name",
@@ -71,7 +71,7 @@ Test_every_flag_is_threaded := func() {
 	}
 }
 
-// The per-sample read QC is the one input whose absence is invisible: three of the fifteen measurements
+// The per-sample read QC is the one input whose absence is invisible. Three of the fifteen measurements
 // have no other source, and they render as declared-but-unchecked rather than as an error. The flag must
 // name the file the run template stages, or the exec fails on a path it never received.
 Test_qc_summary_points_at_the_staged_file := func() {
@@ -88,18 +88,18 @@ Test_positionals_lead_and_name_staged_files := func() {
 }
 
 // A flag naming a file the exec never received is a hard failure, so neither file flag may appear on its
-// own. Without a dataset there is no linker; the rest of the reading still runs.
+// own. Without a dataset there is no linker, and the rest of the reading still runs.
 Test_file_flags_follow_their_files := func() {
 	args := va.build({ barcodeSeqColumn: "Sequence", featureNameColumn: "Name" })
 	test.isFalse(va.has(args, "--linker"), "the linker flag must be absent when no linker was staged")
 	test.isFalse(va.has(args, "--qc-summary"), "the QC flag must be absent when no QC table was staged")
 }
 
-// Off means absent, not zero. A zero gate would set aside every cell and a zero agreement floor would
-// pass every majority instead of skipping the check — both are readings, and neither is "off".
-// The switch carries its value like every other flag. A bare flag would make the vector odd, and then
-// `valueOf` reads every later value as the wrong flag's -- which the parity assertion in build() exists
-// to catch, and did.
+// Off means absent, not zero. A zero gate would set aside every cell, and a zero agreement floor would pass
+// every majority instead of skipping the check. Both are readings, and neither is "off".
+//
+// The switch carries its value like every other flag. A bare flag would make the vector odd, and `valueOf`
+// would then read every later value as the wrong flag's. The parity assertion in build() catches that.
 Test_the_baseline_minimum_switch_is_a_flag_value_pair := func() {
 	args := va.build(_full)
 	test.isEqual("true", va.valueOf(args, "--minimum-applies-to-baseline"), "the switch carries its value")
@@ -118,8 +118,8 @@ Test_optional_lines_are_absent_when_off := func() {
 	test.isFalse(va.has(args, "--reference-source"), "an unchosen comparator is resolved by the software")
 }
 
-// The parameters that shape the reading are always on the command line, defaulted here rather than left
-// to argparse, so the value a run was answered under is recorded with the run.
+// The parameters that shape the reading are always on the command line, defaulted here rather than left to
+// argparse, so the value a run was answered under is recorded with the run.
 Test_shaping_parameters_are_always_present := func() {
 	args := va.build({ barcodeSeqColumn: "Sequence", featureNameColumn: "Name" })
 	test.isEqual("4", va.valueOf(args, "--floor"), "the count floor is stated even when defaulted")
@@ -131,9 +131,9 @@ Test_shaping_parameters_are_always_present := func() {
 	test.isEqual("0.5", va.valueOf(args, "--distribution-separation"), "the separation condition is stated")
 }
 
-// argparse declares --floor, --min-voters, --panel-min-members,
-// --high-reference-line and --gate-threshold as `type=int`, which rejects "4.0". A model that rounds to a
-// whole number still hands it over as a JSON number, so the conversion happens here.
+// argparse declares --floor, --min-voters, --panel-min-members, --high-reference-line and --gate-threshold
+// as `type=int`, which rejects "4.0". A model that rounds to a whole number still hands it over as a JSON
+// number, so the conversion happens here.
 Test_integer_flags_carry_no_decimal_point := func() {
 	args := va.build({
 		barcodeSeqColumn: "Sequence", featureNameColumn: "Name",

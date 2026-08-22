@@ -229,7 +229,7 @@ def off_target_bed(tmp_path):
 
 def test_an_off_target_the_panel_omitted_is_present_and_reads_never_asked(off_target_bed):
     # The row has to exist. Dropping it discards a lead for a question nobody
-    # asked; keeping it as anything settled asserts a clean off-target the run
+    # asked. Keeping it as anything settled asserts a clean off-target the run
     # never produced. Present, in a state that says the statement could not be
     # settled, naming the position responsible.
     r = _run(off_target_bed, *BASE)

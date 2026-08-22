@@ -27,7 +27,7 @@ def main() -> None:
         header = next(reader, None)
         if not header:
             raise SystemExit(f"no header row found in {args.tag_feature_csv}")
-        # Preserve header order, drop blank header cells; keep each named column's row index so we can
+        # Preserve header order, drop blank header cells. Keep each named column's row index so we can
         # collect its values by position (DictReader would lose order and collapse duplicate headers).
         columns = [h.strip() for h in header if h.strip()]
         col_index = {h.strip(): i for i, h in enumerate(header) if h.strip()}

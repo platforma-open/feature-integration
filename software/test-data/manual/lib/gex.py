@@ -98,7 +98,7 @@ def build_gene_table(rng, sym2ens, protein_coding, n_filler):
             genes.append((ens, prog, means))
     if missing:
         print(f"  WARNING: markers not found in gene map (skipped): {missing}")
-    # filler: real protein_coding genes, low baseline noise; per-gene mean gives clustering texture
+    # filler: real protein_coding genes, low baseline noise. Per-gene mean gives clustering texture
     pool = [e for e in protein_coding if e not in used]
     rng.shuffle(pool)
     for ens in pool[:n_filler]:

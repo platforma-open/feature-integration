@@ -120,7 +120,7 @@ def main() -> None:
                 raise SystemExit(f"{role}={name!r} not found in the tag->feature CSV (columns: {ordered})")
         rows = list(reader)
 
-    # Role columns are excluded; every remaining named column is a per-feature property. The sample
+    # Role columns are excluded. Every remaining named column is a per-feature property. The sample
     # column (sample-aware mapping) is a role too, so it is excluded when set -- it is not a property.
     roles = {args.csv_barcode_col, args.csv_feature_col}
     if args.sample_col:
@@ -156,7 +156,7 @@ def main() -> None:
     # pl7.app/feature/negativeControl column keyed on the feature axis and VDJ Multiomic Integration
     # removes the control ENTIRELY from its antigen metrics (restriction index, breadth, per-antigen
     # fractions, dominant call) -- unlike an off-target, which stays in the metrics. Header-only when no
-    # control is designated. The name is emitted verbatim (trimmed); it is one of the panel's features.
+    # control is designated. The name is emitted verbatim (trimmed). It is one of the panel's features.
     control = args.control_feature.strip()
     with open(f"{args.output_prefix}_negative_control.csv", "w", newline="") as out:
         w = csv.writer(out)

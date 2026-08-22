@@ -3,26 +3,25 @@
 Cells of one set are replicates of one measurement, so where they differ at
 an identity the difference is error and the modal answer is the best
 available reading of what the receptor did. The vote is per identity: a
-single winning antigen collapses a set that bound several, which the model
-this reduces from -- four states per (cell, identity) -- exists to keep
-distinct.
+single winning antigen collapses a set that bound several, which the four
+states per (cell, identity) exist to keep distinct.
 
-The row set is the identity universe, never the offered subset: a set's
+The row set is the identity universe, never the offered subset. A set's
 verdict at an identity the panel never offered is NEVER_ASKED, and that
 comes only from the offered map, never from a row's absence. `offered` is
-keyed by sample, matching `silent_tally`'s `offered_by_sample` -- what a
-panel offered is a property of the staining, not of the clonotype grouping
-built on top of it -- so a set's own offered set is the union, over its
-member samples, of what each sample's panel offered.
+keyed by sample, matching `silent_tally`'s `offered_by_sample`, because
+what a panel offered is a property of the staining rather than of the
+clonotype grouping built on top of it. A set's own offered set is
+therefore the union, over its member samples, of what each sample's panel
+offered.
 
 A cell asked about an identity and showing no reading in `states` is silent,
-not absent from the vote: `silent_tally`, generalised to key its tally by an
-arbitrary per-cell group rather than only by sample, supplies the silent
-contribution here. A silent admissible cell always resolves NOT_BOUND (see
-`specificity_score` in verdict.py), so silent cells vote not bound; silent
-inadmissible cells vote nowhere, which is exactly what keeps a set every one
-of whose cells failed to bind reading NOT_BOUND rather than UNRELIABLE or
-NEVER_ASKED.
+not absent from the vote. `silent_tally`, keyed here by an arbitrary
+per-cell group rather than by sample, supplies the silent contribution. A
+silent admissible cell always resolves NOT_BOUND (see `specificity_score` in
+verdict.py), so silent cells vote not bound, and silent inadmissible cells
+vote nowhere. That is what keeps a set whose every cell failed to bind
+reading NOT_BOUND rather than UNRELIABLE or NEVER_ASKED.
 """
 
 from __future__ import annotations
@@ -32,7 +31,7 @@ from enum import Enum
 import polars as pl
 from verdict import Admissibility, State, UnreliableReason, _admissibility_reason, silent_tally
 
-# Both limits default permissively because the failure they would prevent is
+# Both limits default permissively, because the failure they would prevent is
 # visible and the failure they would cause is not. Requiring two voting cells
 # would silently discard every singleton, which many clonotypes in a run are.
 DEFAULT_MIN_VOTERS = 1
@@ -42,12 +41,11 @@ SETTLED = (State.BOUND.value, State.NOT_BOUND.value)
 
 
 class SetUnreliableReason(str, Enum):
-    """Why a set's verdict at one identity could not be settled, or why it
-    was never asked. Cell-level admissibility (`verdict.UnreliableReason`)
-    answers "why can't this cell be compared"; this answers "why can't this
-    set's cells, taken together, produce a verdict" -- a different grain,
-    kept in its own enum rather than folded into the cell-level one, whose
-    own docstring scopes it to a single cell's comparison.
+    """Why a set's verdict at one identity could not be settled, or why it was
+    never asked. Cell-level admissibility (`verdict.UnreliableReason`) answers
+    "why can't this cell be compared". This answers "why can't this set's cells,
+    taken together, produce a verdict" -- a different grain, kept in its own enum
+    rather than folded into a vocabulary scoped to one cell's comparison.
 
     NEVER_OFFERED is the reason recorded on a NEVER_ASKED row: not itself a
     reliability problem, but the same column carries it, so a reader always
@@ -102,7 +100,7 @@ def _dominant_reason(
     NO_COMPARATOR -- reporting a missing comparator for a cell whose
     comparator is fine.
     """
-    # Takes the identity because one rung's comparator depends on it: a set can
+    # Takes the identity because one rung's comparator depends on it. A set can
     # fail to settle one identity and settle every other, where the tag carrying
     # it did not separate and the rest did.
     reasons = {_admissibility_reason(k, identity, admissibility) for k in asked_keys}
@@ -195,18 +193,18 @@ def combine_cells(
     ):
         set_id = group_by_cell.get((sample_id, cell_id))
         if set_id is None:
-            # This cell is not in any set's membership list: the same drop
+            # This cell is in no set's membership list: the same drop
             # `silent_tally` applies to a cell absent from its `cells` frame,
-            # kept here so a vote can never be counted for a cell nobody
-            # asked to vote.
+            # kept here so a vote is never counted for a cell nobody asked to
+            # vote.
             continue
         if identity not in offered.get(sample_id, frozenset()):
             # This cell's own sample never offered the identity, so the cell
             # was never asked about it and its reading is not a vote. The
             # denominator below counts only members whose own sample offered
-            # it; counting the vote here would mix two populations, and where
-            # a set sits in one sample this reading is already discarded as
-            # never-asked. The multi-sample case now behaves the same way.
+            # it, so counting the vote here would mix two populations. A set
+            # sitting in one sample already discards the reading as
+            # never-asked, and the multi-sample case behaves the same way.
             continue
         bucket = explicit_counts.setdefault((set_id, identity), {})
         bucket[state] = bucket.get(state, 0) + 1
@@ -226,7 +224,7 @@ def combine_cells(
                         "cellsCouldAnswer": 0,
                         "cellsAnswered": 0,
                         # No tally exists for a position never put to this clonotype. 0 is the honest
-                        # count; a null would ride into the punch value as an empty field. Same reasoning
+                        # count. A null would ride into the punch value as an empty field. Same reasoning
                         # for cellsNotBound: nothing was ever asked, so nothing was ever answered either way.
                         "cellsBound": 0,
                         "cellsNotBound": 0,
@@ -286,10 +284,9 @@ def combine_cells(
 
             # A tie has no majority to trust: the settled cells split evenly,
             # and nothing in the reading says which side to believe. A narrow
-            # majority below the agreement floor has one -- it was refused
-            # only because the operator raised that floor. The two states
-            # this identity could still not settle in call for different
-            # action, so they get different reasons.
+            # majority below the agreement floor has one, refused only
+            # because the operator raised that floor. The two call for
+            # different action, so they get different reasons.
             if tied:
                 rows.append(
                     {
@@ -551,9 +548,9 @@ def self_disagreement(
             # This cell's own sample never offered the identity, so the cell
             # was never asked about it and its reading is not a vote. The
             # denominator below counts only members whose own sample offered
-            # it; counting the vote here would mix two populations, and where
-            # a set sits in one sample this reading is already discarded as
-            # never-asked. The multi-sample case now behaves the same way.
+            # it, so counting the vote here would mix two populations. A set
+            # sitting in one sample already discards the reading as
+            # never-asked, and the multi-sample case behaves the same way.
             continue
         bucket = explicit_counts.setdefault((set_id, key), {})
         bucket[state] = bucket.get(state, 0) + 1

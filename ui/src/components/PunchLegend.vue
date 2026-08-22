@@ -5,17 +5,16 @@ import { PUNCH_LEGEND_DIAMETER_PX, PUNCH_PAINT, type PunchGlyph } from "./punchM
 
 // What the card's marks mean, stated once above it.
 //
-// The swatches are drawn from PUNCH_PAINT, the same map the cells paint from, so a legend cannot drift
-// from the card it explains — the failure mode of every hand-drawn legend, and one nobody notices because
+// The swatches are drawn from PUNCH_PAINT, the same map the cells paint from, so a legend cannot drift from
+// the card it explains. That is the failure mode of every hand-drawn legend, and one nobody notices because
 // both halves look deliberate.
 //
-// The swatches are smaller than the card's marks, and that is now harmless rather than misleading. A
-// diameter carries no meaning on the card any more, so a swatch is an example of a COLOUR at the scale a
-// line of text wants. While the card sized its dots by evidence, a swatch had to pick one value and was
-// then read as the meaning rather than as an example -- the reason this legend has always been drawn
-// small. The counts still reach the reader, in the per-cell tooltip and in the clonotype expansion.
-// Which card this legend is above. The four glyphs are the same on both faces -- that is the point of the
-// shared paint map -- but what a glyph MEANS is not: a mark on the card is a verdict a majority of cells
+// The swatches are smaller than the card's marks, which is harmless: a diameter carries no meaning on the
+// card, so a swatch is an example of a COLOUR at the scale a line of text wants. The counts still reach the
+// reader, in the per-cell tooltip and in the clonotype expansion.
+//
+// Which card this legend is above. The four glyphs are the same on both faces, which is the point of the
+// shared paint map, but what a glyph MEANS is not: a mark on the card is a verdict a majority of cells
 // produced, and a mark on the by-cell face is one cell's own reading. "A majority read it as bound" is
 // false of a single cell, and a legend that said it would teach the wrong thing about the very view a
 // reader opened to see individual cells.
@@ -57,9 +56,9 @@ const CELL_ENTRIES: Entry[] = [
   {
     glyph: "not-bound",
     label: "Not bound",
-    // Said explicitly, because it is the one thing about this face a reader would otherwise get wrong: a
-    // cell that returned no count for an antigen it WAS asked about reads here, not blank. A zero count is
-    // a reading, and the same cell votes that way in its clonotype's verdict.
+    // Said explicitly, because it is the one thing about this face a reader would otherwise get wrong: a cell
+    // that returned no count for an antigen it WAS asked about reads here, never blank. A zero count is a
+    // reading, and the same cell votes that way in its clonotype's verdict.
     meaning: "this cell read it as not bound, a returned count of zero included",
   },
   {
@@ -83,7 +82,7 @@ const swatch = (glyph: PunchGlyph | "none"): CSSProperties => ({
   width: `${PUNCH_LEGEND_DIAMETER_PX}px`,
   height: `${PUNCH_LEGEND_DIAMETER_PX}px`,
   flex: "0 0 auto",
-  // "Never asked" draws nothing on the card, so its swatch is an empty well rather than a mark — a legend
+  // "Never asked" draws nothing on the card, so its swatch is an empty well rather than a mark. A legend
   // entry with no glyph beside it reads as a missing image.
   ...(glyph === "none" ? { border: "1px dashed #cfcfcf" } : PUNCH_PAINT[glyph]),
 });

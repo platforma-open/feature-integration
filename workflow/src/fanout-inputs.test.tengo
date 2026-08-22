@@ -8,10 +8,10 @@ _one := func(key) {
 	return m
 }
 
-// The whole point of the two-stage split: changing the reading must not re-run the per-sample mitool
-// chain. Every verdict-stage parameter is checked against both allowlists, so adding one to
-// verdict-args.PARAMETER_NAMES and to the fan-out at the same time fails here rather than costing every
-// user a full parse / refine-tags / tag-stat re-run with nothing in the logs to explain it.
+// The whole point of the two-stage split: changing the reading must not re-run the per-sample mitool chain.
+// Every verdict-stage parameter is checked against both allowlists, so adding one to
+// verdict-args.PARAMETER_NAMES and to the fan-out at once fails here rather than costing every user a full
+// parse, refine-tags and tag-stat re-run with nothing in the logs to explain it.
 Test_no_verdict_parameter_may_reach_the_fanout := func() {
 	for name in va.PARAMETER_NAMES {
 		test.isEqual([name], fanout.unlisted(_one(name), fanout.EXTRA_INPUT_KEYS),
@@ -21,8 +21,8 @@ Test_no_verdict_parameter_may_reach_the_fanout := func() {
 	}
 }
 
-// The resolved clonotype linker is a resource, not a parameter, and it is the other thing that must never
-// enter: it would put every per-sample body behind the clonotyping chain as well as re-keying it.
+// The resolved clonotype linker is a resource rather than a parameter, and it is the other thing that must
+// never enter. It would re-key every per-sample body and put it behind the clonotyping chain.
 Test_no_linker_resource_may_reach_the_fanout := func() {
 	for name in ["linker", "linkerColumn", "cellLinker", "columns", "setAxisSpec"] {
 		test.isEqual([name], fanout.unlisted(_one(name), fanout.EXTRA_INPUT_KEYS),
@@ -32,8 +32,8 @@ Test_no_linker_resource_may_reach_the_fanout := func() {
 	}
 }
 
-// The allowlist accepts exactly what main.tpl.tengo passes today, so the render-time check is not
-// vacuously satisfied by an over-broad list.
+// The allowlist accepts exactly what main.tpl.tengo passes, so an over-broad list cannot satisfy the
+// render-time check vacuously.
 Test_the_declared_fanout_inputs_are_accepted := func() {
 	extra := {}
 	for key in fanout.EXTRA_INPUT_KEYS {

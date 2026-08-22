@@ -15,11 +15,11 @@ const app = useApp();
 // both questions at once: did the measurements pass, and did the panel we declared match the barcodes the
 // sequencer actually returned.
 //
-// This page is the RUN's quality, not the sample's. The "Per-sample QC" page above shows the mitool
+// This page is the RUN's quality, never the sample's. The "Per-sample QC" page above shows the mitool
 // per-sample stats — reads parsed and matched, cells and features detected — one row per sample. What is
 // below is keyed (level, panel, entity, measurement): the measurements the verdict stage takes over the
-// whole run. The two pages are named apart for that reason, because "QC" alone would read as two views of
-// the same numbers.
+// whole run. The two pages are named apart for that reason, since "QC" alone would read as two views of
+// one set of numbers.
 const qcSettings = usePlDataTableSettingsV2({
   model: () => app.model.outputs.runQualityTable,
 });
@@ -35,13 +35,13 @@ const mismatchSettings = usePlDataTableSettingsV2({
 const noDataset = computed(() => app.model.data.datasetRef === undefined);
 
 // An absent frame and an empty frame are different facts and get different words. Absent means the verdict
-// stage produced no report at all: the frame is not there to read. Empty means it ran, imported its frame
-// and put no rows in it — which for the mismatch check is the wanted outcome, and for the measurements is a
-// sign something went wrong upstream. So absence is answered here, by not drawing a grid at all, and
-// emptiness is answered inside the grid through `noRowsText`; neither ends up as a bare empty table.
+// stage produced no report at all, so the frame is not there to read. Empty means it ran, imported its
+// frame and put no rows in it, which for the mismatch check is the wanted outcome and for the measurements
+// is a sign something went wrong upstream. So absence is answered here, by drawing no grid at all, and
+// emptiness inside the grid through `noRowsText`. Neither ends up as a bare empty table.
 //
 // `ok === false` is deliberately NOT treated as absence. An errored output belongs to the grid, which
-// renders the error it was handed; swallowing it into "the stage did not run" would report a failure as a
+// renders the error it was handed. Swallowing it into "the stage did not run" would report a failure as a
 // choice the user made.
 const qcAbsent = computed(() => {
   const output = app.model.outputs.runQualityTable;
@@ -53,13 +53,12 @@ const mismatchAbsent = computed(() => {
   return output === undefined || (output.ok && output.value === undefined);
 });
 
-// Status is rendered as the plain string the workflow emitted, with the discrete filter its spec already
-// declares. It is deliberately not a status tag: the vocabulary is `acceptable` / `alerting` as a ranked
-// pair PLUS `unjudged` and `not evaluated`, and those last two are states rather than degrees of badness —
-// `unjudged` means no line exists to judge against, `not evaluated` means nothing computed it. A tag
-// vocabulary of ALERT / WARN / OK / HOLD cannot carry that: it would either rank the two non-ranks as mild
-// badness or collapse them into one another, and both readings are the exact mistake this vocabulary was
-// built to prevent. The plain word says what the workflow said.
+// Status is rendered as the plain string the workflow emitted, with the discrete filter its spec declares.
+// Deliberately not a status tag. The vocabulary is `acceptable` and `alerting` as a ranked pair PLUS
+// `unjudged` and `not evaluated`, and those last two are states rather than degrees of badness: `unjudged`
+// means no line exists to judge against, and `not evaluated` means nothing computed it. A tag vocabulary
+// of ALERT / WARN / OK / HOLD cannot carry that. It would either rank the two non-ranks as mild badness or
+// collapse them into one another, and both readings are the mistake this vocabulary exists to prevent.
 </script>
 
 <template>

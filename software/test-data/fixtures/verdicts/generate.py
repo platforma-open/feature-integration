@@ -28,7 +28,7 @@ import random
 SEED = 20260817
 BARCODE_LENGTH = 12
 
-# Slot names, not sequences. The tests never hard-code a sequence; they recover each barcode by the
+# Slot names, not sequences. The tests never hard-code a sequence. They recover each barcode by the
 # role it plays in the panel (two names, two barcodes under one name, declared here and read there),
 # so a regenerated bed with different sequences still exercises the same shapes.
 ANTIGEN_SLOTS = ["A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7"]
@@ -156,7 +156,7 @@ COUNTS = [
     ("S04", "c09", "A1", 8),
     ("S04", "c09", "A4", 500),
     # A6 and A7 are the two barcodes of Ag07, and the two S04 cells of K03 bind opposite ones. Read
-    # per barcode each splits its set one to one and reads *unreliable* on the tie; read as one
+    # per barcode each splits its set one to one and reads *unreliable* on the tie. Read as one
     # antigen by the highest member, both cells bind Ag07 and the set reads *bound*.
     ("S04", "c09", "A6", 500),
     ("S04", "c09", "A7", 8),

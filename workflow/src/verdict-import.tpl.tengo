@@ -1,17 +1,17 @@
 // The verdict import: every table emit_verdicts.py wrote, turned into p-columns.
 //
 // Separate from the exec (verdict-run.tpl.tengo) because the run record has to be read as a VALUE before
-// any of these specs can be built. `referenceChoice` and `cellListSource` are resolved by the software —
-// a declared comparator degrades to none where the panel carries no reference tag, a panel comparator
-// degrades below the minimum membership — and both sit in the emitted columns' DOMAIN, because a verdict
-// read against a declared reference is not the same reading as one read against the panel's own signal.
-// Domain is part of column identity and annotations are not, so recording the choice as an annotation
-// would let two incomparable runs emit columns of identical identity and be unioned in a pool holding
-// both. Building the specs inside the exec's own template would record the choice that was REQUESTED.
+// any of these specs can be built. The software resolves `referenceChoice` and `cellListSource`: a
+// declared comparator degrades to none where the panel carries no reference tag, and a panel comparator
+// degrades below the minimum membership. Both sit in the emitted columns' DOMAIN, because a verdict read
+// against a declared reference is not the same reading as one read against the panel's own signal. As an
+// annotation the choice would be excluded from column identity, and two incomparable runs would emit
+// columns of identical identity and be unioned in a pool holding both. Specs built inside the exec's own
+// template would record the choice that was REQUESTED.
 //
-// Ephemeral: it awaits the bundle (for the clonotype axis, taken verbatim from the linker) and the run
-// record. It receives the bundle UNRESOLVED from main.tpl.tengo — verdict-run holds it resolved, as a map
-// with methods, which cannot be serialized as a template input, so each template resolves it itself.
+// Ephemeral: it awaits the bundle, for the clonotype axis taken verbatim from the linker, and the run
+// record. It receives the bundle UNRESOLVED from main.tpl.tengo. A resolved bundle is a map with methods,
+// which cannot be serialized as a template input, so each template resolves it itself.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
@@ -25,10 +25,10 @@ verdictLinker := import(":verdict-linker")
 json := import("json")
 
 // Returns five frames: antigenVerdicts (exported), and punchcard, cellReference, qcTable and
-// panelMismatchTable (this block's own). cellReference holds one row per cell — the reference reading and
-// the gate outcome — and deliberately not the per-cell per-tag counts; see where it is built below.
-// defineOutputs is deliberately absent — an ephemeral template takes its output names from what the body
-// returns and never checks a declared list, so declaring one here would be inert.
+// panelMismatchTable (this block's own). cellReference holds one row per cell, carrying the reference
+// reading and the gate outcome, and deliberately not the per-cell per-tag counts. See where it is built
+// below. defineOutputs is deliberately absent: an ephemeral template takes its output names from what the
+// body returns and never checks a declared list, so declaring one would be inert.
 self.awaitState("columns", "PColumnBundle")
 self.awaitState("runMeta", "ResourceReady")
 
@@ -39,8 +39,8 @@ self.body(func(inputs) {
 	// What actually served, read from the run record rather than from the block's arguments.
 	served := json.decode(string(inputs.runMeta.getData()))
 
-	// The clonotype axis is taken VERBATIM from the linker rather than rebuilt: an axis assembled here
-	// would be a lookalike carrying a different identity, and would join to nothing.
+	// The clonotype axis is taken VERBATIM from the linker and never rebuilt. An axis assembled here would
+	// be a lookalike carrying a different identity, and would join to nothing.
 	columns := inputs.columns
 	anchorSpec := columns.getSpec(inputs.datasetRef)
 	linkerCol := verdictLinker.pick(columns.getColumns("linker"), anchorSpec.axesSpec[1])
@@ -51,11 +51,10 @@ self.body(func(inputs) {
 	tagAxis := columnSpecs.tagAxis(blockId)
 	panelAxis := columnSpecs.panelAxis(blockId)
 
-	// Seeded from the FASTQ dataset spec: these columns' subject is the antigen readout that dataset
-	// produced, so seeding from the linker would label them after the clonotyping run instead. The
-	// clonotyping root is already recorded where it belongs — pl7.app/vdj/scClonotypeKey carries its
-	// clonotyping run id in its own domain — so it needs no trace step of its own. makeTrace is variadic
-	// and the linker is deliberately not one of its steps.
+	// Seeded from the FASTQ dataset spec, because these columns' subject is the antigen readout that dataset
+	// produced. Seeding from the linker would label them after the clonotyping run instead. The clonotyping
+	// root is already recorded where it belongs: pl7.app/vdj/scClonotypeKey carries its clonotyping run id
+	// in its own domain. makeTrace is variadic, and the linker is deliberately not one of its steps.
 	trace := pSpec.makeTrace(inputs.traceSeedSpec, {
 		type: "milaboratories.feature-integration",
 		id: blockId,
@@ -64,16 +63,17 @@ self.body(func(inputs) {
 	})
 
 	// One import per table. Keys are prefixed with the table name because two tables can carry the same
-	// column id — both label tables call their column "label" in the CSV — and one p-frame key must mean
-	// one column.
+	// column id — both label tables call their column "label" in the CSV — and one p-frame key must mean one
+	// column.
 	//
-	// The importer's result map is walked with maps.forEach, whose key order is sorted. A bare
-	// `for k, v in` has no defined order in Tengo, which would make the built frame's resource handle vary
-	// run to run and silently cost every downstream node its deduplication, with nothing reported.
-	// Every antigen table imported by this block goes through here, which makes it the one place that
-	// can check them all. The check is that none keys on the legacy feature axis: that axis is keyed by
-	// feature NAME, and a new column reusing it while carrying barcode sequences would keep the axis
-	// identity and invert its value space, so joins downstream would return wrong rows rather than fail.
+	// The importer's result map is walked with maps.forEach, whose key order is sorted. A bare `for k, v in`
+	// has no defined order in Tengo, which would make the built frame's resource handle vary run to run and
+	// silently cost every downstream node its deduplication.
+	//
+	// Every antigen table this block imports goes through here, which makes it the one place that can check
+	// them all. The check is that none keys on the legacy feature axis, which is keyed by feature NAME: a
+	// new column reusing it while carrying barcode sequences would keep the axis identity and invert its
+	// value space, so downstream joins would return wrong rows rather than fail.
 	addTo := func(fb, name, file, spec) {
 		columnSpecs.guardNoLegacyFeatureAxis(spec.axes)
 		imported := xsv.importFile(file, "csv", spec, { splitDataAndSpec: true })
@@ -93,8 +93,8 @@ self.body(func(inputs) {
 	// The pivoted per-identity summary is the only per-antigen state lead selection can see: a column
 	// carrying an axis the clonotype anchor does not have is dropped there with no error, so nothing keyed
 	// (set, identity) reaches it. The pivot costs one column per identity, so the software gates it on an
-	// identity count and records both the limit and whether it emitted. When it did not, the CSV carries
-	// only the key column, and an empty identity list yields no columns rather than a failed import.
+	// identity count and records the limit and whether it emitted. Where it did not, the CSV carries only
+	// the key column, and an empty identity list yields no columns rather than a failed import.
 	summaryIdentities := []
 	if !is_undefined(served.identitySummaryEmitted) && served.identitySummaryEmitted {
 		ll.assert(!is_undefined(served.identities),
@@ -108,67 +108,58 @@ self.body(func(inputs) {
 
 	// --- the punchcard's own frame, as an OUTPUT --------------------------------------------------------
 	//
-	// The punchcard is the view `block-set` calls this block's own — every clonotype against every identity,
+	// The punchcard is the view `block-set` calls this block's own: every clonotype against every identity,
 	// each position in one of the four states. It needs the pivoted shape, because a table cannot pivot a
-	// (set, identity) frame into columns, and it needs it as an output rather than an export: a block's own
-	// exports are not in its own result pool.
+	// (set, identity) frame into columns, and it needs it as an output rather than an export, because a
+	// block's own exports are not in its own result pool.
 	//
-	// Its cell carries the state, the two support counts, the agreement among them and — where the verdict
-	// did not settle — which of the seven ways it failed to, as one five-field value. No glyph on that page
-	// states a verdict without what it rests on. Gated on the same identity count as the summary above — either both
-	// pivots are present or neither is, and the page says so rather than rendering an empty grid.
+	// Its cell carries the state, the two support counts, the agreement among them and, where the verdict
+	// did not settle, which of the seven ways it failed to, as one five-field value. No glyph on that page
+	// states a verdict without what it rests on. Gated on the same identity count as the summary above, so
+	// either both pivots are present or neither is, and the page says which rather than rendering an empty
+	// grid.
 	punchFb := pframes.pFrameBuilder()
 	if len(summaryIdentities) > 0 {
 		addTo(punchFb, "identityPunch", inputs.identityPunch,
 			columnSpecs.identityPunchImportSpec(setAxis, summaryIdentities, served.groupingId, served))
 	}
 
-	// The clonotype's own cell count, beside its name. Imported into THIS frame and not only into the
-	// export, because a block's own exports are not in its own result pool: the copy in the exported
-	// setCounts family is unreadable by this grid. Ungated by the identity count — a card with no
-	// identity columns still says how many cells each clonotype has.
+	// The clonotype's own cell count, beside its name. Imported into THIS frame and not only into the export,
+	// because a block's own exports are not in its own result pool and the copy in the exported setCounts
+	// family is unreadable by this grid. Ungated by the identity count: a card with no identity columns
+	// still says how many cells each clonotype has.
 	addTo(punchFb, "setCellCount", inputs.setCounts,
 		columnSpecs.setCellCountImportSpec(setAxis, served))
 
 	// The per-cell material stays INSIDE the block: an output, never an export. Reading the same experiment
-	// under another grouping is another execution of this block, not a re-derivation performed by a reader,
-	// so nothing downstream needs per-cell state — and nothing downstream ever asked for it. Labelling and
-	// lead selection read verdicts, never cells.
+	// under another grouping is another execution of this block rather than a re-derivation a reader
+	// performs, and labelling and lead selection read verdicts, never cells.
 	//
-	// What this frame carries is one row per cell: the reference reading, and whether a declared gate set
-	// the cell aside. Those keep their place among the run's own measurements, because they are where a
-	// reader checks why a cell could or could not be compared — and the block must report the cells
-	// carrying a high reference reading whether or not a gate was declared, which this is the source for.
+	// This frame carries one row per cell: the reference reading, and whether a declared gate set the cell
+	// aside. Those keep their place among the run's own measurements, because a reader checks here why a
+	// cell could or could not be compared, and because the block must report the cells carrying a high
+	// reference reading whether or not a gate was declared.
 	//
-	// The per-cell per-TAG counts are deliberately NOT imported, so they are not built as columns and never
-	// reach the block boundary. Two reasons, and the second is the one that removes the import rather than
-	// merely the export:
+	// The per-cell per-TAG counts are deliberately NOT imported, so they are never built as columns. They
+	// are the largest table the run produces — a cell x tag grain, 11-20x the rows of the sparse reads they
+	// came from — and nothing reads them at either side of the boundary: not this block's model, not its UI,
+	// not another template here, no downstream block. Importing them would build the run's biggest p-frame
+	// for no reader on every verdict run.
 	//
-	//  1. They are the largest table the run produces. Their grain is cell x tag, which on a realistic
-	//     panel is 11-20x the rows of the sparse reads they were derived from — the same ratio the Python
-	//     avoids materializing for, in emit_verdicts.py and verdict.py.
-	//  2. Nothing reads them, at either side of the boundary. Not this block's model, not its UI, not
-	//     another template here, and no downstream block. Importing them would build the run's biggest
-	//     p-frame for no reader on every verdict run.
-	//
-	// This is a choice, not an oversight, and it is not a claim that the states are unwanted: emit_verdicts
-	// writes result_cell_counts.csv and verdict-run.tpl.tengo still collects it, so the per-cell per-tag
-	// states are computed and exist within the run. What stops here is turning them into p-columns.
-	// cellTagCountsImportSpec is kept in column-specs.lib.tengo for the same reason — it is the spec to
-	// reuse if a consumer at that grain ever appears, and rebuilding it from scratch would risk a lookalike
-	// tag axis that joins to nothing.
+	// The states themselves are not unwanted. emit_verdicts writes result_cell_counts.csv and
+	// verdict-run.tpl.tengo collects it, so they are computed and exist within the run. What stops here is
+	// turning them into p-columns. cellTagCountsImportSpec stays in column-specs.lib.tengo as the spec to
+	// reuse if a consumer at that grain appears, because rebuilding it would risk a lookalike tag axis that
+	// joins to nothing.
 	cellRefFb := pframes.pFrameBuilder()
 	addTo(cellRefFb, "cellScalars", inputs.cellScalars,
 		columnSpecs.cellScalarsImportSpec(sampleAxis, cellAxis, served))
 
-	// The per-cell punchcard, into the SAME frame: one row per cell, one column per identity, that cell's
-	// own reading. This is the by-cell face of the expansion, and it is the one place the block shows why a
-	// clonotype's verdict came out as it did rather than only what it came out as.
-	//
-	// Note what this does to the paragraph above. That reasoning still holds for the per-cell per-TAG
-	// counts, which remain unimported: nothing reads them. It no longer holds as a blanket statement about
-	// per-cell material, because this frame now carries a per-cell-per-identity grid — a reader appeared.
-	// What kept the cell x tag table out was the absence of a consumer, not the grain.
+	// The per-cell punchcard, into the SAME frame: one row per cell, one column per identity, that cell's own
+	// reading. This is the by-cell face of the expansion, and the one place the block shows WHY a clonotype's
+	// verdict came out as it did rather than only what it came out as. It is also why the paragraph above
+	// argues from the absence of a consumer rather than from the grain: this frame carries a
+	// per-cell-per-identity grid, and only the cell x tag table has no reader.
 	//
 	// Gated the same way as the identity pivots, and additionally on a cell count in the software, which is
 	// the gate that matters here: the rows are cells rather than clonotypes, so the same panel width costs
@@ -185,20 +176,20 @@ self.body(func(inputs) {
 			columnSpecs.cellPunchImportSpec(sampleAxis, cellAxis, cellPunchIdentities, served.groupingId, served))
 	}
 
-	// Which identities each sample was actually stained with — without it "never asked" is a claim a
-	// reader cannot check.
+	// Which identities each sample was actually stained with. Without it, "never asked" is a claim a reader
+	// cannot check.
 	addTo(exportFb, "offered", inputs.offered,
 		columnSpecs.offeredImportSpec(sampleAxis, identityAxis))
 
-	// The tag -> identity linker. It lets a reader put a tag's count beside its verdict, and neither
-	// layer needs to know about the other. It carries no sample axis. Neither side of the join has one.
-	// See tagIdentityLinkerImportSpec for why.
+	// The tag -> identity linker. It lets a reader put a tag's count beside its verdict, and neither layer
+	// needs to know about the other. It carries no sample axis, because neither side of the join has one.
+	// See tagIdentityLinkerImportSpec.
 	addTo(exportFb, "tagIdentity", inputs.tagIdentity,
 		columnSpecs.tagIdentityLinkerImportSpec(tagAxis, identityAxis))
 
-	// The label columns. A label is satisfied only by a column NAMED pl7.app/label with exactly one axis,
-	// and the readable names are imported as columns rather than read as values — which is also why they
-	// cannot be used while these specs are built.
+	// The label columns. A label is satisfied only by a column NAMED pl7.app/label with exactly one axis.
+	// The readable names are imported as columns rather than read as values, which is why they cannot be
+	// used while these specs are built.
 	addTo(exportFb, "identityLabels", inputs.identityLabels,
 		columnSpecs.identityLabelsImportSpec(identityAxis))
 
@@ -207,8 +198,8 @@ self.body(func(inputs) {
 	// per-feature property columns key on the feature NAME axis, which no verdict-stage column carries.
 	//
 	// The column names are panel data, so they come from the run record. A panel declaring nothing beyond
-	// the barcode and the name emits none, and the CSV is then key-only — imported with no value columns it
-	// would be an import of nothing, so it is skipped rather than built empty.
+	// the barcode and the name emits none, leaving the CSV key-only, which imports as nothing. Skipped
+	// rather than built empty.
 	if !is_undefined(served.identityProperties) && len(served.identityProperties) > 0 {
 		addTo(exportFb, "identityProperties", inputs.identityProperties,
 			columnSpecs.identityPropertyImportSpec(
@@ -217,8 +208,8 @@ self.body(func(inputs) {
 	addTo(exportFb, "panelLabels", inputs.panelLabels,
 		columnSpecs.panelLabelsImportSpec(panelAxis))
 
-	// sample -> panel, so per-tag QC keyed (panel, tag) can be read back to the samples it covers. Where
-	// one panel covers every sample this column is constant and drops out of view.
+	// sample -> panel, so per-tag QC keyed (panel, tag) can be read back to the samples it covers. Where one
+	// panel covers every sample, this column is constant and drops out of view.
 	addTo(exportFb, "samplePanel", inputs.samplePanel,
 		columnSpecs.samplePanelImportSpec(sampleAxis))
 
@@ -230,7 +221,7 @@ self.body(func(inputs) {
 		columnSpecs.qcMeasurementAxis(blockId),
 		columnSpecs.panelAxis(blockId)))
 
-	// The panel-versus-reads check is emitted as a p-column rather than left as a file: a mismatch report
+	// The panel-versus-reads check is emitted as a p-column rather than left as a file. A mismatch report
 	// the user cannot see defeats its purpose.
 	mismatchFb := pframes.pFrameBuilder()
 	addTo(mismatchFb, "panelMismatch", inputs.panelMismatch,

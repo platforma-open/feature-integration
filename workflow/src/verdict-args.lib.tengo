@@ -1,14 +1,13 @@
 // The emit-verdicts command line, built in one place and unit-tested.
 //
 // Every flag this CLI takes has a default, so an unthreaded parameter is silent in both directions: the
-// render succeeds, the exec succeeds, and the reading is answered under a value the user never chose. The
-// per-sample QC file is the sharpest case — without `--qc-summary` the run has no read count at all, so
-// `readsTotal`, `panelAssignedFraction` and `readsPerCell` render as declared-but-unchecked rather than
-// failing, and `readsPerCell` is the only sequencing-depth alert the block ships. Building the whole
-// argument list here, including the staged input filenames, is what makes the threading assertable
-// without a backend.
+// render succeeds, the exec succeeds, and the reading is answered under a value the user never chose.
+// `--qc-summary` is the sharpest case — without it the run has no read count at all, so `readsTotal`,
+// `panelAssignedFraction` and `readsPerCell` render as declared-but-unchecked rather than failing, and
+// `readsPerCell` is the only sequencing-depth alert the block ships. Building the whole argument list
+// here, staged input filenames included, is what makes the threading assertable without a backend.
 //
-// The staged filenames are exported beside the flags that name them: verdict-run.tpl.tengo stages each
+// The staged filenames are exported beside the flags that name them. verdict-run.tpl.tengo stages each
 // file under the same constant it is referenced by, so a rename cannot leave a flag pointing at a file
 // the exec never received.
 
@@ -45,9 +44,10 @@ PARAMETER_NAMES := [
 ]
 
 // Defaults mirroring the CLI's own (verdict.py DEFAULT_FLOOR, BOUND_CUTOFF, combine.py
-// DEFAULT_MIN_VOTERS, DEFAULT_PANEL_MIN_MEMBERS, DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE). They are restated rather than left to argparse so the value
-// that produced a run is always on the command line, where the run record and a re-run both see it; a
-// parameter carried only as a CLI default drifts the moment one side changes.
+// DEFAULT_MIN_VOTERS, DEFAULT_PANEL_MIN_MEMBERS, DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE). Restated
+// rather than left to argparse, so the value that produced a run is always on the command line, where the
+// run record and a re-run both see it. A parameter carried only as a CLI default drifts the moment one
+// side changes.
 DEFAULT_COUNT_FLOOR := 4
 DEFAULT_BOUND_CUTOFF := 75
 DEFAULT_MIN_VOTING_CELLS := 1
@@ -60,17 +60,17 @@ _num := func(value, fallback) {
 	return is_undefined(value) ? fallback : value
 }
 
-// An integer flag. int() first because a model that sends 4.0 would otherwise reach argparse as "4.0",
-// which `type=int` rejects — a whole-run failure from a value that was correct.
+// An integer flag. int() first, because a model that sends 4.0 would otherwise reach argparse as "4.0",
+// which `type=int` rejects: a whole-run failure from a value that was correct.
 _intArg := func(value) {
 	return string(int(value))
 }
 
 // build: the full argument vector, positionals first.
 //
-// `params` is the block's args map plus `hasLinker` / `hasQcSummary`, which say whether the caller staged
-// those two files. A flag naming a file the exec did not receive is a hard failure, so each is emitted
-// only with its file.
+// `params` is the block's args map plus `hasLinker` and `hasQcSummary`, which say whether the caller
+// staged those two files. A flag naming a file the exec did not receive is a hard failure, so each is
+// emitted only with its file.
 build := func(params) {
 	args := [FILE_COUNTS, FILE_PANEL]
 
@@ -87,16 +87,15 @@ build := func(params) {
 	}
 
 	// The panel-file column roles. Passed even when empty: an empty --sample-col declares one panel for
-	// every sample and an empty --role-column declares no comparator designation, both of which are
-	// readings rather than omissions.
+	// every sample, and an empty --role-column declares no comparator designation. Both are readings rather
+	// than omissions.
 	add("--barcode-col", params.barcodeSeqColumn)
 	add("--feature-col", params.featureNameColumn)
 	add("--sample-col", is_undefined(params.sampleColumn) ? "" : params.sampleColumn)
 	add("--role-column", is_undefined(params.roleColumn) ? "" : params.roleColumn)
 
-	// Comma-separated, because that is what the CLI splits on. The list is already de-duplicated and
-	// sorted by the args lambda, so the string is canonical and two equivalent selections produce one
-	// cache key.
+	// Comma-separated, because that is what the CLI splits on. The args lambda has already de-duplicated
+	// and sorted the list, so the string is canonical and two equivalent selections produce one cache key.
 	referenceValues := ""
 	if !is_undefined(params.referenceValues) {
 		for i, value in params.referenceValues {
@@ -105,16 +104,16 @@ build := func(params) {
 	}
 	add("--reference-values", referenceValues)
 
-	// Which comparator was ASKED for. The run may serve "none" instead — never a different one — and what
-	// served is read back from the run record, not from here.
+	// Which comparator was ASKED for. The run may serve "none" instead, never a different one, and what
+	// served is read back from the run record rather than from here.
 	if !is_undefined(params.referenceSource) && params.referenceSource != "" {
 		add("--reference-source", params.referenceSource)
 	}
 
 	add("--panel-min-members", _intArg(_num(params.panelReferenceMinMembers, DEFAULT_PANEL_MIN_MEMBERS)))
-	// Both conditions on the tag-distribution rung. Passed on every run rather than only where that rung
-	// was asked for: the run record then states the numbers the reading would have used, so two runs
-	// answered by different rungs still compare their configurations.
+	// Both conditions on the tag-distribution rung. Passed on every run, not only where that rung was asked
+	// for, so the run record states the numbers the reading would have used and two runs answered by
+	// different rungs still compare their configurations.
 	add("--distribution-min-cells", _intArg(_num(params.distributionMinCells, DEFAULT_DISTRIBUTION_MIN_CELLS)))
 	add("--distribution-separation", string(_num(params.distributionSeparation, DEFAULT_DISTRIBUTION_SEPARATION)))
 	add("--floor", _intArg(_num(params.countFloor, DEFAULT_COUNT_FLOOR)))
@@ -122,19 +121,19 @@ build := func(params) {
 	add("--min-voters", _intArg(_num(params.minVotingCells, DEFAULT_MIN_VOTING_CELLS)))
 	add("--high-reference-line", _intArg(_num(params.highReferenceLine, DEFAULT_HIGH_REFERENCE_LINE)))
 
-	// A switch, and it carries its value rather than standing alone. The vector is flag/value pairs --
-	// `valueOf` reads the next element, and the parity assertion at the end catches a dropped value --
-	// so a bare flag would make every later value read as the wrong one's.
+	// A switch, and it carries its value rather than standing alone. The vector is flag/value pairs:
+	// `valueOf` reads the next element, and the parity assertion at the end catches a dropped value. A bare
+	// flag would make every later value read as the wrong one's.
 	//
 	// Present only when on. Off by default: the minimum removes what is not evidence of binding, and the
-	// comparator is not evidence of binding. Turning it on changes no verdict, because every rung reads
-	// its own source raw -- only what the run reports as removed and emptied.
+	// comparator is not evidence of binding. Turning it on changes no verdict, because every rung reads its
+	// own source raw. It changes only what the run reports as removed and emptied.
 	if params.minimumAppliesToBaseline == true {
 		add("--minimum-applies-to-baseline", "true")
 	}
 
-	// Off by default, and off means absent rather than zero: a floor of 0 would make every majority pass
-	// the check instead of skipping the check, and the two are different claims about the reading.
+	// Off by default, and off means absent rather than zero. A floor of 0 passes every majority instead of
+	// skipping the check, and the two are different claims about the reading.
 	if !is_undefined(params.minAgreement) {
 		add("--min-agreement", string(params.minAgreement))
 	}
@@ -143,13 +142,13 @@ build := func(params) {
 		add("--gate-threshold", _intArg(params.gateThreshold))
 	}
 
-	// The three JSON-valued flags are encoded key-sorted rather than with the plain encoder. Tengo maps
-	// have no iteration order, so the plain encoder can emit the same rule as two different strings on two
-	// renders — which changes the exec's argument list, and with it the cache key, for a run that is
-	// identical in every way that matters.
+	// The three JSON-valued flags are encoded key-sorted, never with the plain encoder. Tengo maps have no
+	// iteration order, so the plain encoder can emit one rule as two different strings on two renders. That
+	// changes the exec's argument list, and with it the cache key, for a run identical in every way that
+	// matters.
 	//
-	// A rule over declared properties, not a tag map. Absent means one identity per tag, which is the
-	// CLI's own default, so the flag is omitted rather than carrying a hand-built {"by":"tag"}.
+	// A rule over declared properties, not a tag map. Absent means one identity per tag, the CLI's own
+	// default, so the flag is omitted rather than carrying a hand-built {"by":"tag"}.
 	if !is_undefined(params.grouping) {
 		add("--grouping", canonical.encode(params.grouping))
 	}
@@ -158,15 +157,15 @@ build := func(params) {
 	if !is_undefined(params.contendingGroups) && len(params.contendingGroups) > 0 {
 		add("--contending", canonical.encode(params.contendingGroups))
 	}
-	// No capture assignment reaches the block yet, so this is normally absent and every capture rolls up
-	// as not evaluated. Threaded now so supplying the map is a model change alone.
+	// No capture assignment reaches the block yet, so this is normally absent and every capture rolls up as
+	// not evaluated. Threaded already, so supplying the map is a model change alone.
 	if !is_undefined(params.captureMap) {
 		add("--capture-map", canonical.encode(params.captureMap))
 	}
-	// The panel file names samples the way the scientist does; everything else here is keyed by sampleId.
+	// The panel file names samples the way the scientist does. Everything else here is keyed by sampleId.
 	// Without this map the two namespaces never meet, nothing is offered to any sample that exists, and
-	// every verdict comes back *never asked* — a correct answer to a question nobody was asked, which is
-	// why it raises nothing. Passed only when the block has a sample column to key the panel by.
+	// every verdict comes back *never asked* — a correct answer to a question nobody asked, which is why it
+	// raises nothing. Passed only where the block has a sample column to key the panel by.
 	if !is_undefined(params.sampleLabels) {
 		add("--sample-labels", canonical.encode(params.sampleLabels))
 	}
@@ -188,7 +187,7 @@ has := func(args, flag) {
 }
 
 // valueOf: the value following a flag, or undefined. Used by the threading test to check that a flag
-// carries what the caller asked for rather than merely appearing.
+// carries what the caller asked for rather than only appearing.
 valueOf := func(args, flag) {
 	for i, a in args {
 		if a == flag && i + 1 < len(args) {

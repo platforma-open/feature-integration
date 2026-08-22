@@ -229,7 +229,7 @@ def test_all_cells_gated_is_not_reported_when_the_reason_mix_is_not_unanimous():
 
 
 def test_cellscouldanswer_is_not_a_row_count():
-    # THE defect this reduction exists to fix. 40 cells; only 3 have a row in
+    # THE defect this reduction exists to fix. 40 cells. Only 3 have a row in
     # `states`, the other 37 are silent and admissible. cellsCouldAnswer must
     # reflect all 40 cells asked (their sample offered A), never the 3 rows.
     explicit = [("S1", "c0", "A", B), ("S1", "c1", "A", B), ("S1", "c2", "A", N)]
@@ -272,7 +272,7 @@ def test_a_row_for_a_cell_no_set_lists_is_ignored():
     # A stray row for a cell absent from every set's membership must not
     # vote: cellsAnswered must never exceed cellsCouldAnswer. Before the fix,
     # a stray row like this counted toward the set it happened to name in a
-    # setId column; there is no such column now, only cells_by_set, and this
+    # setId column. There is no such column now, only cells_by_set, and this
     # cell is not in it.
     df = _states([("S1", "c1", "A", B), ("S1", "stray", "A", B)])
     cells_by_set = {"s1": [("S1", "c1")]}
@@ -297,11 +297,11 @@ def test_a_cell_in_two_sets_fails_naming_cells_by_set():
 
 def test_dominant_reason_raises_rather_than_falling_through_to_thin_comparator():
     # A malformed but constructible input: `states` claims this cell is
-    # UNRELIABLE, while `admissibility` says it is perfectly fine -- a real
-    # comparator, not gated, not thin. That contradiction is exactly what
-    # used to let an admissible key reach _dominant_reason and fall through
-    # to NO_COMPARATOR; it must now raise instead of reporting a
-    # comparator problem for a cell whose comparator is fine.
+    # UNRELIABLE while `admissibility` says it is fine -- a real comparator,
+    # not gated, not thin. That contradiction is what lets an admissible key
+    # reach _dominant_reason and fall through to NO_COMPARATOR. It must raise
+    # instead of reporting a comparator problem for a cell whose comparator is
+    # fine.
     df = _states([("S1", "c1", "A", U)])
     cells_by_set = {"s1": [("S1", "c1")]}
     admissibility = Admissibility({("S1", "c1"): 10}, set())
@@ -406,7 +406,7 @@ def test_overlapping_declared_groups_union_their_bound_competitors():
 
 def test_competitor_names_are_joined_in_sorted_order():
     # Three bound rivals whose declared-group and bound-set iteration order
-    # is not alphabetical; only a sorted join reliably reads "Bee, Mango,
+    # is not alphabetical. Only a sorted join reliably reads "Bee, Mango,
     # Zebra" run after run. A byte-stable column depends on this.
     out = attach_competitor_notes(
         _verdicts([("s1", "Zebra", B), ("s1", "Mango", B), ("s1", "Bee", B), ("s1", "C", N)]),
@@ -458,7 +458,7 @@ def test_offered_equals_settled_plus_unsettled_with_all_four_states_present():
     # true because some state never appeared. A predicate that counts the
     # wrong states (say offeredCount including NEVER_ASKED, or settledCount
     # including UNRELIABLE) passes every test above that uses only two or
-    # three states; this one does not let that slip through.
+    # three states. This one does not let that slip through.
     v = _v([("s1", "a", B), ("s1", "b", N), ("s1", "c", U), ("s1", "d", NA)])
     r = set_counts(v).row(0, named=True)
     assert r["offeredCount"] == r["settledCount"] + r["unsettledCount"]
@@ -473,7 +473,7 @@ def test_a_set_asked_nothing_reports_all_zero_and_a_reader_must_guard_the_divide
     # Every position NEVER_ASKED: offeredCount is 0, so a downstream reader
     # computing boundCount / offeredCount would divide by zero. This pins
     # what the row emits -- all zeros -- rather than leaving the shape
-    # undocumented; the guard against the zero is the caller's job, since
+    # undocumented. The guard against the zero is the caller's job, since
     # this function cannot produce a rate for a set that was asked nothing.
     v = _v([("s1", "a", NA), ("s1", "b", NA)])
     r = set_counts(v).row(0, named=True)

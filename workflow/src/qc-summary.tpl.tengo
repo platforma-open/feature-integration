@@ -1,15 +1,15 @@
 // Per-sample QC summary assembly (feature-integration).
 //
-// processColumn emits the per-sample QC CSV (fb-pipeline `qc` output) as a [sampleId] -> file resource
-// map (column-specs.lib.tengo qcFileMapOutput). A per-sample QC row is a scalar (0 within-sample axes),
-// which an xsv import cannot emit directly (it needs >=1 within-file axis) — so this template
-// concatenates the one-row CSVs into a single table (injecting the REAL sampleId per row from the map
-// key, overwriting the constant "sample" the Python writes) and imports it ONCE keyed [sampleId].
+// processColumn emits the per-sample QC CSV (fb-pipeline `qc` output) as a [sampleId] -> file resource map
+// (column-specs.lib.tengo qcFileMapOutput). A per-sample QC row is a scalar, with 0 within-sample axes,
+// which an xsv import cannot emit directly: it needs at least one within-file axis. So this template
+// concatenates the one-row CSVs into one table and imports it ONCE keyed [sampleId], injecting the REAL
+// sampleId per row from the map key over the constant "sample" the Python writes.
 //
 // Mirrors blocks/mixcr-clonotyping/workflow/src/export-report.tpl.tengo: iterate a per-sample file map,
-// pTabler-concat with an injected sampleId literal, then a single xsv.importFile with a sampleId axis.
-// Rendered as a separate template (render.create from main.tpl) because the resource map must be
-// awaited before its per-sample keys can be iterated — this cannot be done inline in main's body.
+// pTabler-concat with an injected sampleId literal, then one xsv.importFile with a sampleId axis. Rendered
+// as a separate template (render.create from main.tpl) because the resource map must be awaited before its
+// per-sample keys can be iterated, which main's body cannot do inline.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 ll := import("@platforma-sdk/workflow-tengo:ll")
@@ -29,7 +29,7 @@ self.body(func(inputs) {
 	columnsSpec := columnSpecs.qcSummaryColumnsSpec(sampleAxisSpec)
 
 	// Metric column names to carry through from each per-sample CSV. The CSV's own sampleId column is
-	// intentionally NOT selected — the real sampleId is injected from the resource-map key below.
+	// deliberately NOT selected: the real sampleId is injected from the resource-map key below.
 	metricCols := []
 	for col in columnsSpec.columns {
 		metricCols = append(metricCols, col.column)
@@ -40,7 +40,7 @@ self.body(func(inputs) {
 
 	wf := pt.workflow().inLightQueue().cpu(1).mem("2GiB")
 
-	// Sorted-key iteration keeps the constructed pt sub-resource canonical (dedup-stable).
+	// Sorted-key iteration keeps the constructed pt sub-resource canonical, and so dedup-stable.
 	dfs := []
 	for key in maps.getKeys(inputsMap) {
 		sampleId := json.decode(key)[0]
@@ -62,10 +62,10 @@ self.body(func(inputs) {
 
 	return {
 		qcSummaryTable: qcSummaryTable,
-		// The same combined table as a FILE. The verdict stage reads its read counts through --qc-summary,
-		// and it is returned here rather than concatenated a second time because the two must agree: the
-		// per-sample sampleId is injected from the resource-map key, so a second gather could key the rows
-		// differently and the verdict stage would silently match no sample and evaluate nothing.
+		// The same combined table as a FILE. The verdict stage reads its read counts through --qc-summary.
+		// Returned here rather than concatenated a second time because the two must agree: the per-sample
+		// sampleId is injected from the resource-map key, so a second gather could key the rows differently,
+		// and the verdict stage would then match no sample and evaluate nothing.
 		qcSummaryCsv: csvFile
 	}
 })

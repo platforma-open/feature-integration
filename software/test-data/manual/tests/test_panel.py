@@ -14,7 +14,7 @@ HERE = Path(__file__).resolve().parent.parent  # software/test-data/manual
 
 # The gex arm annotates against a human gene-annotations table that is downloaded, not committed, so a
 # full multiomic run cannot be built in a clean checkout. Tests needing only the antigen arm use the
-# scenario path instead and are unaffected; the ones that genuinely need a full run say so rather than
+# scenario path instead and are unaffected. The ones that genuinely need a full run say so rather than
 # failing with a bare subprocess error that names no cause.
 GENE_ANNOTATIONS = HERE / "assets" / "homo_sapiens_gene_annotations.csv"
 needs_full_run = pytest.mark.skipif(
@@ -173,7 +173,7 @@ def test_annotation_emitter(tmp_path):
     with (tmp_path / "truth" / "expected-consensus.tsv").open() as fh:
         cons = list(csv.DictReader(fh, delimiter="\t"))
     ann_ids = {r["cell_id"] for r in rows}
-    # expected-consensus.tsv keys the barcode as `cellId` (antigen arm); annotations use `cell_id`.
+    # expected-consensus.tsv keys the barcode as `cellId` (antigen arm). Annotations use `cell_id`.
     # Accept either so the join-compatibility check is meaningful against the real truth schema.
     cons_ids = {r.get("cell_id") or r.get("cellId") for r in cons}
     assert ann_ids & cons_ids

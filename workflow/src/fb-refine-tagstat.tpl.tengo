@@ -1,18 +1,19 @@
 // Gated refine + tag-stat (render.create boundary).
 //
-// Branches on the parse gate's decision (parse_gate.py -> decision.json, read here via .getData() — file
-// content can only be inspected inside a template that receives the file, hence this sub-template).
-//   - matched > 0  -> the normal chain: refine-tags (fb-refine) then tag-stat (fb-tagstat).
-//   - matched == 0 -> mitool wrote no parsed.mic (fb-parse pre-wrote an empty placeholder), so refine /
-//                     tag-stat would crash on it. Skip both and return the header-only tag-stat TSV +
-//                     empty refine report the gate already synthesized. The downstream Python is
-//                     empty-safe (a header-only tag-stat yields empty results), so the sample completes
-//                     with zero cells instead of failing the whole block.
-// It also assembles the per-sample step-report map (the parse / refine / tag-stat output files) keyed by
-// an ordinal step axis. These files are deterministic, so surfacing them is CID-safe; the model reads
-// only their PRESENCE to derive which step a sample has reached (see the model's sampleStep) — a report
-// appears once its step finishes. A no-match sample still gets all three (parse's real report plus the
-// gate's empty refine report + header-only tag-stat), so it advances to Done like any other sample.
+// Branches on the parse gate's decision (parse_gate.py -> decision.json), read here through .getData().
+// File content can be inspected only inside a template that receives the file, which is why this
+// sub-template exists.
+//   - matched > 0  -> the normal chain: refine-tags (fb-refine), then tag-stat (fb-tagstat).
+//   - matched == 0 -> mitool wrote no parsed.mic, and fb-parse pre-wrote an empty placeholder, so refine
+//                     and tag-stat would crash on it. Skip both and return the header-only tag-stat TSV
+//                     and empty refine report the gate synthesized. The downstream Python is empty-safe,
+//                     since a header-only tag-stat yields empty results, so the sample completes with
+//                     zero cells instead of failing the whole block.
+// It also assembles the per-sample step-report map of the parse, refine and tag-stat output files, keyed by
+// an ordinal step axis. These files are deterministic, so surfacing them is CID-safe. The model reads only
+// their PRESENCE to derive which step a sample has reached (see the model's sampleStep), and a report
+// appears once its step finishes. A no-match sample still gets all three — parse's real report plus the
+// gate's empty refine report and header-only tag-stat — so it advances to Done like any other sample.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 assets := import("@platforma-sdk/workflow-tengo:assets")
@@ -33,17 +34,17 @@ self.body(func(inputs) {
 	tags := inputs.tags
 
 	if !shouldContinue {
-		// No-match branch: use the gate's header-only tag-stat + empty refine report (refine / tag-stat
-		// never ran). The step-report map carries parse's real report plus those fallbacks.
-		// Reports are exported (file.exportFile) so each map value is a downloadable Blob the model can
-		// probe with getFileHandle; the model only reads their PRESENCE, never the content.
+		// No-match branch: use the gate's header-only tag-stat and empty refine report, since refine and
+		// tag-stat never ran. The step-report map carries parse's real report plus those fallbacks. Reports
+		// are exported through file.exportFile, so each map value is a downloadable Blob the model can probe
+		// with getFileHandle. The model reads only their PRESENCE, never the content.
 		stepReports := pcolumn.resourceMapBuilder(1)
 		stepReports.add(["1-parse"], file.exportFile(inputs.parseReport))
 		stepReports.add(["2-refine"], file.exportFile(inputs.emptyRefineReport))
 		stepReports.add(["3-tagstat"], file.exportFile(inputs.emptyTagstat))
-		// Only the parse step ran, so only its log stream exists (refine / tag-stat were skipped). A
-		// variable key set is expected — the UI shows nothing for the absent steps (mirrors peptide's
-		// empty branch). parse still streamed, so the sample gets a live parse log + progress.
+		// Only the parse step ran, so only its log stream exists. A variable key set is expected, and the UI
+		// shows nothing for the absent steps, mirroring peptide's empty branch. parse still streamed, so the
+		// sample gets a live parse log and progress.
 		stepLogs := pcolumn.resourceMapBuilder(1)
 		stepLogs.add(["1-parse"], inputs.parseLogStream)
 		return {
@@ -77,9 +78,9 @@ self.body(func(inputs) {
 	stepReports.add(["2-refine"], file.exportFile(refineRun.output("refineReport")))
 	stepReports.add(["3-tagstat"], file.exportFile(tagStatRun.output("tagstatTsv")))
 
-	// Per-step live stdout streams, same [step] axis as stepReports. The model exposes these as per-step
-	// log handles (PlLogView) and scrapes parse's for a live % (see fb-parse.tpl.tengo). The Python
-	// per-cell-metrics step (fb-downstream) is surfaced separately (metrics log), not in this mitool map.
+	// Per-step live stdout streams, on the same [step] axis as stepReports. The model exposes these as
+	// per-step log handles (PlLogView) and scrapes parse's for a live % (see fb-parse.tpl.tengo). The Python
+	// per-cell-metrics step (fb-downstream) is surfaced separately as the metrics log.
 	stepLogs := pcolumn.resourceMapBuilder(1)
 	stepLogs.add(["1-parse"], inputs.parseLogStream)
 	stepLogs.add(["2-refine"], refineRun.output("refineLogStream"))

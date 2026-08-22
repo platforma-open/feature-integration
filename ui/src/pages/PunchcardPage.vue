@@ -36,26 +36,21 @@ const tableSettings = usePlDataTableSettingsV2({
 });
 
 // Only the antigen columns are punches. The grid applies a renderer through `defaultColDef`, so a selector
-// that answered unconditionally replaced EVERY cell — the row number and the clonotype label rendered as
-// "unreadable value" marks, because a clone id is not a verdict and never parses as one. The columns this
-// table carries are the punch family plus the clonotype axis and whatever label columns the pool supplies
-// for it, and only the first should be drawn.
+// that answers unconditionally replaces EVERY cell, and the row number and the clonotype label render as
+// "unreadable value" marks: a clone id is not a verdict and never parses as one. This table carries the
+// punch family plus the clonotype axis and whatever label columns the pool supplies for it, and only the
+// first should be drawn.
 //
-// Identified from the column's own SPEC, which the grid hands back on `colDef.context`, and never by
-// matching the identity against the column id. Two ways that string match was wrong, one root:
-//
-//   1. A column id is `identityPunch_<substituteSpecialCharacters(identity)>`, and the SDK's substitution
-//      rewrites `-`, space, `.`, `/`, `(`, `)` and more to `_`. So an identity containing any of them —
-//      every antigen name under a property grouping — never matched its OWN column, and the tooltip
-//      silently lost both the antigen line and the merged note.
-//   2. `.includes()` is a substring test, so `SpikeWT` also matched `identityPunch_SpikeWT_alt`. The
-//      hover panel then named the wrong antigen with no sign anything was amiss, which is worse than
-//      naming none.
-//
-// The spec is the exact handle: the identity travels in the column's domain, put there by
-// identityPivotImportSpec, and reading it needs no knowledge of how an id is spelled. If the grid ever
-// stops supplying `context` the punch renderer simply does not apply, and the card renders raw values —
-// visibly broken, rather than quietly mislabelled.
+// Identified from the column's own SPEC, which the grid hands back on `colDef.context`. Never by matching
+// the identity against the column id, which is wrong twice over: an id is
+// `identityPunch_<substituteSpecialCharacters(identity)>`, and the substitution rewrites `-`, space, `.`,
+// `/`, `(`, `)` and more to `_`, so an identity carrying any of them — every antigen name under a property
+// grouping — never matches its OWN column; and `.includes()` is a substring test, so `SpikeWT` also
+// matches `identityPunch_SpikeWT_alt` and the hover panel names the wrong antigen with no sign anything is
+// amiss. The spec is the exact handle: the identity travels in the column's domain, put there by
+// identityPivotImportSpec, and reading it needs no knowledge of how an id is spelled. Should the grid ever
+// stop supplying `context`, the punch renderer does not apply and the card renders raw values — visibly
+// broken rather than quietly mislabelled.
 type PunchColumnContext = {
   type?: string;
   spec?: {
@@ -84,13 +79,11 @@ const identityOfColumn = (params: {
 // some barcodes carry no grouping value, but it sits far from the column it is about. Attaching the note
 // to the column's cells puts the explanation where the reader's cursor already is.
 //
-// An unplaced identity IS its barcode. A tag the grouping column says nothing about becomes its own
-// identity. This is therefore an exact set membership test, not a search.
+// An unplaced identity IS its barcode, since a tag the grouping column says nothing about becomes its own
+// identity, so this is an exact set membership test rather than a search.
 //
-// It does NOT cover a barcode the panel names differently in different samples. That used to land here,
-// because a dataset-wide map could hold only one value per tag and a second one read as a conflict. The
-// panel is now read per tag AND sample, so such a barcode is placed under each name its own sample
-// declared and never reaches this note.
+// It does NOT cover a barcode the panel names differently in different samples. The panel is read per tag
+// AND sample, so such a barcode is placed under each name its own sample declared.
 const mergedNote = (identity: string | undefined): string | undefined => {
   if (identity === undefined || !ungroupedTags.value.includes(identity)) return undefined;
   return (
@@ -107,14 +100,14 @@ const labelOf = computed(() => {
   return m;
 });
 
-// The clonotype's own column, which is where the row gets its button. Measured rather than assumed: the
-// grid hands this column a context of `{type: "column", spec: {name: "pl7.app/label", axesSpec: [the
-// clonotype axis]}}`. It is NOT an axis context, even though the value shown is the axis's label -- the
-// pool-resolved label column stands in for the axis and is handed over as an ordinary column.
+// The clonotype's own column, which is where the row gets its button. The grid hands this column a context
+// of `{type: "column", spec: {name: "pl7.app/label", axesSpec: [the clonotype axis]}}`. NOT an axis
+// context, even though the value shown is the axis's label: the pool-resolved label column stands in for
+// the axis and is handed over as an ordinary column.
 //
-// Matched by AXIS as well as by name, and against the same axis id the expansion filters on, so the two
-// provably agree. Name alone would be wrong the moment a second label column reaches this frame, which is
-// exactly what happens on the by-identity face.
+// Matched by AXIS as well as by name, against the same axis id the expansion filters on, so the two
+// provably agree. Name alone breaks the moment a second label column reaches this frame, which is what
+// happens on the by-identity face.
 const isClonotypeLabelColumn = (params: { colDef?: { context?: PunchColumnContext } }): boolean => {
   const spec = params.colDef?.context?.spec;
   const axisName = app.model.outputs.clonotypeAxisId?.name;
@@ -128,15 +121,13 @@ const isClonotypeLabelColumn = (params: { colDef?: { context?: PunchColumnContex
 
 const cellRendererSelector = (params: { colDef?: { context?: PunchColumnContext } }) => {
   // The affordance. `invokeRowsOnDoubleClick` makes the button fire the ROW's double-click event, so it
-  // routes through the same `openExpansion` handler as a double-click anywhere on the row -- one path, not
-  // two, and clicking the row keeps working exactly as before. The button exists because nothing on a grid
-  // of coloured dots says it can be opened, and a reader who does not already know does not find out.
+  // routes through the same `openExpansion` handler as a double-click anywhere on the row: one path, not
+  // two, and clicking the row keeps working. The button exists because nothing on a grid of coloured dots
+  // says it can be opened, and a reader who does not already know does not find out.
   //
-  // This is the block's second attempt at the affordance. `showCellButtonForAxisId` was tried first and
-  // rendered nothing, with no error: the SDK matches that prop against an axis column's own id or a
-  // one-axis label column's id with `isJsonEqual`, and neither branch matched here. This route does not go
-  // through that matching at all -- it replaces the cell's renderer, which is the same mechanism the punch
-  // glyphs already use on this grid.
+  // Not `showCellButtonForAxisId`, which renders nothing here and no error: the SDK matches that prop
+  // against an axis column's own id or a one-axis label column's id with `isJsonEqual`, and neither branch
+  // matches. This route replaces the cell's renderer instead, the same mechanism the punch glyphs use.
   if (isClonotypeLabelColumn(params)) {
     return { component: PlAgTextAndButtonCell, params: { invokeRowsOnDoubleClick: true } };
   }
@@ -167,26 +158,23 @@ const cellPunchRendererSelector = (params: { colDef?: { context?: PunchColumnCon
 const settingsOpen = ref(false);
 
 // The expansion: one clonotype's identities read DOWN, which `the-explore-readout` puts opposite this
-// card's read ACROSS. The card stays a field of colour with no number in any position; every number the
-// atom asks for lives in here.
+// card's read ACROSS. The card stays a field of colour with no number in any position, and every number
+// the atom asks for lives in here.
 //
-// The gesture is a double-click on the row, which is what the Main page already uses to open a sample's
-// report, so it is this block's own idiom.
+// The gesture is a double-click on the row, matching the Main page's own way of opening a sample report.
 //
-// `showCellButtonForAxisId` was tried first, because a visible per-row button is the affordance nine
-// other blocks use and is more discoverable than a double-click. It rendered NOTHING here, with no error.
-// The SDK matches that prop with `isJsonEqual` against either an axis column's own id or the id of a
-// one-axis LABEL column (`table-source-v2.ts:296-315`); on this card the clonotype axis is displayed
-// through a pool-resolved label column and neither branch matched, so the selector returned undefined
-// and the cell rendered as plain text. The axis id itself was not the problem — it is derived from an
-// emitted column, domain and all, and a hand-written `{type, name}` would have missed the three domain
-// keys this axis carries. Worth re-testing if the SDK's label-column branch changes.
+// `showCellButtonForAxisId` renders NOTHING here, with no error, and is worth re-testing only if the SDK's
+// label-column branch changes. The SDK matches that prop with `isJsonEqual` against either an axis
+// column's own id or the id of a one-axis LABEL column (`table-source-v2.ts:296-315`), and this card
+// displays the clonotype axis through a pool-resolved label column, so neither branch matches, the
+// selector returns undefined and the cell renders as plain text. The axis id is not the problem: it is
+// derived from an emitted column, domain and all.
 //
-// The key is all the event carries — `cellButtonClicked` emits a `PTableKey` and nothing else, because
-// the table's values live in the pFrame and a detail view is expected to re-query. So the key goes into
-// block data and the model builds a table filtered to it. Nothing is fetched until a row is chosen: with
-// `expandedSet` undefined the model returns no table at all, which matters because an unfiltered
-// expansion would be every clonotype's identities at once.
+// The key is all the event carries. `cellButtonClicked` emits a `PTableKey` and nothing else, because the
+// table's values live in the pFrame and a detail view is expected to re-query. So the key goes into block
+// data and the model builds a table filtered to it. Nothing is fetched until a row is chosen: with
+// `expandedSet` undefined the model returns no table at all, which matters because an unfiltered expansion
+// would be every clonotype's identities at once.
 const expansionOpen = computed({
   get: () => app.model.data.expandedSet !== undefined,
   set: (open: boolean) => {
@@ -194,12 +182,12 @@ const expansionOpen = computed({
   },
 });
 
-// Which face of the expansion is showing. Two readings of one clonotype: `identity` is one row per
-// identity with the clonotype's verdict on it, `cell` is one row per cell with that cell's own reading at
-// every identity -- the same card, one clonotype deep.
+// Which face of the expansion is showing. Two readings of one clonotype: `identity` is one row per identity
+// carrying the clonotype's verdict, `cell` is one row per cell carrying that cell's own reading at every
+// identity -- the same card, one clonotype deep.
 //
-// Local state rather than block data, and reset on every open. A tab is a glance, not a setting: nothing
-// downstream reads it, no other client needs to see it, and reopening on whichever face was last used
+// Local state rather than block data, and reset on every open. A tab is a glance rather than a setting:
+// nothing downstream reads it, no other client needs it, and reopening on whichever face was last used
 // would answer a question the reader did not ask. Block data would also make it a migration.
 const EXPANSION_TABS = [
   { label: "By identity", value: "identity" as const },
@@ -247,18 +235,16 @@ const expansionSettings = usePlDataTableSettingsV2({
   sourceId: () => app.model.data.expandedSet?.join(" "),
 });
 
-// The slide-over's title names the VIEW, not the clonotype.
+// The slide-over's title names the VIEW, never the raw `expandedSet[0]`. That is the scClonotypeKey axis
+// value, `04zdk2ezKgFGCgckfLw5H` against a card showing `C-ZDKEZ`, because the card displays that axis
+// through a pool-resolved label column. The key appears nowhere else in the block and names nothing to a
+// reader.
 //
-// It used to render `String(expandedSet[0])`, which is the raw scClonotypeKey axis value — measured live
-// as `04zdk2ezKgFGCgckfLw5H` against a card showing `C-ZDKEZ`. The card displays that axis through a
-// pool-resolved label column, which is the same fact that made `showCellButtonForAxisId` match nothing
-// here, so the key appears nowhere else in the block and named nothing to the reader.
+// The design asks for `C-ZDKEZ — 4 cells`. Both are pFrame values and the row event carries only a key, so
+// that needs a value route which does not exist: a Parquet p-column cannot be read in the model, and no
+// block in this workspace builds a header out of row values. The clonotype's name stays available as an
+// optional column of the panel's own table, one click away in the Columns picker.
 //
-// The design asks for `C-ZDKEZ — 4 cells` here instead. Both of those are pFrame values, and the row
-// event carries only a key: no block in this workspace builds a header out of row values, and doing it
-// would need a value route that does not exist (a Parquet p-column cannot be read in the model). The
-// clonotype's name stays available as an optional column of the panel's own table, one click away in the
-// Columns picker, and the reader reached this panel by clicking that clonotype in the first place.
 // The clonotype's readable name, fetched through the card's own pFrame handle. `fullPframeHandle` is the
 // frame the grid already joined the upstream label column into, so the title and the card cannot disagree
 // about what this clonotype is called.
@@ -293,9 +279,9 @@ const noDataset = computed(() => app.model.data.datasetRef === undefined);
 // choice that SERVED is the only one worth stating: a reader meeting a grid of rings otherwise has nothing
 // telling them the comparator they asked for was never available.
 const runMeta = computed(() => app.model.outputs.verdictRunMeta);
-// Compared against the machine token, not against a sentence. This branch used to string-match the
-// display prose the Python enum happened to carry, so rewording that sentence for readability would have
-// silently removed the warning below with nothing failing.
+// Compared against the machine token, never against a sentence. String-matching the display prose the
+// Python enum carries would let rewording that sentence for readability silently remove the warning below,
+// with nothing failing.
 const noComparator = computed(() => runMeta.value?.referenceChoice === "none");
 // Whether the run carried panels that differ. `the-explore-readout` shows the per-identity
 // could-answer count only then, because only then does it vary: under one panel it is the clonotype's
@@ -336,7 +322,7 @@ const baselineDegraded = computed(
 );
 
 // Tags the grouping column said nothing about stand as their own identity under a bare barcode. The
-// software reports this to stderr; a column a reader cannot place needs saying on the page too.
+// software reports this to stderr. A column a reader cannot place needs saying on the page too.
 const ungroupedTags = computed(() => runMeta.value?.tagsWithoutGroupingValue ?? []);
 
 const identityOptions = computed(() => app.model.outputs.punchcardIdentityOptions ?? []);
@@ -346,17 +332,15 @@ const identityOptions = computed(() => app.model.outputs.punchcardIdentityOption
 // view, and it needs saying, because an empty grid looks the same either way.
 const nothingToOffer = computed(() => !noDataset.value && identityOptions.value.length === 0);
 
-// Headers carry the identity's full name. A cut to 20 characters was applied here before. It removed the
-// one thing a reader needs from a header, which is the identity the column holds.
-//
-// The grid auto-sizes every column to its contents and exposes no width a block can set, so a long label
-// does make its column wide. Every column is resizable, and the hover below names the identity as well.
+// Headers carry the identity's full name, never a truncation: the identity a column holds is the one thing
+// a reader needs from a header. The grid auto-sizes every column to its contents and exposes no width a
+// block can set, so a long label does make its column wide. Every column is resizable, and the hover
+// below names the identity as well.
 
-// An "Antigens shown" multi-select used to sit above the legend, narrowing the card to the identities it
-// had picked and holding that pick in block data. Removed: PlAgDataTableV2 ships a columns panel and a
-// filters panel, both live on this table, so the control re-implemented in block state something the grid
-// already did — and two narrowing mechanisms can disagree with each other, where the grid's own cannot
-// disagree with itself. Every identity column the pivot produced renders now, and narrowing is done in the
+// Nothing here narrows the card to a subset of identities, and nothing should. PlAgDataTableV2 ships a
+// columns panel and a filters panel, both live on this table, so such a control re-implements in block
+// state what the grid already does, and two narrowing mechanisms can disagree where the grid's own cannot
+// disagree with itself. Every identity column the pivot produced renders, and narrowing is done in the
 // grid. The options output stays, because the card reads two other things off it.
 </script>
 

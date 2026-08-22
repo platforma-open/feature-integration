@@ -39,8 +39,8 @@ const isUserConfigurable = computed(() => selectedPreset.value?.userConfigurable
 function setPresetId(id: string | undefined) {
   app.model.data.presetId = id;
   const p = getPreset(id);
-  // User-configurable preset: seed a starting pattern so the builder opens populated. Fixed presets own
-  // their pattern (args reads preset.pattern) — nothing to write into data.
+  // User-configurable preset: seed a starting pattern so the builder opens populated. A fixed preset owns
+  // its pattern, which args reads from preset.pattern, so there is nothing to write into data.
   if (p?.userConfigurable && !app.model.data.pattern) {
     app.model.data.pattern = assemblePattern(DEFAULT_PARTS);
   }
@@ -82,16 +82,18 @@ const patternParseError = computed(() => {
   if (!isUserConfigurable.value) return null;
   const p = app.model.data.pattern;
   if (!p) return null;
-  // Loose check (same rule as the model's args): mitool does the real parsing; we only require the
-  // CELL/UMI/FEATURE tags + R2 capture. Extra flanks/spacers/anchors are allowed via the string field.
+  // Loose check, the same rule as the model's args. mitool does the real parsing, and only the
+  // CELL/UMI/FEATURE tags and the R2 capture are required here. An extra flank, spacer or anchor is allowed
+  // through the string field.
   return validatePattern(p);
 });
 
-// ── Bidirectional sync (data.pattern ↔ builder fields). Hairpin-safe: both directions read/write
-//    data.pattern (persisted data) and local refs, never a model output. ──
+// ── Bidirectional sync (data.pattern ↔ builder fields). Hairpin-safe: both directions read and write
+//    data.pattern, which is persisted data, and local refs. Never a model output. ──
 const lastAssembled = ref<string | undefined>(undefined);
 
-// data.pattern → fields (skips our own write; leaves fields untouched on an unparseable write-mode string)
+// data.pattern → fields. Skips this component's own write, and leaves the fields untouched on an
+// unparseable write-mode string.
 watch(
   () => app.model.data.pattern,
   (pattern) => {

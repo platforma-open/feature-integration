@@ -53,7 +53,7 @@ BASE = [
     "--reference-values",
     "Control",
     # Stated, because the CLI requires it and nothing below the model picks a rung. This bed declares a
-    # comparator tag, so the declared rung is the one it is about; a test that wants a different rung
+    # comparator tag, so the declared rung is the one it is about. A test that wants a different rung
     # passes its own --reference-source, which argparse takes as the later value.
     "--reference-source",
     "declared",
@@ -292,10 +292,9 @@ def test_the_key_only_frames_carry_a_value_column_so_they_can_become_columns(bed
 
 
 def test_asking_for_a_rung_that_cannot_serve_drops_to_none_and_never_to_another_rung(bed):
-    # There is no cascade any more, and its absence is the point. This bed declares no comparator tag
-    # and carries a panel large enough to stand in for one, which is exactly the shape a cascade would
-    # have rescued: ask for the declared rung and it drops to *none*, leaving every verdict unreliable,
-    # rather than quietly serving the panel instead.
+    # There is no cascade, and its absence is the point. This bed declares no comparator tag and carries a
+    # panel large enough to stand in for one, exactly the shape a cascade would rescue: ask for the declared
+    # rung and it drops to *none*, leaving every verdict unreliable, rather than quietly serving the panel.
     #
     # A baseline nobody chose is a methodology nobody knows they used. The scientist gets the rung they
     # asked for or nothing, and the run says which.
@@ -620,10 +619,9 @@ def test_two_identities_that_disagree_the_same_way_do_not_share_a_label(bed):
     # two declarations, and each barcode joins the family its own sample named. The identities are the
     # two families, and neither barcode stands alone under its raw sequence.
     #
-    # This expectation INVERTED with per-sample keying. It previously asserted that both barcodes fell
-    # back to their own identity, labelled with the values they declared joined ("Nuc / Spike"), and
-    # that the two joined strings had to be kept apart by appending the barcode. That fallback existed
-    # only because a dataset-wide map could not hold both declarations at once.
+    # Do not invert this back to a fallback where each barcode stands alone under its raw sequence,
+    # labelled with its declared values joined ("Nuc / Spike"). That shape is only forced by a dataset-wide
+    # map, which cannot hold both declarations at once. The panel is read per tag AND sample.
     (bed / "panel.csv").write_text(
         "Samples,Name,Sequence,Type,Family\n"
         "S1,AgA,AAAA,Target,Spike\n"
@@ -743,7 +741,7 @@ def test_a_computed_but_unjudged_measurement_is_not_reported_as_unchecked(bed):
     # measurement that WAS computed and carries no defensible line is
     # unjudged, and reporting it as not evaluated collapses "nothing was
     # wrong" into "nobody looked" -- the one distinction the status set
-    # exists to keep apart. The row keeps its own status; the triple beside
+    # exists to keep apart. The row keeps its own status. The triple beside
     # it says how much was checked.
     _run(bed, *BASE)
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
@@ -778,7 +776,7 @@ def test_a_capture_rollup_sums_the_coverage_it_aggregates(bed):
 
 
 def test_a_cell_list_of_its_own_overrides_the_linker_and_is_recorded(bed):
-    # The cell list is an input; the linker only says which set a cell
+    # The cell list is an input. The linker only says which set a cell
     # belongs to. A list from gene expression covers cells whose receptor
     # never assembled, which the linker structurally cannot, so which list a
     # figure was computed against has to travel with the run.
@@ -955,14 +953,13 @@ def test_the_bed_keys_identity_by_barcode_where_the_names_would_split(wide_bed):
     assert set(labels) == shape["antigens"]
     assert len(set(labels.values())) == len(labels)
 
-    # And from the other side: asked to group by the name, the run now PLACES the renamed barcodes,
-    # one identity per name the panel declared. Nothing is left unplaced.
+    # And from the other side: asked to group by the name, the run PLACES the renamed barcodes, one identity
+    # per name the panel declared. Nothing is left unplaced.
     #
-    # This expectation INVERTED with per-sample keying, and the inversion is the point of the change.
-    # A barcode named differently in two samples used to have "no one name that holds", so it was
-    # reported in `tagsWithoutGroupingValue` and stood alone under its raw sequence. Under
-    # `panel-file-authority@3.0` those are two declarations -- the same reagent identifier carrying a
-    # different antigen in each sample -- so each is placed under the name its own sample gave it.
+    # A barcode named differently in two samples does NOT have "no one name that holds", and must not be
+    # reported in `tagsWithoutGroupingValue` or left standing alone under its raw sequence. Under
+    # `panel-file-authority@3.0` those are two declarations -- one reagent identifier carrying a different
+    # antigen in each sample -- so each is placed under the name its own sample gave it.
     r = _run(wide_bed, *_bed_args("panel_with_reference.csv", *NAME_GROUPING))
     assert r.returncode == 0, r.stderr
     meta = json.loads((wide_bed / "result_run_meta.json").read_text())
@@ -1056,7 +1053,7 @@ def test_one_antigen_on_two_barcodes_is_read_by_its_highest_member(wide_bed):
 
     # Read as one antigen the two barcodes combine by the highest member, never by the sum and never
     # by an arbitrary one: each cell's reading becomes 500, both cells bind, and the set is bound.
-    # Summing would reach the same verdict here by accident; what the highest rule buys is that a
+    # Summing would reach the same verdict here by accident. What the highest rule buys is that a
     # cell's answer does not depend on how many barcodes happened to carry the antigen.
     r = _run(wide_bed, *_bed_args("panel_with_reference.csv", *NAME_GROUPING))
     assert r.returncode == 0, r.stderr
@@ -1064,17 +1061,15 @@ def test_one_antigen_on_two_barcodes_is_read_by_its_highest_member(wide_bed):
 
 
 def test_two_declared_comparators_are_refused_rather_than_combined(wide_bed):
-    # This used to assert the opposite: that the higher of the two served, because several comparator
-    # tags combined the way an identity's tags do. `baseline-scope` states that references are never
-    # combined, and taking the highest is a combination.
+    # Never take the higher of the two, and never combine comparator tags the way an identity's tags
+    # combine: `baseline-scope` states that references are never combined, and taking the highest is a
+    # combination. The atom's construct scopes each reference to a group of antigens by a declared property,
+    # and this version has no group-by half, so it cannot say which antigens a second comparator belongs to.
+    # It refuses rather than choosing a rule nobody wrote down, as the field does -- the ordinary antibody
+    # run rejects a second control outright.
     #
-    # The atom's construct scopes each reference to a group of antigens by a declared property. This
-    # version has no group-by half, so it cannot say which antigens a second comparator belongs to, and
-    # it refuses instead of choosing a rule nobody wrote down. The field does the same -- the ordinary
-    # antibody run rejects a second control outright.
-    #
-    # Refused loudly rather than degraded to no comparator: this is a panel a scientist fixes in a
-    # minute, and a silent fall to *unreliable* everywhere would not tell them how.
+    # Refused loudly rather than degraded to no comparator: this is a panel a scientist fixes in a minute,
+    # and a silent fall to *unreliable* everywhere would not tell them how.
     r = _run(wide_bed, *_bed_args("panel_multi_reference.csv"), expect_failure=True)
     assert "declares 2 baseline tags" in r.stderr
     assert "one baseline tag or none" in r.stderr
@@ -1215,7 +1210,7 @@ def test_no_qc_row_carries_a_null_panel_key(bed):
 # open, and a test asserting today's answer would have to be deleted to settle it.
 
 # Twenty-six, against a shipped minimum of twenty-five. The count is the only thing this list carries
-# that the panel rung cares about; every test below reads its members by position, so widening it
+# that the panel rung cares about. Every test below reads its members by position, so widening it
 # changes what serves and nothing else. Padded to two digits so the sorted identity list this bed's
 # assertions compare against is the list order.
 CUSTOMER_TAGS = [f"SEQ{i:02d}" for i in range(1, 27)]
@@ -1234,7 +1229,7 @@ def _customer_bed(root, *, renamed=2, span_samples=True):
             rows.append(f"{sample},{tag},{name}")
     (root / "panel.csv").write_text("\n".join(rows) + "\n")
 
-    # SEQ01 is strong; the rest sit at 10, above the shipped floor of 4 so nothing is floored away and
+    # SEQ01 is strong. The rest sit at 10, above the shipped floor of 4 so nothing is floored away and
     # the panel median stays a real number. A background of 3 would floor to zero, drag the median to
     # zero, and make every identity unreliable for a reason unrelated to the comparator.
     counts = ["sampleId,cellId,tag,umiCount"]
@@ -1322,7 +1317,7 @@ def test_two_barcodes_disagreeing_about_the_same_pair_of_names_stay_tellable_apa
     _customer_bed(bed, renamed=0)
     rows = ["Sample,Sequence,Antigen"]
     for sample, name in (("SmpA", "Shared"), ("SmpB", "Conflict")):
-        # The first two barcodes carry the identical pair; the rest agree, as the bed built them.
+        # The first two barcodes carry the identical pair. The rest agree, as the bed built them.
         rows.extend(f"{sample},{tag},{name}" for tag in CUSTOMER_TAGS[:2])
         rows.extend(f"{sample},{tag},Ag{i:03d}" for i, tag in enumerate(CUSTOMER_TAGS[2:], start=2))
     (bed / "panel.csv").write_text("\n".join(rows) + "\n")
@@ -1384,9 +1379,9 @@ def test_the_narrow_shape_labels_every_barcode_the_samples_name_differently_with
     # is below the shipped minimum of twenty-five, so the rung is asked for explicitly: what this test
     # is about is the LABEL a barcode gets, and it needs a run that produced verdicts to look at.
     #
-    # A barcode two samples name differently has no agreed name, and the label used to fall through to
-    # the raw 15-mer -- the conflict recorded on stderr and shown nowhere a reader would look. It carries
-    # the names it DID declare instead, joined, exactly as a property grouping does.
+    # A barcode two samples name differently has no agreed name, and its label must never fall through to
+    # the raw 15-mer, which records the conflict on stderr and shows it nowhere a reader looks. It carries
+    # the names it DID declare, joined, exactly as a property grouping does.
     narrow_size = pl.read_csv(wide_bed / "panel_narrow.csv", infer_schema_length=0)["Sequence"].n_unique()
     r = _run(
         wide_bed,
@@ -1428,7 +1423,7 @@ def test_the_narrow_shape_labels_every_barcode_the_samples_name_differently_with
 
 
 def test_naming_the_off_target_role_as_the_comparator_deletes_the_off_target_questions(wide_bed):
-    # The role column says what a member is TO THE QUESTION; the comparator is a different axis. Naming
+    # The role column says what a member is TO THE QUESTION. The comparator is a different axis. Naming
     # the off-target role as the comparator does not merely move a baseline — reference tags are held
     # out of the identity universe, so the off-targets stop being asked about at all.
     # The role value that marks exactly ONE tag. This version of the block reads counts against one
@@ -1478,7 +1473,7 @@ def test_naming_the_off_target_role_as_the_comparator_deletes_the_off_target_que
     )
     asked_with = {identity for _, identity in _states_prefix(wide_bed, "named")}
 
-    # Without the naming they are questions; with it they are gone.
+    # Without the naming they are questions. With it they are gone.
     assert off_target <= asked_without, "an off-target is an identity when nothing names it a comparator"
     assert not (off_target & asked_with), "naming the role deleted the off-target questions"
     assert asked_with, "and must not delete every question, or the bed says nothing about which went"
@@ -1729,11 +1724,11 @@ def test_a_barcode_named_differently_per_sample_becomes_one_identity_per_name(tm
     AAAA is named differently across the two samples and CCCC is not, so the same
     run shows both the reuse case and the ordinary one.
 
-    THIS TEST INVERTED. It previously asserted AAAA stood alone under its raw
-    sequence, labelled with the two names joined ('SpikeWT / SpikeWT__alt'), and
-    that it was reported in `tagsWithoutGroupingValue`. That behaviour existed
-    only because a dataset-wide tag->identity map could not hold two declarations
-    for one barcode.
+    Do not invert this back. AAAA must not stand alone under its raw sequence,
+    labelled with the two names joined ('SpikeWT / SpikeWT__alt'), nor be
+    reported in `tagsWithoutGroupingValue`. That shape is forced only by a
+    dataset-wide tag->identity map, which cannot hold two declarations for one
+    barcode.
     """
     (tmp_path / "counts.csv").write_text(
         "sampleId,cellId,tag,umiCount\n"
@@ -2256,7 +2251,7 @@ def test_cell_punch_resolves_a_silent_position_rather_than_leaving_it_blank(sile
 def test_cell_punch_counts_the_identities_a_cell_read_bound(silent_position_bed):
     _run(silent_position_bed, *BASE)
     rows = _cell_punch(silent_position_bed)
-    # c1 bound both antigens; c2 bound AgA and was silent -- so not bound -- at AgB.
+    # c1 bound both antigens. C2 bound AgA and was silent -- so not bound -- at AgB.
     assert rows[("S1", "c1")]["boundIdentities"] == 2
     assert rows[("S1", "c2")]["boundIdentities"] == 1
 

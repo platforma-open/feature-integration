@@ -137,7 +137,7 @@ def _clone_sizes(n, mean_size=25, singleton_cell_frac=0.10, alpha=0.9, tail_cycl
     short = n_exp - sum(sizes)
     for i in sorted(range(k), key=lambda i: -(raw[i] - sizes[i]))[:short]:
         sizes[i] += 1
-    # A clone in the expanded compartment holds at least 2 cells; fold anything smaller into the head so
+    # A clone in the expanded compartment holds at least 2 cells. Fold anything smaller into the head so
     # the total is preserved. (A 1-cell clone belongs to the singleton tail, which is counted separately.)
     runts = sum(x for x in sizes if x < 2)
     sizes = [x for x in sizes if x >= 2]

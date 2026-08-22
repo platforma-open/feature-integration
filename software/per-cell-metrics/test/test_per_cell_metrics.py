@@ -193,7 +193,7 @@ def test_cli_abundance_uses_unique_umi(tagstat_tsv, tags_csv, tmp_path):
 def test_cli_with_renamed_csv_columns(tagstat_tsv, tmp_path):
     # D4: the CSV's barcode/feature columns can be named anything -- --csv-barcode-col /
     # --csv-feature-col map them to the join key and output "feature" column. Barcode values
-    # (AAAA, CCCC) match the committed tagstat_main.tsv bed; mapped to the same AGX/BGX names the
+    # (AAAA, CCCC) match the committed tagstat_main.tsv bed. Mapped to the same AGX/BGX names the
     # golden test expects, just via a differently-named CSV.
     renamed_csv = tmp_path / "renamed_tags.csv"
     renamed_csv.write_text("barcode,antigen\nAAAA,AGX\nCCCC,BGX\n")
@@ -336,7 +336,7 @@ def test_cli_per_cell_summary_maxima_match_exported_columns(tagstat_tsv, tags_cs
 @pytest.mark.slow
 def test_cli_combine_all_gates_dual_barcode_antigen(tmp_path):
     # End-to-end: a dual-barcode antigen (BG505 = b1 + b2) in "all" (AND) mode is called only in cells
-    # where BOTH barcodes fired; a single-barcode antigen (OTHER = cx) stays OR. Mirrors the LIBRA-seq
+    # where BOTH barcodes fired. A single-barcode antigen (OTHER = cx) stays OR. Mirrors the LIBRA-seq
     # dual-probe design (a cell is BG505-specific only when both probe barcodes are present).
     tags = tmp_path / "tags.csv"
     tags.write_text("tag,feature,combine\nb1,BG505,all\nb2,BG505,all\ncx,OTHER,sum\n")
