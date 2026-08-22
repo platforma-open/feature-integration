@@ -361,21 +361,19 @@ def roll_up(statuses: list[Status]) -> Coverage:
     return Coverage(status, len(judged), unjudged, not_evaluated)
 
 
-def roll_up_panel(tag_statuses: list[Status], identity_statuses: list[Status]) -> Coverage:
-    """A panel carries the worst status among its per-tag and per-identity measurements."""
-    return roll_up([*tag_statuses, *identity_statuses])
-
-
-def roll_up_capture(sample_statuses: list[Status], panel_statuses: list[Status]) -> Coverage:
-    """A capture carries the worst status among every sample and every panel within it.
-
-    Sample and panel are separate axes rather than nested: a per-tag failure is
-    usually a property of the reagent across the whole run rather than of any one
-    sample, and a dead reagent would otherwise mark every sample alerting. The
-    two call for different actions, and nothing hides because the capture rolls
-    up both.
-    """
-    return roll_up([*sample_statuses, *panel_statuses])
+# Only the sample rolls up, so `roll_up` above is the only aggregation rule here.
+#
+# A panel status is gone because it overestimated what could be judged
+# categorically: of the per-tag measurements one is categorical and the rest are
+# read only as outliers against the other tags in the same panel, which is a
+# comparison rather than a severity and cannot be rolled into one without
+# discarding the comparison that made it a finding. A capture status followed the
+# same logic and lost its content with it -- the worst of every sample and every
+# panel becomes the worst of every sample, which the samples already say.
+#
+# Nothing hides. A reagent finding states itself on its own per-tag row, keyed by
+# the panel that has it, and a sample's own report names the measurement that set
+# the sample alerting.
 
 
 def measurement_row(m: Measurement) -> dict:

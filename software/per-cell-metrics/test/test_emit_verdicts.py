@@ -374,23 +374,34 @@ def test_no_cell_list_leaves_membership_unknown_and_depth_unevaluated(bed):
     assert set(counts["inCellList"].to_list()) == {"unknown"}, "unclassified is not the same as classified 'no'"
 
 
-def test_the_capture_rollup_gathers_every_sample_when_no_capture_map_is_given(bed):
-    # The capture level exists so that nothing hides. Rolling up an empty
-    # membership makes it report *not evaluated* over a run whose samples and
-    # panels were measured perfectly well, which is the opposite of its job.
+def test_only_the_sample_rolls_up(bed):
+    # A panel status assumed its per-tag measurements would mostly carry statuses.
+    # They do not: one is categorical and the rest are read only as outliers
+    # against the other tags in the same panel. A capture status was then the
+    # worst of every sample and every panel, which becomes the worst of every
+    # sample -- a statement that only repeats what is beside it.
     _run(bed, *BASE)
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
     rollups = qc.filter(pl.col("measurement") == "rollup")
-    capture = rollups.filter(pl.col("level") == "capture").row(0, named=True)
+    levels = set(rollups["level"].to_list())
+    assert levels == {"sample"}, f"only the sample rolls up, got {sorted(levels)}"
 
     def _triple(level):
         r = rollups.filter(pl.col("level") == level)
         return [int(r[c].cast(pl.Int64).sum()) for c in ("judged", "unjudged", "notEvaluated")]
 
-    assert sum(_triple("sample")) > 0, "the bed must have something for the capture to gather"
-    assert [int(capture[c]) for c in ("judged", "unjudged", "notEvaluated")] == [
-        s + p for s, p in zip(_triple("sample"), _triple("panel"), strict=True)
-    ]
+    assert sum(_triple("sample")) > 0, "the sample rollup still counts what was checked"
+
+
+def test_per_tag_measurements_survive_the_removed_panel_rollup(bed):
+    # This task removes aggregation, not measurement. A reagent finding still
+    # lands on its own row, keyed by the panel that has it, which is what keeps
+    # a bad reagent discoverable with no panel status above it.
+    _run(bed, *BASE)
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    tags = qc.filter((pl.col("level") == "tag") & (pl.col("measurement") != "rollup"))
+    assert tags.height > 0, "per-tag measurement rows are untouched by the rollup removal"
+    assert all(p != "" for p in tags["panelId"].to_list()), "each still names its panel"
 
 
 def test_contending_groups_reach_the_note(bed):
@@ -754,25 +765,16 @@ def test_a_computed_but_unjudged_measurement_is_not_reported_as_unchecked(bed):
     assert deferred["reason"]  # a deferred measurement says why nothing computed it
 
 
-def test_a_capture_rollup_sums_the_coverage_it_aggregates(bed):
-    # `roll_up_capture` takes statuses, so a sample that was fully computed
-    # but had nothing judgeable arrives as *not evaluated* and would
-    # increment the capture's not-evaluated count by one, losing every
-    # measurement behind it. The counts are summed from the constituent
-    # coverages instead.
+def test_a_capture_map_is_accepted_and_changes_no_row(bed):
+    # The capture rollup was the only reader of this map, and only the sample
+    # carries an aggregated status now. The argument stays accepted because the
+    # capture axis ships on the QC columns: adding an axis to a released column
+    # changes that column's identity, where adding a value does not. So supplying
+    # a map must not fail, and must not put a row anywhere either.
     _run(bed, *BASE, "--capture-map", json.dumps({"S1": "C1"}))
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    rollups = qc.filter(pl.col("measurement") == "rollup")
-    capture = rollups.filter(pl.col("level") == "capture").row(0, named=True)
-    assert capture["entity"] == "C1"
-
-    def _triple(level):
-        r = rollups.filter(pl.col("level") == level)
-        return [int(r[c].cast(pl.Int64).sum()) for c in ("judged", "unjudged", "notEvaluated")]
-
-    assert [int(capture[c]) for c in ("judged", "unjudged", "notEvaluated")] == [
-        s + p for s, p in zip(_triple("sample"), _triple("panel"), strict=True)
-    ]
+    assert "capture" not in set(qc["level"].to_list())
+    assert "C1" not in set(qc["entity"].to_list())
 
 
 def test_a_cell_list_of_its_own_overrides_the_linker_and_is_recorded(bed):

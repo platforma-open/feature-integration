@@ -19,8 +19,6 @@ from qc_measures import (
     per_antigen_measures,
     reads_per_cell,
     roll_up,
-    roll_up_capture,
-    roll_up_panel,
     status_for,
 )
 
@@ -548,23 +546,23 @@ def test_a_level_with_no_measurements_at_all_is_not_evaluated():
     assert (r.judged, r.unjudged, r.not_evaluated) == (0, 0, 0)
 
 
-def test_panel_rolls_up_tag_and_identity_measurements():
-    r = roll_up_panel(tag_statuses=[Status.ACCEPTABLE], identity_statuses=[Status.ALERTING])
-    assert r.status is Status.ALERTING
+def test_only_one_aggregation_rule_remains():
+    # A panel status overestimated what could be judged categorically, and a
+    # capture status became the worst of every sample -- which the samples
+    # already say. `roll_up` over a sample's own measurements is what is left.
+    import qc_measures
 
-
-def test_capture_rolls_up_samples_and_panels():
-    r = roll_up_capture(sample_statuses=[Status.ACCEPTABLE], panel_statuses=[Status.ALERTING])
-    assert r.status is Status.ALERTING
+    assert not hasattr(qc_measures, "roll_up_panel")
+    assert not hasattr(qc_measures, "roll_up_capture")
 
 
 def test_a_dead_reagent_does_not_mark_every_sample_alerting():
-    # Sample and panel are separate axes rather than nested: the panel alerts,
-    # the samples stay clean, and the capture still shows the problem.
+    # A per-tag failure is usually a property of the reagent across the whole run
+    # rather than of any one sample. Fed into a sample status, one dead reagent in
+    # a panel of twenty tags would mark every sample alerting, which makes that
+    # status noise within one run. The sample rolls up its OWN measurements only.
     samples = [roll_up([Status.ACCEPTABLE]).status for _ in range(3)]
-    panel = roll_up_panel(tag_statuses=[Status.ALERTING], identity_statuses=[Status.ACCEPTABLE])
     assert samples == [Status.ACCEPTABLE] * 3
-    assert roll_up_capture(sample_statuses=samples, panel_statuses=[panel.status]).status is Status.ALERTING
 
 
 def test_outlier_status_flags_only_high_values():

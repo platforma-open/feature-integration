@@ -81,8 +81,6 @@ from qc_measures import (
     per_antigen_measures,
     reads_per_cell,
     roll_up,
-    roll_up_capture,
-    roll_up_panel,
     status_for,
 )
 from tag_distribution import (
@@ -811,24 +809,6 @@ def _leaf(level, entity, measurement, value, detail, panel_id, status: Status) -
     return QcRow(level, entity, measurement, value, detail, panel_id, status, roll_up([status]))
 
 
-def _sum_coverage(status: Status, parts: list[Coverage]) -> Coverage:
-    """A rollup over rollups: the status from the rollup rule, the counts summed.
-
-    `roll_up_capture` takes statuses, so handing it the statuses of levels
-    that were themselves rolled up gives the right status and the wrong
-    counts. A sample that was fully computed but had nothing judgeable
-    arrives as *not evaluated* and increments the capture's not-evaluated
-    count, collapsing "nothing was wrong" into "nobody looked". Summing the
-    constituent coverages keeps the two apart.
-    """
-    return Coverage(
-        status,
-        sum(c.judged for c in parts),
-        sum(c.unjudged for c in parts),
-        sum(c.not_evaluated for c in parts),
-    )
-
-
 def _qc_frame(rows: list[QcRow]) -> pl.DataFrame:
     """The measurement set as a frame keyed (level, entity, measurement).
 
@@ -963,7 +943,12 @@ def main() -> None:
     p.add_argument("--high-reference-line", type=int, default=DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE)
     p.add_argument("--grouping", default=None, help="JSON: {'by':'tag'} or {'by':'property','column':...}")
     p.add_argument("--contending", default=None, help="JSON: groups of identities that contend, as a list of lists")
-    p.add_argument("--capture-map", default=None, help="JSON: sampleId -> captureId")
+    # Accepted and not yet read. The capture rollup was its only reader, and only the
+    # sample carries an aggregated status now. It stays declared because the capture
+    # axis ships on the QC columns for the same reason: adding an axis to a released
+    # column changes that column's identity, where adding a value does not. So the
+    # plumbing waits for a capture assignment rather than being torn out and rebuilt.
+    p.add_argument("--capture-map", default=None, help="JSON: sampleId -> captureId (accepted, not yet read)")
     p.add_argument(
         "--sample-labels",
         default=None,
@@ -1067,7 +1052,6 @@ def main() -> None:
                 "with itself, and a group of one tests nothing."
             )
     contending = [set(group) for group in contending_raw]
-    capture_of_sample: dict[str, str] = _json_arg(args.capture_map, "--capture-map") or {}
 
     counts = _read_counts(args.counts_csv)
 
@@ -1512,8 +1496,8 @@ def main() -> None:
         says something the panel did not do: a reagent declared in panels P and Q but misbehaving only in
         Q's samples shows the same inflated rate on P's row, and `outlier_status` inside P then alerts P's
         rollup for a reagent that was clean there -- pointing the reader at the wrong panel and the wrong
-        remedy. `310-qc-status-and-rollup` keeps sample and panel as separate axes precisely so a reagent
-        fault lands on the panel that has it.
+        remedy. A per-tag row is keyed by its panel so a reagent fault lands on the panel that has it,
+        which stays true now that only the sample carries an aggregated status.
 
         This is the same restriction `per_antigen_measures` already gets from `panel_states` a few lines
         below; disagreement was the one per-panel measure still reading a run-wide number.
@@ -1650,9 +1634,7 @@ def main() -> None:
         .iter_rows(named=True)
     }
 
-    panel_coverage: dict[str, Coverage] = {}
     for panel_id in sorted(tags_of_panel):
-        first = len(rows)
         panel_samples_here = samples_of_panel[panel_id]
         panel_tags = tags_of_panel[panel_id]
         tag_rate, identity_rate = _disagreement_rates(panel_samples_here)
@@ -1736,9 +1718,6 @@ def main() -> None:
                 if feeds:
                     rows[i] = rows[i]._replace(detail=f"identitiesFed={'|'.join(feeds)}")
 
-        tag_statuses = [r.status for r in rows[first:]]
-
-        identity_first = len(rows)
         panel_identities = identities_of_panel[panel_id]
         for identity in sorted(panel_identities & set(identity_rate)):
             peers = [identity_rate[o] for o in panel_identities if o != identity and identity_rate.get(o) is not None]
@@ -1746,35 +1725,16 @@ def main() -> None:
             rows.append(
                 _leaf("identity", identity, "identityDisagreement", identity_rate[identity], "", panel_id, status)
             )
-        identity_statuses = [r.status for r in rows[identity_first:]]
-        panel_coverage[panel_id] = roll_up_panel(tag_statuses, identity_statuses)
 
+    # Only the sample carries an aggregated status, over its OWN per-sample
+    # measurements. A per-tag failure is usually a property of the reagent across
+    # the whole run rather than of any one sample, so feeding a dead reagent in a
+    # panel of twenty tags into a sample status would mark every sample alerting
+    # and make that status noise within one run. It does not hide: the per-tag row
+    # states the reagent finding on its own, keyed by the panel that has it.
     for sample in samples:
         coverage = sample_coverage[sample]
         rows.append(QcRow("sample", sample, ROLLUP, None, "", "", coverage.status, coverage))
-    for panel_id in sorted(panel_coverage):
-        coverage = panel_coverage[panel_id]
-        rows.append(QcRow("panel", panel_id, ROLLUP, None, "", panel_id, coverage.status, coverage))
-
-    # The capture axis ships whether or not a capture assignment reached the
-    # block: adding an axis to a released column changes its identity, adding
-    # a value does not. With no assignment the single row reads *not
-    # evaluated*, which is what it is -- nobody looked -- and never an absence.
-    # With no assignment every sample belongs to one unnamed capture, rather
-    # than to a capture with no members. Emptying the membership would make the
-    # one level whose whole job is that nothing hides aggregate nothing: it
-    # would read *not evaluated* over a run whose samples and panels were
-    # measured perfectly well.
-    captures: dict[str, list[str]] = {}
-    for sample in samples:
-        captures.setdefault(capture_of_sample.get(sample, "unassigned"), []).append(sample)
-    for capture, its_samples in sorted(captures.items()):
-        its_panels = sorted({panel_of_sample[s] for s in its_samples})
-        from_samples = [sample_coverage[s] for s in its_samples]
-        from_panels = [panel_coverage[p] for p in its_panels]
-        worst = roll_up_capture([c.status for c in from_samples], [c.status for c in from_panels]).status
-        coverage = _sum_coverage(worst, from_samples + from_panels)
-        rows.append(QcRow("capture", capture, ROLLUP, None, "", "", worst, coverage))
 
     _write_sorted(_qc_frame(rows), f"{prefix}_qc.csv", ["level", "entity", "panelId", "measurement"])
 
