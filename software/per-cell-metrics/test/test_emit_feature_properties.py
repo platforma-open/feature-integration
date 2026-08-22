@@ -122,6 +122,42 @@ def test_no_control_feature_marker_header_only(tmp_path):
     assert _control_rows(tmp_path) == [["feature", "value"]]
 
 
+def test_several_controls_are_all_marked(tmp_path):
+    # A panel may carry several controls: being a control is a property of the tag, where supplying the
+    # baseline is a job given to exactly one of them. This file marks controls and nominates nothing, so
+    # every one given is marked. Repeated flags, in the order given.
+    _run(
+        tmp_path,
+        "tag,feature\nAAAA,AGX\nGGGG,CTRL1\nCCCC,CTRL2\n",
+        "--control-feature",
+        "CTRL2",
+        "--control-feature",
+        "CTRL1",
+    )
+    assert _control_rows(tmp_path) == [["feature", "value"], ["CTRL2", "true"], ["CTRL1", "true"]]
+
+
+def test_a_control_name_may_contain_a_comma(tmp_path):
+    # Repeated flags rather than one comma-joined value, so a feature name carrying a comma survives. A
+    # comma-joined encoding would split this name into two features that do not exist.
+    _run(tmp_path, 'tag,feature\nAAAA,AGX\nGGGG,"CTRL, batch 2"\n', "--control-feature", "CTRL, batch 2")
+    assert _control_rows(tmp_path) == [["feature", "value"], ["CTRL, batch 2", "true"]]
+
+
+def test_a_repeated_control_is_marked_once(tmp_path):
+    # The marker is a set. A duplicate would emit two rows for one feature, and the import would then carry
+    # the same feature twice on an axis that keys on it.
+    _run(
+        tmp_path,
+        "tag,feature\nAAAA,AGX\nGGGG,CTRL\n",
+        "--control-feature",
+        "CTRL",
+        "--control-feature",
+        "CTRL",
+    )
+    assert _control_rows(tmp_path) == [["feature", "value"], ["CTRL", "true"]]
+
+
 def _rows(text):
     reader = csv.reader(io.StringIO(text))
     header = next(reader)

@@ -1,9 +1,9 @@
 import type { ImportFileHandle, PlDataTableStateV2, PlRef } from "@platforma-sdk/model";
 
 /**
- * Which baseline a count is read against. Selected, never inferred: two runs answered by different
- * rules produce numbers that do not compare, and a scientist who did not choose the rule cannot know
- * that happened.
+ * Which baseline a count is read against. Selected, never inferred: two runs answered by different rules
+ * produce numbers that do not compare, and a scientist who did not choose the rule cannot know that
+ * happened.
  *
  * There is no "none". A baseline is required and a run without one does not happen, so an unselected
  * choice is undefined here and `args()` refuses it -- rather than a fourth value meaning "answer every
@@ -12,17 +12,16 @@ import type { ImportFileHandle, PlDataTableStateV2, PlRef } from "@platforma-sdk
 export type ReferenceSource = "declared" | "panel" | "distribution";
 
 /**
- * How tags become identities. A RULE over declared properties, never a tag->identity map: a map is
- * keyed by tags, which are known only after the block runs, so any editor for it writes an output back
- * into data. Property column names are knowable at prerun, from the panel header the block already
- * enumerates. Absent means one identity per tag.
+ * How tags become identities. A RULE over declared properties, never a tag->identity map: a map is keyed
+ * by tags, which are known only after the block runs, so any editor for it writes an output back into
+ * data. Property column names are knowable at prerun, from the panel header the block already enumerates.
+ * Absent means one identity per tag.
  *
  * Several columns may be named, and the identity is the distinct combination of their values. Name
  * antigen and concentration together, and the same antigen at two concentrations is two identities.
  *
  * `column` is the shape this rule had before it took a list. It stays readable because a project stored
- * under it must keep running, and `groupingColumns()` is the one place that reads either. Never write
- * it.
+ * under it must keep running, and `groupingColumns()` is the one place that reads either. Never write it.
  */
 export type GroupingRule =
   | { by: "tag" }
@@ -35,41 +34,45 @@ export type BlockArgs = {
   tagFeatureCsvHandle: ImportFileHandle; // tag->feature CSV, user-uploaded
   barcodeSeqColumn: string; // CSV column holding the feature barcode (whitelist/panel)
   featureNameColumn: string; // CSV column holding the feature/antigen name
-  // Negative-control feature name. It gates no per-cell rule, because the verdict asks the binding
-  // question of every antigen independently. main.tpl.tengo still passes it to
-  // emit_feature_properties.py as --control-feature, which emits the pl7.app/feature/negativeControl
-  // marker column consumers read. Omitted -> that marker is header-only.
-  controlFeature?: string;
+  // Negative-control feature names. They gate no per-cell rule, because the verdict asks the binding
+  // question of every antigen independently. main.tpl.tengo passes each to emit_feature_properties.py as a
+  // repeated --control-feature, which emits the pl7.app/feature/negativeControl marker column consumers
+  // read. Empty or omitted leaves that marker header-only.
+  //
+  // SEVERAL, because being a control is a property of the tag and a panel may carry more than one. Being
+  // the reference that supplies the baseline is a job given to exactly one of them, and that job is
+  // `referenceValues`, not this.
+  controlFeatures?: string[];
   pattern: string; // Mitool tag pattern
   // mitool tag names baked into `pattern`
   tags: { cell: string; umi: string; feature: string };
-  // Sample-aware tag→feature mapping (optional). When set, the same feature barcode may map to different
+  // Sample-aware tag->feature mapping (optional). When set, the same feature barcode may map to different
   // features per sample.
   sampleColumn?: string; // the CSV column holding the (user-friendly) sample name
-  sampleLabels?: Record<string, string>; // a snapshot of sampleId→name
+  sampleLabels?: Record<string, string>; // a snapshot of sampleId->name
   // Cell-barcode whitelist for refine-tags CELL correction. "" = de-novo, the default for non-10x and
-  // synthetic input. A 10x built-in name such as 737K-august-2016 makes cellIds match the VDJ producer
-  // by construction.
+  // synthetic input. A 10x built-in name such as 737K-august-2016 makes cellIds match the VDJ producer by
+  // construction.
   cellWhitelist: string;
-  // Optional mitool resource overrides (Advanced Settings). Undefined -> workflow defaults: 8 CPUs, and
+  // Optional mitool resource overrides (Advanced Settings). Undefined means workflow defaults: 8 CPUs, and
   // RAM sized by the input-blob formula. When set, perProcessMemGB is a fixed RAM request per sample.
   perProcessCPUs?: number;
   perProcessMemGB?: number;
   // Preview (dry-run): when set, mitool parse processes only the first `limitInput` reads per sample, so
-  // the user can check settings before the full run. Omitted -> full run, every read. Mirrors
+  // the user can check settings before the full run. Omitted means a full run, every read. Mirrors
   // mixcr-clonotyping / demultiplex-fastq "Preview" mode.
   limitInput?: number;
   // Optional multi-barcode antigen combine mode. combineColumn names a tag-CSV column giving each
   // feature's mode: "sum" = OR, the default, and "all" = AND, where a feature is called only when every
-  // member barcode fires. minUmi is the AND per-barcode "fired" floor, an integer >= 1 defaulting to 1
-  // in the workflow.
+  // member barcode fires. minUmi is the AND per-barcode "fired" floor, an integer >= 1 defaulting to 1 in
+  // the workflow.
   combineColumn?: string;
   minUmi?: number;
 
   // --- the binding reading -------------------------------------------------------------------------
   // Everything below reaches emit_verdicts.py through verdict-args.lib.tengo, and nothing below reaches
-  // the per-sample mitool fan-out. A change to how the counts are READ therefore recovers every
-  // per-sample body from cache and re-runs the verdict stage alone.
+  // the per-sample mitool fan-out. A change to how the counts are READ therefore recovers every per-sample
+  // body from cache and re-runs the verdict stage alone.
 
   // The single-cell V(D)J dataset ANCHOR (axes [pl7.app/sampleId, pl7.app/vdj/scClonotypeKey],
   // pl7.app/isAnchor). Not a linker ref: the cell linker carries pl7.app/isLinkerColumn and is hidden in
@@ -83,9 +86,9 @@ export type BlockArgs = {
   referenceValues?: string[];
   referenceSource?: ReferenceSource;
   panelReferenceMinMembers: number; // members the panel needs before its own readings can serve
-  // The two conditions on reading a count against that tag's own distribution across the sample's
-  // cells. Both GATE rather than tune: below them the baseline the rung would produce is not
-  // conservative but wrong, which is why neither has an "off".
+  // The two conditions on reading a count against that tag's own distribution across the sample's cells.
+  // Both GATE rather than tune: below them the baseline the rung would produce is wrong rather than
+  // conservative, which is why neither has an "off".
   distributionMinCells: number; // cells a sample needs before the rung may serve
   distributionSeparation: number; // how deep the trough between the two components must be (0-1)
   countFloor: number; // counts below this are not evidence of binding
@@ -99,13 +102,13 @@ export type BlockArgs = {
   // Share (0-1) of answering cells the majority must reach. Off by default, and off means ABSENT rather
   // than zero: a floor of 0 passes every majority instead of skipping the check.
   minAgreement?: number;
-  // The admissibility gate, in comparator UMIs. Undefined means off. Zero would set aside every cell,
-  // so the args lambda projects it only when positive.
+  // The admissibility gate, in comparator UMIs. Undefined means off. Zero would set aside every cell, so
+  // the args lambda projects it only when positive.
   gateThreshold?: number;
   highReferenceLine: number; // where a reference reading counts as high, with the gate off
   grouping?: GroupingRule;
-  // Identities declared to contend for one binding site. Canonicalised by the args lambda (each group
-  // sorted, groups sorted, groups of fewer than two members dropped).
+  // Identities declared to contend for one binding site. Canonicalised by the args lambda: each group
+  // sorted, groups sorted, groups of fewer than two members dropped.
   contendingGroups?: string[][];
 };
 
@@ -132,9 +135,9 @@ export type BlockData = {
    * The handle tag is what makes it safe to persist: a snapshot is read only while it matches the CSV
    * currently picked, so a stale one left by a failed clear can never be read against a different file.
    *
-   * This is the ONLY source of the metadata — no workflow step parses the panel. The UI fills it from the
+   * This is the ONLY source of the metadata -- no workflow step parses the panel. The UI fills it from the
    * user's disk on a local pick, and from the prerun-imported blob for a remote pick. Absent means the
-   * bytes have not arrived yet, which the "Reading columns…" alert reports.
+   * bytes have not arrived yet, which the "Reading columns..." alert reports.
    */
   csvMetaSnapshot?: { handle: ImportFileHandle; meta: CsvMeta };
   /**
@@ -145,6 +148,10 @@ export type BlockData = {
   csvImportError?: string;
   barcodeSeqColumn?: string;
   featureNameColumn?: string;
+  // The chosen negative-control features. `controlFeature` is the shape a project saved before the setting
+  // took a list, and it is still read: every reader goes through `controlFeatures()` in index.ts, which
+  // reads either. Nothing writes the singular form now.
+  controlFeatures?: string[];
   controlFeature?: string;
   sampleColumn?: string;
   sampleLabelSnapshot?: Record<string, string>;
@@ -167,8 +174,8 @@ export type BlockData = {
 
   /**
    * The single-cell V(D)J dataset anchor, and the block's one optional input. A missing dataset narrows
-   * what the block can answer, since no clonotype set means no verdict, and stops nothing. The args
-   * lambda never throws on its absence.
+   * what the block can answer, since no clonotype set means no verdict, and stops nothing. The args lambda
+   * never throws on its absence.
    */
   datasetRef?: PlRef;
   roleColumn?: string;
@@ -195,8 +202,8 @@ export type BlockData = {
   grouping?: GroupingRule;
   /**
    * Written on a user gesture only. The identities to choose from come from the identityOptions model
-   * output, and a watcher that copied that output into data would make the model output depend on the
-   * data it feeds — a write-on-read loop, and a write race between two open clients.
+   * output, and a watcher that copied that output into data would make the model output depend on the data
+   * it feeds -- a write-on-read loop, and a write race between two open clients.
    */
   contendingGroups?: string[][];
   punchcardTableState: PlDataTableStateV2; // punchcard grid state (UI-only, never projected to args)
@@ -214,8 +221,8 @@ export type BlockData = {
    * Grid state for the expansion table. UI-only, never projected to args.
    *
    * Optional, unlike the card's own state beside it. A required field would need every stored project
-   * migrated to carry it, and `createPlDataTableV3` already takes `tableState` as optional. A project
-   * that predates the expansion opens with a default grid instead of failing to open.
+   * migrated to carry it, and `createPlDataTableV3` already takes `tableState` as optional. A project that
+   * predates the expansion opens with a default grid instead of failing to open.
    */
   expansionTableState?: PlDataTableStateV2;
   /**
@@ -226,20 +233,20 @@ export type BlockData = {
    */
   cellExpansionTableState?: PlDataTableStateV2;
   // No field narrows which identity columns the punchcard shows, and none should be added.
-  // PlAgDataTableV2 ships a columns panel and a filters panel, so such a field re-implements in block
-  // state what the grid already does, and two narrowing mechanisms can disagree where the grid's own
-  // cannot disagree with itself. Every identity column is rendered.
+  // PlAgDataTableV2 ships a columns panel and a filters panel, so such a field re-implements in block state
+  // what the grid already does, and two narrowing mechanisms can disagree where the grid's own cannot
+  // disagree with itself. Every identity column is rendered.
   //
   // No field truncates the punch headers either. A cut header hides which identity a column is, which is
-  // what a reader needs from it most. Every column is resizable, and the punch hover carries the name.
-  // A `punchcardIdentities` list or a `punchcardFullLabels` flag stored by an older project is ignored.
+  // what a reader needs from it most. Every column is resizable, and the punch hover carries the name. A
+  // `punchcardIdentities` list or a `punchcardFullLabels` flag stored by an older project is ignored.
 
   // Snapshotted on the gesture that picks the barcode column, so args() can refuse a mapping that is
   // certain to fail without reading an output. args is data-only, and these are read from the
-  // csvValuesByColumn / csvRowCount OUTPUTS, which lag a gesture by one round trip even though the
-  // metadata they derive from is now in data. Same device as sampleColumnValues, for the same reason.
-  // Absent where the metadata had not arrived at pick time, or predates rowCount. The gate then does not
-  // fire, and the Python guard catches it at the end of the run.
+  // csvValuesByColumn / csvRowCount OUTPUTS, which lag a gesture by one round trip even though the metadata
+  // they derive from is now in data. Same device as sampleColumnValues, for the same reason. Absent where
+  // the metadata had not arrived at pick time, or predates rowCount. The gate then does not fire, and the
+  // Python guard catches it at the end of the run.
   //
   // Both could be dropped now that csvMetaSnapshot puts the same numbers in data, where args() could read
   // them directly. That is a migration and a change to the gate, so it is deliberately left alone here.
@@ -249,7 +256,7 @@ export type BlockData = {
   presetId?: string;
   pattern?: string;
   cellWhitelist?: string; // optional (defaults to "" = de-novo); see BlockArgs.cellWhitelist
-  // Optional mitool resource overrides (Advanced Settings). Undefined = workflow defaults.
+  // Optional mitool resource overrides (Advanced Settings). Undefined means workflow defaults.
   perProcessCPUs?: number;
   perProcessMemGB?: number;
   defaultBlockLabel?: string; // UI-only: sidebar subtitle, mirrored from the suggestedBlockLabel output
