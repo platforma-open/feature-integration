@@ -47,22 +47,33 @@ export type QcCheck = {
 
 const percent = (fraction: number) => `${(fraction * 100).toFixed(1)}%`;
 
-// The per-sample QC checks, with proposed cutoffs. Tune them here and nowhere else. They mirror the
-// analysisLog flags: zero cells detected or a very low panel-assigned fraction gives ALERT, a low
-// panel-assigned or pattern-match fraction gives WARN, and otherwise OK.
+// The per-sample QC checks. Each status rests on a line with a stated source, or it is undefined and the
+// value speaks for itself. No number here is invented: a line comes from a figure the field published,
+// from a categorical fact, or from a stated recommendation, and from nowhere else. Where none of the
+// three applies, the check carries no status rather than a number with nothing behind it.
 //
 // The single definition of the sample's quality. The grid's one-tag Quality column is the worst of these
 // statuses (qualityStatus below), so the tag and the panel's rows can never disagree about one sample,
 // which they would if each carried its own copy of the thresholds.
+//
+// These are NOT the software layer's quality measurements. That is a larger set with its own statuses,
+// its own line provenance and its own page. Bringing the two together is a separate change.
+
+// Inherited from the field rather than calibrated here: the complement of the published 0.50
+// unrecognized-barcode fraction. `qc_measures.py` holds the same number for panelAssignedFraction, and
+// the two must not drift.
+const PANEL_ASSIGNED_LINE = 0.5;
 export function qcChecks(qc: QcRow): QcCheck[] {
   const paf = typeof qc.panelAssignedFraction === "number" ? qc.panelAssignedFraction : undefined;
 
   return [
     {
       label: "Cells detected",
-      // Zero cells means nothing downstream of this sample can be computed, so it is the hardest fail the
-      // per-sample QC has. Any non-zero count is left unjudged as OK: how many cells a sample *should* yield
-      // depends on the experiment, so no cutoff here is defensible.
+      // Categorical, not a quantity judged against a cutoff. Zero cells means nothing downstream of this
+      // sample can be computed, and that is a fact rather than a threshold somebody chose. Above zero the
+      // fact does not hold, which is all OK says here -- never that the yield was good. How many cells a
+      // sample *should* yield depends on the experiment, and no number for that is defensible, so none is
+      // applied.
       status: qc.cellsDetected === 0 ? "ALERT" : "OK",
       printedValue: qc.cellsDetected.toLocaleString(),
       description:
@@ -72,7 +83,10 @@ export function qcChecks(qc: QcRow): QcCheck[] {
     },
     {
       label: "Reads assigned to the panel",
-      status: paf === undefined ? undefined : paf < 0.25 ? "ALERT" : paf < 0.5 ? "WARN" : "OK",
+      // One line, inherited, and no second tier. The field publishes 0.50 and nothing else, so an ALERT
+      // level below it would be a number invented here -- a confident label on an arbitrary cut, which is
+      // worse than saying less. A reader can act on WARN; they cannot act on a severity nobody calibrated.
+      status: paf === undefined ? undefined : paf < PANEL_ASSIGNED_LINE ? "WARN" : "OK",
       printedValue: paf === undefined ? "not reported" : percent(paf),
       description:
         paf === undefined
@@ -87,9 +101,11 @@ export function qcChecks(qc: QcRow): QcCheck[] {
     },
     {
       label: "Reads matching the read pattern",
-      // Below this the sample is still usable, but the library loses most of its reads before any feature
-      // barcode is read, which is worth a look. Hence WARN rather than ALERT.
-      status: qc.matchedFraction < 0.8 ? "WARN" : "OK",
+      // Unjudged, and shown with its value beside it. The matched share is not one of the four numbers the
+      // field publishes for this assay, and nothing published says what a low one means -- so no status is
+      // claimed. The finding survives anyway: one sample at 40% beside its neighbours at 95% is visible in
+      // the column, which is a comparison a reader makes rather than a line this code can apply.
+      status: undefined,
       printedValue: `${percent(qc.matchedFraction)} (${qc.readsMatched.toLocaleString()} of ${qc.readsTotal.toLocaleString()})`,
       description:
         "The fraction of raw reads whose structure matched the read pattern, i.e. reads from which a " +
