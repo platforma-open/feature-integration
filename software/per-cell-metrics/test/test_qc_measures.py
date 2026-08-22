@@ -401,11 +401,23 @@ def test_the_undeclared_barcode_fraction_ships_unjudged():
     assert status_for("undeclaredBarcodes", 0.4, DEFAULT_LINES) is Status.UNJUDGED
 
 
-def test_categorical_alerts_only_on_the_named_fact():
-    # Alerting *at* zero -- a different predicate from "at or below a floor",
-    # which is why one direction flag cannot serve both.
-    assert status_for("declaredNeverSeen", 0, DEFAULT_LINES) is Status.ALERTING
-    assert status_for("declaredNeverSeen", 1, DEFAULT_LINES) is Status.ACCEPTABLE
+def test_a_tag_the_reads_never_show_carries_no_status():
+    # The verdict took this job: a tag with no reads removes its cells from what
+    # could answer, so the position reads *never asked* rather than a confident
+    # negative. The measurement is a fact on the tag's row, kept for the
+    # reagent's sake, and warning a reader off an answer that already says so
+    # would be a second voice on one fact.
+    assert status_for("declaredNeverSeen", 0, DEFAULT_LINES) is Status.UNJUDGED
+    assert status_for("declaredNeverSeen", 1, DEFAULT_LINES) is Status.UNJUDGED
+    assert "declaredNeverSeen" not in DEFAULT_LINES
+
+
+def test_the_categorical_route_is_kept_with_no_member():
+    # One of the three places a line can come from, and the only one nothing
+    # currently uses. Kept as a route rather than deleted, so the next
+    # measurement standing on a fact rather than a quantity has somewhere to go.
+    assert "categorical" in LINE_ROUTES
+    assert not [m.id for m in MEASUREMENTS if m.line == "categorical"]
 
 
 def test_no_defensible_line_means_unjudged():

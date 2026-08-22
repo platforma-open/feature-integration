@@ -250,16 +250,47 @@ def identity_universe(panel: pl.DataFrame, grouping: Grouping) -> set[str]:
     return set(grouping.values())
 
 
-def offered_identities(panel: pl.DataFrame, grouping: Grouping, samples: list[str]) -> set[str]:
-    """Which identities a set was offered, given the samples its cells came from.
+def offered_identities(
+    panel: pl.DataFrame,
+    grouping: Grouping,
+    samples: list[str],
+    seen: set[tuple[str, str]] | None = None,
+) -> set[str]:
+    """Which identities a set could answer at, given the samples its cells came from.
 
     An identity was offered when any one of its tags was on any of those
-    samples' panels. The `any` is deliberate: an identity is a group of tags,
-    and that group can span several panels.
+    samples' panels AND the reads for that tag came back for that sample. The
+    `any` is deliberate on both halves: an identity is a group of tags, that
+    group can span several panels, and one live tag is enough to put the
+    question.
 
     The identity is read from the (tag, sample) pair itself rather than through a
     dataset-wide map, so a barcode carrying one antigen here and another there is
     not conflated: only what THIS sample declared that barcode to be is offered.
+
+    **`seen` is the set of (sample, tag) pairs the reads carry, and a tag absent
+    from it is dropped for that sample.** Declaring a tag is not the same as
+    measuring it: a reagent that returned nothing was never put to those cells,
+    whatever the file intended. Zero reads is categorical and cannot arise from
+    biology, because ambient material reaches every cell, so a tag that bound
+    nothing still returns counts. What zero reads means is a reagent never added,
+    a barcode mis-declared, or a library that failed.
+
+    This is not the reads overruling the declaration. The file declares what was
+    offered and the reads say which cells were actually measured, and those were
+    always different questions -- so no disagreement here is ever acted on as
+    though the file were wrong. What follows is only that unmeasured cells do not
+    vote, which this function already holds for a sample the panel never
+    mentions.
+
+    Pass `seen` built from the RAW counts, before the minimum. A count the
+    minimum zeroed is a reading that happened and failed, which settles *not
+    bound*; a tag with no reads is a question nobody put. Building `seen` from
+    the floored frame collapses the second into the first and hands back the
+    confident clean negative this parameter exists to prevent.
+
+    `seen=None` keeps the panel-only reading, for a caller with no counts frame
+    to hand.
 
     A sample the panel never mentions is offered nothing, so every identity
     reads *never asked* for a set drawn from it. That is the honest reading of
@@ -267,7 +298,14 @@ def offered_identities(panel: pl.DataFrame, grouping: Grouping, samples: list[st
     what makes the gap visible rather than leaving it to be inferred.
     """
     wanted = set(samples)
-    return {identity for (_tag, sample), identity in grouping.items() if sample == ANY_SAMPLE or sample in wanted}
+    return {
+        identity
+        for (tag, sample), identity in grouping.items()
+        if (sample == ANY_SAMPLE or sample in wanted)
+        # A globally-declared tag is live where any wanted sample's reads carry
+        # it: the declaration spans samples, so the measurement question does too.
+        and (seen is None or ((sample, tag) in seen if sample != ANY_SAMPLE else any((s, tag) in seen for s in wanted)))
+    }
 
 
 def panel_read_mismatch(panel: pl.DataFrame, seen: pl.DataFrame) -> pl.DataFrame:

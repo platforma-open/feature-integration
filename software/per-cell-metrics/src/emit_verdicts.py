@@ -1198,8 +1198,18 @@ def main() -> None:
             combine_tags_to_identities(non_reference, by_tag_grouping), tag_admissibility, args.cutoff
         )
 
-    offered_by_sample = {s: offered_identities(panel, grouping, [s]) for s in samples}
-    tag_offered_by_sample = {s: offered_identities(panel, by_tag_grouping, [s]) for s in samples}
+    # Which (sample, tag) pairs the reads actually carry, from the RAW counts.
+    # Never from `floored`: a count the minimum zeroed is a reading that happened
+    # and failed, and settles *not bound*, while a tag with no reads at all is a
+    # question nobody put. Reading the floored frame here would collapse the
+    # second into the first and turn a dead reagent into a confident clean
+    # negative on every clonotype in the run. The same frame feeds the
+    # panel-versus-reads check further down.
+    seen_pairs = {
+        (row["sampleId"], row["tag"]) for row in counts.select("sampleId", "tag").unique().iter_rows(named=True)
+    }
+    offered_by_sample = {s: offered_identities(panel, grouping, [s], seen_pairs) for s in samples}
+    tag_offered_by_sample = {s: offered_identities(panel, by_tag_grouping, [s], seen_pairs) for s in samples}
 
     verdicts = attach_competitor_notes(
         combine_cells(

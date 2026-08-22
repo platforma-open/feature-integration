@@ -840,22 +840,28 @@ def _bed_shape(bed):
     counts = pl.read_csv(bed / "counts.csv", infer_schema_length=0)
     linker = pl.read_csv(bed / "linker.csv", infer_schema_length=0)
 
+    read_in: dict[str, set[str]] = {}
+    for sample, tag in counts.select("sampleId", "tag").iter_rows():
+        read_in.setdefault(tag, set()).add(sample)
+
     names: dict[str, set[str]] = {}
     declared_in: dict[str, set[str]] = {}
     offered: dict[str, set[str]] = {}
     for row in panel.filter(pl.col("Type") != "Control").iter_rows(named=True):
         names.setdefault(row["Sequence"], set()).add(row["Name"])
         declared_in.setdefault(row["Sequence"], set()).add(row["Samples"])
-        offered.setdefault(row["Samples"], set()).add(row["Sequence"])
+        # `offered` means what a cell could ANSWER at, which needs the declaration
+        # AND the reads. A tag the sample's reads never carry was declared and
+        # never measured, so its cells do not count toward that identity -- the
+        # key is kept either way so a sample that measured nothing still appears.
+        offered.setdefault(row["Samples"], set())
+        if row["Samples"] in read_in.get(row["Sequence"], set()):
+            offered[row["Samples"]].add(row["Sequence"])
 
     tags_of_name: dict[str, set[str]] = {}
     for tag, tag_names in names.items():
         for name in tag_names:
             tags_of_name.setdefault(name, set()).add(tag)
-
-    read_in: dict[str, set[str]] = {}
-    for sample, tag in counts.select("sampleId", "tag").iter_rows():
-        read_in.setdefault(tag, set()).add(sample)
 
     sets_of_sample: dict[str, set[str]] = {}
     samples_of_set: dict[str, set[str]] = {}
@@ -957,13 +963,22 @@ def test_the_short_panel_is_where_never_asked_appears(wide_bed):
     assert unasked == shape["antigens"] - shape["offered"][short]
     assert unasked
 
-    # A set spanning two samples was offered whatever either panel offered, so the gap closes where
-    # the two panels together cover the run. Nothing in it reads never asked.
+    # A set spanning two samples could answer wherever either sample both declared and measured a
+    # tag, so a panel gap in one sample closes where the other covers it.
+    #
+    # One barcode is offered nowhere and cannot close: the cross declaration, declared by a single
+    # sample and read only in another. The sample that declared it measured nothing for it, and the
+    # sample that measured it never declared it, so neither side put the question. That barcode is the
+    # bed's deliberate hole -- it exists so both directions of the panel-versus-reads check fire on one
+    # tag -- and it is exactly what the spanning set still reads never asked at.
     spanning = shape["spanning"]
     assert spanning, "the bed needs one set drawn from two samples"
     covered = set().union(*(shape["offered"][s] for s in _samples_of(shape, spanning[0])))
-    assert covered == shape["antigens"], "the spanning set's panels must together cover the universe"
-    assert not [i for (s, i), state in states.items() if s == spanning[0] and state == "never asked"]
+    assert covered == shape["antigens"] - set(shape["cross"]), (
+        "the spanning set's samples must cover the universe apart from the cross declaration"
+    )
+    unasked_spanning = {i for (s, i), state in states.items() if s == spanning[0] and state == "never asked"}
+    assert unasked_spanning == set(shape["cross"])
 
 
 def test_the_panel_mismatch_fires_per_sample_in_both_directions(wide_bed):
@@ -997,10 +1012,16 @@ def test_the_panel_mismatch_fires_per_sample_in_both_directions(wide_bed):
     states = _states(wide_bed)
     assert states[(_only_set(shape, reading[0]), tag)] == "never asked"
 
-    # And the sample that declared it read nothing: its cells were offered the identity and could be
-    # compared, so they answer not bound. A silent cell that can be compared is a negative answer,
-    # not an absent one, and reading it as never asked was the earlier revision's bug.
-    assert states[(_only_set(shape, declaring), tag)] == "not bound"
+    # And the sample that DECLARED it read nothing for it, so its cells leave that identity's
+    # denominator too: zero reads across a whole sample is a reagent that produced nothing, and none
+    # of the things that causes -- a reagent never added, a barcode mis-declared, a failed library --
+    # put the question the file says was put. Both sides read never asked, for opposite reasons: one
+    # sample was never offered the barcode, the other was offered it and nobody measured it.
+    #
+    # This is NOT the per-cell rule. A cell that read nothing for a tag its sample DID measure votes
+    # not bound, which is a reading that happened and failed; `test_a_silent_cell_votes_not_bound`
+    # pins that, and the off-target acceptance bed exercises both routes in one clonotype.
+    assert states[(_only_set(shape, declaring), tag)] == "never asked"
 
 
 def test_one_antigen_on_two_barcodes_is_read_by_its_highest_member(wide_bed):

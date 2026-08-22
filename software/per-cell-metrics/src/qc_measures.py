@@ -140,13 +140,17 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "tag",
         "Barcodes the reads carry that the sample's panel does not declare, and which sequences they are.",
     ),
+    # No status. This one is a fact on the tag's row, reported for the reagent's
+    # sake rather than the answer's, because the answer already carries it: cells
+    # in a sample where the tag returned nothing do not count toward what could
+    # answer there, so the verdict reads *never asked* rather than a confident
+    # negative. Warning a reader off an answer that already says so would be a
+    # second voice on one fact.
     Measurement(
         "declaredNeverSeen",
         "Declared tags the reads never show",
         "tag",
         "Tags on the sample's panel with no reads at all.",
-        "A reagent that produced nothing did not work in this run.",
-        "categorical",
     ),
     Measurement(
         "floorRemoved",
@@ -225,11 +229,12 @@ MEASUREMENTS: tuple[Measurement, ...] = (
 # binding something other than the receptor no longer announces itself, and a
 # reader who does not scan the column sees a bad tag and a good one alike.
 #
-# The categorical route currently backs `declaredNeverSeen`: a declared tag the
-# reads never show is a fact rather than a quantity, and the line is that fact.
-# The intended end state moves that job to the verdict, where a tag with no reads
-# removes its cells from what could answer, and the measurement then carries no
-# status at all. That change is not made here, so the route keeps its member.
+# The categorical route has no member. A declared tag the reads never show was
+# its one example until the verdict took the job: that condition now removes the
+# tag's cells from what could answer, so the answer carries the finding and the
+# measurement no longer needs to warn anyone off it. What remains of it is a row
+# on the panel table, which needs no line at all. The route stays because it is
+# one of the three places a line can come from, not because something uses it.
 LINE_ROUTES: frozenset[str] = frozenset({"inherited", "categorical", "recommended-and-observed"})
 
 # Every line is a parameter with a shipped default, and the operator may
@@ -238,15 +243,11 @@ LINE_ROUTES: frozenset[str] = frozenset({"inherited", "categorical", "recommende
 # nothing behind it.
 DEFAULT_LINES: dict[str, float] = {
     "panelAssignedFraction": 0.5,  # inherited: complement of the field's 0.50 unrecognized line
-    "declaredNeverSeen": 0,  # categorical: alerting at zero reads
     "readsPerCell": 5_000,  # recommended-and-observed: the vendor's per-cell depth
 }
 
 # How each line is read. Deliberately *not* overridable: an operator moves a
-# number, never a direction. Three comparisons rather than one flag, because a
-# floor and a categorical fact disagree at the boundary -- `readsPerCell` alerts
-# strictly *below* the recommendation, while `declaredNeverSeen` alerts *at*
-# zero. One `<=` cannot serve both.
+# number, never a direction.
 #
 #   at-least    acceptable at or above the line, alerting strictly below
 #   at-most     acceptable at or below the line, alerting strictly above
@@ -254,13 +255,13 @@ DEFAULT_LINES: dict[str, float] = {
 #
 # In every case the named value satisfies the condition it names.
 #
-# `at-most` currently has no member. It is kept because it is one of the three
-# readings a line can have, not because something uses it: the only candidate
-# was the undeclared-barcode fraction, which ships unjudged for want of a
-# defensible line rather than for want of a direction.
+# `at-most` and `alerting-at` currently have no member. Both are kept because
+# each is one of the three readings a line can have, not because something uses
+# it. `alerting-at` was `declaredNeverSeen`, which now carries no status at all;
+# the only `at-most` candidate was the undeclared-barcode fraction, which ships
+# unjudged for want of a defensible line rather than for want of a direction.
 _COMPARISON: dict[str, str] = {
     "panelAssignedFraction": "at-least",
-    "declaredNeverSeen": "alerting-at",
     "readsPerCell": "at-least",
 }
 

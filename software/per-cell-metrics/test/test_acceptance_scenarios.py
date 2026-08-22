@@ -4,12 +4,22 @@ Every scenario writes a counts CSV, a panel CSV and a linker CSV, runs
 `emit_verdicts.py` as a subprocess, and asserts on the CSVs it wrote. Nothing
 here builds a per-cell state frame, calls `read_states`, or reaches into a
 module: an earlier revision of these scenarios did exactly that and passed
-while the pipeline was turning an antigen every cell failed to bind into
-*never asked*. A scenario that constructs the states it then reads tests its
-own assertion, not the reading.
+while the pipeline read a mutant whose cells all failed to bind as *never
+asked*. A scenario that constructs the states it then reads tests its own
+assertion, not the reading.
 
-Three numbers are load-bearing in every bed below, so they are stated once
-here rather than rediscovered by whoever next changes a count.
+**Absence in the counts file means two different things, and which one a bed
+carries decides the state it must produce.** A tag the SAMPLE's reads never
+carry is a reagent that produced nothing: it removes its cells from what could
+answer, and the position reads *never asked*. A tag the sample did measure that
+a particular CELL read nothing for is a reading that happened and failed, and
+that cell votes *not bound*. So a bed testing a failure to bind gives the tag
+ambient counts, and only the dead-reagent bed leaves a tag out entirely. Getting
+this backwards is how a dead reagent becomes a confident clean negative on every
+clonotype in the run.
+
+Four numbers are load-bearing in the beds below, so they are stated once here
+rather than rediscovered by whoever next changes a count.
 
 *The cutoff is 75 and the score is a beta function, not a ratio.* Against a
 reference of 6, a count of 500 scores 100 and binds, while counts of 50 and 60
@@ -106,15 +116,29 @@ def _row(bed, set_id, identity):
 # ---------------------------------------------------------------------------
 
 
+# Ambient. A reagent that is present and bound nothing still returns counts,
+# because ambient material reaches every droplet -- so a mutant the clone failed
+# to bind reads LOW, not empty. 2 sits under the floor of 4, so the reading is
+# zeroed and the position settles *not bound*, which is what this scenario is
+# about. It is deliberately not 0 rows: zero rows means a reagent that never
+# worked, which is a different finding with a different state.
+AMBIENT = 2
+
+
 @pytest.fixture
 def epitope_bed(tmp_path):
     """One clonotype against an unmutated antigen and four point mutants.
 
-    The fourth mutant has **no rows at all** in the counts file. That is the
-    whole point of the bed: tag-stat emits only observed (cell, tag) pairs, so
-    an antigen every cell failed to bind arrives as nothing, and the reading
-    has to recover *not bound* from the panel saying those cells were offered
-    it. Writing zero-count rows instead would hand the pipeline the answer.
+    The fourth mutant carries **ambient counts only** -- present in the reads,
+    below the floor. That is the bed: the clone failed to bind M4, and a failure
+    to bind is not the reagent going missing. Ambient material reaches every
+    droplet, so a live reagent nothing bound still returns counts, and the
+    reading has to settle *not bound* from a count the floor zeroed.
+
+    Giving M4 no rows at all would make this the dead-reagent bed below, where
+    the same absence means the question was never put and the state is *never
+    asked*. The two are told apart by whether the tag appears in the sample's
+    reads, never by how low its counts are.
     """
     (tmp_path / "panel.csv").write_text(
         "Samples,Name,Sequence,Type\n"
@@ -133,7 +157,32 @@ def epitope_bed(tmp_path):
         # the epitope it grabs survives those substitutions.
         for tag in ("WT", "M1", "M2", "M3"):
             rows.append(f"S1,{cell},{tag},{BINDING}")
-        # M4 deliberately absent -- not zero, absent.
+        # M4 is on the panel, in the reads, and bound by nothing.
+        rows.append(f"S1,{cell},M4,{AMBIENT}")
+    (tmp_path / "counts.csv").write_text("\n".join(rows) + "\n")
+    (tmp_path / "linker.csv").write_text("sampleId,cellId,setId\n" + "".join(f"S1,{cell},K1\n" for cell in cells))
+    return tmp_path
+
+
+@pytest.fixture
+def dead_reagent_bed(tmp_path):
+    """The same panel, with M4's reagent having produced nothing at all.
+
+    M4 has **no rows in the counts file for any cell of the sample**. Zero reads
+    is categorical and cannot arise from biology: ambient reagent reaches every
+    cell, so a tag that bound nothing still returns counts. What zero reads means
+    is a reagent never added, a barcode mis-declared, or a library that failed --
+    and none of those put the question the panel file says was put.
+    """
+    (tmp_path / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type\nS1,AgWT,WT,Target\nS1,AgM4,M4,Target\nS1,Ctrl,CTRL,Control\n"
+    )
+    cells = ("c1", "c2", "c3", "c4")
+    rows = ["sampleId,cellId,tag,umiCount"]
+    for cell in cells:
+        rows.append(f"S1,{cell},CTRL,{COMPARATOR}")
+        rows.append(f"S1,{cell},WT,{BINDING}")
+        # M4 absent for every cell: the reagent produced nothing.
     (tmp_path / "counts.csv").write_text("\n".join(rows) + "\n")
     (tmp_path / "linker.csv").write_text("sampleId,cellId,setId\n" + "".join(f"S1,{cell},K1\n" for cell in cells))
     return tmp_path
@@ -161,18 +210,46 @@ def test_the_mutant_no_cell_bound_reads_not_bound_not_never_asked(epitope_bed):
     assert (int(m4["cellsCouldAnswer"]), int(m4["cellsAnswered"])) == (4, 4)
 
 
-def test_the_silent_mutant_is_reported_as_a_reagent_that_produced_nothing(epitope_bed):
-    # Two different statements, both true and neither substituting for the
-    # other: the verdict says the clone failed to bind M4, and the quality
-    # measurement says M4 returned no reads in this run. A reader deciding
-    # whether the failure is biology or a dead reagent needs both, and the
-    # verdict must not be suppressed to make the second point.
+def test_a_live_mutant_nothing_bound_is_still_reported_as_seen(epitope_bed):
+    # The quality row and the verdict say different things and neither
+    # substitutes for the other. Here the reagent worked -- it returned ambient
+    # counts in every cell -- so the panel-versus-reads check must NOT report it
+    # as a tag the reads never show, and the verdict is the clone's failure.
     assert _run(epitope_bed, *BASE).returncode == 0
     qc = pl.read_csv(epitope_bed / "result_qc.csv", infer_schema_length=0)
     never_seen = qc.filter((pl.col("measurement") == "declaredNeverSeen") & (pl.col("entity") == "M4"))
     assert never_seen.height == 1
-    assert float(never_seen.row(0, named=True)["value"]) == 0.0
+    assert float(never_seen.row(0, named=True)["value"]) > 0.0, "M4 returned reads, so it was seen"
     assert _row(epitope_bed, "K1", "M4")["state"] == "not bound"
+
+
+def test_a_dead_reagent_reads_never_asked_not_a_confident_negative(dead_reagent_bed):
+    # The headline failure this arrives by the one route the states were not
+    # watching. The antigen was declared, so *never asked* does not fire from the
+    # panel; zero counts fall below the minimum, so every cell settles *not
+    # bound*; and the result is a confident clean negative on every clone in the
+    # run -- which is exactly the claim that qualifies a lead.
+    #
+    # A tag the reads never show removes its cells from what could answer. That
+    # is not the reads overruling the file: the file declares what was offered,
+    # the reads say which cells were actually measured, and those were always
+    # different questions. No line is drawn and no threshold is chosen, and a
+    # real negative cannot trigger it, since a real negative still has reads.
+    r = _run(dead_reagent_bed, *BASE)
+    assert r.returncode == 0, r.stderr
+
+    assert _row(dead_reagent_bed, "K1", "WT")["state"] == "bound", "the live antigen still answers"
+
+    m4 = _row(dead_reagent_bed, "K1", "M4")
+    assert m4["state"] == "never asked", "zero reads means nobody could answer, not that nobody bound"
+    assert int(m4["cellsCouldAnswer"]) == 0, "cells in a sample where the tag returned nothing do not vote"
+
+    # And the reagent finding is still stated on its own row, for the reagent's
+    # sake rather than the answer's.
+    qc = pl.read_csv(dead_reagent_bed / "result_qc.csv", infer_schema_length=0)
+    never_seen = qc.filter((pl.col("measurement") == "declaredNeverSeen") & (pl.col("entity") == "M4"))
+    assert never_seen.height == 1
+    assert float(never_seen.row(0, named=True)["value"]) == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -209,10 +286,19 @@ def off_target_bed(tmp_path):
     for cell in ("a1", "a2", "a3"):
         rows.append(f"S1,{cell},CTRL,{COMPARATOR}")
         rows.append(f"S1,{cell},TARGET,{BINDING}")
-        # OFF1 read low and OFF2 read nothing at all: both routes to *not
-        # bound* in one clonotype, so the clean off-target list does not rest
-        # on either route alone.
+        # Two routes to *not bound* in one clonotype, so the clean off-target
+        # list does not rest on either route alone. OFF1 reads low in every
+        # cell. OFF2 reads ambient in a1 only and is silent in a2 and a3 --
+        # a tag the SAMPLE measured, which some of its cells read nothing for.
+        # That per-cell silence is a reading that happened and failed.
+        #
+        # OFF2 must appear in at least one of S1's cells. A tag absent from the
+        # whole sample is a reagent that produced nothing, which removes its
+        # cells from what could answer and reads *never asked* -- the dead
+        # reagent bed above, and a different finding from this one.
         rows.append(f"S1,{cell},OFF1,{BACKGROUND}")
+        if cell == "a1":
+            rows.append(f"S1,{cell},OFF2,{AMBIENT}")
     for cell in ("b1", "b2", "b3"):
         rows.append(f"S2,{cell},CTRL,{COMPARATOR}")
         rows.append(f"S2,{cell},TARGET,{BINDING}")
