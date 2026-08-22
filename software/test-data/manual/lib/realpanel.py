@@ -903,8 +903,15 @@ def build(
             extra += f", {len(planted_agg)} aggregates ({sum(k for _, k in planted_agg)} UMIs)"
         if ambient_barcode_ratio > 0:
             extra += f", ~{int(len(cells) * ambient_barcode_ratio)} ambient barcodes"
-        print(f"  {sample}: {len(cells)} cells, {len(panel.names)} members "
-              f"({len(panel.targets)} target / {len(panel.offtargets)} off-target), "
+        # `offtargets` holds whatever --offtarget-roles selected, which is the BASELINE, not necessarily
+        # a member named off-target. Printing it as "off-target" made a run whose baseline is its Decoy
+        # read as though the decoy had vanished and the off-targets had become the comparator — exactly
+        # backwards. Members matching neither role are counted too rather than silently dropped.
+        n_other = len(panel.names) - len(panel.targets) - len(panel.offtargets)
+        split = f"{len(panel.targets)} target / {len(panel.offtargets)} baseline"
+        if n_other:
+            split += f" / {n_other} neither"
+        print(f"  {sample}: {len(cells)} cells, {len(panel.names)} members ({split}), "
               f"{len(reads)} reads, library {lib_tier_of[sample]} -> expect {tag}{extra}")
 
     _write_truth(truth_dir, ab_rows, con_rows, read_rows, lib_rows, panels)
@@ -1065,6 +1072,9 @@ def write_run_report(run_dir, info, panel_csv, quality_profile, gate_hint=True):
     pattern = "^(CELL:N{16})(UMI:N{10})*\\^" + skip + "(FEATURE:N{15})(R2:*)"
     role_values = sorted({p.role[n] for p in panels.values() for n in p.names})
     offtarget_values = sorted({p.role[n] for p in panels.values() for n in p.offtargets})
+    # Distinct TAGS across the whole panel, which is what the block's panel rung counts
+    # (`emit_verdicts.py` reads `panel["tag"].n_unique()`), not rows and not per-sample members.
+    panel_tag_count = len({p.barcode[n] for p in panels.values() for n in p.names})
     lines = [
         "# Run settings",
         "",
@@ -1086,37 +1096,89 @@ def write_run_report(run_dir, info, panel_csv, quality_profile, gate_hint=True):
         "",
         "## Feature Barcode Profiling",
         "",
-        "| setting | value | why |",
-        "| --- | --- | --- |",
-        f"| barcode column | `{cols['sequence']}` | holds the 15 bp feature barcode |",
-        f"| feature-name column | `{cols['name']}` | holds the antigen name |",
-        f"| sample column | `{cols['sample']}` | **required** — the panel is per-sample and reuses "
-        "sequences across samples; without it the duplicate-barcode guard fires |",
-        f"| role column | `{cols['role']}` | values present: {', '.join(role_values)} |",
-        "| negative control | *(none)* | this panel declares no comparator — see below |",
-        "| tag preset | **Custom feature-barcode kit** (`generic-fb-umi`) | these are TotalSeq-C "
-        "antigen-capture barcodes; the BEAM-Core preset assumes offset 0 |",
-        "| cell / UMI / feature length | 16 / 10 / 15 | |",
-        f"| Read 2 offset | **{offset}** | R2 = {offset} bp lead-in + the 15 bp feature |",
-        f"| assembled pattern | `{pattern}` | what the builder produces from the row above |",
-        # Under the shallow regime the barcode universe is the point, and a whitelist collapses it. The
-        # table and the shallow section below would otherwise contradict each other in the same file.
-        ("| cell whitelist | *(leave empty)* | the raw barcode universe is what this run is for — see "
-         "below |" if info.get("regime") == "shallow" else
-         "| cell whitelist | `737K-august-2016` | cell barcodes are real 737K members |"),
+        # Named as the block shows them, and ORDERED as the settings drawer shows them, top to bottom.
+        # A reader configures the block by walking the drawer; a table in any other order makes them hunt
+        # for each control, and a control named by its internal argument cannot be found at all.
+        "Named and ordered as they appear in the settings drawer, top to bottom. Rows marked *default* "
+        "need no change — they are listed so the drawer can be read straight through.",
+        "",
+        "| # | control | set it to | why |",
+        "| --- | --- | --- | --- |",
+        "| 1 | **Feature-barcode FASTQ dataset** | the `antigen/` dataset | the reads |",
+        f"| 2 | **Preset** | `Custom feature-barcode kit` | the 10x BEAM preset reads the feature at "
+        f"offset 0; this data carries a {offset} bp lead-in, so the configurable preset is required |",
+        "| 3 | **Cell barcode length** | 16 | Read 1 tab of the pattern builder |",
+        "| 4 | **UMI length** | 10 | Read 1 tab |",
+        f"| 5 | **Feature barcode offset** | **{offset}** | Read 2 tab. Bases to skip before the feature "
+        "barcode. Wrong here sends panel-assigned to ~0% and every sample to ALERT, with no other "
+        "symptom |",
+        "| 6 | **Feature barcode length** | 15 | Read 2 tab |",
+        f"| — | **Tag pattern** | `{pattern}` | what the builder produces from rows 3-6. Only visible if "
+        "you switch the editor to write the pattern by hand |",
+        "| 7 | **Tag-feature CSV** | `panel.csv` | the panel, verbatim |",
+        f"| 8 | **Barcode sequence column** | `{cols['sequence']}` | holds the 15 bp feature barcode |",
+        f"| 9 | **Feature name column** | `{cols['name']}` | holds the antigen name |",
+        "| 10 | **Run mode** | `Full` | *default*. Preview read-limits the run |",
+        f"| 11 | **Sample column** | `{cols['sample']}` | " + (
+            "**required** — the panel is per-sample and reuses sequences across samples; without it the "
+            "duplicate-barcode guard fires |" if len(panels) > 1 else
+            "one sample in this panel; still set it so the panel is read per sample |"),
+        "| 12 | **Control feature marker (output only)** | *(leave unset)* | marks a member in the "
+        "output; it does not change any number |",
+        "| 13 | **Single-cell V(D)J dataset (optional)** | the `vdj/` dataset | needed for the "
+        "per-clonotype rollup |",
+        f"| 14 | **Panel column naming the baseline tag** | `{cols['role']}` | values present: "
+        f"{', '.join(role_values)} |",
+        ("| 15 | **Values that mark the baseline tag** | "
+         + (", ".join(f"`{v}`" for v in offtarget_values)
+            + " | the panel marks this as the negative control |"
+            if offtarget_values else
+            "*(nothing to pick)* | no value in that column marks a baseline — see below |")),
+        ("| 16 | **What sets the baseline** | "
+         + ("`Declared baseline tag`" if offtarget_values else "`No baseline`")
+         + " | " + ("read every count against that one member |"
+                    if offtarget_values else
+                    "nothing can serve as a comparator here |")),
+        f"| 17 | *Baseline thresholds* → **Minimum panel size to serve as baseline** | "
+        f"{PANEL_MIN_MEMBERS} | *default*. This panel holds {panel_tag_count} tags, which is why the "
+        "panel's own readings cannot serve |",
+        "| 18 | *Baseline thresholds* → **High baseline reading** | 100 | *default*. Counts how many "
+        "cells read a high baseline; it sets nothing aside |",
+        "| 19 | *Baseline thresholds* → **Admissibility gate (baseline UMIs)** | *(off)* | *default*. "
+        "Turn it on to see the `gated` tier read *unreliable* |",
+        "| 20 | **Panel columns that define an identity** | *(default)* | change only to test identity "
+        "grouping |",
+        f"| 21 | **Minimum count** | {FLOOR} | *default*. Readings below it read as zero; the baseline is "
+        "exempt |",
+        f"| 22 | **Bound cutoff (0–100)** | {CUTOFF} | *default* |",
+        "| 23 | **Minimum voting cells** | 1 | *default*. At ~1 cell per clonotype in this regime, "
+        "raising it leaves most clonotypes unanswered |",
         "",
         "### The comparator",
         "",
-        "The role column names what a member is TO THE QUESTION and carries no value meaning "
-        "*negative control*, so there is no declared comparator to point at. Two readings are "
-        "available and they answer differently:",
+        (f"This panel marks {', '.join(f'`{v}`' for v in offtarget_values)} as the baseline, so there IS "
+         "a declared comparator to point at."
+         if offtarget_values else
+         "The role column names what a member is TO THE QUESTION and carries no value meaning "
+         "*negative control*, so there is no declared comparator to point at."),
         "",
-        "- **reference source = panel** — each cell is read against its own sample's panel readings.",
-        "- **reference source = declared**, reference values "
-        + (", ".join(f"`{v}`" for v in offtarget_values) if offtarget_values else "*(none available)*")
-        + " — the off-target members serve as the comparator. Closest to how the panel was "
-        "designed to be read.",
-        "- **reference source = none** — no comparator; readings stand on the count floor alone.",
+        "The **What sets the baseline** dropdown offers these, and they answer differently:",
+        "",
+        ("- **Declared baseline tag** — reads every count against the one member named in **Values that "
+         "mark the baseline tag**"
+         + (f" ({', '.join(f'`{v}`' for v in offtarget_values)}). This is the reading this run is built "
+            "for." if offtarget_values else
+            ". Nothing in this panel carries that role, so it cannot serve.")),
+        # The panel rung GATES on member count, so offering it where it cannot serve sends the reader to
+        # a choice that silently degrades to no comparator at all.
+        (f"- **The panel's own readings** — the cell's other readings serve as its background. Needs at "
+         f"least the number in **Minimum panel size to serve as baseline** ({PANEL_MIN_MEMBERS}); this "
+         f"panel holds {panel_tag_count} tags, so it "
+         + ("can serve." if panel_tag_count >= PANEL_MIN_MEMBERS else
+            "**cannot serve** and silently degrades to no baseline.")),
+        "- **Each tag's own distribution** — fits one distribution per tag across the sample's cells; "
+        "needs the cell count and separation set under **Baseline thresholds**.",
+        "- **No baseline** — every reading comes back *unreliable*.",
         "",
         "### Reading tiers planted",
         "",
@@ -1155,12 +1217,12 @@ def write_run_report(run_dir, info, panel_csv, quality_profile, gate_hint=True):
             "This run stands in for real in-vivo BEAM libraries rather than for a public 10x "
             "BEAM run. Three things follow, and the first is the one that surprises people.",
             "",
-            "**Leave the cell whitelist EMPTY.** The observed live configuration sets none, so the block "
-            "consumes the raw barcode universe and reports it as *cells detected*. This run plants "
-            f"about {ratio:.0f}x as many ambient barcodes as real cells, with a median of one UMI each, "
-            "so `cells detected` will read in the tens or hundreds of thousands and `median UMIs / "
-            "cell` will read **1**. That is not the bed misbehaving — it is the number their "
-            "scientists see. Setting a whitelist collapses it and hides the effect.",
+            "**Expect `cells detected` to read in the hundreds of thousands, and `median UMIs / cell` "
+            "to read 1.** There is nothing to configure for this and nothing has gone wrong. The block "
+            "does no cell calling and offers no whitelist control, so what it counts as a cell is every "
+            f"distinct barcode it saw. This run plants about {ratio:.0f}x as many ambient barcodes as "
+            "real cells, each carrying a median of one UMI, which is the shape a real library has. Every "
+            "QC number derived from that count inherits it.",
             "",
             f"**Antigen aggregates are present and unfiltered.** {per_lib} barcodes per library hold "
             "roughly 59% of its UMIs, the largest about 18% on its own. Cell Ranger removes this "
