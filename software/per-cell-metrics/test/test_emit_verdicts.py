@@ -760,7 +760,7 @@ def test_a_computed_but_unjudged_measurement_is_not_reported_as_unchecked(bed):
     assert floor_row["status"] == "unjudged"
     assert (floor_row["judged"], floor_row["unjudged"], floor_row["notEvaluated"]) == ("0", "1", "0")
 
-    deferred = qc.filter(pl.col("measurement") == "sequencingSaturation").row(0, named=True)
+    deferred = qc.filter(pl.col("measurement") == "aggregateBarcodeFraction").row(0, named=True)
     assert deferred["status"] == "not evaluated"
     assert deferred["reason"]  # a deferred measurement says why nothing computed it
 

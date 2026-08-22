@@ -22,16 +22,12 @@ from qc_measures import (
     status_for,
 )
 
-# The spec's row for sequencing saturation and sequencing depth covers two
-# figures with different fates in this build -- one derivable from counts the
-# package already has, the other not -- so it becomes two declared ids here,
-# both at the row's stated level. Every other row maps one to one. This is the
-# expected per-id level, built from the spec's own table rather than copied
-# from this module, so a level typo on any id changes the multiset below.
+# Every row maps one to one. This is the expected per-id level, built from the
+# spec's own table rather than copied from this module, so a level typo on any id
+# changes the multiset below.
 EXPECTED_LEVEL_BY_ID = {
     "readsTotal": "sample",
     "panelAssignedFraction": "sample",
-    "sequencingSaturation": "sample",
     "readsPerCell": "sample",
     "antigenCountDistribution": "sample",
     "aggregateBarcodeFraction": "sample",
@@ -43,14 +39,24 @@ EXPECTED_LEVEL_BY_ID = {
     "perAntigen": "tag",
     "identityDisagreement": "identity",
     "tagDisagreement": "tag",
-    "knownAnswerRecovered": "sample",
 }
 
-DEFERRED_IDS = {"sequencingSaturation", "aggregateBarcodeFraction", "knownAnswerRecovered"}
+DEFERRED_IDS = {"aggregateBarcodeFraction"}
 
 
 def test_every_declared_id_is_expected_and_every_expected_id_is_declared():
     assert {m.id for m in MEASUREMENTS} == set(EXPECTED_LEVEL_BY_ID)
+
+
+def test_saturation_and_known_answer_are_not_measured():
+    # Both are stated exclusions rather than gaps. Saturation is a number nobody
+    # can act on for the run already collected, and depth is answered by reads
+    # per cell against a stated recommendation. The known-answer check needs a
+    # declaration no surface asks for, so building it means building that first.
+    ids = {m.id for m in MEASUREMENTS}
+    assert "sequencingSaturation" not in ids
+    assert "knownAnswerRecovered" not in ids
+    assert "readsPerCell" in ids, "the depth question is answered here instead"
 
 
 def test_declared_levels_match_the_spec_as_a_multiset():

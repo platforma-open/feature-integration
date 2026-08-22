@@ -91,18 +91,12 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "A low share means most reads carry barcodes the panel never declared.",
         "inherited",
     ),
-    # The spec's one row for saturation and sequencing depth covers two figures
-    # with different fates in this build: depth can be derived from counts this
-    # package already has, saturation cannot. One Measurement could not carry
-    # "computed" and "deferred" at once, so the row becomes two ids here, both
-    # at the row's declared level.
-    Measurement(
-        "sequencingSaturation",
-        "Sequencing saturation",
-        "sample",
-        "Duplicate reads over total reads.",
-        deferred_reason="needs read-level data the per-sample fan-out discards",
-    ),
+    # Saturation is deliberately NOT measured. The vendor's own report carries it,
+    # which is why it was here, and nothing hangs on it: a scientist cannot act on
+    # it for the run already collected, and whether the run was deep enough is
+    # answered by reads per cell against a stated recommendation, below. A number
+    # nobody acts on competes for attention with numbers they do.
+    #
     # Per *cell*, not per observed barcode. The vendor's five thousand is a
     # per-cell recommendation, and in droplet data the observed-barcode count
     # exceeds the called-cell count by one to two orders of magnitude, because
@@ -200,13 +194,13 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "A tag standing clear of the others in its panel is misbehaving, whether or not the identities it feeds are.",
         "against-the-run",
     ),
-    Measurement(
-        "knownAnswerRecovered",
-        "Whether a declared known answer came back",
-        "sample",
-        "The quantity recovered for a clonotype declared in advance, against what was intended.",
-        deferred_reason="no input declares a known answer",
-    ),
+    # Whether a clonotype of known specificity came back correctly is deliberately
+    # NOT measured. It would be the only end-to-end check of the pipeline there is,
+    # and nothing computes it because nothing declares it: no surface asks a
+    # scientist which clonotype they already know the answer for. What they do
+    # instead is find that clonotype in the readout and read its row, which the
+    # readout already supports. Building the measurement means building the
+    # declaration first.
 )
 
 # The four routes a line can be defended by, and no others. `Measurement.line`

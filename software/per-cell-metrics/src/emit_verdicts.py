@@ -1557,7 +1557,6 @@ def main() -> None:
         matched_detail = "" if reads_matched is None else f"readsMatched={int(reads_matched)}"
         _add(rows, "sample", sample, "readsTotal", _number(qc, "readsTotal"), matched_detail)
         _add(rows, "sample", sample, "panelAssignedFraction", _number(qc, "panelAssignedFraction"))
-        _add(rows, "sample", sample, "sequencingSaturation", None)
         # The denominator is the cell list, never the barcodes the reads
         # happened to touch: the five-thousand recommendation is per called
         # cell, and in droplet data observed barcodes run one to two orders of
@@ -1610,7 +1609,6 @@ def main() -> None:
         here = {key: value for key, value in reference.by_cell.items() if key[0] == sample}
         _, high_here = gate_cells(here, None, args.high_reference_line)
         _add(rows, "sample", sample, "highReferenceCells", float(high_here), f"cellsWithAComparator={len(here)}")
-        _add(rows, "sample", sample, "knownAnswerRecovered", None)
 
         sample_coverage[sample] = roll_up([r.status for r in rows[first:]])
 
