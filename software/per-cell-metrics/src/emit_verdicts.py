@@ -76,7 +76,6 @@ from qc_measures import (
     Coverage,
     Status,
     antigen_count_deciles,
-    outlier_status,
     per_antigen_measures,
     reads_per_cell,
     roll_up,
@@ -867,9 +866,9 @@ def _qc_frame(rows: list[QcRow]) -> pl.DataFrame:
 def _add(rows: list[QcRow], level: str, entity: str, measurement: str, value, detail: str = "", panel_id: str = ""):
     """Append one measurement row, taking its status from the lines in force.
 
-    `status_for` refuses the two measurements judged against the run itself;
-    those are added through `outlier_status` at their own call sites and
-    never reach here.
+    Every declared measurement goes through here. One with no line in force reads
+    unjudged, which is the honest reading rather than a refusal: it was computed,
+    no line stands behind it, so its number is shown and nothing is claimed.
     """
     rows.append(
         _leaf(level, entity, measurement, value, detail, panel_id, status_for(measurement, value, DEFAULT_LINES))
@@ -1637,16 +1636,16 @@ def main() -> None:
                 panel_id,
             )
 
-        # Judged against the run rather than against a line, so `status_for`
-        # refuses these and `outlier_status` answers instead. The peers are
-        # the other members of the same panel and never include the value
-        # being judged: including it would inflate the upper quartile it is
-        # then measured against, so the one reading the measure exists to
-        # catch is the one it would miss.
+        # No line stands behind this, so it reads unjudged and its value travels
+        # beside its siblings for a reader to compare. A tag standing clear of the
+        # other tags in its panel is misbehaving whatever the absolute rate, and
+        # that is a real finding -- but a finding a reader makes by looking, not a
+        # threshold this block can apply. Applying one would need a multiplier
+        # nobody published, which is a line invented here. Keeping the rows per
+        # panel is what makes the comparison the right one: a reagent's rate on
+        # P's row is P's cells, never Q's.
         for tag in sorted(panel_tags & set(tag_rate)):
-            peers = [tag_rate[o] for o in panel_tags if o != tag and tag_rate.get(o) is not None]
-            status = outlier_status(tag_rate[tag], peers)
-            rows.append(_leaf("tag", tag, "tagDisagreement", tag_rate[tag], "", panel_id, status))
+            _add(rows, "tag", tag, "tagDisagreement", tag_rate[tag], "", panel_id)
 
     # Only the sample carries an aggregated status, over its OWN per-sample
     # measurements. A per-tag failure is usually a property of the reagent across

@@ -1,20 +1,16 @@
 import dataclasses
 
 import polars as pl
-import pytest
 from qc_measures import (
     _COMPARISON,
     DEFAULT_LINES,
-    DEFAULT_OUTLIER_FENCE,
     LINE_ROUTES,
     MEASUREMENTS,
-    NUMERIC_LINE_ROUTES,
     Coverage,
     Measurement,
     Status,
     antigen_count_deciles,
     measurement_rows,
-    outlier_status,
     per_antigen_measures,
     reads_per_cell,
     roll_up,
@@ -44,6 +40,29 @@ DEFERRED_IDS = {"aggregateBarcodeFraction"}
 
 def test_every_declared_id_is_expected_and_every_expected_id_is_declared():
     assert {m.id for m in MEASUREMENTS} == set(EXPECTED_LEVEL_BY_ID)
+
+
+def test_a_comparison_is_not_a_line():
+    # A comparison against siblings yields no boundary: nothing separates OK from
+    # alerting, so nothing can be computed, and a status derived from it would
+    # need a multiplier -- a median-absolute-deviation cut, an interquartile
+    # multiple -- that nobody has published for this measurement. The invention
+    # would move up a level rather than disappear.
+    assert LINE_ROUTES == {"inherited", "categorical", "recommended-and-observed"}
+    assert {m.line for m in MEASUREMENTS if m.line} <= LINE_ROUTES
+
+
+def test_tag_disagreement_reads_unjudged():
+    # Such measurements read unjudged and are shown where the comparison is free
+    # to make: a column beside its siblings. The value still travels.
+    assert status_for("tagDisagreement", 0.24, DEFAULT_LINES) is Status.UNJUDGED
+
+
+def test_no_measurement_is_refused_by_status_for():
+    # The against-the-run route was the only case `status_for` raised on. With it
+    # gone, every declared measurement gets an answer rather than an exception.
+    for m in MEASUREMENTS:
+        assert isinstance(status_for(m.id, 0.5, DEFAULT_LINES), Status), m.id
 
 
 def test_self_disagreement_is_measured_at_the_tag_and_nowhere_else():
@@ -306,15 +325,17 @@ def test_four_readings_only_two_are_statuses():
 # which measurements carry a line.
 
 
-def test_every_declared_route_is_one_of_the_atoms_four():
+def test_every_declared_route_is_one_of_the_three():
     assert {m.line for m in MEASUREMENTS if m.line} <= LINE_ROUTES
-    assert LINE_ROUTES == {"inherited", "categorical", "recommended-and-observed", "against-the-run"}
 
 
-def test_a_numeric_route_has_a_line_and_a_comparison_and_nothing_else_does():
-    numeric = {m.id for m in MEASUREMENTS if m.line in NUMERIC_LINE_ROUTES}
-    assert set(DEFAULT_LINES) == numeric
-    assert set(_COMPARISON) == numeric
+def test_a_measurement_with_a_route_has_a_line_and_a_comparison_and_nothing_else_does():
+    # Every surviving route puts an absolute number on the measurement, so the
+    # route set and the line set are the same set. A comparison is not a line and
+    # so declares no route at all.
+    routed = {m.id for m in MEASUREMENTS if m.line}
+    assert set(DEFAULT_LINES) == routed
+    assert set(_COMPARISON) == routed
 
 
 def test_an_unjudged_measurement_claims_nothing_about_a_bad_value():
@@ -399,71 +420,6 @@ def test_a_missing_value_is_not_evaluated():
     assert status_for("readsPerCell", None, DEFAULT_LINES) is Status.NOT_EVALUATED
 
 
-# --- the against-the-run route ---------------------------------------------
-
-
-def test_an_against_the_run_measurement_is_refused_not_called_unjudged():
-    # These two do carry a status; `status_for` just cannot compute it, having
-    # no peers. Answering `unjudged` would be worse than refusing: unjudged
-    # never enters a rollup, so an outlying reagent would leave its panel
-    # reading clean -- the failure the rollup exists to invert.
-    with pytest.raises(ValueError, match="outlier_status"):
-        status_for("tagDisagreement", 0.4, DEFAULT_LINES)
-
-
-def test_every_measurement_either_answers_or_refuses_but_never_lies():
-    # Walks the whole declared set so a route added later cannot quietly fall
-    # through to `unjudged`, which is the one wrong answer that hides.
-    for m in MEASUREMENTS:
-        if m.line == "against-the-run":
-            with pytest.raises(ValueError):
-                status_for(m.id, 0.4, DEFAULT_LINES)
-        else:
-            assert status_for(m.id, 0.4, DEFAULT_LINES) in set(Status)
-
-
-def test_a_lone_outlier_is_flagged_because_peers_exclude_the_value():
-    # If `peers` included the value, one extreme reading would inflate q3 and
-    # could never be flagged -- the measure would defeat itself, and no fixture
-    # carrying a second outlier would reveal it.
-    assert outlier_status(0.9, [0.01, 0.02, 0.03, 0.02, 0.01]) is Status.ALERTING
-
-
-def test_a_value_inside_its_peers_is_acceptable():
-    assert outlier_status(0.02, [0.01, 0.02, 0.03, 0.02, 0.01]) is Status.ACCEPTABLE
-
-
-def test_the_shipped_fence_is_the_far_out_fence():
-    # Pinned like every other line. Without this, every fence assertion below
-    # derives its expected value from the constant, so the constant itself is
-    # free to move and no test notices.
-    assert DEFAULT_OUTLIER_FENCE == 3.0
-
-
-def test_the_fence_multiplier_is_a_parameter():
-    # q1 0.02, q3 0.04, so the default fence sits at 0.10 and a fence of 0.5
-    # at 0.05. 0.08 falls between them, which is the only way the parameter is
-    # observable at all -- a value outside both brackets proves nothing.
-    peers = [0.01, 0.02, 0.03, 0.04, 0.05]
-    assert outlier_status(0.08, peers, fence=DEFAULT_OUTLIER_FENCE) is Status.ACCEPTABLE
-    assert outlier_status(0.08, peers, fence=0.5) is Status.ALERTING
-
-
-def test_a_value_exactly_at_the_fence_is_acceptable():
-    peers = [0.0, 1.0, 2.0, 3.0, 4.0]
-    q1, q3 = 1.0, 3.0
-    fence = q3 + (q3 - q1) * DEFAULT_OUTLIER_FENCE
-    assert outlier_status(fence, peers) is Status.ACCEPTABLE
-    assert outlier_status(fence + 0.1, peers) is Status.ALERTING
-
-
-def test_too_few_peers_is_unjudged_but_a_missing_value_is_not_evaluated():
-    # Two different absences: nothing to compare against, versus nothing to
-    # compare. Collapsing them would make an uncomparable tag look unchecked.
-    assert outlier_status(0.9, [0.01, 0.02]) is Status.UNJUDGED
-    assert outlier_status(None, [0.01, 0.02, 0.03]) is Status.NOT_EVALUATED
-
-
 # --- the three-level rollup -----------------------------------------------
 
 
@@ -526,27 +482,10 @@ def test_a_dead_reagent_does_not_mark_every_sample_alerting():
     assert samples == [Status.ACCEPTABLE] * 3
 
 
-def test_outlier_status_flags_only_high_values():
-    # "A disagreement rate below its peers is a tag behaving better than the
-    # panel, which is not a finding." A two-sided fence would alert on the
-    # best-behaved reagent in every panel, which is the opposite of the point.
-    peers = [0.4, 0.5, 0.6, 0.5]
-    assert outlier_status(0.0, peers) is Status.ACCEPTABLE
-    assert outlier_status(9.9, peers) is Status.ALERTING
-
-
-def test_the_minimum_peer_count_is_satisfied_at_the_named_value():
-    # The named value satisfies the condition it names: three peers is enough
-    # to compare against, two is not. Nothing else pins this boundary.
-    assert outlier_status(0.9, [0.01, 0.02, 0.03]) is not Status.UNJUDGED
-    assert outlier_status(0.9, [0.01, 0.02]) is Status.UNJUDGED
-
-
 # --- corrupt numbers must never read green -------------------------------------------
 #
 # Every `<` and `>` comparison against NaN is False, so an unguarded NaN value falls
-# through to `bad = False` and the measurement reads ACCEPTABLE. A NaN among the peers
-# makes np.quantile return NaN fences, with the same result. For QC code,
+# through to `bad = False` and the measurement reads ACCEPTABLE. For QC code,
 # corrupt-input-reads-green is the worst available failure mode: it is the one state a
 # reader will not investigate.
 
@@ -562,19 +501,3 @@ def test_infinite_values_are_not_evaluated_rather_than_judged():
     # defend than a rule that depends on the sign.
     assert status_for("readsPerCell", float("inf"), DEFAULT_LINES) is Status.NOT_EVALUATED
     assert status_for("readsPerCell", float("-inf"), DEFAULT_LINES) is Status.NOT_EVALUATED
-
-
-def test_a_nan_value_is_not_evaluated_against_its_peers():
-    assert outlier_status(float("nan"), [0.1, 0.2, 0.3, 0.4]) is Status.NOT_EVALUATED
-
-
-def test_nan_among_the_peers_leaves_the_comparison_unjudged():
-    # The value is a real number here. What cannot be defended is the distribution it
-    # would be measured against. That is unjudged, not not-evaluated -- the
-    # measurement was computed, and only the comparison is unavailable.
-    assert outlier_status(0.9, [0.1, float("nan"), 0.3, 0.4]) is Status.UNJUDGED
-
-
-def test_a_clear_outlier_still_alerts_with_finite_peers():
-    # The guard above must not swallow the case the measure exists for.
-    assert outlier_status(0.9, [0.01, 0.02, 0.03, 0.04]) is Status.ALERTING

@@ -180,12 +180,12 @@ def test_a_tag_grouping_reports_no_unplaceable_tags(bed):
     assert meta["tagsWithoutGroupingValue"] == []
 
 
-def test_a_tag_noisy_in_one_panel_does_not_alert_the_panel_it_was_clean_in(bed):
+def test_a_tag_noisy_in_one_panel_reads_clean_on_the_panel_it_was_clean_in(bed):
     # Two samples declaring different tag sets are two panels, and both declare T00. T00's clonotype
     # splits itself in S2 and reads steady in S1. A run-global disagreement rate puts S2's noise on S1's
-    # row as well, so `outlier_status` alerts inside S1 for a reagent that was clean there -- the reader
-    # is sent to re-prepare the wrong panel. The rows are keyed `(tag, panelId)`, so the figure on them
-    # has to be that panel's.
+    # row as well, so a reader comparing S1's tags against each other is handed a fault that belongs to
+    # S2 -- and is sent to re-prepare the wrong panel. The rows are keyed `(tag, panelId)`, so the figure
+    # on them has to be that panel's. No status is involved: the comparison is the reader's to make.
     shared = [f"T{i:02d}" for i in range(5)]
     (bed / "panel.csv").write_text(
         "Samples,Name,Sequence,Type\n"
@@ -224,9 +224,16 @@ def test_a_tag_noisy_in_one_panel_does_not_alert_the_panel_it_was_clean_in(bed):
     assert len(set(rates.values())) == 2, f"one rate on both panels means the run-global figure: {rates}"
 
     clean = min(rates, key=lambda p: rates[p])
+    noisy = max(rates, key=lambda p: rates[p])
     assert rates[clean] == 0.0, "the panel whose cells never disagreed reads zero"
-    assert by_panel[clean]["status"] != "alerting", "a panel must not alert for a reagent clean inside it"
-    assert by_panel[max(rates, key=lambda p: rates[p])]["status"] == "alerting"
+    # Two cells of four sit in the minority of their own set, pooled over the cells
+    # of sets that had something to compare: 2 of 4.
+    assert rates[noisy] == pytest.approx(0.5)
+    # Neither row carries a status. A comparison against the other tags in a panel
+    # is not a line, so no status can be computed from it, and the value travels
+    # instead for a reader to compare.
+    assert by_panel[clean]["status"] == "unjudged"
+    assert by_panel[noisy]["status"] == "unjudged"
 
 
 def test_the_key_only_frames_carry_a_value_column_so_they_can_become_columns(bed):

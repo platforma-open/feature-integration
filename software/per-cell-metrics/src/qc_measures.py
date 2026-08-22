@@ -188,14 +188,17 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # many clonotypes sit near the line. Whatever it would say about one
     # clonotype's answer is already on that verdict, in the cells that could answer
     # and the cells that bound, where a scientist is deciding about that clone.
+    # No line, so it reads unjudged and its value travels beside its siblings. A
+    # tag standing clear of the other tags in its panel is misbehaving whatever
+    # the absolute rate, and that is a real finding -- but a finding a reader makes
+    # by looking, not a threshold this module can apply. Applying one would need a
+    # multiplier nobody published, which is a line invented here.
     Measurement(
         "tagDisagreement",
         "Clonotype self-disagreement at a single tag",
         "tag",
-        "The same, computed at a single tag rather than an identity. Diagnostic only: it rests on comparing "
-        "each tag against the reference separately, which no verdict is built from.",
-        "A tag standing clear of the others in its panel is misbehaving, whether or not the identities it feeds are.",
-        "against-the-run",
+        "Of the cells whose set had another cell to compare against, the share reading the opposite way "
+        "from the rest of their own set, by this tag's count alone. Two states cap it at half.",
     ),
     # Whether a clonotype of known specificity came back correctly is deliberately
     # NOT measured. It would be the only end-to-end check of the pipeline there is,
@@ -206,20 +209,31 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # declaration first.
 )
 
-# The four routes a line can be defended by, and no others. `Measurement.line`
+# The three places a line can come from, and nowhere else. `Measurement.line`
 # names one of these or None, and it is the *only* declaration of which
 # measurements carry a line -- the tables below are derived facts about the
 # route, never a second opinion on whether a line exists. A test asserts the
 # correspondence in both directions.
-LINE_ROUTES: frozenset[str] = frozenset({"inherited", "categorical", "recommended-and-observed", "against-the-run"})
-
-# Three of the four routes put an absolute number on the measurement. The
-# fourth compares the run against itself and carries no number at all. See
-# `outlier_status`.
-NUMERIC_LINE_ROUTES: frozenset[str] = frozenset({"inherited", "categorical", "recommended-and-observed"})
+#
+# A comparison against the other tags in a panel is NOT a line. It yields no
+# boundary, so nothing can be computed from it, and a status derived from it
+# would need a multiplier -- an interquartile multiple, a median-absolute-
+# deviation cut -- that nobody has published for this measurement, which moves
+# the invention up a level rather than removing it. Such a measurement reads
+# unjudged and is shown beside its siblings, where the comparison is free for a
+# reader to make. What that costs is real and accepted: a barcoded reagent
+# binding something other than the receptor no longer announces itself, and a
+# reader who does not scan the column sees a bad tag and a good one alike.
+#
+# The categorical route currently backs `declaredNeverSeen`: a declared tag the
+# reads never show is a fact rather than a quantity, and the line is that fact.
+# The intended end state moves that job to the verdict, where a tag with no reads
+# removes its cells from what could answer, and the measurement then carries no
+# status at all. That change is not made here, so the route keeps its member.
+LINE_ROUTES: frozenset[str] = frozenset({"inherited", "categorical", "recommended-and-observed"})
 
 # Every line is a parameter with a shipped default, and the operator may
-# override any of them. No line is invented -- where none of the four routes
+# override any of them. No line is invented -- where none of the three routes
 # applies the measurement stays unjudged rather than being given a number with
 # nothing behind it.
 DEFAULT_LINES: dict[str, float] = {
@@ -254,8 +268,6 @@ _ORDINAL = {Status.ACCEPTABLE: 0, Status.ALERTING: 1}
 
 _DEFERRED: frozenset[str] = frozenset(m.id for m in MEASUREMENTS if m.deferred_reason)
 
-_AGAINST_THE_RUN: frozenset[str] = frozenset(m.id for m in MEASUREMENTS if m.line == "against-the-run")
-
 
 def status_for(measurement: str, value: float | None, lines: dict[str, float]) -> Status:
     """How one measurement reads, given the lines in force.
@@ -264,19 +276,10 @@ def status_for(measurement: str, value: float | None, lines: dict[str, float]) -
     computes it, so a value reaching here is a caller's mistake and must not be
     laundered into a judgement about the run.
 
-    A measurement on the against-the-run route is refused outright rather than
-    answered. It does carry a status -- one this function cannot compute, since
-    the comparison is against the measurement's peers in the same panel and no
-    peers are passed here. Returning `unjudged` instead would be the worst
-    available answer: unjudged never enters a rollup, so an outlying reagent
-    would leave its panel reading clean, which is the exact failure the rollup
-    exists to invert. Call `outlier_status` for these.
+    Every declared measurement gets an answer. A measurement with no line in
+    force reads unjudged, which is the honest reading: it was computed and no
+    line stands behind it, so its number is shown and nothing is claimed.
     """
-    if measurement in _AGAINST_THE_RUN:
-        raise ValueError(
-            f"{measurement!r} is judged against the run itself, not against a line: "
-            "call outlier_status(value, peers) with the measurement's peers in the same panel"
-        )
     # A non-finite value is treated exactly as an absent one. Every `<` and `>` against
     # NaN is False, so without this a NaN fell through to `bad = False` and the
     # measurement read ACCEPTABLE -- corrupt input reading green, which is the one status
@@ -296,51 +299,6 @@ def status_for(measurement: str, value: float | None, lines: dict[str, float]) -
     else:
         bad = value == line
     return Status.ALERTING if bad else Status.ACCEPTABLE
-
-
-# The interquartile fence a value must clear to count as standing apart from its
-# peers. A parameter like every other line, and visible for the same reason.
-DEFAULT_OUTLIER_FENCE: float = 3.0
-
-MIN_PEERS_TO_COMPARE = 3
-
-
-def outlier_status(
-    value: float | None,
-    peers: list[float],
-    fence: float = DEFAULT_OUTLIER_FENCE,
-) -> Status:
-    """The fourth route: a value standing clear of its peers in the same panel.
-
-    Needs no published number to be valid, which is the same ground the
-    self-disagreement measure stands on in the first place.
-
-    `peers` **excludes** `value` -- the other tags in the same panel, not all of
-    them. Including it would let a single extreme reading inflate the upper
-    quartile it is then measured against, so the one case the measure exists to
-    catch is the one it would miss.
-
-    Only high values are flagged. A disagreement rate below its peers is a tag
-    behaving better than the panel, which is not a finding.
-
-    Unjudged below `MIN_PEERS_TO_COMPARE` peers, where a quartile is not a
-    distribution but an arithmetic accident of two or three numbers.
-    """
-    # Same rule as `status_for` for the value itself: not a finite number is not a
-    # measurement, and a NaN compared against any fence is False, which read ACCEPTABLE.
-    if value is None or not math.isfinite(value):
-        return Status.NOT_EVALUATED
-    if len(peers) < MIN_PEERS_TO_COMPARE:
-        return Status.UNJUDGED
-    q1, q3 = (float(q) for q in np.quantile(peers, [0.25, 0.75]))
-    # A non-finite fence is a different failure from a non-finite value, and reads
-    # differently. One NaN among the peers makes np.quantile return NaN quartiles, so
-    # every comparison went False and the tag read ACCEPTABLE. The value here is a real
-    # number and the measurement WAS computed -- what cannot be defended is the
-    # distribution it would be measured against, which is what unjudged says.
-    if not (math.isfinite(q1) and math.isfinite(q3)):
-        return Status.UNJUDGED
-    return Status.ALERTING if value > q3 + (q3 - q1) * fence else Status.ACCEPTABLE
 
 
 def roll_up(statuses: list[Status]) -> Coverage:
