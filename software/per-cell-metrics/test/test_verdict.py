@@ -150,12 +150,24 @@ def test_nothing_here_picks_a_rung():
     assert not hasattr(verdict, "resolve_default_source")
 
 
-def test_a_choice_that_cannot_serve_drops_to_none_and_never_to_another_rung():
+def test_a_choice_that_cannot_serve_refuses_and_never_falls_to_another_rung():
     # `served_source` survived the removal above and is a different thing: it
-    # never picks a rung, it only reports that the one asked for cannot serve.
-    assert served_source(ReferenceChoice.DECLARED, set(), 40, 25) is ReferenceChoice.NONE
-    assert served_source(ReferenceChoice.PANEL, {"CTRL"}, 3, 25) is ReferenceChoice.NONE
+    # never picks a rung. There is no rung below to fall to either -- a baseline
+    # is required and a run without one does not happen, so it refuses and names
+    # the condition that failed. Both conditions are properties of the settings,
+    # knowable before anything is read.
+    with pytest.raises(SystemExit, match="declares no baseline tag"):
+        served_source(ReferenceChoice.DECLARED, set(), 40, 25)
+    with pytest.raises(SystemExit, match="below the 25 that rung needs"):
+        served_source(ReferenceChoice.PANEL, {"CTRL"}, 3, 25)
     assert served_source(ReferenceChoice.DECLARED, {"CTRL"}, 3, 25) is ReferenceChoice.DECLARED
+
+
+def test_there_is_no_bottom_rung():
+    # A tripwire. Rung five was "no baseline exists, every verdict unreliable",
+    # and it is gone: a full punchcard of non-answers costs what a real run costs
+    # and looks like a result at a glance.
+    assert not hasattr(ReferenceChoice, "NONE")
 
 
 def test_empty_droplets_is_not_offered():
@@ -204,10 +216,13 @@ def test_cell_missing_the_reference_tag_reads_zero():
     assert ref[("S1", "c2")] == 0
 
 
-def test_source_none_yields_no_comparator():
+def test_a_declared_rung_with_no_declared_tag_refuses():
+    # The refusal reaches the caller through `reference_by_cell` too, since that
+    # is where a hand-driven run enters. The message names the condition and what
+    # to change, because a scientist meeting it can fix the panel in a minute.
     counts = _counts([("S1", "c1", "AAAA", 9)])
-    ref, choice = reference_by_cell(counts, {"CTRL"}, ReferenceChoice.NONE)
-    assert choice is ReferenceChoice.NONE and ref == {}
+    with pytest.raises(SystemExit, match="declares no baseline tag"):
+        reference_by_cell(counts, set(), ReferenceChoice.DECLARED)
 
 
 def test_shipped_defaults_are_pinned():
@@ -234,9 +249,11 @@ def test_panel_source_serves_exactly_at_the_minimum():
 
 
 def test_panel_source_refuses_one_below_the_minimum():
+    # A gate rather than a preference: below it the baseline the rung permits is
+    # not conservative but wrong, so the run refuses rather than serving it.
     counts = _counts([("S1", "c1", "AAAA", 9)])
-    ref, choice = reference_by_cell(counts, set(), ReferenceChoice.PANEL, panel_size=4, min_members=5)
-    assert choice is ReferenceChoice.NONE and ref == {}
+    with pytest.raises(SystemExit, match="below the 5 that rung needs"):
+        reference_by_cell(counts, set(), ReferenceChoice.PANEL, panel_size=4, min_members=5)
 
 
 def test_the_gate_boundary_includes_the_line_itself():
@@ -272,19 +289,19 @@ def test_the_observation_line_is_independent_of_the_gate_threshold():
     assert aside_lo == {("S1", "a"), ("S1", "b"), ("S1", "c")} and high_lo == 2
 
 
-def test_a_source_that_cannot_be_served_falls_to_none_and_never_sideways():
-    # The served choice may only move down to NONE. Substituting a different
-    # comparator would silently answer a question the scientist did not ask,
-    # and two runs served by different comparators are not comparable.
+def test_a_source_that_cannot_be_served_refuses_and_never_moves_sideways():
+    # A rung that cannot serve refuses. It never substitutes another, which would
+    # silently answer a question the scientist did not ask -- and two runs served
+    # by different baselines are not comparable, so nothing may pick for them.
     counts = _counts([("S1", "c1", "AAAA", 9), ("S1", "c1", "CCCC", 3)])
-    # DECLARED with nothing declared: not PANEL, even though a panel exists.
-    ref, choice = reference_by_cell(counts, set(), ReferenceChoice.DECLARED, panel_size=100, min_members=5)
-    assert choice is ReferenceChoice.NONE
-    assert ref == {}
-    # PANEL below the minimum: not DECLARED, even though a reference tag exists.
-    ref2, choice2 = reference_by_cell(counts, {"CTRL"}, ReferenceChoice.PANEL, panel_size=1, min_members=5)
-    assert choice2 is ReferenceChoice.NONE
-    assert ref2 == {}
+    # DECLARED with nothing declared: refused, not served by PANEL, even though a
+    # panel of a hundred tags sits right there and would satisfy that rung.
+    with pytest.raises(SystemExit, match="declares no baseline tag"):
+        reference_by_cell(counts, set(), ReferenceChoice.DECLARED, panel_size=100, min_members=5)
+    # PANEL below the minimum: refused, not served by DECLARED, even though a
+    # reference tag exists and would satisfy that rung.
+    with pytest.raises(SystemExit, match="below the 5 that rung needs"):
+        reference_by_cell(counts, {"CTRL"}, ReferenceChoice.PANEL, panel_size=1, min_members=5)
 
 
 def test_the_panel_comparator_is_the_median_not_the_mean():

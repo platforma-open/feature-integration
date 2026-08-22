@@ -1136,6 +1136,9 @@ def main() -> None:
     # argparse refuses it above, so this never sees an empty value.
     source = ReferenceChoice[args.reference_source.upper()]
     tag_fits: dict[tuple[str, str], TagBaseline] = {}
+    # Set only by the one rung whose conditions the settings cannot answer. The
+    # other two refuse in `served_source` before any of this runs.
+    no_baseline_reason: str | None = None
     if source is ReferenceChoice.DISTRIBUTION:
         # Keyed by (sample, identity) and never by cell: this rung fits one
         # distribution per tag across a sample's cells, so its answer is the
@@ -1150,12 +1153,22 @@ def main() -> None:
             counts, analysed_cells, panel, args.distribution_min_cells, args.distribution_separation
         )
         by_identity = identity_baselines(tag_fits, grouping, samples).baseline
-        # A run where no tag separated anywhere has no comparator at all, which
-        # is the bottom rung rather than a partially served one. Reported as
-        # NONE so the reader is told plainly, exactly as an unserviceable
-        # request for either other rung is.
-        reference = Reference({}, ReferenceChoice.DISTRIBUTION if by_identity else ReferenceChoice.NONE)
+        # A run where no tag separated anywhere established no baseline. This is
+        # the one refusal that cannot be caught from the settings: whether a
+        # sample holds three hundred cells whose counts separate is a property of
+        # the data, so the only way to learn it is to count. So the run FINISHES,
+        # says so, and draws no punchcard -- rather than answering every position
+        # *unreliable*, which is honest and useless, or crashing after doing the
+        # work. The reason travels in the run record for the model to render.
+        reference = Reference({}, ReferenceChoice.DISTRIBUTION)
         if not by_identity:
+            no_baseline_reason = (
+                "no baseline could be established: the tag-distribution rung was selected and no tag's "
+                f"counts separated in any sample, against the {args.distribution_min_cells} cells and the "
+                "separation this rung requires. Whether a sample can support this rung is a property of "
+                "the data rather than of the settings, so it could not be caught before the run. The "
+                "run's quality measurements are below; no verdicts were read."
+            )
             by_identity = None
         tag_by_identity = identity_baselines(tag_fits, by_tag_grouping, samples).baseline or None
     else:
@@ -1211,6 +1224,26 @@ def main() -> None:
     offered_by_sample = {s: offered_identities(panel, grouping, [s], seen_pairs) for s in samples}
     tag_offered_by_sample = {s: offered_identities(panel, by_tag_grouping, [s], seen_pairs) for s in samples}
 
+    def _answers(frame: pl.DataFrame) -> pl.DataFrame:
+        """The frame, or its headers alone where the run established no baseline.
+
+        A run with no baseline read no verdicts, so the frames carrying answers
+        carry no rows. They keep their schemas, because every reader still needs
+        to find its columns, and a missing file reads as a stage that crashed
+        rather than one that finished and said why.
+
+        Emitting the answers instead would fill every position with *unreliable*.
+        That is honest and useless: it costs what a real run costs and looks like
+        a result at a glance, which is the outcome the required-baseline rule
+        exists to prevent.
+
+        The STRUCTURAL frames are written in full either way -- which tags feed
+        which identity, what each sample was offered, the panel and identity
+        labels. Those describe the run rather than answering it, and a reader
+        working out why no baseline could be established needs them.
+        """
+        return frame.clear() if no_baseline_reason else frame
+
     verdicts = attach_competitor_notes(
         combine_cells(
             states,
@@ -1223,7 +1256,7 @@ def main() -> None:
         ),
         contending,
     )
-    _write_sorted(verdicts, f"{prefix}_verdicts.csv", ["setId", "identity"])
+    _write_sorted(_answers(verdicts), f"{prefix}_verdicts.csv", ["setId", "identity"])
     # The set's own cell count, joined on rather than computed inside `set_counts`, which is a pure
     # reading of the verdicts frame at its (setId, identity) grain where a cell count does not live. It
     # is the set's cells, NOT its answering cells: that number varies by identity and travels with the
@@ -1273,14 +1306,14 @@ def main() -> None:
     missing = counts_frame.filter(pl.col("cellCount").is_null())["setId"].to_list()
     if missing:
         raise SystemExit(f"sets carry verdicts but no cells, which cannot happen: {missing[:8]}")
-    _write_sorted(counts_frame, f"{prefix}_set_counts.csv", ["setId"])
+    _write_sorted(_answers(counts_frame), f"{prefix}_set_counts.csv", ["setId"])
 
     summary, punch, summary_emitted = _pivot_identity_summary(verdicts, universe)
-    _write_sorted(summary, f"{prefix}_identity_summary.csv", ["setId"])
-    _write_sorted(punch, f"{prefix}_identity_punch.csv", ["setId"])
+    _write_sorted(_answers(summary), f"{prefix}_identity_summary.csv", ["setId"])
+    _write_sorted(_answers(punch), f"{prefix}_identity_punch.csv", ["setId"])
 
     cell_punch, cell_punch_emitted = _pivot_cell_punch(states, cells_by_set, offered_by_sample, admissibility, universe)
-    _write_sorted(cell_punch, f"{prefix}_cell_punch.csv", ["setId", "sampleId", "cellId"])
+    _write_sorted(_answers(cell_punch), f"{prefix}_cell_punch.csv", ["setId", "sampleId", "cellId"])
 
     # The sparse per-tag counts and the per-cell scalars together carry every
     # per-cell state, at a small fraction of the size the dense
@@ -1338,7 +1371,7 @@ def main() -> None:
         .with_columns(pl.col("inCellList").fill_null(unlisted_reads))
         .select(["sampleId", "cellId", "referenceCount", "admissibility", "inCellList"])
     )
-    _write_sorted(cell_scalars, f"{prefix}_cell_scalars.csv", ["sampleId", "cellId"])
+    _write_sorted(_answers(cell_scalars), f"{prefix}_cell_scalars.csv", ["sampleId", "cellId"])
 
     # Both of these frames are pure key sets -- what a sample was offered, and
     # which identity a tag feeds -- and each carries a constant value column so
@@ -1672,6 +1705,17 @@ def main() -> None:
     meta = {
         "referenceChoice": reference.served.value,
         "referenceSourceRequested": source.value,
+        # Whether a baseline was established, and where not, why. Only the
+        # tag-distribution rung can reach false: its conditions are properties of
+        # the data, so a run resting on it proceeds and reports afterwards. The
+        # other rungs refuse from the settings before anything is read.
+        #
+        # The model reads this and draws no punchcard where it is false, showing
+        # the reason in its place. The answer frames are header-only in that case,
+        # so a consumer that reads them anyway finds no rows rather than a full
+        # grid of non-answers.
+        "baselineEstablished": no_baseline_reason is None,
+        "noBaselineReason": no_baseline_reason,
         "cellListSource": cell_list_source,
         "cellsInList": len(cell_list) if cell_list is not None else None,
         "cellsAnalysed": len(analysed_cells),

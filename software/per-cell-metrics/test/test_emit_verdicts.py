@@ -141,11 +141,14 @@ def test_run_meta_records_every_choice(bed):
         assert key in m, key
 
 
-def test_reference_source_none_produces_unreliable_not_a_crash(bed):
-    r = _run(bed, *BASE, "--reference-source", "none")
-    assert r.returncode == 0, r.stderr
-    v = pl.read_csv(bed / "result_verdicts.csv")
-    assert v.filter(pl.col("identity") == "AAAA").row(0, named=True)["state"] == "unreliable"
+def test_none_is_no_longer_a_selectable_rung(bed):
+    # There is no bottom rung. "none" used to select one -- no baseline exists,
+    # every verdict reads unreliable -- and a baseline is now required, so the
+    # value is not a choice a caller can make. Refused by argparse rather than
+    # accepted and quietly reinterpreted as some other rung.
+    r = _run(bed, *BASE, "--reference-source", "none", expect_failure=True)
+    assert r.returncode != 0
+    assert "none" in r.stderr
 
 
 def test_a_tag_the_grouping_could_not_place_is_named_in_the_output(bed):
@@ -281,13 +284,13 @@ def test_asking_for_a_rung_that_cannot_serve_drops_to_none_and_never_to_another_
     (bed / "counts.csv").write_text("\n".join(rows) + "\n")
 
     # BASE asks for the declared rung, and this panel marks no tag as a comparator.
-    r = _run(bed, *BASE)
-    assert r.returncode == 0, r.stderr
-    meta = json.loads((bed / "result_run_meta.json").read_text())
-    assert meta["referenceChoice"] == ReferenceChoice.NONE.value
-    assert meta["referenceSourceRequested"] == ReferenceChoice.DECLARED.value
-    states = set(pl.read_csv(bed / "result_verdicts.csv", infer_schema_length=0)["state"].to_list())
-    assert states == {"unreliable"}
+    # A baseline is required, so the run is refused rather than answered with a
+    # punchcard of non-answers. Whether a reference tag is declared is a property
+    # of the settings, so it is caught before anything is read.
+    r = _run(bed, *BASE, expect_failure=True)
+    assert r.returncode != 0
+    assert "declares no baseline tag" in r.stderr
+    assert not (bed / "result_verdicts.csv").exists(), "a refused run writes no verdicts"
 
     # The same counts, asked the other way: the panel rung serves them perfectly well. Which is what
     # makes the drop above a choice the scientist made rather than a limit of the data.
@@ -305,10 +308,10 @@ def test_a_panel_too_small_to_serve_still_falls_to_no_comparator(bed):
     (bed / "panel.csv").write_text(
         "Samples,Name,Sequence,Type\nS1,AgA,AAAA,Target\nS1,AgB,BBBB,Target\nS1,AgC,CCCC,Target\n"
     )
-    r = _run(bed, *BASE)
-    assert r.returncode == 0, r.stderr
-    meta = json.loads((bed / "result_run_meta.json").read_text())
-    assert meta["referenceChoice"] == ReferenceChoice.NONE.value
+    # Refused, and the message names the rung the scientist should reach for.
+    r = _run(bed, *BASE, expect_failure=True)
+    assert r.returncode != 0
+    assert "declares no baseline tag" in r.stderr
 
 
 def test_no_cell_list_leaves_membership_unknown_and_depth_unevaluated(bed):
@@ -460,18 +463,12 @@ def test_run_meta_records_the_comparator_served_not_the_one_requested(bed):
     # stand in as one. Recording the request instead would claim a comparator
     # the run never had, and two runs compared against different things would
     # look like two runs compared against the same thing.
-    r = _run(bed, *BASE, "--reference-source", "panel", "--panel-min-members", "50")
-    assert r.returncode == 0, r.stderr
-    # The flag spelling and the recorded value differ on purpose: "none" is what
-    # a caller asks for, `ReferenceChoice.NONE` is what the record says happened.
-    from verdict import ReferenceChoice
-
-    meta = json.loads((bed / "result_run_meta.json").read_text())
-    assert meta["referenceChoice"] == ReferenceChoice.NONE.value
-    assert meta["referenceChoice"] != "panel", "the request must not be reported as though it were served"
-
-    verdicts = pl.read_csv(bed / "result_verdicts.csv", infer_schema_length=0)
-    assert verdicts.filter(pl.col("identity") == "AAAA").row(0, named=True)["state"] == "unreliable"
+    r = _run(bed, *BASE, "--reference-source", "panel", "--panel-min-members", "50", expect_failure=True)
+    assert r.returncode != 0
+    # The message names the condition and the number, so a scientist reading it
+    # knows which of the two halves to change.
+    assert "below the 50 that rung needs" in r.stderr
+    assert not (bed / "result_verdicts.csv").exists(), "nothing is written for a rung that cannot serve"
 
 
 def test_sequencing_depth_divides_by_the_cell_list_not_by_observed_barcodes(bed):
@@ -1103,13 +1100,13 @@ def test_a_panel_of_this_size_no_longer_stands_in_for_its_own_comparator(wide_be
     shape = _bed_shape(wide_bed)
     assert len(shape["antigens"]) < DEFAULT_PANEL_MIN_MEMBERS, "the bed grew past the minimum"
 
-    assert _run(wide_bed, *_bed_args("panel.csv")).returncode == 0
-    meta = json.loads((wide_bed / "result_run_meta.json").read_text())
-    assert meta["referenceChoice"] == ReferenceChoice.NONE.value
-    # Never-asked stands beside it and is not a kind of unreliable: those are the identities a set's
-    # own samples never offered, and no comparator would have changed them. Every position that WAS
-    # asked reads unreliable.
-    assert set(_states(wide_bed).values()) == {"unreliable", "never asked"}
+    r = _run(wide_bed, *_bed_args("panel.csv", "--reference-source", "panel"), expect_failure=True)
+    assert r.returncode != 0
+    assert f"below the {DEFAULT_PANEL_MIN_MEMBERS} that rung needs" in r.stderr
+    # Refused before anything is read, rather than answered with a punchcard where every asked
+    # position reads unreliable. That output was honest and useless: it cost what a real run costs
+    # and looked like a result at a glance.
+    assert not (wide_bed / "result_verdicts.csv").exists()
 
 
 def test_a_reading_from_a_sample_that_never_offered_it_is_not_a_vote(bed):
@@ -2399,18 +2396,32 @@ def test_the_comparator_is_the_same_for_every_cell_of_a_sample(tmp_path):
     assert fitted and not any(x.startswith("unreliable|") for x in fitted)
 
 
-def test_a_sample_below_the_cell_condition_falls_to_no_comparator(tmp_path):
-    # 200 cells. Nothing can be fitted, so the run has no comparator at all --
-    # reported as the bottom rung rather than as a partly served one.
+def test_a_sample_below_the_cell_condition_finishes_and_establishes_no_baseline(tmp_path):
+    # 200 cells, against the three hundred this rung needs. This is the ONE refusal that cannot be
+    # caught from the settings: whether a sample holds enough cells whose counts separate is a
+    # property of the data, so the only way to learn it is to count. So the run FINISHES rather than
+    # refusing up front -- and then says that no baseline could be established and draws no punchcard.
     _distribution_bed(tmp_path, n_cells=200)
-    _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
+    r = _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
+    assert r.returncode == 0, r.stderr
 
     meta = json.loads((tmp_path / "result_run_meta.json").read_text())
-    assert meta["referenceChoice"] == ReferenceChoice.NONE.value
+    assert meta["baselineEstablished"] is False
+    assert "no baseline could be established" in meta["noBaselineReason"]
+    # The rung that was asked for is still what is recorded. It served in the sense that nothing
+    # substituted for it -- there is no rung below to fall to.
+    assert meta["referenceChoice"] == ReferenceChoice.DISTRIBUTION.value
     assert meta["referenceSourceRequested"] == ReferenceChoice.DISTRIBUTION.value
 
+    # The answer frames keep their headers and carry no rows. A reader still finds its columns, and a
+    # consumer that reads them anyway finds nothing rather than a grid of non-answers.
     v = pl.read_csv(tmp_path / "result_verdicts.csv", infer_schema_length=0)
-    assert set(v["state"].to_list()) == {"unreliable"}
+    assert v.height == 0
+    assert "state" in v.columns
+
+    # The structural frames are written in full: they describe the run rather than answering it, and
+    # a reader working out why no baseline could be established needs them.
+    assert pl.read_csv(tmp_path / "result_tag_identity.csv", infer_schema_length=0).height > 0
 
 
 def test_the_gate_exposure_is_not_evaluated_where_no_cell_has_a_comparator(tmp_path):

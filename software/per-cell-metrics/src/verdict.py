@@ -203,7 +203,6 @@ class ReferenceChoice(str, Enum):
     DECLARED = "declared"
     PANEL = "panel"
     DISTRIBUTION = "distribution"
-    NONE = "none"
 
 
 # Nothing here derives a default rung, and nothing may.
@@ -224,16 +223,39 @@ def served_source(
     panel_size: int,
     min_members: int,
 ) -> ReferenceChoice:
-    """The source that can actually be served. Only ever the one asked for, or NONE.
+    """The source asked for, or a refusal naming the condition that failed.
 
-    A comparison that cannot be made is reported as absent rather than
-    approximated. A caller that asked for a comparator this run cannot
-    produce is told plainly, and never handed a different one.
+    A baseline is required and a run without one does not happen: verdicts are
+    what this block is for, so a configuration that could produce none is
+    refused rather than run. There is no bottom rung that answers everything
+    *unreliable* -- a full punchcard of non-answers costs what a real run costs
+    and looks like a result at a glance.
+
+    Both conditions here are properties of the SETTINGS, knowable before
+    anything is read: whether a reference tag is declared, and how many tags the
+    panel carries. So they are caught up front and the scientist changes the
+    configuration instead of waiting for a run to tell them. The model refuses
+    the same two conditions in `args()`, which is where a scientist meets them;
+    this is the backstop for a hand-driven run.
+
+    The third rung is not checked here and cannot be. Whether a sample holds
+    enough cells whose counts separate is a property of the DATA, so a run
+    resting on it proceeds and the caller reports afterwards that no baseline
+    could be established.
     """
     if source is ReferenceChoice.DECLARED and not reference_tags:
-        return ReferenceChoice.NONE
+        raise SystemExit(
+            "the declared-baseline rung was selected and this panel declares no baseline tag. "
+            "Mark a tag as the baseline in the panel's role column, or select a different baseline "
+            "source. A run with no baseline produces no verdicts, which is what this block is for."
+        )
     if source is ReferenceChoice.PANEL and panel_size < min_members:
-        return ReferenceChoice.NONE
+        raise SystemExit(
+            f"the other-tags-in-the-cell rung was selected and this panel carries {panel_size} tags, "
+            f"below the {min_members} that rung needs. Below it the baseline is not conservative but "
+            "wrong, so the condition is a gate rather than a preference. Select a different baseline "
+            "source; an antibody panel cannot reach this one, its kits capping at fifteen tags."
+        )
     return source
 
 
@@ -252,13 +274,12 @@ def reference_by_cell(
 ) -> Reference:
     """The reference reading per cell, and which source actually served.
 
-    `source` is supplied, never inferred. `served_source` decides whether it
-    can be served, and the result differs from the request in exactly one
-    direction, down to NONE. `by_cell` is EMPTY when `served` is NONE, and
-    never a mapping of zeros. Where a comparator did serve, it holds a key for
-    every analysed cell, zero where that cell showed none of it. So a reader
-    switches on `served`, never on key presence: `by_cell.get(key, 0)` reads
-    "no comparator was available" as "the comparator read zero", which is the
+    `source` is supplied, never inferred, and `served` always equals it: there is
+    no rung below to fall to, so `served_source` either returns the request or
+    refuses the run. `by_cell` holds a key for every analysed cell, zero where
+    that cell showed none of the comparator. A reader still switches on `served`
+    rather than on key presence, because `by_cell.get(key, 0)` would read "this
+    cell was not in the analysis" as "the comparator read zero", which is the
     difference between a position that could not be settled and one settled as
     not bound. `cells`, where given, is authoritative in both directions: the
     result holds exactly those cells, zero-filled where the comparator read
@@ -280,9 +301,9 @@ def reference_by_cell(
     also present, is one of those readings rather than something held out of
     them.
     """
+    # Raises where the rung asked for cannot serve from the settings alone. There
+    # is no fall-through to a bottom rung, because there is no bottom rung.
     served = served_source(source, reference_tags, panel_size, min_members)
-    if served is ReferenceChoice.NONE:
-        return Reference({}, ReferenceChoice.NONE)
 
     all_cells = (
         # Deduplicated: a cell with several tag readings otherwise appears once
