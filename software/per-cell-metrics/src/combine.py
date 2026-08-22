@@ -465,15 +465,29 @@ def self_disagreement(
     offered: dict[str, set[str]],
     cells_by_set: dict[str, list[tuple[str, str]]],
     admissibility: Admissibility,
-    level: str,
 ) -> pl.DataFrame:
-    """How often sets contradict themselves, at an identity or at a tag.
+    """How often a tag's cells contradict the rest of their own set.
 
     A clonotype is one receptor and one receptor has one specificity, so
     where two of a set's evaluable cells read differently at one position, at
     least one reading is wrong. That makes this the cheapest quality signal
     available: no threshold and no external reference, because the
     contradiction comes from the data disagreeing with itself.
+
+    **The figure pools CELLS rather than scoring sets.** For one key: every set
+    with two or more evaluable cells contributes all of them to `cellsCompared`,
+    and the cells sitting in the minority of their own set to `minorityCells`.
+    The rate is the second over the first.
+
+    Pooling needs no small-set cutoff. A per-set share does: a share over three
+    cells takes only four values and would otherwise set the figure, and
+    excluding those sets makes the counted population differ from key to key.
+    Pooling's own weakness is that one very large set can set the number, and
+    that weakness cancels -- the same set sets it for every tag in the panel,
+    so a tag standing clear still stands clear.
+
+    Two states cap the rate at half, the minority being the smaller side by
+    definition.
 
     A set's evaluable cells at a position are every admissible cell that
     settled there, whether the reading is an explicit row in `states` or
@@ -484,31 +498,28 @@ def self_disagreement(
     tally by set rather than only by sample -- the same source
     `combine_cells` draws on for the same fact, never recomputed here.
 
-    Both levels are always carried by calling this twice, once per level. The
-    two answer different questions: a tag with a high rate is a reagent
-    misbehaving for everyone; an identity with a high rate is the answer a
-    scientist acts on being unstable. Where an identity carries one tag the
-    two coincide, and saying so beats dropping a row a reader would then hunt
-    for.
+    Measured at the TAG and nowhere else, and read as a comparison rather than a
+    rate: a tag standing clear of the other tags in the same panel is misbehaving
+    whatever its absolute value, and the value alone says almost nothing. The
+    identity-level figure is not carried, because it has nothing to compare
+    against and so cannot separate a faulty reagent from a panel full of weak
+    binders.
 
-    The tag figure is diagnostic only. It rests on comparing each tag against
-    the reference separately, which no verdict is built from, so it is never
-    read as evidence about an answer.
+    The figure is diagnostic only. It rests on comparing each tag against the
+    baseline separately, which no verdict is built from, so it is never read as
+    evidence about an answer -- it is evidence about a reagent.
 
-    `states` carries a `key` column holding the identity or the tag according
-    to `level`, plus sampleId, cellId and state -- the same sparse shape
-    `combine_cells` takes as `states`, with `identity` renamed to `key` and
-    with no setId column: which set a cell belongs to comes only from
-    `cells_by_set`, never from a second column that could disagree with it.
-    `offered` and `universe` are at that same grain: the identities or the
-    tags each sample offers, and the full set of keys to report on, since a
-    key with every one of its cells silent has no explicit row anywhere in
-    `states` and cannot be recovered from it.
+    `states` carries a `key` column holding the tag, plus sampleId, cellId and
+    state -- the same sparse shape `combine_cells` takes as `states`, with
+    `identity` renamed to `key` and with no setId column: which set a cell
+    belongs to comes only from `cells_by_set`, never from a second column that
+    could disagree with it. `offered` and `universe` are at that same grain: the
+    tags each sample offers, and the full set of keys to report on, since a key
+    with every one of its cells silent has no explicit row anywhere in `states`
+    and cannot be recovered from it.
 
-    Only a set's position with two or more evaluable cells contributes: a
-    singleton cannot disagree with itself. The rate is over sets evaluated,
-    not every set that exists, so a key nobody could evaluate reports a null
-    rate rather than a rate of zero, which would read as agreement.
+    A key no set could compare reports a NULL rate rather than zero, which would
+    read as agreement.
     """
     group_by_cell: dict[tuple[str, str], str] = {}
     for set_id, members in cells_by_set.items():
@@ -555,32 +566,37 @@ def self_disagreement(
         bucket = explicit_counts.setdefault((set_id, key), {})
         bucket[state] = bucket.get(state, 0) + 1
 
-    sets_evaluated: dict[str, int] = {}
-    sets_disagreeing: dict[str, int] = {}
+    minority_cells: dict[str, int] = {}
+    cells_compared: dict[str, int] = {}
     for row in tally.iter_rows(named=True):
         set_id, key = row["setId"], row["identity"]
         counts = dict(explicit_counts.get((set_id, key), {}))
         counts[State.NOT_BOUND.value] = counts.get(State.NOT_BOUND.value, 0) + row["silentNotBound"]
         evaluable = sum(counts.values())
         if evaluable < 2:
+            # One cell has no minority of its own set to sit in. Left out of BOTH
+            # counts, so a key whose every set is a singleton reports nothing to
+            # compare rather than a rate of zero, which would read as agreement.
             continue
-        sets_evaluated[key] = sets_evaluated.get(key, 0) + 1
-        if sum(1 for n in counts.values() if n > 0) > 1:
-            sets_disagreeing[key] = sets_disagreeing.get(key, 0) + 1
+        cells_compared[key] = cells_compared.get(key, 0) + evaluable
+        # SETTLED holds exactly BOUND and NOT_BOUND, so the majority is one of two
+        # numbers and every other evaluable cell is in the minority. The zero-valued
+        # entry the silent add above can create contributes to neither term.
+        minority_cells[key] = minority_cells.get(key, 0) + (evaluable - max(counts.values()))
 
     return (
         pl.DataFrame({"key": sorted(universe)})
         .with_columns(
-            pl.col("key").replace_strict(sets_evaluated, default=0, return_dtype=pl.Int64).alias("setsEvaluated"),
-            pl.col("key").replace_strict(sets_disagreeing, default=0, return_dtype=pl.Int64).alias("setsDisagreeing"),
+            pl.col("key").replace_strict(cells_compared, default=0, return_dtype=pl.Int64).alias("cellsCompared"),
+            pl.col("key").replace_strict(minority_cells, default=0, return_dtype=pl.Int64).alias("minorityCells"),
         )
         .with_columns(
-            pl.when(pl.col("setsEvaluated") > 0)
-            .then(pl.col("setsDisagreeing") / pl.col("setsEvaluated"))
+            pl.when(pl.col("cellsCompared") > 0)
+            .then(pl.col("minorityCells") / pl.col("cellsCompared"))
             .otherwise(None)
             .alias("disagreementRate"),
-            pl.lit(level).alias("level"),
-            pl.lit("true" if level == "tag" else "false").alias("diagnosticOnly"),
+            pl.lit("tag").alias("level"),
+            pl.lit("true").alias("diagnosticOnly"),
         )
         .sort("key")
     )

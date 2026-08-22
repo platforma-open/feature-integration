@@ -534,24 +534,29 @@ def _row_for_key(out, key):
 def test_a_set_whose_cells_agree_does_not_disagree():
     states = _key_states([("S1", "c1", "A", B), ("S1", "c2", "A", B)])
     cells_by_set = {"s1": [("S1", "c1"), ("S1", "c2")]}
-    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL, level="identity")
+    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL)
     r = _row_for_key(out, "A")
-    assert r["setsEvaluated"] == 1
+    assert r["cellsCompared"] == 2
+    assert r["minorityCells"] == 0
     assert r["disagreementRate"] == 0.0
 
 
 def test_a_set_whose_cells_differ_disagrees():
     states = _key_states([("S1", "c1", "A", B), ("S1", "c2", "A", N)])
     cells_by_set = {"s1": [("S1", "c1"), ("S1", "c2")]}
-    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL, level="identity")
-    assert _row_for_key(out, "A")["disagreementRate"] == 1.0
+    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL)
+    # Two cells splitting one against one: one of them is the minority. Two
+    # states cap the rate at half, so an even split is the worst attainable.
+    assert _row_for_key(out, "A")["disagreementRate"] == 0.5
 
 
 def test_singletons_do_not_contribute():
     states = _key_states([("S1", "c1", "A", B)])
     cells_by_set = {"s1": [("S1", "c1")]}
-    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL, level="identity")
-    assert _row_for_key(out, "A")["setsEvaluated"] == 0
+    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL)
+    r = _row_for_key(out, "A")
+    assert r["cellsCompared"] == 0
+    assert r["disagreementRate"] is None, "nothing to compare says so rather than reading zero"
 
 
 def test_unsettled_cells_are_not_evaluable():
@@ -561,38 +566,71 @@ def test_unsettled_cells_are_not_evaluable():
     # the position does not contribute.
     states = _key_states([("S1", "c1", "A", B), ("S1", "c2", "A", U)])
     cells_by_set = {"s1": [("S1", "c1"), ("S1", "c2")]}
-    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL, level="identity")
-    assert _row_for_key(out, "A")["setsEvaluated"] == 0
+    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL)
+    assert _row_for_key(out, "A")["cellsCompared"] == 0
 
 
-def test_both_levels_are_carried_even_when_they_coincide():
-    states = _key_states([("S1", "c1", "AAAA", B), ("S1", "c2", "AAAA", N)])
-    cells_by_set = {"s1": [("S1", "c1"), ("S1", "c2")]}
-    universe, offered = {"AAAA"}, {"S1": {"AAAA"}}
-    ident = self_disagreement(states, universe, offered, cells_by_set, _NEUTRAL, level="identity")
-    tag = self_disagreement(states, universe, offered, cells_by_set, _NEUTRAL, level="tag")
-    assert ident.height == 1 and tag.height == 1
-    assert tag.row(0, named=True)["level"] == "tag"
-    assert ident.row(0, named=True)["level"] == "identity"
+def test_pooled_disagreement_counts_cells_not_sets():
+    # Two sets at one tag. s1 splits 4 bound and 1 not bound, so one cell sits in
+    # the minority. s2 splits 1 and 1, so one cell does too. Pooled: 2 minority
+    # cells over 7 compared. A per-set share would read 2 of 2 -- every set
+    # disagrees -- which says nothing about how much of the tag is affected.
+    states = _key_states(
+        [("S1", f"a{i}", "T1", B) for i in range(4)]
+        + [("S1", "a4", "T1", N), ("S1", "b1", "T1", B), ("S1", "b2", "T1", N)]
+    )
+    cells_by_set = {
+        "s1": [("S1", f"a{i}") for i in range(5)],
+        "s2": [("S1", "b1"), ("S1", "b2")],
+    }
+    out = self_disagreement(states, {"T1"}, {"S1": {"T1"}}, cells_by_set, _NEUTRAL)
+    r = _row_for_key(out, "T1")
+    assert (r["minorityCells"], r["cellsCompared"]) == (2, 7)
+    assert r["disagreementRate"] == pytest.approx(2 / 7)
 
 
-def test_tag_level_is_marked_diagnostic_only():
+def test_pooled_disagreement_caps_at_half():
+    # A minority is the smaller side by definition, and there are two states, so
+    # an even split is the worst value attainable. Nothing can exceed one half.
+    states = _key_states([("S1", f"c{i}", "T1", B) for i in range(3)] + [("S1", f"d{i}", "T1", N) for i in range(3)])
+    cells_by_set = {"s1": [("S1", f"c{i}") for i in range(3)] + [("S1", f"d{i}") for i in range(3)]}
+    out = self_disagreement(states, {"T1"}, {"S1": {"T1"}}, cells_by_set, _NEUTRAL)
+    assert _row_for_key(out, "T1")["disagreementRate"] == pytest.approx(0.5)
+
+
+def test_a_tag_no_set_could_compare_says_so_rather_than_reading_zero():
+    # Every set is a singleton, so nothing can be compared. Zero would read as
+    # agreement, which is the opposite of what is known.
+    states = _key_states([("S1", "c1", "T1", B), ("S1", "c2", "T1", B)])
+    cells_by_set = {"s1": [("S1", "c1")], "s2": [("S1", "c2")]}
+    out = self_disagreement(states, {"T1"}, {"S1": {"T1"}}, cells_by_set, _NEUTRAL)
+    r = _row_for_key(out, "T1")
+    assert (r["minorityCells"], r["cellsCompared"]) == (0, 0)
+    assert r["disagreementRate"] is None
+
+
+def test_the_figure_is_measured_at_the_tag_and_marked_diagnostic_only():
+    # One level only. The identity-level figure has nothing to compare against,
+    # so it cannot separate a faulty reagent from a panel of weak binders.
     states = _key_states([("S1", "c1", "AAAA", B)])
     cells_by_set = {"s1": [("S1", "c1")]}
-    universe, offered = {"AAAA"}, {"S1": {"AAAA"}}
-    tag = self_disagreement(states, universe, offered, cells_by_set, _NEUTRAL, level="tag")
-    ident = self_disagreement(states, universe, offered, cells_by_set, _NEUTRAL, level="identity")
-    assert tag.row(0, named=True)["diagnosticOnly"] == "true"
-    assert ident.row(0, named=True)["diagnosticOnly"] == "false"
+    tag = self_disagreement(states, {"AAAA"}, {"S1": {"AAAA"}}, cells_by_set, _NEUTRAL)
+    assert tag.height == 1
+    row = tag.row(0, named=True)
+    assert row["level"] == "tag"
+    assert row["diagnosticOnly"] == "true"
 
 
-def test_rate_is_over_sets_evaluated_not_all_sets():
-    # s2 is a singleton at A and is not evaluable.
+def test_a_set_too_small_to_compare_is_left_out_of_both_counts():
+    # s1 contributes both its cells and one minority cell. s2 is a singleton at
+    # A: it has no minority of its own, so it enters neither term. Pooling needs
+    # no cutoff for that -- the two-cell condition does the whole job.
     states = _key_states([("S1", "c1", "A", B), ("S1", "c2", "A", N), ("S1", "c3", "A", B)])
     cells_by_set = {"s1": [("S1", "c1"), ("S1", "c2")], "s2": [("S1", "c3")]}
-    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL, level="identity")
+    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL)
     r = _row_for_key(out, "A")
-    assert r["setsEvaluated"] == 1 and r["disagreementRate"] == 1.0
+    assert (r["minorityCells"], r["cellsCompared"]) == (1, 2)
+    assert r["disagreementRate"] == 0.5
 
 
 def test_silent_cells_flip_agreement_into_disagreement():
@@ -605,10 +643,14 @@ def test_silent_cells_flip_agreement_into_disagreement():
     states = _key_states([("S1", "c0", "A", B), ("S1", "c1", "A", B)])
     cells_by_set = {"s1": members}
     admissibility = Admissibility({k: 5 for k in members}, set())
-    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility, level="identity")
+    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility)
     r = _row_for_key(out, "A")
-    assert r["setsEvaluated"] == 1
-    assert r["disagreementRate"] == 1.0
+    # 40 evaluable cells: 38 silent not-bound and 2 observed bound. The majority
+    # is the 38, so the 2 bound cells are the minority. Counting rows on the
+    # sparse frame instead would see only those 2, call them a set that agrees,
+    # and report nothing to compare at all.
+    assert (r["minorityCells"], r["cellsCompared"]) == (2, 40)
+    assert r["disagreementRate"] == pytest.approx(0.05)
 
 
 def test_one_observed_positive_among_many_silent_negatives_is_evaluable():
@@ -619,10 +661,11 @@ def test_one_observed_positive_among_many_silent_negatives_is_evaluable():
     states = _key_states([("S1", "c0", "A", B)])
     cells_by_set = {"s1": members}
     admissibility = Admissibility({k: 5 for k in members}, set())
-    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility, level="identity")
+    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility)
     r = _row_for_key(out, "A")
-    assert r["setsEvaluated"] == 1
-    assert r["disagreementRate"] == 1.0
+    # 20 evaluable cells, the one bound cell being the minority of its own set.
+    assert (r["minorityCells"], r["cellsCompared"]) == (1, 20)
+    assert r["disagreementRate"] == pytest.approx(0.05)
 
 
 def test_all_silent_not_bound_cells_agree():
@@ -634,9 +677,9 @@ def test_all_silent_not_bound_cells_agree():
     states = _key_states([])
     cells_by_set = {"s1": members}
     admissibility = Admissibility({k: 5 for k in members}, set())
-    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility, level="identity")
+    out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility)
     r = _row_for_key(out, "A")
-    assert r["setsEvaluated"] == 1
+    assert (r["minorityCells"], r["cellsCompared"]) == (0, 5)
     assert r["disagreementRate"] == 0.0
 
 
@@ -656,13 +699,13 @@ def test_self_disagreement_output_is_deterministic_regardless_of_input_row_order
     }
     universe = {"A", "B"}
     offered = {"S1": {"A", "B"}, "S2": {"A", "B"}}
-    baseline = self_disagreement(_key_states(rows), universe, offered, cells_by_set, _NEUTRAL, level="identity")
+    baseline = self_disagreement(_key_states(rows), universe, offered, cells_by_set, _NEUTRAL)
 
     rng = random.Random(2026)
     for _ in range(5):
         shuffled = list(rows)
         rng.shuffle(shuffled)
-        out = self_disagreement(_key_states(shuffled), universe, offered, cells_by_set, _NEUTRAL, level="identity")
+        out = self_disagreement(_key_states(shuffled), universe, offered, cells_by_set, _NEUTRAL)
         assert out.equals(baseline)
 
 

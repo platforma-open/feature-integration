@@ -1518,7 +1518,6 @@ def main() -> None:
             {s: tag_offered_by_sample[s] for s in samples_here},
             sets_here,
             admissibility,
-            "tag",
         )
         return dict(zip(by_tag["key"].to_list(), by_tag["disagreementRate"].to_list(), strict=True))
 
