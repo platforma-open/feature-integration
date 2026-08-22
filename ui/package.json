@@ -16,6 +16,7 @@
     "@platforma-sdk/ui-vue": "catalog:",
     "ag-grid-enterprise": "catalog:",
     "ag-grid-vue3": "catalog:",
+    "csv-parse": "catalog:",
     "vue": "catalog:"
   },
   "devDependencies": {

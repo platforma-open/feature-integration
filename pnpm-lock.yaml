@@ -54,6 +54,9 @@ catalogs:
     ag-grid-vue3:
       specifier: ~34.1.2
       version: 34.1.2
+    csv-parse:
+      specifier: ^6.1.0
+      version: 6.2.1
     shx:
       specifier: 0.4.0
       version: 0.4.0
@@ -215,6 +218,9 @@ importers:
       ag-grid-vue3:
         specifier: 'catalog:'
         version: 34.1.2(vue@3.5.24(typescript@5.6.3))
+      csv-parse:
+        specifier: 'catalog:'
+        version: 6.2.1
       typescript:
         specifier: '*'
         version: 5.6.3
@@ -2859,6 +2865,9 @@ packages:
 
   csstype@3.2.3:
     resolution: {integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==}
+
+  csv-parse@6.2.1:
+    resolution: {integrity: sha512-LRLMV+UCyfMokp8Wb411duBf1gaBKJfOfBWU9eHMJ+b+cJYZsNu3AFmjJf3+yPGd59Exz1TsMjaSFyxnYB9+IQ==}
 
   d3-array@3.2.4:
     resolution: {integrity: sha512-tdQAmyA18i4J7wprpYq8ClcxZy3SC31QMeByyCFyRt7BVHdREQZ5lpzoe5mFEYZUWe+oq8HBvk9JjpibyEV4Jg==}
@@ -8089,6 +8098,8 @@ snapshots:
       which: 2.0.2
 
   csstype@3.2.3: {}
+
+  csv-parse@6.2.1: {}
 
   d3-array@3.2.4:
     dependencies:

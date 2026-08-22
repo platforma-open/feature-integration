@@ -7,7 +7,7 @@ column generically (no hardcoded schema) so the workflow can surface it as a p-c
 feature axis, and the property then rides that axis into VDJ Multiomic Integration's per-feature
 outputs and lead selection (see spec A-0026).
 
-Two outputs (stdlib only -- a trivial, fast pre-step like emit_csv_meta / emit_panel):
+Two outputs (stdlib only -- a trivial, fast pre-step like emit_panel):
   * ``<prefix>_feature_properties.csv`` -- one row per distinct feature; columns are ``feature``
     (the feature-name column, always renamed to ``feature`` so the downstream xsv import keys it on
     the feature axis) followed by every extra column under its own header. Rows sorted by feature.
@@ -31,7 +31,7 @@ import sys
 def _read_header(reader: "csv._reader") -> tuple[list[str], dict[str, int]]:
     """Return (ordered named columns, name -> first column index). Blank header cells are dropped;
     the first index wins for a duplicated header (read by position so order is preserved -- DictReader
-    would collapse duplicates and lose order, mirroring emit_csv_meta)."""
+    would collapse duplicates and lose order)."""
     header = next(reader, None)
     if not header:
         raise SystemExit("no header row found in the tag->feature CSV")

@@ -17,13 +17,13 @@ import {
 } from "@platforma-sdk/model";
 import { assemblePattern, CELL_TAG, FEATURE_TAG, UMI_TAG, validatePattern } from "./pattern";
 import { getPreset } from "./presets";
-import type { BlockArgs, BlockData, GroupingRule, ReferenceSource } from "./types";
+import type { BlockArgs, BlockData, CsvMeta, GroupingRule, ReferenceSource } from "./types";
 
 export { assemblePattern, parsePattern, validatePattern } from "./pattern";
 export type { PatternParts } from "./pattern";
 export { allPresets, getPreset } from "./presets";
 export type { Preset } from "./presets";
-export type { BlockArgs, BlockData, GroupingRule, ReferenceSource } from "./types";
+export type { BlockArgs, BlockData, CsvMeta, GroupingRule, ReferenceSource } from "./types";
 
 // Re-exported so the UI can seed a grid state without a direct @platforma-sdk/model dependency. The ui
 // package depends only on ui-vue, which does not carry this factory.
@@ -186,18 +186,11 @@ export type QcRow = {
 // Panel-assigned fraction below this flags a sample in the analysis log (panel / read-geometry issue).
 const PANEL_ASSIGNED_FLOOR = 0.5;
 
-// Tag→feature CSV metadata emitted by the prerun's single emit-csv-meta exec (emit_csv_meta.py): the
-// column headers (-> the barcode/feature column dropdowns) and each column's distinct values (-> the
-// negative-control dropdown, indexed by the chosen feature column). One upload-triggered exec feeds all
-// three CSV-derived dropdowns, so picking the feature column is a pure model recompute with no rerun.
-// rowCount (total data rows) lets the model detect a feature barcode on more than one row (distinct
-// barcode values < rowCount), the sample-specific-mapping case per_cell_metrics.py guards at the end of
-// the run. Optional, so a prerun output predating rowCount still parses and the duplicate check skips.
-type CsvMeta = {
-  columns: string[];
-  valuesByColumn: Record<string, string[]>;
-  rowCount?: number;
-};
+// CsvMeta (the panel's headers, each header's distinct values, and its row count) now lives in types.ts
+// beside the data field that carries it. It feeds the barcode/feature column dropdowns, the
+// negative-control dropdown indexed by the chosen feature column, and the duplicate-mapping gate, which
+// compares distinct barcode values against rowCount to spot a barcode declared on more than one row —
+// the sample-specific-mapping case per_cell_metrics.py guards at the end of the run.
 
 // mitool tag-stat emits these columns (the CELL/FEATURE/UMI tags — see pattern.ts — plus tag-stat's
 // count/totalWeight/unique_<UMI> outputs). A user-mapped CSV barcode/feature column that names one of
@@ -282,12 +275,16 @@ function parseQcRows(ctx: BlockRenderCtx<BlockArgs, BlockData>) {
   return (qcMap?.data ?? []).filter((e) => e.value != null);
 }
 
-// Tag→feature CSV metadata from the prerun (emit-csv-meta), or undefined until staging has produced it.
-// Shared by the two column dropdowns, the control dropdown, and the csvColumnsLoading signal.
+// Tag→feature CSV metadata, or undefined until the UI has read the file. Shared by the two column
+// dropdowns, the control dropdown, and the csvColumnsLoading signal.
+//
+// The snapshot is read only while its handle matches the CSV currently picked. That comparison is the
+// whole guard against a stale read: every path that swaps the CSV clears the snapshot, and if one ever
+// fails to, the mismatch makes the metadata absent rather than wrong.
 function readCsvMeta(ctx: BlockRenderCtx<BlockArgs, BlockData>): CsvMeta | undefined {
-  return ctx.prerun
-    ?.resolve({ field: "csvMeta", allowPermanentAbsence: true })
-    ?.getDataAsJsonOrUndefined<CsvMeta>();
+  const snap = ctx.data.csvMetaSnapshot;
+  if (snap === undefined) return undefined;
+  return snap.handle === ctx.data.tagFeatureCsvHandle ? snap.meta : undefined;
 }
 
 // The grouping columns a rule names, whichever shape it is stored in. A project saved before the rule
@@ -801,12 +798,18 @@ export const platforma = BlockModelV3.create(dataModel)
         : {}),
     };
   })
-  // Staging depends only on the CSV: emit-csv-meta emits every column's values in one exec, so the
-  // negative-control dropdown needs no rerun when the feature column changes. The model indexes the
-  // already-emitted map. featureNameColumn is deliberately NOT a prerun arg, and neither is fbFastqRef.
-  // The CSV metadata is independent of the FASTQ, so keying staging on it would re-run emit-csv-meta and
-  // blank the column dropdowns (csvColumnsLoading → tagMappingDisabled) on every FASTQ change or PlRef
-  // re-resolve. Key on the CSV alone.
+  // Staging depends only on the CSV. It imports the file and exports the blob, and nothing else.
+  // featureNameColumn is deliberately NOT a prerun arg, and neither is fbFastqRef: the panel is
+  // independent of the FASTQ, so keying staging on it would re-import the CSV on every FASTQ change or
+  // PlRef re-resolve.
+  //
+  // THIS PROJECTION MUST NOT GROW TO INCLUDE csvMetaSnapshot, csvImportError, OR ANYTHING DERIVED FROM
+  // THEM. The UI reads the panel from the blob this staging exports and writes the result into
+  // csvMetaSnapshot. A data write re-renders staging only when the canonical JSON of THIS projection
+  // changes — that comparison in pl-middle-layer's setStates is what gates renderStagingFor — so today
+  // that write cannot re-run staging. Add the snapshot here and it can: the write re-renders staging,
+  // which re-exports the blob, which re-triggers the write. And because a staging re-render calls
+  // resetStaging first, every turn of that loop would discard the uploaded CSV, not merely waste work.
   .prerunArgs((data) => ({
     tagFeatureCsvHandle: data.tagFeatureCsvHandle,
   }))
@@ -893,22 +896,22 @@ export const platforma = BlockModelV3.create(dataModel)
     // the user types in the sidebar does not pass through this output, so an override is safe.
     return parts.join(" / ").replace(/\./g, " ").replace(/ {2,}/g, " ").trim();
   })
-  // Negative-control dropdown options: the distinct values of the chosen feature-name column, from the
-  // prerun's emit-csv-meta valuesByColumn map. No rerun on a column change, because the map already
-  // carries every column's values and picking the feature column only re-indexes here. Retentive avoids
-  // a flicker to [] on rerun. Empty until the CSV is uploaded and staging completes.
+  // Negative-control dropdown options: the distinct values of the chosen feature-name column, indexed out
+  // of the snapshot's valuesByColumn map. Picking the feature column only re-indexes here, because the
+  // snapshot already carries every column's values. Retentive avoids a flicker to [] on rerun. Empty
+  // until the panel has been read.
   .retentiveOutput("controlOptions", (ctx): { value: string; label: string }[] => {
     const col = ctx.data.featureNameColumn;
     const names = col ? (readCsvMeta(ctx)?.valuesByColumn?.[col] ?? []) : [];
     return names.map((name) => ({ value: name, label: name }));
   })
-  // CSV column headers (from the prerun emit-csv-meta step) → the barcode/feature column dropdowns.
-  // Retentive so the dropdowns do not blank on rerun. Empty until the CSV is uploaded and parsed.
+  // The panel's column headers → the barcode/feature column dropdowns. Retentive so the dropdowns do not
+  // blank on rerun. Empty until the panel has been read.
   .retentiveOutput("csvColumnOptions", (ctx): { value: string; label: string }[] =>
     (readCsvMeta(ctx)?.columns ?? []).map((c) => ({ value: c, label: c })),
   )
-  // Every CSV column's distinct values (from the prerun emit-csv-meta step). The UI reads this when the
-  // sample column is picked, to snapshot that column's values into data (args gates Run on them).
+  // Every panel column's distinct values. The UI reads this when the sample column is picked, to snapshot
+  // that column's values into data (args gates Run on them).
   .retentiveOutput(
     "csvValuesByColumn",
     (ctx): Record<string, string[]> => readCsvMeta(ctx)?.valuesByColumn ?? {},
@@ -1032,12 +1035,12 @@ export const platforma = BlockModelV3.create(dataModel)
       "Sample column."
     );
   })
-  // Total data rows in the uploaded CSV, so the UI can snapshot it alongside the barcode column's
-  // distinct count. Those two numbers are what args() needs to refuse a duplicate mapping, and args()
-  // cannot reach the prerun meta itself.
+  // Total data rows in the panel, so the UI can snapshot it alongside the barcode column's distinct
+  // count. Those two numbers are what args() needs to refuse a duplicate mapping.
   .retentiveOutput("csvRowCount", (ctx): number | undefined => readCsvMeta(ctx)?.rowCount)
-  // True while the uploaded CSV is still being parsed by staging: the handle is set, but emit-csv-meta
-  // has not produced csvMeta yet. Lets the UI show a "reading columns…" state instead of silent empty
+  // True while the panel has been picked but not yet read: the handle is set and no snapshot matches it.
+  // A local pick closes this window within a tick. A remote pick holds it until the upload lands and the
+  // UI parses the exported blob. Lets the UI show a "reading columns…" state instead of silent empty
   // dropdowns. NOT retentive: it must report the live loading state, including on a CSV swap.
   .output(
     "csvColumnsLoading",
@@ -1066,6 +1069,12 @@ export const platforma = BlockModelV3.create(dataModel)
         ?.getImportProgress(),
     { isActive: true },
   )
+  // The uploaded tag->feature CSV as a downloadable blob handle, resolved from the PRERUN's csvFile
+  // export. This is what lets the UI read the CSV's bytes for a REMOTE (index://) pick, where it
+  // cannot read the user's disk: the same client-side parser then runs on these bytes instead. The
+  // prerun already exported csvFile to make staging demand the blob, so this output adds no work to
+  // the workflow. `traverse` is used rather than `resolve` because it does not assert a field type.
+  .output("csvFileHandle", (ctx) => ctx.prerun?.traverse({ field: "csvFile" })?.getFileHandle())
   // True while the main run is executing, with no output or context field settled yet. Drives the block
   // spinner through the app.ts progress callback.
   .output("isRunning", (ctx) => ctx.outputs?.getIsReadyOrError() === false)

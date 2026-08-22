@@ -106,10 +106,40 @@ export type BlockArgs = {
   contendingGroups?: string[][];
 };
 
+/**
+ * What the block knows about the tag->feature CSV without running anything: the panel's headers, the
+ * distinct values of each header, and how many non-blank data rows there were.
+ *
+ * Parsed in the UI, from the file itself. `rowCount` stays optional because a project stored before the
+ * count existed must keep opening, and the duplicate-mapping gate skips where it is absent.
+ */
+export type CsvMeta = {
+  columns: string[];
+  valuesByColumn: Record<string, string[]>;
+  rowCount?: number;
+};
+
 /** Unified persisted UI state. */
 export type BlockData = {
   fbFastqRef?: PlRef;
   tagFeatureCsvHandle?: ImportFileHandle;
+  /**
+   * The panel CSV's metadata, parsed in the UI, tagged with the handle it was read from.
+   *
+   * The handle tag is what makes it safe to persist: a snapshot is read only while it matches the CSV
+   * currently picked, so a stale one left by a failed clear can never be read against a different file.
+   *
+   * This is the ONLY source of the metadata — no workflow step parses the panel. The UI fills it from the
+   * user's disk on a local pick, and from the prerun-imported blob for a remote pick. Absent means the
+   * bytes have not arrived yet, which the "Reading columns…" alert reports.
+   */
+  csvMetaSnapshot?: { handle: ImportFileHandle; meta: CsvMeta };
+  /**
+   * Why the panel CSV could not be read, or undefined where it could. Shown to the user rather than
+   * logged: with no workflow-side parser to fall back on, a discarded parse error leaves empty dropdowns
+   * and nothing that says why.
+   */
+  csvImportError?: string;
   barcodeSeqColumn?: string;
   featureNameColumn?: string;
   controlFeature?: string;
@@ -202,10 +232,14 @@ export type BlockData = {
   // A `punchcardIdentities` list or a `punchcardFullLabels` flag stored by an older project is ignored.
 
   // Snapshotted on the gesture that picks the barcode column, so args() can refuse a mapping that is
-  // certain to fail without reading an output. args is data-only, and readCsvMeta lives on ctx.prerun.
-  // Same device as sampleColumnValues, for the same reason. Absent where the CSV meta had not resolved at
-  // pick time, or predates rowCount. The gate then does not fire, and the Python guard catches it at the
-  // end of the run.
+  // certain to fail without reading an output. args is data-only, and these are read from the
+  // csvValuesByColumn / csvRowCount OUTPUTS, which lag a gesture by one round trip even though the
+  // metadata they derive from is now in data. Same device as sampleColumnValues, for the same reason.
+  // Absent where the metadata had not arrived at pick time, or predates rowCount. The gate then does not
+  // fire, and the Python guard catches it at the end of the run.
+  //
+  // Both could be dropped now that csvMetaSnapshot puts the same numbers in data, where args() could read
+  // them directly. That is a migration and a change to the gate, so it is deliberately left alone here.
   panelRowCount?: number;
   panelBarcodeDistinct?: number;
 

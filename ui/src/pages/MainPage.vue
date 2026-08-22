@@ -25,6 +25,9 @@ import {
   makeRowNumberColDef,
 } from "@platforma-sdk/ui-vue";
 import { groupingColumns } from "@platforma-open/milaboratories.feature-integration.model";
+import type { ImportFileHandle } from "@platforma-sdk/model";
+import { parseTagCsvMeta } from "../csvMeta";
+import { readLocalCsvMeta, useRemoteCsvBytes } from "../csvSource";
 import type { ColDef, GridReadyEvent } from "ag-grid-enterprise";
 import { ClientSideRowModelModule, ModuleRegistry } from "ag-grid-enterprise";
 import { AgGridVue } from "ag-grid-vue3";
@@ -85,14 +88,15 @@ const controlInfoVisible = computed(
   () => !!app.model.data.tagFeatureCsvHandle && !app.model.data.controlFeature,
 );
 
-// True while staging is still parsing the uploaded tag-feature CSV: the handle is set, but the column and
-// value metadata have not resolved. Drives a "reading columns…" note and disables the CSV-derived
-// dropdowns, so their empty state reads as "loading" rather than "no columns found".
+// True while the panel CSV has been picked but not yet read: the handle is set and csvMetaSnapshot is not.
+// For a local pick that window is a single tick, so the note below never appears. For a remote pick it
+// lasts until the upload lands and the blob watcher parses it. Drives a "reading columns…" note and
+// disables the CSV-derived dropdowns, so their empty state reads as "loading" rather than "no columns".
 const csvProcessing = computed(() => app.model.outputs.csvColumnsLoading === true);
 
 // The CSV-derived tag-mapping dropdowns (barcode / feature / control / sample columns) have nothing to
-// offer until a tag-feature CSV is uploaded AND its columns are parsed. Disable and dim them while no CSV
-// handle exists, or while staging is still reading its columns, so their empty state reads as "waiting for
+// offer until a tag-feature CSV is picked AND its columns are read. Disable and dim them while no CSV
+// handle exists, or while the panel has not been read yet, so their empty state reads as "waiting for
 // a CSV" rather than "no columns found". Reuses the SDK disabled and dimmed affordance the parse window
 // (csvProcessing) already uses.
 const tagMappingDisabled = computed(
@@ -278,9 +282,68 @@ function onCsvChanged(next: unknown) {
   // decide the user's re-pick was a no-op.
   seenFeatureColumn.value = "";
   clearOnCsvChange();
+  // Read the panel NOW, from the file the user just chose, rather than waiting for the upload to land and
+  // a workflow step to describe it. `next` is the parse target, not data: v-model has already written it,
+  // but reading the argument makes the handler independent of listener order.
+  void readPanelFrom(next as ImportFileHandle | undefined);
 }
 
+// Fills csvMetaSnapshot from the picked file. Local picks are read from disk, which is what makes the
+// column dropdowns fill on the gesture. A remote pick reads nothing here and is served by the blob
+// watcher below once the upload lands.
+//
+// The handle re-check before the write is the rapid-re-pick guard: the read is async, so a user who
+// swaps files twice in quick succession can have the FIRST read resolve last. Publishing it would leave
+// the dropdowns describing a file that is no longer chosen.
+async function readPanelFrom(handle: ImportFileHandle | undefined) {
+  if (!handle) return;
+  try {
+    const meta = await readLocalCsvMeta(handle);
+    if (meta === undefined) return; // remote pick — the blob path serves it
+    if (app.model.data.tagFeatureCsvHandle !== handle) return;
+    app.model.data.csvMetaSnapshot = { handle, meta };
+  } catch (e) {
+    if (app.model.data.tagFeatureCsvHandle !== handle) return;
+    app.model.data.csvImportError = e instanceof Error ? e.message : String(e);
+  }
+}
+
+// The remote-pick path. Nothing on this machine can open an `index://` file, so the panel is read from the
+// blob the prerun imported, through the SAME parser the local path uses. One parser, two byte sources.
+//
+// This is a watcher that writes to data, which hairpin.md tells reviewers to look at twice, and it is the
+// same construction blocks/immune-assay-data uses for the same job. It cannot feed itself. The output it
+// watches comes from the prerun, and the prerun re-renders only when the prerunArgs PROJECTION changes
+// (canonical-JSON compared in pl-middle-layer's setStates, which gates renderStagingFor). That projection
+// is tagFeatureCsvHandle alone, so writing csvMetaSnapshot cannot re-run the prerun and cannot change
+// csvFileHandle. Adding the snapshot to prerunArgs WOULD close that loop, and because a staging re-render
+// resets staging, each turn would throw away the uploaded blob. Leave the projection alone.
+//
+// Two clients open on one project both run this and both write, which is safe because they cannot
+// disagree: the parse is pure and both read the same blob, so the writes are identical. The guard below
+// stops the second one anyway.
+const remoteCsvBytes = useRemoteCsvBytes(() => app.model.outputs.csvFileHandle);
+watch(
+  remoteCsvBytes,
+  (bytes) => {
+    const handle = app.model.data.tagFeatureCsvHandle;
+    if (!bytes || !handle) return;
+    if (app.model.data.csvMetaSnapshot?.handle === handle) return; // already read
+    try {
+      app.model.data.csvMetaSnapshot = { handle, meta: parseTagCsvMeta(bytes) };
+      app.model.data.csvImportError = undefined;
+    } catch (e) {
+      app.model.data.csvImportError = e instanceof Error ? e.message : String(e);
+    }
+  },
+  { immediate: true },
+);
+
 function clearOnCsvChange() {
+  // The panel metadata describes the OLD file, so it goes first: every field cleared below is derived
+  // from it, and readCsvMeta stops returning it the moment the handle it is tagged with stops matching.
+  app.model.data.csvMetaSnapshot = undefined;
+  app.model.data.csvImportError = undefined;
   app.model.data.barcodeSeqColumn = undefined;
   app.model.data.panelRowCount = undefined;
   app.model.data.panelBarcodeDistinct = undefined;
@@ -487,6 +550,9 @@ const gridOptions = {
         </template>
       </PlFileInput>
       <PlAlert v-if="csvProcessing" type="info"> Reading columns from the uploaded CSV… </PlAlert>
+      <PlAlert v-if="app.model.data.csvImportError" type="warn">
+        Could not read the tag-feature CSV: {{ app.model.data.csvImportError }}
+      </PlAlert>
       <PlDropdown
         v-model="app.model.data.barcodeSeqColumn"
         :options="app.model.outputs.csvColumnOptions"
