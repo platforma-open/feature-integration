@@ -180,49 +180,6 @@ def test_a_tag_grouping_reports_no_unplaceable_tags(bed):
     assert meta["tagsWithoutGroupingValue"] == []
 
 
-def test_an_alerting_tag_carries_the_figures_for_the_identities_it_feeds(bed):
-    # A noisy reagent whose identities read steady is a reagent to replace, not
-    # a run to distrust, and only the two numbers together say which. One tag
-    # whose clonotype disagrees with itself, against four that do not: its rate
-    # stands clear of its peers, so it alerts and must carry the identity
-    # figures beside it.
-    tags = [f"T{i:02d}" for i in range(5)]
-    (bed / "panel.csv").write_text(
-        "Samples,Name,Sequence,Type\n"
-        + "".join(f"S1,Ag{i},{t},Target\n" for i, t in enumerate(tags))
-        + "S1,Ctrl,CTRL,Control\n"
-    )
-    rows = ["sampleId,cellId,tag,umiCount"]
-    for cell in ("c1", "c2", "c3", "c4"):
-        rows.append(f"S1,{cell},CTRL,6")
-        # T00 splits the clonotype: two cells bind it, two do not.
-        rows.append(f"S1,{cell},{tags[0]},{500 if cell in ('c1', 'c2') else 5}")
-        rows.extend(f"S1,{cell},{t},5" for t in tags[1:])
-    (bed / "counts.csv").write_text("\n".join(rows) + "\n")
-    (bed / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS1,c2,K1\nS1,c3,K1\nS1,c4,K1\n")
-
-    r = _run(bed, *BASE)
-    assert r.returncode == 0, r.stderr
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    tag_rows = qc.filter(pl.col("measurement") == "tagDisagreement")
-
-    alerting = tag_rows.filter(pl.col("status") == "alerting")
-    assert alerting.height == 1, "exactly the split tag should stand clear of its peers"
-    row = alerting.row(0, named=True)
-    assert row["entity"] == tags[0]
-    assert row["detail"].startswith("identitiesFed="), row["detail"]
-    assert tags[0] in row["detail"]
-
-    # Neither figure is suppressed: the identity rows are still emitted in full.
-    assert qc.filter(pl.col("measurement") == "identityDisagreement").height > 0
-
-    # And a tag that did not alert carries no attachment -- the pairing is the
-    # answer to a question the alert raised, not decoration on every row.
-    quiet = tag_rows.filter(pl.col("status") != "alerting")
-    assert quiet.height > 0
-    assert not any((d or "").startswith("identitiesFed=") for d in quiet["detail"].to_list())
-
-
 def test_a_tag_noisy_in_one_panel_does_not_alert_the_panel_it_was_clean_in(bed):
     # Two samples declaring different tag sets are two panels, and both declare T00. T00's clonotype
     # splits itself in S2 and reads steady in S1. A run-global disagreement rate puts S2's noise on S1's

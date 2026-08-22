@@ -13,7 +13,6 @@ from qc_measures import (
     Measurement,
     Status,
     antigen_count_deciles,
-    attach_alerting_identities,
     measurement_rows,
     outlier_status,
     per_antigen_measures,
@@ -37,7 +36,6 @@ EXPECTED_LEVEL_BY_ID = {
     "uniqueCountsPerCell": "sample",
     "highReferenceCells": "sample",
     "perAntigen": "tag",
-    "identityDisagreement": "identity",
     "tagDisagreement": "tag",
 }
 
@@ -46,6 +44,17 @@ DEFERRED_IDS = {"aggregateBarcodeFraction"}
 
 def test_every_declared_id_is_expected_and_every_expected_id_is_declared():
     assert {m.id for m in MEASUREMENTS} == set(EXPECTED_LEVEL_BY_ID)
+
+
+def test_self_disagreement_is_measured_at_the_tag_and_nowhere_else():
+    # The identity-level figure has nothing to compare against, so it cannot
+    # separate a faulty reagent from a panel full of weak binders -- it measures
+    # how many clonotypes sit near the line, which is a fact about the panel
+    # rather than a fault to fix. The tag-level figure is read against the other
+    # tags in the same panel, under the same cells and the same line.
+    ids = {m.id for m in MEASUREMENTS}
+    assert "tagDisagreement" in ids
+    assert "identityDisagreement" not in ids
 
 
 def test_saturation_and_known_answer_are_not_measured():
@@ -69,7 +78,7 @@ def test_declared_levels_match_the_spec_as_a_multiset():
 
 
 def test_every_measurement_declares_a_known_level():
-    assert {m.level for m in MEASUREMENTS} <= {"sample", "tag", "identity"}
+    assert {m.level for m in MEASUREMENTS} <= {"sample", "tag"}
 
 
 def test_every_measurement_says_what_it_counts():
@@ -287,59 +296,6 @@ def test_antigen_count_deciles_empty_sample():
     assert all(v is None for v in out["value"].to_list())
 
 
-# --- attach_alerting_identities ------------------------------------------------
-
-
-def _identity_measures(rows: dict[str, tuple[int, int, float]]) -> pl.DataFrame:
-    keys = list(rows)
-    return pl.DataFrame(
-        {
-            "key": keys,
-            "setsEvaluated": [rows[k][0] for k in keys],
-            "setsDisagreeing": [rows[k][1] for k in keys],
-            "disagreementRate": [rows[k][2] for k in keys],
-            "level": ["identity"] * len(keys),
-            "diagnosticOnly": ["false"] * len(keys),
-        }
-    )
-
-
-def test_attach_alerting_identities_feeding_two_identities_attaches_both():
-    identity_measures = _identity_measures({"ID1": (10, 1, 0.1), "ID2": (8, 0, 0.0), "ID3": (5, 2, 0.4)})
-    grouping = {"T1": {"ID1", "ID2"}, "T2": {"ID3"}}
-
-    out = attach_alerting_identities(identity_measures, grouping, alerting={"T1"})
-
-    assert set(out["identity"].to_list()) == {"ID1", "ID2"}
-    assert set(out["tag"].to_list()) == {"T1"}
-    assert "ID3" not in out["identity"].to_list()
-    # The identity's own figures travel with it, not just its name.
-    row = out.filter(pl.col("identity") == "ID1").row(0, named=True)
-    assert row["setsEvaluated"] == 10
-    assert row["disagreementRate"] == pytest.approx(0.1)
-
-
-def test_attach_alerting_identities_no_alerting_tags_returns_no_rows():
-    identity_measures = _identity_measures({"ID1": (10, 1, 0.1)})
-    out = attach_alerting_identities(identity_measures, {"T1": {"ID1"}}, alerting=set())
-    assert out.height == 0
-    assert set(out.columns) == {
-        "tag",
-        "identity",
-        "setsEvaluated",
-        "setsDisagreeing",
-        "disagreementRate",
-        "level",
-        "diagnosticOnly",
-    }
-
-
-def test_attach_alerting_identities_tag_with_no_grouping_entry_contributes_no_row():
-    identity_measures = _identity_measures({"ID1": (10, 1, 0.1)})
-    out = attach_alerting_identities(identity_measures, {"T1": {"ID1"}}, alerting={"CONTROL"})
-    assert out.height == 0
-
-
 def test_four_readings_only_two_are_statuses():
     assert {s.value for s in Status} == {"acceptable", "alerting", "unjudged", "not evaluated"}
 
@@ -446,14 +402,13 @@ def test_a_missing_value_is_not_evaluated():
 # --- the against-the-run route ---------------------------------------------
 
 
-@pytest.mark.parametrize("measurement", ["identityDisagreement", "tagDisagreement"])
-def test_an_against_the_run_measurement_is_refused_not_called_unjudged(measurement):
+def test_an_against_the_run_measurement_is_refused_not_called_unjudged():
     # These two do carry a status; `status_for` just cannot compute it, having
     # no peers. Answering `unjudged` would be worse than refusing: unjudged
     # never enters a rollup, so an outlying reagent would leave its panel
     # reading clean -- the failure the rollup exists to invert.
     with pytest.raises(ValueError, match="outlier_status"):
-        status_for(measurement, 0.4, DEFAULT_LINES)
+        status_for("tagDisagreement", 0.4, DEFAULT_LINES)
 
 
 def test_every_measurement_either_answers_or_refuses_but_never_lies():

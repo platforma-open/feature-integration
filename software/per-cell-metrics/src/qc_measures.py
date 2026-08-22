@@ -17,7 +17,7 @@ cannot, so a reader never mistakes "nothing computed this yet" for "this was
 checked and found fine." Most of the set is computed elsewhere in this package
 and only declared here -- undeclared barcodes and declared-but-unseen tags in
 ``panel.py``, the floor's counts and the high-reference-cell count in
-``verdict.py``, both levels of self-disagreement in ``combine.py``, and the read
+``verdict.py``, per-tag self-disagreement in ``combine.py``, and the read
 and per-cell totals in ``qc_report.py``. This module declares the full set and
 computes only what none of those already do.
 """
@@ -176,15 +176,18 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "tag",
         "Per tag: cells with any reading, cells whose reading was bound, and the median count among those.",
     ),
-    Measurement(
-        "identityDisagreement",
-        "Clonotype self-disagreement at an identity",
-        "identity",
-        "Clonotypes whose evaluable cells did not all agree, over clonotypes with two or more evaluable "
-        "cells, at an identity.",
-        "A high rate means the answer a scientist acts on is unstable.",
-        "against-the-run",
-    ),
+    # Self-disagreement at an IDENTITY is deliberately not measured, and keeping
+    # the tag-level figure while dropping this one rests on which confound cancels.
+    # Marginal binding inflates disagreement everywhere, so comparing one tag
+    # against its siblings under the same cells, the same run and the same line
+    # leaves a tag that stands clear standing clear for a reason that is not
+    # biology. The identity-level figure has nothing to compare against and so
+    # cannot separate a faulty reagent from a panel full of weak binders: cells of
+    # one clonotype only all agree where the reading sits clear of the line, so for
+    # anything marginal disagreement is close to certain and the rate measures how
+    # many clonotypes sit near the line. Whatever it would say about one
+    # clonotype's answer is already on that verdict, in the cells that could answer
+    # and the cells that bound, where a scientist is deciding about that clone.
     Measurement(
         "tagDisagreement",
         "Clonotype self-disagreement at a single tag",
@@ -478,47 +481,3 @@ def antigen_count_deciles(counts: pl.DataFrame) -> pl.DataFrame:
     totals = counts.group_by(["sampleId", "cellId"]).agg(pl.col("umiCount").sum().alias("total"))["total"].to_numpy()
     values = [float(np.quantile(totals, p / 100)) for p in DECILE_POINTS]
     return pl.DataFrame({"decile": list(DECILE_POINTS), "value": values})
-
-
-def attach_alerting_identities(
-    identity_measures: pl.DataFrame,
-    grouping: dict[str, set[str]],
-    alerting: set[str],
-) -> pl.DataFrame:
-    """Beside each alerting tag, the identity figures for the identities it feeds.
-
-    Deciding which tags alert is a threshold call made elsewhere, not here;
-    `alerting` names the tags a caller has already flagged. `grouping` maps a
-    tag to every identity it feeds -- ordinarily one, since one tag combines
-    into one identity, but kept as a set rather than a single value so a tag
-    feeding more than one identity attaches beside all of them rather than
-    arbitrarily one.
-
-    A noisy reagent whose identities read steady is a reagent to replace, not
-    a run to distrust; this attachment is what lets a reader tell the two
-    apart, by showing both figures rather than only the tag's own.
-
-    `identity_measures` is self-disagreement's own identity-level output: a
-    `key` column holding the identity, plus its measures. Returns one row per
-    (alerting tag, identity it feeds) -- so a tag feeding two identities
-    produces two rows, neither dropped -- with columns `tag`, `identity`, and
-    every column `identity_measures` carries besides `key`. A tag in
-    `alerting` that feeds no known identity contributes no row, since there is
-    no identity figure to attach beside it.
-    """
-    identity_columns = [c for c in identity_measures.columns if c != "key"]
-    pairs = [(tag, identity) for tag in sorted(alerting) for identity in sorted(grouping.get(tag, ()))]
-
-    if not pairs:
-        return pl.DataFrame(
-            schema={
-                "tag": pl.String,
-                "identity": pl.String,
-                **{c: identity_measures.schema[c] for c in identity_columns},
-            }
-        )
-
-    pair_frame = pl.DataFrame(pairs, orient="row", schema={"tag": pl.String, "identity": pl.String})
-    return pair_frame.join(identity_measures.rename({"key": "identity"}), on="identity", how="left").sort(
-        ["tag", "identity"]
-    )

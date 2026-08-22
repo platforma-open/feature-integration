@@ -76,7 +76,6 @@ from qc_measures import (
     Coverage,
     Status,
     antigen_count_deciles,
-    attach_alerting_identities,
     outlier_status,
     per_antigen_measures,
     reads_per_cell,
@@ -1488,16 +1487,18 @@ def main() -> None:
 
     # ---- the quality measurements -------------------------------------------------
 
-    def _disagreement_rates(samples_here: list[str]) -> tuple[dict[str, float | None], dict[str, float | None]]:
-        """The two self-disagreement rates over one panel's samples only.
+    def _disagreement_rates(samples_here: list[str]) -> dict[str, float | None]:
+        """The per-tag self-disagreement rate over one panel's samples only.
 
-        Scoped per panel rather than computed once over the run, because the rows that carry these
-        figures are keyed `(tag, panelId)` and `(identity, panelId)`. A run-global rate on a panel's row
-        says something the panel did not do: a reagent declared in panels P and Q but misbehaving only in
-        Q's samples shows the same inflated rate on P's row, and `outlier_status` inside P then alerts P's
-        rollup for a reagent that was clean there -- pointing the reader at the wrong panel and the wrong
-        remedy. A per-tag row is keyed by its panel so a reagent fault lands on the panel that has it,
-        which stays true now that only the sample carries an aggregated status.
+        Scoped per panel rather than computed once over the run, because the row that carries this
+        figure is keyed `(tag, panelId)`. A run-global rate on a panel's row says something the panel
+        did not do: a reagent declared in panels P and Q but misbehaving only in Q's samples shows the
+        same inflated rate on P's row, so a reader comparing P's tags against each other is handed a
+        fault that belongs to Q -- pointing them at the wrong panel and the wrong remedy. A per-tag row
+        is keyed by its panel so a reagent fault lands on the panel that has it.
+
+        Measured at the tag and nowhere else. The identity-level figure has nothing to compare against,
+        so it cannot separate a faulty reagent from a panel full of weak binders.
 
         This is the same restriction `per_antigen_measures` already gets from `panel_states` a few lines
         below; disagreement was the one per-panel measure still reading a run-wide number.
@@ -1519,20 +1520,7 @@ def main() -> None:
             admissibility,
             "tag",
         )
-        by_identity = self_disagreement(
-            states.filter(pl.col("sampleId").is_in(samples_here)).select(
-                "sampleId", "cellId", pl.col("identity").alias("key"), "state"
-            ),
-            universe,
-            {s: offered_by_sample[s] for s in samples_here},
-            sets_here,
-            admissibility,
-            "identity",
-        )
-        return (
-            dict(zip(by_tag["key"].to_list(), by_tag["disagreementRate"].to_list(), strict=True)),
-            dict(zip(by_identity["key"].to_list(), by_identity["disagreementRate"].to_list(), strict=True)),
-        )
+        return dict(zip(by_tag["key"].to_list(), by_tag["disagreementRate"].to_list(), strict=True))
 
     read_qc: dict[str, dict] = {}
     if args.qc_summary:
@@ -1612,19 +1600,6 @@ def main() -> None:
 
         sample_coverage[sample] = roll_up([r.status for r in rows[first:]])
 
-    # Resolved through the panel's OWN samples, plus any global declaration. A panel carries the worst
-    # status among the identities its tags feed. Under (tag, sample) keying the same barcode feeds a
-    # different identity in a sample that carries a different panel. Resolution by tag alone would
-    # therefore bring another panel's identity into this rollup.
-    identities_of_panel: dict[str, set[str]] = {
-        panel_id: {
-            grouping[(t, s)]
-            for t in tags
-            for s in (*samples_of_panel.get(panel_id, []), ANY_SAMPLE)
-            if (t, s) in grouping
-        }
-        for panel_id, tags in tags_of_panel.items()
-    }
     per_sample_tag_total = {
         (row["sampleId"], row["tag"]): row["total"]
         for row in counts.group_by(["sampleId", "tag"])
@@ -1635,7 +1610,7 @@ def main() -> None:
     for panel_id in sorted(tags_of_panel):
         panel_samples_here = samples_of_panel[panel_id]
         panel_tags = tags_of_panel[panel_id]
-        tag_rate, identity_rate = _disagreement_rates(panel_samples_here)
+        tag_rate = _disagreement_rates(panel_samples_here)
         here_total = {
             tag: float(sum(per_sample_tag_total.get((s, tag), 0) for s in panel_samples_here))
             for tag in {t for (s, t) in per_sample_tag_total if s in panel_samples_here} | set(panel_tags)
@@ -1669,60 +1644,10 @@ def main() -> None:
         # being judged: including it would inflate the upper quartile it is
         # then measured against, so the one reading the measure exists to
         # catch is the one it would miss.
-        disagreement_at = len(rows)
         for tag in sorted(panel_tags & set(tag_rate)):
             peers = [tag_rate[o] for o in panel_tags if o != tag and tag_rate.get(o) is not None]
             status = outlier_status(tag_rate[tag], peers)
             rows.append(_leaf("tag", tag, "tagDisagreement", tag_rate[tag], "", panel_id, status))
-
-        # Beside an alerting tag, the figures for the identities it feeds. A
-        # noisy reagent whose identities read steady is a reagent to replace,
-        # not a run to distrust, and only the two numbers together say which.
-        # Neither is suppressed: the identity rows are emitted in full below,
-        # and this attaches a copy to the tag that raised the question so a
-        # reader meeting the alert does not have to go looking.
-        alerting_tags = {r.entity for r in rows[disagreement_at:] if r.status is Status.ALERTING}
-        if alerting_tags:
-            beside = attach_alerting_identities(
-                pl.DataFrame(
-                    [
-                        (identity, identity_rate[identity])
-                        for identity in sorted(identities_of_panel[panel_id] & set(identity_rate))
-                    ],
-                    orient="row",
-                    schema={"key": pl.String, "identityDisagreement": pl.Float64},
-                ),
-                {
-                    tag: identities
-                    for tag in panel_tags
-                    if (
-                        identities := {
-                            grouping[(tag, s)]
-                            for s in (*samples_of_panel.get(panel_id, []), ANY_SAMPLE)
-                            if (tag, s) in grouping
-                        }
-                    )
-                },
-                alerting_tags,
-            )
-            attached: dict[str, list[str]] = {}
-            for row in beside.iter_rows(named=True):
-                rate = row["identityDisagreement"]
-                attached.setdefault(row["tag"], []).append(
-                    f"{row['identity']}={'' if rate is None else round(float(rate), 4)}"
-                )
-            for i in range(disagreement_at, len(rows)):
-                feeds = attached.get(rows[i].entity)
-                if feeds:
-                    rows[i] = rows[i]._replace(detail=f"identitiesFed={'|'.join(feeds)}")
-
-        panel_identities = identities_of_panel[panel_id]
-        for identity in sorted(panel_identities & set(identity_rate)):
-            peers = [identity_rate[o] for o in panel_identities if o != identity and identity_rate.get(o) is not None]
-            status = outlier_status(identity_rate[identity], peers)
-            rows.append(
-                _leaf("identity", identity, "identityDisagreement", identity_rate[identity], "", panel_id, status)
-            )
 
     # Only the sample carries an aggregated status, over its OWN per-sample
     # measurements. A per-tag failure is usually a property of the reagent across
