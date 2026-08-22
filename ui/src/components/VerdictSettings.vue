@@ -19,45 +19,45 @@ import { computed } from "vue";
 import { useApp } from "../app";
 
 // The settings for the binding reading. Rendered in the Main page's Settings drawer and again in the Explore
-// readout page's own: one component, one set of controls, both writing the same data. A scientist who meets
-// a card of grey punches can change the rule that produced it without leaving the page.
+// readout page's own: one component, one set of controls, both writing the same data. A scientist who meets a
+// card of grey punches can change the rule that produced it without leaving the page.
 //
-// Everything this component EDITS is below the "binding reading" line in BlockArgs, so a change here
-// recovers every per-sample mitool body from cache and re-runs the verdict stage alone. That is what makes
-// it safe to offer from a results page. It also READS three fields it must never edit —
-// tagFeatureCsvHandle, barcodeSeqColumn, sampleColumn — to tell whether the panel has loaded, and to keep
-// a role or grouping setting from naming a column the panel reader consumes as a key. Those three force
-// the whole per-sample fan-out to re-run and belong to the Main page alone. A control for one of them
-// here would make the explore readout's drawer silently expensive.
+// Everything this component EDITS is below the "binding reading" line in BlockArgs, so a change here recovers
+// every per-sample mitool body from cache and re-runs the verdict stage alone. That is what makes it safe to
+// offer from a results page. It also READS three fields it must never edit -- tagFeatureCsvHandle,
+// barcodeSeqColumn, sampleColumn -- to tell whether the panel has loaded, and to keep a role or grouping
+// setting from naming a column the panel reader consumes as a key. Those three force the whole per-sample
+// fan-out to re-run and belong to the Main page alone. A control for one of them here would make the explore
+// readout's drawer silently expensive.
 //
 // VOCABULARY, and the split is deliberate. Everything a USER reads says "baseline": the level a count must
-// exceed, measured in the same cell from a tag declared to bind nothing. The DATA layer keeps `reference`
-// — `ReferenceSource`, the run-meta keys, the p-column domain values — and those cannot follow, because
-// domain is part of column identity and renaming one would change what every emitted column IS. Code
-// comments here describe the data layer, so they still say reference and comparator.
+// exceed, measured in the same cell from a tag declared to bind nothing. The DATA layer keeps `reference` --
+// `ReferenceSource`, the run-meta keys, the p-column domain values -- and those cannot follow, because domain
+// is part of column identity and renaming one would change what every emitted column IS. Code comments here
+// describe the data layer, so they still say reference and comparator.
 //
 // One user-facing word, never four. "control" is not it: that word belongs to the separate `controlFeature`
-// field on the Main page, a marker for downstream readers that changes no number and no verdict, and it
-// must never appear here.
+// field on the Main page, a marker for downstream readers that changes no number and no verdict, and it must
+// never appear here.
 const app = useApp();
 
-// The panel-derived dropdowns have nothing to offer until the panel file is uploaded and staging has read
-// its columns. Disabled and dimmed, so their empty state reads as "waiting" rather than "nothing found".
+// The panel-derived dropdowns have nothing to offer until the panel file is uploaded and staging has read its
+// columns. Disabled and dimmed, so their empty state reads as "waiting" rather than "nothing found".
 const panelUnread = computed(
   () => !app.model.data.tagFeatureCsvHandle || app.model.outputs.csvColumnsLoading === true,
 );
 
-// The panel's PROPERTY columns: every header except the ones the panel reader consumes as keys, which are
-// the barcode column and the sample column where one is set. Mirrors panel.py's own rule. A column the
-// reader strips is not one the role or grouping setting may name, and emit_verdicts.py ends the run rather
-// than degrading when handed one.
+// The panel's PROPERTY columns: every header except the ones the panel reader consumes as keys, which are the
+// barcode column and the sample column where one is set. Mirrors panel.py's own rule. A column the reader
+// strips is not one the role or grouping setting may name, and emit_verdicts.py ends the run rather than
+// degrading when handed one.
 const panelPropertyOptions = computed(() =>
   (app.model.outputs.csvColumnOptions ?? []).filter(
     (o) => o.value !== app.model.data.barcodeSeqColumn && o.value !== app.model.data.sampleColumn,
   ),
 );
 
-// The distinct values of the chosen role column — what the comparator is designated by.
+// The distinct values of the chosen role column -- what the comparator is designated by.
 const roleValueOptions = computed(() => {
   const column = app.model.data.roleColumn;
   if (!column) return [];
@@ -67,10 +67,10 @@ const roleValueOptions = computed(() => {
   }));
 });
 
-// The panel's headers as they stand now. Snapshotted into data on the gesture that names a panel column,
-// so args() can refuse a column the panel does not carry without reaching outside data, the same reason
-// the sample column snapshots its values. Left to a watcher this would be an output written back into
-// data, which two open clients would race to write.
+// The panel's headers as they stand now. Snapshotted into data on the gesture that names a panel column, so
+// args() can refuse a column the panel does not carry without reaching outside data, the same reason the
+// sample column snapshots its values. Left to a watcher this would be an output written back into data, which
+// two open clients would race to write.
 function snapshotPanelColumns() {
   app.model.data.panelColumnSnapshot = (app.model.outputs.csvColumnOptions ?? []).map(
     (o) => o.value,
@@ -80,14 +80,14 @@ function snapshotPanelColumns() {
 // Changing the role column drops the values chosen under the old one. They designate values of THIS column,
 // and left behind they would mark no tag while still reading as a configured comparator.
 //
-// Declaring a baseline is also what the baseline CHOICE was made against, so changing the declaration
-// drops the choice too. An override means "I want this rung given what I have declared", not a standing
-// instruction that outlives the declaration it answered. Left behind, marking a baseline tag could not
-// move the field onto it, which reads as the block ignoring what you just declared.
+// Declaring a baseline is also what the baseline CHOICE was made against, so changing the declaration drops
+// the choice too. An override means "I want this rung given what I have declared", not a standing instruction
+// that outlives the declaration it answered. Left behind, marking a baseline tag could not move the field
+// onto it, which reads as the block ignoring what you just declared.
 //
-// The same rule the two settings either side of it follow: a setting does not outlive the thing it was
-// chosen against. Only on a GESTURE, never from a watcher — a watcher on a model output writing back into
-// data is the hairpin, and two clients with the project open would race on it.
+// The same rule the two settings either side of it follow: a setting does not outlive the thing it was chosen
+// against. Only on a GESTURE, never from a watcher -- a watcher on a model output writing back into data is
+// the hairpin, and two clients with the project open would race on it.
 function clearBaselineChoice() {
   app.model.data.referenceSource = undefined;
 }
@@ -99,8 +99,18 @@ function setRoleColumn(column: string | undefined) {
   snapshotPanelColumns();
 }
 
-function setReferenceValues(values: string[]) {
-  app.model.data.referenceValues = values.length > 0 ? values : undefined;
+// ONE value, stored as a one-element list. `040-glossary` splits the two cardinalities: being a control is
+// a property of the tag and a panel may carry several, but the reference is one job given to one of them.
+// So the value that marks the baseline is singular. Several values here only ever described a panel whose
+// role column spells one role more than one way, and a panel that does that is asking to be corrected
+// rather than accommodated.
+//
+// `data.referenceValues` stays a LIST. The field name, the `--reference-values` flag and every stored
+// project keep their shape, so this tightens the control without a migration. The `> 1 tag` refusal in
+// `verdict.py` stays too, and is now the only thing that can fire: one value can still mark several tags,
+// which is a panel fact this control cannot see.
+function setReferenceValue(value: string | undefined) {
+  app.model.data.referenceValues = value ? [value] : undefined;
   clearBaselineChoice();
 }
 
@@ -108,8 +118,8 @@ function setReferenceValues(values: string[]) {
 // named columns' values, so naming antigen and concentration together makes the same antigen at two
 // concentrations two identities.
 //
-// The barcode column sits in the same list as the property columns, because naming it IS a grouping — the
-// finest one available, one identity per barcode — rather than a mode beside grouping. It cannot be offered
+// The barcode column sits in the same list as the property columns, because naming it IS a grouping -- the
+// finest one available, one identity per barcode -- rather than a mode beside grouping. It cannot be offered
 // as a property column, since the panel reader consumes it as the `tag` key, so it maps to the `tag` rule,
 // which produces exactly that reading. A sentinel value stands for it, prefixed with a space so no real
 // column name can collide.
@@ -147,34 +157,33 @@ function setGrouping(selected: string[] | undefined) {
   snapshotPanelColumns();
 }
 
-// The comparator sources this panel can serve. Both the option list and the reasons come from a model
-// output rather than from a watcher: the facts behind them are the panel's, and copying them into data
-// would make the output depend on the data it feeds.
+// The comparator sources this panel can serve. Both the option list and the reasons come from a model output
+// rather than from a watcher: the facts behind them are the panel's, and copying them into data would make
+// the output depend on the data it feeds.
 const referenceSources = computed(() => app.model.outputs.referenceSources);
 
-// The rungs this panel can serve, and the rung the run will be answered under. Both come from model
-// outputs: the option list from `referenceSources`, the shown value from `effectiveReferenceSource`.
+// The rungs this panel can serve, and the rung the run will be answered under. Both come from model outputs:
+// the option list from `referenceSources`, the shown value from `effectiveReferenceSource`.
 //
-// NEVER derive the shown value here. Writing the rule twice — once to decide what to display, once in
-// `args()` to decide what to send — makes the field lie the moment a stored choice stops being
-// serviceable. Clearing the role values then leaves a dead "declared" behind: this component re-renders as
-// "the panel's own readings" while the data still holds "declared", so the form shows a scientist the
-// exact value they are being asked to supply while Run stays greyed out, and only re-picking the
-// already-shown value fixes it.
+// NEVER derive the shown value here. Writing the rule twice -- once to decide what to display, once in
+// `args()` to decide what to send -- makes the field lie the moment a stored choice stops being serviceable.
+// Clearing the role values then leaves a dead "declared" behind: this component re-renders as "the panel's
+// own readings" while the data still holds "declared", so the form shows a scientist the exact value they are
+// being asked to supply while Run stays greyed out, and only re-picking the already-shown value fixes it.
 //
-// No derivation exists anywhere. The block does not choose a baseline, because a baseline nobody chose is
-// a methodology nobody knows they used. `effectiveReferenceSource` is the stored choice, or the bottom
-// rung where none was made. Reading an output to display it is not a hairpin: nothing here writes back.
+// No derivation exists anywhere. The block does not choose a baseline, because a baseline nobody chose is a
+// methodology nobody knows they used. `effectiveReferenceSource` is the stored choice, or the bottom rung
+// where none was made. Reading an output to display it is not a hairpin: nothing here writes back.
 const serviceableSources = computed(() => referenceSources.value?.options ?? []);
 const shownSource = computed(() => app.model.outputs.effectiveReferenceSource);
-// Whether the scientist has actually chosen. Read from data rather than from the output above, which
-// answers "none" both for an explicit choice of no baseline and for no choice at all. The two look the
-// same to a run and are opposite things to say to a reader.
+// Whether the scientist has actually chosen. Read from data rather than from the output above, which answers
+// "none" both for an explicit choice of no baseline and for no choice at all. The two look the same to a run
+// and are opposite things to say to a reader.
 const baselineUnchosen = computed(() => app.model.data.referenceSource === undefined);
 
-// A checkbox binds a boolean, and the field is optional in data so a project that never touched it carries
-// no key. `undefined` reads as false here, and the setter writes `undefined` back rather than `false`,
-// which keeps such a project's args vector unchanged.
+// A checkbox binds a boolean, and the field is optional in data so a project that never touched it carries no
+// key. `undefined` reads as false here, and the setter writes `undefined` back rather than `false`, which
+// keeps such a project's args vector unchanged.
 const minimumAppliesToBaseline = computed({
   get: () => app.model.data.minimumAppliesToBaseline === true,
   set: (on: boolean) => {
@@ -189,9 +198,9 @@ function setBaselineSource(value: string | undefined) {
 // The identities the contending-groups editor picks from, live from the uploaded panel.
 const identityOptions = computed(() => app.model.outputs.identityOptions ?? []);
 // Grouped on the barcode column, an identity id IS a feature barcode. The panel metadata staging emits is
-// column-wise, carrying each column's distinct values with no pairing between a barcode and the name
-// beside it, so the identity names cannot be offered here. Said in the editor rather than left for the
-// user to discover from a list of 15-mers.
+// column-wise, carrying each column's distinct values with no pairing between a barcode and the name beside
+// it, so the identity names cannot be offered here. Said in the editor rather than left for the user to
+// discover from a list of 15-mers.
 const identitiesAreBarcodes = computed(() => app.model.data.grouping?.by !== "property");
 
 const contendingGroups = computed(() => app.model.data.contendingGroups ?? []);
@@ -249,30 +258,29 @@ function removeContendingGroup(index: number) {
       Leave it blank if your panel declares no role.
     </template>
   </PlDropdown>
-  <!-- Required exactly while a role column is named, and not otherwise. The column alone marks no tag:
-       it is validated, recorded, and changes no number, so the pair is the setting and half of it is an
-       unfinished form. Blank column + blank values stays legitimate — that is the panel that declares no
-       baseline, which `292-no-declared-reference` serves. -->
-  <PlDropdownMulti
-    :model-value="app.model.data.referenceValues ?? []"
+  <!-- Required exactly while a role column is named, and not otherwise. The column alone marks no tag: it is
+       validated, recorded, and changes no number, so the pair is the setting and half of it is an unfinished
+       form. Blank column plus blank values stays legitimate -- that is the panel which declares no baseline,
+       which `292-no-declared-reference` serves. -->
+  <PlDropdown
+    :model-value="app.model.data.referenceValues?.[0]"
     :options="roleValueOptions"
-    label="Values that mark the baseline tag"
+    label="Value that marks the baseline tag"
     :disabled="panelUnread || !app.model.data.roleColumn"
     :required="!!app.model.data.roleColumn"
-    @update:model-value="setReferenceValues($event)"
+    clearable
+    @update:model-value="setReferenceValue($event)"
   >
     <template #tooltip>
-      Select which values of the role column mark the baseline tag. A tag is the baseline in every
+      Select which value of the role column marks the baseline tag. A tag is the baseline in every
       sample, or in none. You cannot give some samples a different baseline.<br /><br />
-      Required once you name a role column. That column says where each tag's role is written; these
-      values are what actually marks one. Named alone, the column changes nothing.<br /><br />
-      This version reads counts against <b>one</b> baseline tag, or none. If the values you pick
-      mark more than one tag, the run stops and names the tags it found. Reading against several
-      needs a panel column saying which antigens each one belongs to, which this version does not
-      have. One value can still mark several tags, so this is about the tags rather than about how
-      many values you pick.
+      Required once you name a role column. That column says where each tag's role is written; this
+      value is what actually marks one. Named alone, the column changes nothing.<br /><br />
+      The block reads counts against <b>one</b> baseline tag. A panel may carry several control
+      tags, but only one is nominated to supply the baseline. If the value you pick marks more than
+      one tag, the run stops and names the tags it found.
     </template>
-  </PlDropdownMulti>
+  </PlDropdown>
 
   <PlDropdown
     :model-value="shownSource"
@@ -300,16 +308,16 @@ function removeContendingGroup(index: number) {
     </template>
   </PlDropdown>
   <!-- Not an error and not a block: leaving this unchosen is answered under the bottom rung, which is a
-       legitimate position. It is a loud one, though, because the reader gets no verdicts out of it and
-       the field itself shows nothing to explain why. -->
+       legitimate position. It is a loud one, though, because the reader gets no verdicts out of it and the
+       field itself shows nothing to explain why. -->
   <PlAlert v-if="baselineUnchosen && serviceableSources.length > 0" type="warn">
     No baseline is chosen, so this run judges no count against anything and every verdict that needs
     a baseline will read unreliable. Choose one above. "No baseline" is on that list if it is what
     you mean.
   </PlAlert>
-  <!-- Above the info alert, and warn rather than info: this is the one case the user has shown us is
-       a mistake rather than a configuration. It sits in this section instead of beside the control
-       field on the Main page because the fix — the two dropdowns above — is here. -->
+  <!-- Above the info alert, and warn rather than info: this is the one case the user has shown us is a
+       mistake rather than a configuration. It sits in this section instead of beside the control field on
+       the Main page because the fix -- the two dropdowns above -- is here. -->
   <PlAlert v-if="referenceSources?.controlNotBaseline" type="warn">
     {{ referenceSources.controlNotBaseline }}
   </PlAlert>
@@ -319,11 +327,11 @@ function removeContendingGroup(index: number) {
 
   <!-- Directly under the baseline section rather than with the other accordion at the foot of the form.
        Grouping the accordions together sorted this form by how advanced a control is, which split the
-       baseline's own thresholds away from the baseline. Collapsed, this costs the reader one line and
-       puts every baseline control in one place. The heading does NOT repeat "(background)": that
-       parenthetical glosses the word once, where the reader first meets it, and repeating it would read
-       as part of the name and re-open the several-names-for-one-thing problem this form already closed.
-       The shared word "Baseline" is the link. -->
+       baseline's own thresholds away from the baseline. Collapsed, this costs the reader one line and puts
+       every baseline control in one place. The heading does NOT repeat "(background)": that parenthetical
+       glosses the word once, where the reader first meets it, and repeating it would read as part of the name
+       and re-open the several-names-for-one-thing problem this form already closed. The shared word
+       "Baseline" is the link. -->
   <PlAccordionSection label="Baseline thresholds">
     <PlNumberField
       v-model="app.model.data.panelReferenceMinMembers"
