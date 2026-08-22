@@ -53,3 +53,15 @@ now leave that identity's denominator instead of voting a confident negative on 
 run. A per-cell absence is unchanged: a cell that read nothing for a tag its sample did measure still
 votes *not bound*, which is a reading that happened and failed. `declaredNeverSeen` carries no status
 now, the verdict having taken that job.
+
+**A baseline is required, and a run without one does not happen.** The bottom rung is gone — "no
+baseline" is no longer a value a scientist can select, and an unselected baseline is refused rather
+than answered. The alternative was every position reading *unreliable*, which is honest and useless: a
+full punchcard of non-answers costs what a real run costs and looks like a result at a glance.
+
+Where the refusal falls follows from when the condition becomes knowable. A missing baseline tag and a
+panel below the tag count are properties of the **settings**, so they are caught before anything runs
+and the message names the condition that failed. Whether a sample holds enough cells whose counts
+separate is a property of the **data**, so a run on that rung proceeds, finishes, reports that no
+baseline could be established, and draws no punchcard. Its answer frames keep their headers and carry
+no rows; the frames describing the run's structure are written in full.

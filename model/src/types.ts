@@ -1,12 +1,15 @@
 import type { ImportFileHandle, PlDataTableStateV2, PlRef } from "@platforma-sdk/model";
 
 /**
- * Which comparator a count is read against. Selected, never inferred: two runs answered by different
+ * Which baseline a count is read against. Selected, never inferred: two runs answered by different
  * rules produce numbers that do not compare, and a scientist who did not choose the rule cannot know
- * that happened. Undefined means the default for this panel: a declared reference tag where one exists,
- * and otherwise no comparator at all.
+ * that happened.
+ *
+ * There is no "none". A baseline is required and a run without one does not happen, so an unselected
+ * choice is undefined here and `args()` refuses it -- rather than a fourth value meaning "answer every
+ * position unreliable", which costs what a real run costs and looks like a result at a glance.
  */
-export type ReferenceSource = "declared" | "panel" | "distribution" | "none";
+export type ReferenceSource = "declared" | "panel" | "distribution";
 
 /**
  * How tags become identities. A RULE over declared properties, never a tag->identity map: a map is

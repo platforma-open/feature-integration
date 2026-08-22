@@ -486,11 +486,13 @@ MISMATCH_DIRECTIONS := string(json.encode(["declared-never-seen", "undeclared-in
 // In the DOMAIN, not the annotations. Two runs served by different comparators would otherwise emit
 // columns of identical identity and be silently unioned in a pool holding both, and a verdict read against
 // a declared reference tag is not the same reading as one read against the panel's own signal. `served` is
-// what emit_verdicts.py RESOLVED, not what was requested: it degrades to `none` where it cannot serve,
-// which is why it arrives from the run-meta JSON rather than from the block's arguments.
+// what emit_verdicts.py RESOLVED. It always equals what was requested, since a rung that cannot serve
+// refuses the run rather than falling to another, and it arrives from the run-meta JSON because that
+// record is also where a run that established no baseline says so.
 //
-// The domain value is the MACHINE token (`declared` / `panel` / `distribution` / `none`). Never put display
-// prose here: a domain value must outlive any wording.
+// The domain value is the MACHINE token (`declared` / `panel` / `distribution`). There is no `none`: a
+// baseline is required and a run without one does not happen. Never put display prose here: a domain
+// value must outlive any wording.
 servedDomain := func(served) {
 	return {
 		"pl7.app/antigen/referenceChoice": served.referenceChoice,

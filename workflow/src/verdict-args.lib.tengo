@@ -104,8 +104,9 @@ build := func(params) {
 	}
 	add("--reference-values", referenceValues)
 
-	// Which comparator was ASKED for. The run may serve "none" instead, never a different one, and what
-	// served is read back from the run record rather than from here.
+	// Which baseline was asked for, and the only one the run can be answered under: a rung that cannot
+	// serve refuses rather than falling to another, so nothing substitutes for this. What the run
+	// established is read back from the run record, which also says where no baseline could be.
 	if !is_undefined(params.referenceSource) && params.referenceSource != "" {
 		add("--reference-source", params.referenceSource)
 	}

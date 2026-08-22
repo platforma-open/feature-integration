@@ -15,7 +15,6 @@ import {
   CELL_PUNCH_COLUMN_NAME,
   PUNCH_COLUMN_NAME,
   PUNCH_IDENTITY_DOMAIN,
-  REFERENCE_SOURCE_LABELS,
   createPlDataTableStateV2,
 } from "@platforma-open/milaboratories.feature-integration.model";
 import { computed, ref } from "vue";
@@ -275,14 +274,16 @@ const expansionTitle = computed(() => resolveTitle(app.model.data.expandedSet?.[
 // is true today and does not dress it up as a property of the punchcard.
 const noDataset = computed(() => app.model.data.datasetRef === undefined);
 
-// What the run was actually answered under. The software degrades a comparator it cannot serve, so the
-// choice that SERVED is the only one worth stating: a reader meeting a grid of rings otherwise has nothing
-// telling them the comparator they asked for was never available.
+// What the run was actually answered under. A rung that cannot serve refuses the run rather than falling
+// to another, so what served always equals what was asked for -- and where no baseline could be
+// established at all, this record is what says so.
 const runMeta = computed(() => app.model.outputs.verdictRunMeta);
-// Compared against the machine token, never against a sentence. String-matching the display prose the
-// Python enum carries would let rewording that sentence for readability silently remove the warning below,
-// with nothing failing.
-const noComparator = computed(() => runMeta.value?.referenceChoice === "none");
+// A run that established no baseline read no verdicts, so no punchcard is drawn and this reason is shown
+// in its place. Only the tag-distribution rung reaches here: its conditions are properties of the data,
+// so the run had to proceed before it could learn them. Read from the boolean the record carries, never
+// from a string match -- rewording the reason must not silently remove the branch.
+const noBaseline = computed(() => runMeta.value?.baselineEstablished === false);
+const noBaselineReason = computed(() => runMeta.value?.noBaselineReason ?? "");
 // Whether the run carried panels that differ. `the-explore-readout` shows the per-identity
 // could-answer count only then, because only then does it vary: under one panel it is the clonotype's
 // own cell count at every identity, and the grid already carries that beside the name. Taken from the
@@ -307,19 +308,12 @@ const setAsideLine = computed(() => {
   const count = meta.cellsSetAsideBySet?.[String(key[0])] ?? 0;
   return `Cells set aside: ${count}. A set-aside cell answers nothing at any identity.`;
 });
-// Display wording comes from the model, which owns it for the pre-run dropdown too, so a comparator does
-// not change its name once it has served.
-const requestedLabel = computed(() =>
-  runMeta.value ? REFERENCE_SOURCE_LABELS[runMeta.value.referenceSourceRequested] : "",
-);
-const servedLabel = computed(() =>
-  runMeta.value ? REFERENCE_SOURCE_LABELS[runMeta.value.referenceChoice] : "",
-);
-const baselineDegraded = computed(
-  () =>
-    runMeta.value !== undefined &&
-    runMeta.value.referenceSourceRequested !== runMeta.value.referenceChoice,
-);
+// Which baseline served is NOT shown here, and does not need to be. Nothing substitutes for a rung
+// that cannot serve, so what served always equals what was asked for and the Settings field already
+// states it. More to the point, it travels with the verdicts structurally: `servedDomain` puts it in
+// the DOMAIN of every emitted column, so two runs answered under different baselines emit columns of
+// different identity and cannot be silently unioned in a pool holding both. A banner would be a
+// weaker copy of a guarantee the data already carries.
 
 // Tags the grouping column said nothing about stand as their own identity under a bare barcode. The
 // software reports this to stderr. A column a reader cannot place needs saying on the page too.
@@ -362,6 +356,16 @@ const nothingToOffer = computed(() => !noDataset.value && identityOptions.value.
       run again.
     </PlAlert>
 
+    <PlAlert v-else-if="noBaseline" type="warn">
+      {{ noBaselineReason }}
+      <br /><br />
+      No punchcard is drawn, because there are no verdicts to draw. Every reading is a comparison
+      against a baseline, so a run that established none produced no answers — and a grid where
+      every position read <b>unreliable</b> would cost what a real run costs while looking like a
+      result at a glance. Pick a baseline this run's data can support in Settings, or a sample with
+      more cells, and run again.
+    </PlAlert>
+
     <PlAlert v-else-if="nothingToOffer" type="info">
       This run produced no per-identity columns to draw. The punchcard costs one column per antigen
       identity, so it is emitted only for panels below the block's identity limit; a larger panel
@@ -369,17 +373,6 @@ const nothingToOffer = computed(() => !noDataset.value && identityOptions.value.
     </PlAlert>
 
     <template v-else>
-      <PlAlert v-if="noComparator" type="warn">
-        No baseline served this run, so every reading was taken against nothing and each punch is
-        drawn from a count alone. Treat the whole grid as unsettled.
-      </PlAlert>
-      <PlAlert v-else-if="baselineDegraded" type="warn">
-        The baseline that served was not the one requested: asked for
-        <b>{{ requestedLabel }}</b
-        >, served <b>{{ servedLabel }}</b
-        >. Every punch below was read against what served.
-      </PlAlert>
-
       <PlAlert v-if="ungroupedTags.length > 0" type="info">
         {{ ungroupedTags.length }} declared
         {{ ungroupedTags.length === 1 ? "barcode carries" : "barcodes carry" }} no value in the

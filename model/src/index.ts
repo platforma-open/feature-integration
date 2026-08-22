@@ -84,7 +84,6 @@ export const REFERENCE_SOURCE_LABELS: Record<ReferenceSource, string> = {
   declared: "Declared baseline tag",
   panel: "The panel's own readings",
   distribution: "Each tag's own distribution",
-  none: "No baseline",
 };
 
 // The run record emit_verdicts.py writes (result_run_meta.json), read as content. Only the fields the UI
@@ -97,6 +96,20 @@ export type VerdictRunMeta = {
    * a control-flow token.
    */
   referenceChoice: ReferenceSource;
+  /**
+   * Whether the run established a baseline, and where it did not, why.
+   *
+   * Only the tag-distribution rung can reach false. Its conditions — enough cells in the sample, and
+   * counts that actually separate — are properties of the DATA, so a run resting on it proceeds and
+   * reports afterwards. The other rungs are refused from the settings before anything is read, so a
+   * run that reaches this record was never one of those.
+   *
+   * False means the run finished and read no verdicts. The punchcard is not drawn, and the reason is
+   * shown in its place: a full grid of *unreliable* costs what a real run costs and looks like a
+   * result at a glance.
+   */
+  baselineEstablished: boolean;
+  noBaselineReason: string | null;
   /** The comparator that was ASKED for, so a degraded run can say what it lost. */
   referenceSourceRequested: ReferenceSource;
   referenceTags: string[];
@@ -310,22 +323,20 @@ export function groupingColumns(rule: GroupingRule | undefined): string[] {
  * exactly one place a rung comes from: `data.referenceSource`. Never derive it from what the panel can
  * serve.
  *
- * An unselected run is not refused. It is answered under the ladder's bottom rung, where no baseline
- * exists and every verdict that needs one reads UNRELIABLE — the identity was put to those cells and the
- * data cannot settle it. A cell-level comparison yields only bound or not bound, so where no baseline
- * exists there is no comparison, and *unreliable* marks its absence. The clonotype verdict follows: a
- * clonotype whose cells all read unreliable has no voters and reads unreliable itself. Not *not
- * evaluated* — that is a quality-measurement status, never a verdict state, and the two are opposite
- * claims.
+ * An unselected run IS refused, and undefined is what carries that. A baseline is required and a run
+ * without one does not happen: verdicts are what this block is for, so a configuration that could
+ * produce none is refused rather than run. There is no bottom rung answering every position
+ * *unreliable* — that output is honest and useless, costing what a real run costs while looking like a
+ * result at a glance. `args()` throws on undefined; this function only reports it.
  *
  * A stored choice is passed through even where this data cannot serve it, such as a declared tag whose
- * values were cleared. `served_source` in the software degrades such a request to no baseline and never
- * substitutes a different rung, and the run record states both what was asked for and what served.
- * Falling to a rung that can serve would be the block choosing one. Nothing here writes to `data`, so a
- * choice that becomes serviceable again revives on its own.
+ * values were cleared. The refusal then comes from `args()` where it can see the reason, and from the
+ * software otherwise — `served_source` names the condition that failed and never substitutes a rung
+ * that would serve, because falling to one would be the block choosing a scientist's methodology.
+ * Nothing here writes to `data`, so a choice that becomes serviceable again revives on its own.
  */
-export function resolveReferenceSource(data: BlockData): ReferenceSource {
-  return data.referenceSource ?? "none";
+export function resolveReferenceSource(data: BlockData): ReferenceSource | undefined {
+  return data.referenceSource;
 }
 
 // A/C/G/T plus N (ambiguous base), case-insensitive.
@@ -644,10 +655,38 @@ export const platforma = BlockModelV3.create(dataModel)
     // panel that declares no baseline leaves this column blank, the configuration
     // `292-no-declared-reference` protects.
     //
-    // The ONLY baseline gate, and it is about the ROLE COLUMN, never about which rung was chosen. An
-    // unselected rung is not an invalid state: it is answered under the ladder's bottom rung, where every
-    // verdict that needs a baseline reads unreliable and the run says so. Refusing to start would be this
-    // block deciding a scientist's methodology by withholding the run.
+    // A baseline is required, and a run without one does not happen. Verdicts are what this block is
+    // for, so a configuration that could produce none is refused rather than run — the alternative
+    // being a full punchcard of *unreliable*, which costs what a real run costs and looks like a result
+    // at a glance.
+    //
+    // Refused HERE, before anything is read, because which rung was chosen and whether a baseline tag
+    // is declared are properties of the settings. The scientist changes the configuration instead of
+    // waiting for a run to tell them, and the message names the condition that failed.
+    if (!data.referenceSource)
+      throw new Error(
+        "Choose what the counts are read against, under “Baseline”. Every verdict is a reading " +
+          "against a baseline, so a run without one produces no answers at all. Which baselines this " +
+          "panel can serve is listed with each option.",
+      );
+    if (data.referenceSource === "declared" && !data.roleColumn)
+      throw new Error(
+        "The declared-baseline option reads every count against one tag marked as the baseline, and no " +
+          "panel column is set to say which tag that is. Choose the column under “Column declaring " +
+          "each tag’s role”, or pick a different baseline.",
+      );
+    //
+    // The panel-size condition is NOT checked here and cannot be: it needs the count of distinct
+    // barcodes, which lives in the CSV metadata, and this projection must not read that (see the
+    // note on the staging projection below). The software refuses it instead, naming the same
+    // condition, and the `referenceSources` output marks the option unserviceable so a scientist
+    // meets it before running rather than after.
+    //
+    // The cell-count condition is not checked anywhere before the run, and cannot be: whether a
+    // sample holds enough cells whose counts separate is a property of the DATA. A run on that rung
+    // proceeds and reports afterwards that no baseline could be established.
+    //
+    // The gate below is about the ROLE COLUMN's VALUES rather than about which rung was chosen.
     if (data.roleColumn && !data.referenceValues?.length)
       throw new Error(
         `The panel column "${data.roleColumn}" declares each tag's role, but no value of it is marked ` +
@@ -1683,7 +1722,9 @@ export const platforma = BlockModelV3.create(dataModel)
   // projects, so the field cannot show one rule while the workflow receives another. Keep it that way:
   // the last divergence between a shown rung and a sent one came from two copies of one rule. The UI
   // reads it the way it reads any other output. Nothing writes back, so there is no hairpin.
-  .output("effectiveReferenceSource", (ctx): ReferenceSource => resolveReferenceSource(ctx.data))
+  .output("effectiveReferenceSource", (ctx): ReferenceSource | undefined =>
+    resolveReferenceSource(ctx.data),
+  )
   // The comparator sources this panel can serve, with a line for each it cannot. Both facts are knowable
   // before a run, from the panel metadata staging already emits: the panel's size is the count of
   // distinct barcodes, and a declared comparator needs a role column and values of it that the column
@@ -1753,21 +1794,11 @@ export const platforma = BlockModelV3.create(dataModel)
         `Pick this where your panel declares no baseline tag and is too small to stand in for one.`,
     });
 
-    // `none` IS offered, though requesting it guarantees a run with no answers. The ladder's bottom rung
-    // is a legitimate position, held in print by scientists who argue that a tag declared to be bound by
-    // nothing is not truly negative, and that a reference chosen that way lends false confidence. On
-    // that view the absence is a design choice, and a block that will not let a scientist state it is
-    // choosing for them. It is also what an unselected run is answered under, so withholding it would
-    // leave that state unnameable in the one control that is about it.
-    options.push({
-      value: "none",
-      label: "No baseline",
-      description:
-        "The block reads no count against anything. Every verdict that needs a baseline reads " +
-        "unreliable — the antigen was put to those cells and the data cannot settle it. The rest of " +
-        "the readout still stands: what the reads gave, what the panel and the reads disagree about, " +
-        "and how often clonotypes contradict themselves.",
-    });
+    // `none` is NOT offered, and there is no fourth option. A baseline is required and a run without
+    // one does not happen, so "no baseline" is not a position a scientist can select here — it is a
+    // configuration `args()` refuses. The published view that a tag declared to be bound by nothing is
+    // not truly negative is served by the two rungs that need no such tag, the panel's own readings and
+    // each tag's own distribution, rather than by an option that produces no answers.
 
     // What an unselected run is answered under. Nothing falls anywhere, so this states the consequence
     // of leaving the field alone rather than naming a fallback.
