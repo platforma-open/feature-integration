@@ -1,11 +1,10 @@
 """Emit the feature-barcode panel as a plain sequence list for mitool refine-tags
 whitelist correction (``-t FEATURE#file:panel.txt``).
 
-The panel is the user-provided tag->feature CSV's tag column: the
-authoritative set of feature barcodes. We write one barcode per line, deduplicated and
-sorted, so the output is deterministic (canonical) and the workflow's pure-template dedup
-stays stable. Only the standard library is used -- no polars -- so this stays a trivial,
-fast pre-step.
+The panel is the tag column of the user's tag->feature CSV: the authoritative set of
+feature barcodes. One barcode per line, deduplicated and sorted, so the output is
+canonical and the workflow's pure-template dedup stays stable. Standard library only, so
+this stays a trivial, fast pre-step.
 """
 
 import argparse
@@ -26,9 +25,8 @@ def main() -> None:
                 f"column {args.tag_col!r} not found in {args.tag_feature_csv} (columns: {reader.fieldnames})"
             )
         # `or ""` rather than a get() default: a short row's missing columns are
-        # present-and-None in DictReader's output, not absent, so the default never
-        # fires and .strip() met None. One malformed line of a user-supplied CSV
-        # took the whole run down with a traceback.
+        # present-and-None in DictReader's output, not absent, so the default never fires
+        # and .strip() met None. One malformed line took the whole run down.
         seqs = {seq for seq in ((row.get(args.tag_col) or "").strip() for row in reader) if seq}
 
     if not seqs:

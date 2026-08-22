@@ -71,8 +71,8 @@ const cellStyle: CSSProperties = {
 // really is machine values. Mapping these would be a second copy of wording that already exists, and one
 // that silently stops matching once it is reworded.
 //
-// Prefixed rather than capitalised. PunchCell capitalises each line at the source, and its comment says why
-// a blanket transform is wrong: it would also capitalise the antigen name, which is panel data.
+// Prefixed rather than capitalised. PunchCell capitalises each line at the source, and its comment says why a
+// blanket transform is wrong: it would also capitalise the antigen name, which is panel data.
 
 const EXPLANATION: Record<VerdictState, string> = {
   bound: "Green: this cell read the antigen as bound against the baseline that served",

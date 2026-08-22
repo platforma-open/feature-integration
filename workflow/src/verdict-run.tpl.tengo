@@ -1,16 +1,15 @@
 // The verdict exec, and nothing else.
 //
-// Split from the import (verdict-import.tpl.tengo) because the software decides which comparator SERVED
-// the run, not the request: reference_by_cell degrades a declared choice to none where the panel carries no
-// reference tag, and a panel choice to none below the minimum membership. That choice belongs in the
-// emitted columns' domain, so the specs have to be built from the run record, and reading a value an exec
-// has not yet produced needs a template boundary. Specs built here would record what was asked for.
+// Split from the import (verdict-import.tpl.tengo) because the software decides which comparator SERVED the
+// run, not the request: reference_by_cell degrades a declared choice to none where the panel carries no
+// reference tag, and a panel choice to none below the minimum membership. That choice belongs in the emitted
+// columns' domain, so the specs have to be built from the run record, and reading a value an exec has not
+// yet produced needs a template boundary.
 //
-// Ephemeral rather than pure because it resolves a PColumnBundle, whose data this template awaits. That
-// wait happens HERE and not in main's prepare. Prepare's bundle is awaited in full, spec and data, before
-// the body runs, so a linker there would hold the entire per-sample mitool fan-out behind the whole
-// clonotyping chain: two chains that run concurrently, serialized, with nothing surfacing it until a real
-// dataset.
+// Ephemeral rather than pure because it resolves a PColumnBundle, whose data this template awaits. That wait
+// happens HERE and not in main's prepare: prepare's bundle is awaited in full, spec and data, before the
+// body runs, so a linker there would hold the entire per-sample mitool fan-out behind the whole clonotyping
+// chain -- two chains that run concurrently, serialized, with nothing surfacing it until a real dataset.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
@@ -74,9 +73,9 @@ self.body(func(inputs) {
 	linkerCsv.setAxisHeader(linkerAxes[2].name, "setId")
 	linkerCsv.cpu(1)
 	// Flat, and it scales with the total cell count of the run: every cell of every sample appears once. The
-	// csv builder's `mem` takes a plain amount rather than one of the sizing formulas the exec below uses,
-	// so this cannot track its input. Raised to the exec's own 16 GiB floor rather than left at 8. Not
-	// observed failing, and stated so a future OOM here is recognised rather than re-diagnosed.
+	// csv builder's `mem` takes a plain amount rather than one of the sizing formulas the exec below uses, so
+	// this cannot track its input. Raised to the exec's own 16 GiB floor rather than left at 8. Not observed
+	// failing, and stated so a future OOM here is recognised rather than re-diagnosed.
 	linkerCsv.mem("16GiB")
 	linkerCsvFile := linkerCsv.build()
 
@@ -103,9 +102,9 @@ self.body(func(inputs) {
 		addFile(va.FILE_PANEL, inputs.panelFile).
 		addFile(va.FILE_LINKER, linkerCsvFile)
 
-	// The per-sample read QC. Without it readsTotal, panelAssignedFraction and readsPerCell have no source
-	// and read "not evaluated", silently, because a non-evaluation is a legitimate state rather than an
-	// error. readsPerCell is the only sequencing-depth alert the block ships.
+	// The per-sample read QC. Without it readsTotal, panelAssignedFraction and readsPerCell have no source and
+	// read "not evaluated", silently, because a non-evaluation is a legitimate state rather than an error.
+	// readsPerCell is the only sequencing-depth alert the block ships.
 	if params.hasQcSummary {
 		b = b.addFile(va.FILE_QC_SUMMARY, inputs.qcSummaryFile)
 	}
@@ -118,8 +117,8 @@ self.body(func(inputs) {
 	}
 	run := b.saveFileContent("result_run_meta.json").run()
 
-	// The run record travels as content because the import template reads it as a VALUE. The tables travel
-	// as files because the import template hands them to xsv.importFile. An exec result object is not
+	// The run record travels as content because the import template reads it as a VALUE. The tables travel as
+	// files because the import template hands them to xsv.importFile. An exec result object is not
 	// serializable as a template output, so each table is returned on its own field.
 	result := { runMeta: run.getFileContent("result_run_meta.json") }
 	for table in RESULT_TABLES {

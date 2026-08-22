@@ -107,9 +107,9 @@ def test_the_same_cell_id_in_two_samples_empties_independently():
 
 
 def test_a_disabled_floor_is_a_no_op_even_for_a_zero_reading():
-    # floor <= 0 returns early, and that early return is behavioural rather
-    # than an optimisation: falling through would count a cell whose only
-    # reading is already 0 as "emptied", when the floor removed nothing.
+    # floor <= 0 returns early, and that early return is behavioural rather than an optimisation.
+    # Falling through would count a cell whose only reading is already 0 as "emptied", when the floor
+    # removed nothing.
     df = _counts([("S1", "c1", "AAAA", 0)])
     out, stats = apply_floor(df, floor=0, reference_tags=set())
     assert out["umiCount"].to_list() == [0]
@@ -124,27 +124,25 @@ def test_an_empty_frame_floors_to_nothing():
 
 
 def test_a_reading_that_was_already_zero_still_counts_as_evidence_lost():
-    # Pins the deliberate asymmetry between had_evidence and kept_evidence.
-    # had_evidence must NOT filter on > 0: on the sparse frame this step is
-    # contracted to receive, every row is an observed reading, so a row's
-    # existence is what makes a cell one that had evidence. Adding "> 0" to
-    # had_evidence is a no-op on real input and silently changes this count
-    # once densified zeros exist — which is the reason densify runs after.
+    # Pins the deliberate asymmetry between had_evidence and kept_evidence. had_evidence must NOT
+    # filter on > 0: on the sparse frame this step is contracted to receive, every row is an observed
+    # reading, so a row's existence is what makes a cell one that had evidence. Adding "> 0" to
+    # had_evidence is a no-op on real input and silently changes this count once densified zeros
+    # exist, which is the reason densify runs after.
     df = _counts([("S1", "c1", "AAAA", 0)])
     _, stats = apply_floor(df, floor=4, reference_tags=set())
     assert stats["cellsEmptied"] == 1
 
 
 def test_nothing_here_picks_a_rung():
-    # `what-plays-the-baseline` requires the scientist to select among the rungs
-    # and requires that nothing selects for them.
+    # `what-plays-the-baseline` requires the scientist to select among the rungs and requires that
+    # nothing selects for them.
     #
-    # A tripwire rather than a permanent ban, the same shape as the empty-droplets
-    # one below: wanting a default again should be a deliberate act that deletes
-    # this test, not a helper that reappears in the layer furthest from the
-    # reader. The workflow omits --reference-source where the model's value is
-    # empty, so anything here that could pick a rung becomes the live rule the
-    # moment the model stops picking one.
+    # A tripwire rather than a permanent ban, the same shape as the empty-droplets one below: wanting
+    # a default again should be a deliberate act that deletes this test, not a helper that reappears
+    # in the layer furthest from the reader. The workflow omits --reference-source where the model's
+    # value is empty, so anything here that could pick a rung becomes the live rule the moment the
+    # model stops picking one.
     import verdict
 
     assert not hasattr(verdict, "resolve_default_source")
@@ -178,14 +176,13 @@ def test_empty_droplets_is_not_offered():
 
 
 def test_several_reference_tags_are_refused_rather_than_combined():
-    # Never take the highest of them: `baseline-scope` states that references are
-    # never combined, and taking the highest is a combination.
+    # Never take the highest of them: `baseline-scope` states that references are never combined, and
+    # taking the highest is a combination.
     #
-    # Refused rather than given a different rule, because the atom's construct
-    # scopes each reference to a group of antigens by a declared property, and
-    # this version of the block has no group-by half, so it cannot say WHICH
-    # antigens a second comparator belongs to. It is also what the field does:
-    # the ordinary antibody run rejects a second control outright.
+    # Refused rather than given a different rule, because the atom's construct scopes each reference
+    # to a group of antigens by a declared property, and this version of the block has no group-by
+    # half. So it cannot say WHICH antigens a second comparator belongs to. It is also what the field
+    # does: the ordinary antibody run rejects a second control outright.
     counts = _counts([("S1", "c1", "CTRL1", 3), ("S1", "c1", "CTRL2", 11)])
     with pytest.raises(SystemExit, match="declares 2 baseline tags"):
         reference_by_cell(counts, {"CTRL1", "CTRL2"}, ReferenceChoice.DECLARED)
@@ -201,10 +198,9 @@ def test_one_reference_tag_still_serves():
 
 
 def test_several_reference_tags_do_not_block_a_rung_that_does_not_use_them():
-    # The refusal is scoped to the rung that reads a declared tag AS the
-    # comparator. Under the panel rung several declared tags are just readings
-    # in the median, which is well defined however many there are -- refusing
-    # there would withdraw a run over a question that does not arise in it.
+    # The refusal is scoped to the rung that reads a declared tag AS the comparator. Under the panel
+    # rung several declared tags are just readings in the median, which is well defined however many
+    # there are. Refusing there would withdraw a run over a question that does not arise in it.
     counts = _counts([("S1", "c1", "CTRL1", 3), ("S1", "c1", "CTRL2", 11), ("S1", "c1", "AAAA", 9)])
     _, choice = reference_by_cell(counts, {"CTRL1", "CTRL2"}, ReferenceChoice.PANEL, panel_size=25, min_members=25)
     assert choice is ReferenceChoice.PANEL
@@ -226,16 +222,14 @@ def test_a_declared_rung_with_no_declared_tag_refuses():
 
 
 def test_shipped_defaults_are_pinned():
-    # These are user-facing numbers that appear in a dropdown and change what
-    # the block produces, so an edit to any of them must be a deliberate,
-    # visible act — not a silent one that only this test would otherwise
-    # catch. The high-reference line is not calibrated against real data.
+    # These are user-facing numbers that appear in a dropdown and change what the block produces, so
+    # an edit to any of them must be a deliberate, visible act -- not a silent one that only this test
+    # would otherwise catch. The high-reference line is not calibrated against real data.
     #
-    # The panel minimum is different in kind: it GATES the rung rather than
-    # tuning it, and it comes from one preprint whose own panels held fifty and
-    # a hundred members. It was 8, which no source supports. At 25 the rung is
-    # out of reach of any antibody panel, since those kits cap at fifteen tags,
-    # and such a panel falls to the tag-distribution rung instead.
+    # The panel minimum is different in kind: it GATES the rung rather than tuning it, and it comes
+    # from one preprint whose own panels held fifty and a hundred members. It was 8, which no source
+    # supports. At 25 the rung is out of reach of any antibody panel, since those kits cap at fifteen
+    # tags, and such a panel falls to the tag-distribution rung instead.
     assert DEFAULT_PANEL_MIN_MEMBERS == 25
     assert DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE == 100
 
@@ -257,10 +251,10 @@ def test_panel_source_refuses_one_below_the_minimum():
 
 
 def test_the_gate_boundary_includes_the_line_itself():
-    # A reading exactly at the threshold is high: the named value satisfies the
-    # condition it names, matching the floor (a count of exactly `floor` is
-    # evidence) and the panel minimum (exactly `min_members` is large enough).
-    # Both sides are pinned so that changing the comparison is a deliberate act.
+    # A reading exactly at the threshold is high: the named value satisfies the condition it names.
+    # This matches the floor, where a count of exactly `floor` is evidence, and the panel minimum,
+    # where exactly `min_members` is large enough. Both sides are pinned so that changing the
+    # comparison is a deliberate act.
     at_line = {("S1", "c1"): 100}
     just_below = {("S1", "c2"): 99}
     aside_at, high_at = gate_cells(at_line, threshold=100, observation_line=100)
@@ -322,11 +316,10 @@ def test_the_panel_comparator_is_the_median_not_the_mean():
 
 
 def test_the_panel_median_truncates_rather_than_rounds():
-    # A median of 1.5 is the value that separates the two: truncation gives 1,
-    # and polars' round-half-to-even gives 2. At a median of 2.5 both give 2,
-    # so a fixture there cannot tell them apart — and the difference matters,
-    # because a comparator of 1 and one of 2 give different scores. Truncation is
-    # the behaviour. This pins it.
+    # A median of 1.5 is the value that separates the two: truncation gives 1, and polars'
+    # round-half-to-even gives 2. At a median of 2.5 both give 2, so a fixture there cannot tell them
+    # apart. The difference matters, because a comparator of 1 and one of 2 give different scores.
+    # Truncation is the behaviour. This pins it.
     counts = _counts(
         [
             ("S1", "c1", "AAAA", 1),
@@ -349,9 +342,9 @@ def test_an_explicit_empty_cell_list_means_no_cells():
 
 
 def test_cells_outside_the_given_list_are_excluded():
-    # The cell list is the analysis. A cell with a real reference reading that
-    # is not in it has a comparator nobody will consult, and returning it would
-    # invite a reader to treat the result as the cell universe.
+    # The cell list is the analysis. A cell with a real reference reading that is not in it has a
+    # comparator nobody will consult, and returning it would invite a reader to treat the result as
+    # the cell universe.
     counts = _counts([("S1", "c1", "CTRL", 7), ("S1", "c2", "CTRL", 9)])
     ref, _ = reference_by_cell(counts, {"CTRL"}, ReferenceChoice.DECLARED, cells=[("S1", "c1")])
     assert ref == {("S1", "c1"): 7}
@@ -436,10 +429,10 @@ def test_zero_reads_not_bound_never_unreliable():
 
 
 def test_a_very_low_comparator_is_scored_rather_than_rerouted():
-    # `count-becomes-a-state` deleted the thin-reference branch rather than filling
-    # it in: no published line separates thin from usable, so the comparison runs
-    # and the reference reading is emitted for the reader to judge instead. A
-    # comparator of 1 is a real comparison, and the score decides it like any other.
+    # `count-becomes-a-state` deleted the thin-reference branch rather than filling it in. No
+    # published line separates thin from usable, so the comparison runs and the reference reading is
+    # emitted for the reader to judge instead. A comparator of 1 is a real comparison, and the score
+    # decides it like any other.
     out = read_states(_ident([("S1", "c1", "A", 50)]), Admissibility({("S1", "c1"): 1}, set()), 75.0)
     assert out["state"].to_list() == [State.NOT_BOUND.value]  # scores 58.4, under the cutoff
     assert out["unreliableReason"].to_list() == [None]
@@ -453,10 +446,9 @@ def test_gated_cell_is_unreliable_and_stays_in_the_frame():
 
 
 def test_a_gated_cell_reports_the_gate_even_when_its_reference_is_very_low():
-    # The gate set this cell aside AND its comparator reads 1. A very low
-    # comparator is no longer a reason on its own, so only the gate can be
-    # reported -- but the reason is an exported column that a later step reads to
-    # tell a panel problem from a re-run problem, so this pins that the gate is
+    # The gate set this cell aside AND its comparator reads 1. A very low comparator is no longer a
+    # reason on its own, so only the gate can be reported. But the reason is an exported column that a
+    # later step reads to tell a panel problem from a re-run problem, so this pins that the gate is
     # what it says. A cell the gate set aside was not measured at all.
     out = read_states(_ident([("S1", "c1", "A", 500)]), Admissibility({("S1", "c1"): 1}, {("S1", "c1")}), 75.0)
     assert out["state"].to_list() == [State.UNRELIABLE.value]
@@ -490,12 +482,11 @@ def test_specificity_score_stays_within_zero_and_hundred_at_sample_points():
 
 
 def test_a_score_exactly_at_the_cutoff_is_bound():
-    # The named value satisfies the condition it names, as everywhere else here.
-    # Integer counts have no rational preimage of a fixed cutoff like 75.0 under
-    # the beta CDF, so the exact boundary is built the other way round: compute
-    # a reading's own score, then feed that exact value back in as the cutoff.
-    # The comparison then lands on the line with no floating-point drift, and
-    # ">=" must call it bound.
+    # The named value satisfies the condition it names, as everywhere else here. Integer counts have
+    # no rational preimage of a fixed cutoff like 75.0 under the beta CDF, so the exact boundary is
+    # built the other way round: compute a reading's own score, then feed that exact value back in as
+    # the cutoff. The comparison then lands on the line with no floating-point drift, and ">=" must
+    # call it bound.
     exact = specificity_score(10, 2)
     out = read_states(_ident([("S1", "c1", "A", 10)]), Admissibility({("S1", "c1"): 2}, set()), cutoff=exact)
     assert out["state"].to_list() == [State.BOUND.value]
@@ -514,12 +505,11 @@ def test_no_line_separates_a_thin_comparator_from_a_usable_one():
 
 
 def test_no_comparator_is_unreliable_but_a_comparator_reading_zero_is_scored():
-    # The two must not collapse. served=NONE (modelled here as an empty
-    # reference dict, per reference_by_cell's contract) means no comparison
-    # existed. A comparator present and reading 0 is a real comparison and
-    # scores normally -- a positive antigen count against a zero reference is
-    # This also subsumes the plain no-comparator-is-unreliable check: nothing
-    # else in the suite needs a weaker, reason-blind version of this.
+    # The two must not collapse. served=NONE, modelled here as an empty reference dict per
+    # reference_by_cell's contract, means no comparison existed. A comparator present and reading 0 is
+    # a real comparison and scores normally: a positive antigen count against a zero reference is
+    # This also subsumes the plain no-comparator-is-unreliable check. Nothing else in the suite needs
+    # a weaker, reason-blind version of this.
     no_comparator = read_states(_ident([("S1", "c1", "A", 200)]), Admissibility({}, set()), 75.0)
     zero_comparator = read_states(_ident([("S1", "c1", "A", 200)]), Admissibility({("S1", "c1"): 0}, set()), 75.0)
     assert no_comparator["state"].to_list() == [State.UNRELIABLE.value]
@@ -554,12 +544,11 @@ def test_duplicated_cells_rows_give_the_deduped_answer():
 
 
 def test_duplicated_observed_rows_are_rejected_not_silently_wrong():
-    # Recorded rather than latent: without the assertion in silent_tally, this
-    # combination silently returned silentUnreliable == -1 (a duplicated
-    # observed row for an inadmissible cell is counted twice against a total
-    # that counts the cell once). `observed` must be unique on
-    # (cell, identity). This input violates that, so the function must now
-    # refuse it loudly instead of emitting a negative count.
+    # Recorded rather than latent: without the assertion in silent_tally, this combination silently
+    # returned silentUnreliable == -1. A duplicated observed row for an inadmissible cell is counted
+    # twice against a total that counts the cell once. `observed` must be unique on (cell, identity).
+    # This input violates that, so the function must now refuse it loudly instead of emitting a
+    # negative count.
     cells = _cells([("S1", "c1")])
     admissibility = Admissibility({}, set())  # no comparator for c1: inadmissible
     observed = read_states(_ident([("S1", "c1", "A", 50), ("S1", "c1", "A", 50)]), admissibility, 75.0)
@@ -607,12 +596,10 @@ def _build_silent_tally_population(seed, force_empty_sample=None):
             # sample offered actually got a tag-stat row.
             for identity in offered_by_sample[sample]:
                 if rng.random() < 0.5:
-                    # Some readings must actually clear the cutoff. Against
-                    # references of 2-20 the largest score a count of 30 can
-                    # reach is about 11.8, so a population drawn only from
-                    # 0-30 contains no bound cell at all -- and the oracle
-                    # comparison's bound assertion below then reads 0 == 0 in
-                    # every run, proving nothing about the claim it names.
+                    # Some readings must actually clear the cutoff. Against references of 2-20 the
+                    # largest score a count of 30 can reach is about 11.8, so a population drawn only
+                    # from 0-30 contains no bound cell at all. The oracle comparison's bound assertion
+                    # below then reads 0 == 0 in every run, proving nothing about the claim it names.
                     count = rng.randint(0, 30) if rng.random() < 0.7 else rng.randint(200, 900)
                     tag_rows.append((sample, cell, identity, count))
 
@@ -685,10 +672,9 @@ def _check_silent_tally_matches_oracle(seed, cutoff=BOUND_CUTOFF, force_empty_sa
         (4, None),
         (5, None),
         (6, None),
-        # The generator above never draws an empty offered set on its own;
-        # force one so the empty-block path in densify and the zero-row case
-        # in silent_tally are both exercised against the oracle, not just
-        # against each other.
+        # The generator above never draws an empty offered set on its own. Force one so the
+        # empty-block path in densify and the zero-row case in silent_tally are both exercised against
+        # the oracle, not just against each other.
         (7, "S2"),
     ],
 )
@@ -705,14 +691,13 @@ def test_silent_tally_agrees_with_the_oracle_at_a_low_valid_cutoff():
 
 
 def _check_silent_tally_matches_oracle_grouped(seed, cutoff=BOUND_CUTOFF, force_empty_sample=None):
-    # Same population and same dense oracle as the sample-keyed check above,
-    # but the cells are regrouped into sets that mix samples with different
-    # offered identities, and silent_tally is called with that grouping. A
-    # set's cell index (0..5) becomes its group, independent of sample, so
-    # every group is guaranteed to contain a member from all three samples
-    # -- exactly the shape a hoisted asked/total_inadmissible would get
-    # wrong, since S1, S2, S3 are built with independently random offered
-    # sets and need not agree on what a given group's identity was offered.
+    # Same population and same dense oracle as the sample-keyed check above, but the cells are
+    # regrouped into sets that mix samples with different offered identities, and silent_tally is
+    # called with that grouping. A set's cell index (0..5) becomes its group, independent of sample,
+    # so every group is guaranteed to contain a member from all three samples. That is exactly the
+    # shape a hoisted asked/total_inadmissible would get wrong, since S1, S2 and S3 are built with
+    # independently random offered sets and need not agree on what a given group's identity was
+    # offered.
     samples, identities, gated, reference, cell_rows, tag_rows, offered_by_sample = _build_silent_tally_population(
         seed, force_empty_sample
     )
@@ -743,9 +728,9 @@ def _check_silent_tally_matches_oracle_grouped(seed, cutoff=BOUND_CUTOFF, force_
                 continue
 
             def _states_for(frame):
-                # A plain Python filter, not a polars struct comparison: this
-                # only needs to run over a handful of rows in a test, and it
-                # sidesteps any doubt about how polars compares struct columns.
+                # A plain Python filter, not a polars struct comparison. This only needs to run over
+                # a handful of rows in a test, and it sidesteps any doubt about how polars compares
+                # struct columns.
                 return [
                     state
                     for sample_id, cell_id, ident, state in zip(
@@ -854,29 +839,27 @@ def test_a_global_panel_entry_applies_to_every_sample_when_combining():
 
 
 def test_an_explicit_per_sample_declaration_beats_the_global_one():
-    # A panel mixing "*" with named rows is refused by the reader, but the fill order is pinned here
-    # so a caller building a frame directly cannot silently get the global answer for a named sample.
+    # A panel mixing "*" with named rows is refused by the reader. The fill order is pinned here so a
+    # caller building a frame directly cannot silently get the global answer for a named sample.
     df = _counts([("S1", "c1", "AAAA", 5)])
     out = combine_tags_to_identities(df, {("AAAA", "*"): "GLOBAL", ("AAAA", "S1"): "MINE"})
     assert out["identity"].to_list() == ["MINE"]
 
 
 def test_the_comparator_is_computed_on_raw_counts_not_floored_ones(tmp_path):
-    """The minimum count acts on the numerator only; every rung reads its own source raw.
+    """The minimum count acts on the numerator only. Every rung reads its own source raw.
 
-    The bug this pins was at the call site, not in this module: production
-    handed `reference_by_cell` the FLOORED frame. Two consequences, and the
-    second is the sharper one.
+    The bug this pins was at the call site, not in this module: production handed `reference_by_cell`
+    the FLOORED frame. Two consequences, and the second is the sharper one.
 
-    A cell whose panel readings straddle the minimum medians differently before
-    and after: [1, 1, 2, 9, 9] medians to 2, and the same readings floored at 4
-    are [0, 0, 0, 9, 9], which medians to 0. A comparator of 0 rather than 2
-    moves every one of that cell's verdicts toward *bound*.
+    A cell whose panel readings straddle the minimum medians differently before and after:
+    [1, 1, 2, 9, 9] medians to 2, and the same readings floored at 4 are [0, 0, 0, 9, 9], which
+    medians to 0. A comparator of 0 rather than 2 moves every one of that cell's verdicts toward
+    *bound*.
 
-    And the median was internally inconsistent wherever a reference tag was
-    also present, because the minimum exempts reference tags and floors every
-    antigen tag — so a single median ran over a mixture of raw and floored
-    values. Nobody chose that.
+    And the median was internally inconsistent wherever a reference tag was also present, because the
+    minimum exempts reference tags and floors every antigen tag. So a single median ran over a mixture
+    of raw and floored values. Nobody chose that.
     """
     raw = _counts(
         [

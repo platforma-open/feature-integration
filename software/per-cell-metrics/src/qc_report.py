@@ -1,10 +1,9 @@
 """Per-sample QC summary for the Feature Integration block.
 
-One row per sample: read-level metrics from mitool's parse JSON report (parseReport.total/.matched),
-cell/feature/UMI metrics from the tag-stat TSV, and the panel-assigned fraction from the refine-tags
-JSON report (the FEATURE correction step's outputCount / inputCount — the fraction of reads kept after
-correcting the feature barcode against the panel whitelist). panelAssignedFraction is left blank only
-when no refine report is available. Stdlib + polars only.
+One row per sample: read-level metrics from mitool's parse JSON report
+(parseReport.total/.matched), cell/feature/UMI metrics from the tag-stat TSV, and the
+panel-assigned fraction from the refine-tags JSON report. panelAssignedFraction is left
+blank only when no refine report is available. Stdlib and polars only.
 """
 
 import argparse
@@ -37,14 +36,13 @@ def _parse_report(path: str) -> tuple[int, int]:
 def _refine_assigned_fraction(path: str | None, feature_tag: str = "FEATURE") -> float | None:
     """Panel-assigned fraction from the refine-tags JSON report.
 
-    The feature refine step corrects each feature barcode against the panel whitelist and drops reads
-    whose barcode is not within correction distance of any panel entry. The panel-assigned fraction is
-    that step's ``outputCount / inputCount`` — the fraction of reads entering feature correction that
-    were kept (assigned to a panel feature). ``feature_tag`` is the mitool tag name to match against the
-    report's per-step ``tagName``.
+    The feature refine step corrects each barcode against the panel whitelist and drops reads
+    whose barcode is not within correction distance of any entry. The fraction is that step's
+    ``outputCount / inputCount`` -- the share of reads entering correction that were kept.
+    ``feature_tag`` is the mitool tag name to match against the report's ``tagName``.
 
-    Returns None (blank in the CSV) when the report is absent/unreadable, carries no matching step, or
-    that step has zero input reads, so QC never crashes on a missing or edge-case report.
+    Returns None, blank in the CSV, when the report is absent or unreadable, carries no
+    matching step, or that step has zero input reads. QC never crashes on an edge-case report.
     """
     if not path:
         return None
@@ -60,8 +58,8 @@ def _refine_assigned_fraction(path: str | None, feature_tag: str = "FEATURE") ->
             if not input_count:
                 return None
             return step.get("outputCount", 0) / input_count
-    # A report with steps but none matching the feature tag means the report schema or tag naming
-    # drifted from what we expect — surface it rather than silently blanking the metric for every sample.
+    # A report with steps but none matching the feature tag means the schema or tag naming
+    # drifted. Surface it rather than silently blanking the metric for every sample.
     if steps:
         print(
             f"[qc-report] refine report has no {feature_tag!r} step "
@@ -85,10 +83,9 @@ def main() -> None:
 
     total, matched = _parse_report(args.parse_report)
     stat = pl.read_csv(args.tag_stat_tsv, separator="\t")
-    # A header-only tag-stat (a sample whose reads were all dropped -- e.g. every read off-panel) has no
-    # data rows, so polars infers every column as String. Coerce the UMI-count column to a numeric type
-    # up front, otherwise .sum()/.median() below raise on String arithmetic. On a populated file the
-    # column is already integer and this cast is a no-op. Mirrors per_cell_metrics._load.
+    # A header-only tag-stat (every read dropped) has no data rows, so polars infers String
+    # for every column. Coerce here, or .sum()/.median() below raise on String arithmetic.
+    # Mirrors per_cell_metrics._load.
     stat = stat.with_columns(pl.col(args.umi_col).cast(pl.Int64))
 
     cells = int(stat[args.cell_col].n_unique())
@@ -114,8 +111,8 @@ def main() -> None:
         w.writeheader()
         w.writerow(row)
 
-    # Also emit the row as JSON so the model can read per-sample QC (getDataAsJson) to build the block's
-    # live "Analysis logs" — the per-sample completed count (heartbeat) and the run-level summary.
+    # Also emit the row as JSON so the model can read per-sample QC (getDataAsJson) to build
+    # the block's live "Analysis logs": the per-sample completed count and the run summary.
     with open("result_qc.json", "w") as jf:
         json.dump(row, jf)
 

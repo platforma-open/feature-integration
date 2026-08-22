@@ -4,11 +4,11 @@ Run from this directory:  python generate.py
 
 The bed mirrors the output of `mitool tag-stat -t CELL -t FEATURE -u UMI`: one row per
 (cell, feature-barcode) group, columns `CELL FEATURE count totalWeight unique_UMI`, ordered by the
-distinct-UMI count descending. `unique_UMI` is the distinct-molecule count mitool computes; `count`
-(raw read occurrences) is deliberately larger than `unique_UMI` so the tests prove the metrics read
-the deduplicated `unique_UMI` column, not the raw read count.
+distinct-UMI count descending. `unique_UMI` is the distinct-molecule count mitool computes. `count`,
+the raw read occurrences, is deliberately larger than `unique_UMI` so the tests prove the metrics read
+the deduplicated `unique_UMI` column and not the raw read count.
 
-It is intentionally tiny and hand-designed so per-cell metrics are hand-computable (on unique_UMI):
+It is intentionally tiny and hand-designed so per-cell metrics are hand-computable, on unique_UMI:
   cell1 -> dominant on AGX (3 vs 1 UMIs, 0.75 share)
   cell2 -> ambiguous (1/1/1 across AGX/BGX/CTRL)
   cell3 -> single feature AGX (2 UMIs)

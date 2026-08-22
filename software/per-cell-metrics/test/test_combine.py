@@ -33,9 +33,9 @@ def _row(out, identity):
     return out.filter(pl.col("identity") == identity).row(0, named=True)
 
 
-# A permissive admissibility used by every test whose cells all have an
-# explicit row in `states` -- no cell is silent, so asked == observed for
-# every identity and the silent terms are 0 regardless of what this holds.
+# A permissive admissibility used by every test whose cells all have an explicit row in `states`. No
+# cell is silent, so asked == observed for every identity and the silent terms are 0 regardless of
+# what this holds.
 _NEUTRAL = Admissibility({}, set())
 
 
@@ -99,12 +99,11 @@ def test_an_offered_identity_nobody_bound_is_not_bound_not_never_asked():
 
 
 def test_silent_cells_vote_an_antigen_every_cell_failed_still_reads_not_bound():
-    # The defect this reduction exists to avoid: five cells asked about A,
-    # none has a row in `states` at all (tag-stat never observed a reading
-    # for any of them), and all five are admissible. Silent admissible cells
-    # resolve not bound, so the set must read not bound with all five voting
-    # -- never unreliable (which is what happens if silent cells are simply
-    # excluded from the tally) and never never-asked.
+    # The defect this reduction exists to avoid: five cells asked about A, none has a row in `states`
+    # at all, because tag-stat never observed a reading for any of them, and all five are admissible.
+    # Silent admissible cells resolve not bound, so the set must read not bound with all five voting.
+    # Never unreliable, which is what happens if silent cells are simply excluded from the tally, and
+    # never never-asked.
     df = _states([])
     members = [("S1", f"c{i}") for i in range(5)]
     cells_by_set = {"s1": members}
@@ -176,12 +175,11 @@ def test_just_below_min_agreement_is_below_agreement_floor_not_tie():
 
 
 def test_a_genuine_tie_still_reads_tie_even_when_min_agreement_would_also_fail_it():
-    # A fixture-coincidence trap: a tie's agreement is exactly 0.5, so any
-    # min_agreement above 0.5 would ALSO fail it, and a fixture where both
-    # conditions hold cannot tell which branch produced the answer. Raise
-    # min_agreement to 0.6 on the same 1-vs-1 tie from test_a_tie_cannot_be_settled
-    # and confirm the reason is still TIE, not BELOW_AGREEMENT_FLOOR -- the
-    # tie check must run and win regardless of where the floor sits.
+    # A fixture-coincidence trap: a tie's agreement is exactly 0.5, so any min_agreement above 0.5
+    # would ALSO fail it, and a fixture where both conditions hold cannot tell which branch produced
+    # the answer. Raise min_agreement to 0.6 on the same 1-vs-1 tie from test_a_tie_cannot_be_settled
+    # and confirm the reason is still TIE, not BELOW_AGREEMENT_FLOOR. The tie check must run and win
+    # regardless of where the floor sits.
     df = _states([("S1", "c1", "A", B), ("S1", "c2", "A", N)])
     cells_by_set = {"s1": [("S1", "c1"), ("S1", "c2")]}
     r = _row(combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL, min_agreement=0.6), "A")
@@ -190,11 +188,10 @@ def test_a_genuine_tie_still_reads_tie_even_when_min_agreement_would_also_fail_i
 
 
 def test_set_with_every_cell_set_aside_is_unreliable_through_the_real_pipeline():
-    # Driven through read_states, not fed a synthetic UNRELIABLE row: a gate
-    # excludes both of this set's cells, read_states produces the real
-    # UNRELIABLE rows from that, and combine_cells must still resolve the
-    # set to unreliable, reason all-cells-gated -- derived from the cells'
-    # own UnreliableReason.GATED, not hard-coded.
+    # Driven through read_states, not fed a synthetic UNRELIABLE row. A gate excludes both of this
+    # set's cells, read_states produces the real UNRELIABLE rows from that, and combine_cells must
+    # still resolve the set to unreliable with reason all-cells-gated -- derived from the cells' own
+    # UnreliableReason.GATED, not hard-coded.
     counts = pl.DataFrame(
         [("S1", "c1", "TAG", 500), ("S1", "c2", "TAG", 500)],
         orient="row",
@@ -250,7 +247,7 @@ def test_a_set_spanning_two_panels_counts_only_the_asked_cells_and_does_not_infl
     df = _states([])
     members = [("S1", "c1"), ("S1", "c2"), ("S2", "c3"), ("S2", "c4")]
     cells_by_set = {"s1": members}
-    # S1's cells are admissible; S2's c3 is gated, c4 has a normal reference.
+    # S1's cells are admissible. S2's c3 is gated, and c4 has a normal reference.
     reference = {("S1", "c1"): 5, ("S1", "c2"): 5, ("S2", "c3"): 900, ("S2", "c4"): 5}
     admissibility = Admissibility(reference, {("S2", "c3")})
     out = combine_cells(df, {"A", "B"}, {"S1": {"A"}, "S2": {"B"}}, cells_by_set, admissibility)
@@ -358,19 +355,18 @@ def test_several_bound_competitors_are_all_named():
 
 
 def test_was_competed_is_the_string_false_never_null_with_no_declared_groups():
-    # wasCompeted is the predicate a downstream statement filters on. With no
-    # contending groups at all, every row's flag must still be the literal
-    # string "false" -- a null here would make "wasCompeted == false" fail to
-    # match the exact rows the flag exists to describe.
+    # wasCompeted is the predicate a downstream statement filters on. With no contending groups at
+    # all, every row's flag must still be the literal string "false". A null here would make
+    # "wasCompeted == false" fail to match the exact rows the flag exists to describe.
     out = attach_competitor_notes(_verdicts([("s1", "A", B), ("s1", "C", N)]), [])
     assert out["wasCompeted"].to_list() == ["false", "false"]
     assert out["wasCompeted"].dtype == pl.String
 
 
 def test_was_competed_is_the_string_false_never_null_with_declared_groups_present():
-    # Same requirement, but with a declared group in play and a row that
-    # simply has no bound rival: the flag column must not switch to null just
-    # because contention was possible elsewhere in the frame.
+    # Same requirement, but with a declared group in play and a row that simply has no bound rival:
+    # the flag column must not switch to null just because contention was possible elsewhere in the
+    # frame.
     out = attach_competitor_notes(_verdicts([("s1", "A", N), ("s1", "C", N)]), [{"A", "C"}])
     assert out["wasCompeted"].to_list() == ["false", "false"]
 
@@ -484,11 +480,10 @@ def test_a_set_asked_nothing_reports_all_zero_and_a_reader_must_guard_the_divide
 
 
 def test_a_set_entirely_unreliable_reads_as_nothing_settled_not_as_a_bind_failure():
-    # All positions UNRELIABLE: boundCount=0, settledCount=0, unsettledCount=N.
-    # This is the shape a fully-gated or comparator-less set produces, and it
-    # is the one most likely to be misread downstream as "bound none of N" --
-    # the honest reading is that nothing settled, since no comparison was
-    # ever made.
+    # All positions UNRELIABLE: boundCount=0, settledCount=0, unsettledCount=N. This is the shape a
+    # fully-gated or comparator-less set produces, and it is the one most likely to be misread
+    # downstream as "bound none of N". The honest reading is that nothing settled, since no comparison
+    # was ever made.
     v = _v([("s1", "a", U), ("s1", "b", U), ("s1", "c", U)])
     r = set_counts(v).row(0, named=True)
     assert r["boundCount"] == 0
@@ -516,10 +511,9 @@ def test_output_row_order_is_deterministic_regardless_of_input_row_order():
         assert out.equals(baseline)
 
 
-# self_disagreement's states frame is keyed by `key` (an identity or a tag,
-# according to `level`), never by `identity`: the same sparse per-cell shape
-# `combine_cells` reads, minus a setId column -- set membership comes only
-# from `cells_by_set`, matching that function's own rule.
+# self_disagreement's states frame is keyed by `key`, an identity or a tag according to `level`, and
+# never by `identity`. It is the same sparse per-cell shape `combine_cells` reads, minus a setId
+# column: set membership comes only from `cells_by_set`, matching that function's own rule.
 _KEY_STATES_SCHEMA = {"sampleId": pl.String, "cellId": pl.String, "key": pl.String, "state": pl.String}
 
 
@@ -634,10 +628,9 @@ def test_a_set_too_small_to_compare_is_left_out_of_both_counts():
 
 
 def test_silent_cells_flip_agreement_into_disagreement():
-    # THE defect this generalisation exists to fix: a set with 2 observed
-    # bound cells and 38 silent, admissible not-bound cells. Counting rows on
-    # the sparse frame sees only the 2 bound rows and calls this agreement;
-    # the 38 silent cells are settled not-bound votes and the set actually
+    # THE defect this generalisation exists to fix: a set with 2 observed bound cells and 38 silent,
+    # admissible not-bound cells. Counting rows on the sparse frame sees only the 2 bound rows and
+    # calls this agreement. The 38 silent cells are settled not-bound votes, and the set actually
     # disagrees as badly as it is possible to.
     members = [("S1", "c0"), ("S1", "c1")] + [("S1", f"s{i}") for i in range(38)]
     states = _key_states([("S1", "c0", "A", B), ("S1", "c1", "A", B)])
@@ -734,11 +727,11 @@ def test_a_never_asked_position_reports_no_bound_cells():
 
 
 def test_cells_not_bound_completes_cells_answered_on_every_row():
-    # cellsNotBound is not a free-standing count: SETTLED holds only BOUND and NOT_BOUND (see the
-    # module docstring's four-state model), so it is the other half of the same pair cellsBound
-    # already reports. This checks the pairing across every shape combine_cells produces -- a settled
-    # majority either way, a tie, a floor refusal, too few voters, a position with no tally at all, and
-    # a position never offered -- over every row of each frame, not one identity picked out by `_row`.
+    # cellsNotBound is not a free-standing count. SETTLED holds only BOUND and NOT_BOUND (see the
+    # module docstring's four-state model), so it is the other half of the same pair cellsBound already
+    # reports. This checks the pairing across every shape combine_cells produces -- a settled majority
+    # either way, a tie, a floor refusal, too few voters, a position with no tally at all, and a
+    # position never offered -- over every row of each frame, not one identity picked out by `_row`.
     def _assert_invariant(out: pl.DataFrame) -> None:
         for row in out.iter_rows(named=True):
             assert row["cellsBound"] + row["cellsNotBound"] == row["cellsAnswered"], row

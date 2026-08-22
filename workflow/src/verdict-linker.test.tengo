@@ -35,8 +35,8 @@ Test_pick_selects_the_anchors_own_linker := func() {
 		"selection does not depend on the order the linkers were resolved in")
 }
 
-// Axis identity is name plus domain. Two clonotyping runs produce axes of one name whose domains differ,
-// and treating them as one would join the verdicts to the wrong clonotypes.
+// Axis identity is name plus domain. Two clonotyping runs produce axes of one name whose domains differ, and
+// treating them as one would join the verdicts to the wrong clonotypes.
 Test_axis_identity_includes_the_domain := func() {
 	test.isTrue(linker.sameAxis(_clonotypeAxis("r1"), _clonotypeAxis("r1")), "same name and domain match")
 	test.isFalse(linker.sameAxis(_clonotypeAxis("r1"), _clonotypeAxis("r2")),
@@ -61,8 +61,8 @@ Test_sample_axis_mismatch_is_named := func() {
 		"a multiplexed sample axis is reported as a mismatch rather than joining to nothing")
 }
 
-// The marker is dropped from a copy. Mutating the resolved spec would change what every other reader of
-// the bundle sees, and the CSV export is the only consumer that needs it gone.
+// The marker is dropped from a copy. Mutating the resolved spec would change what every other reader of the
+// bundle sees, and the CSV export is the only consumer that needs it gone.
 Test_plainSpec_copies_and_keeps_everything_else := func() {
 	original := _linkerCol(_clonotypeAxis("r1")).spec
 	plain := linker.plainSpec(original)

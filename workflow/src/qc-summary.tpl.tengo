@@ -8,8 +8,8 @@
 //
 // Mirrors blocks/mixcr-clonotyping/workflow/src/export-report.tpl.tengo: iterate a per-sample file map,
 // pTabler-concat with an injected sampleId literal, then one xsv.importFile with a sampleId axis. Rendered
-// as a separate template (render.create from main.tpl) because the resource map must be awaited before its
-// per-sample keys can be iterated, which main's body cannot do inline.
+// as a separate template because the resource map must be awaited before its per-sample keys can be
+// iterated, which main's body cannot do inline.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 ll := import("@platforma-sdk/workflow-tengo:ll")

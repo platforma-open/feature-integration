@@ -2,14 +2,14 @@
 //
 // Every flag this CLI takes has a default, so an unthreaded parameter is silent in both directions: the
 // render succeeds, the exec succeeds, and the reading is answered under a value the user never chose.
-// `--qc-summary` is the sharpest case — without it the run has no read count at all, so `readsTotal`,
+// `--qc-summary` is the sharpest case -- without it the run has no read count at all, so `readsTotal`,
 // `panelAssignedFraction` and `readsPerCell` render as declared-but-unchecked rather than failing, and
-// `readsPerCell` is the only sequencing-depth alert the block ships. Building the whole argument list
-// here, staged input filenames included, is what makes the threading assertable without a backend.
+// `readsPerCell` is the only sequencing-depth alert the block ships. Building the whole argument list here,
+// staged input filenames included, is what makes the threading assertable without a backend.
 //
-// The staged filenames are exported beside the flags that name them. verdict-run.tpl.tengo stages each
-// file under the same constant it is referenced by, so a rename cannot leave a flag pointing at a file
-// the exec never received.
+// The staged filenames are exported beside the flags that name them. verdict-run.tpl.tengo stages each file
+// under the same constant it is referenced by, so a rename cannot leave a flag pointing at a file the exec
+// never received.
 
 ll := import("@platforma-sdk/workflow-tengo:ll")
 canonical := import("@platforma-sdk/workflow-tengo:canonical")
@@ -20,9 +20,9 @@ FILE_LINKER := "linker.csv"
 FILE_QC_SUMMARY := "qc_summary.csv"
 OUTPUT_PREFIX := "result"
 
-// The block arguments this module reads. Exported so fanout-inputs.test.tengo can assert that none of
-// them has leaked into the per-sample mitool fan-out, which is what keeps the fan-out cached when only
-// the reading's parameters change. Extend this list whenever a parameter is added below.
+// The block arguments this module reads. Exported so fanout-inputs.test.tengo can assert that none of them
+// has leaked into the per-sample mitool fan-out, which is what keeps the fan-out cached when only the
+// reading's parameters change. Extend this list whenever a parameter is added below.
 PARAMETER_NAMES := [
 	"boundCutoff",
 	"captureMap",
@@ -43,11 +43,10 @@ PARAMETER_NAMES := [
 	"roleColumn"
 ]
 
-// Defaults mirroring the CLI's own (verdict.py DEFAULT_FLOOR, BOUND_CUTOFF, combine.py
-// DEFAULT_MIN_VOTERS, DEFAULT_PANEL_MIN_MEMBERS, DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE). Restated
-// rather than left to argparse, so the value that produced a run is always on the command line, where the
-// run record and a re-run both see it. A parameter carried only as a CLI default drifts the moment one
-// side changes.
+// Defaults mirroring the CLI's own (verdict.py DEFAULT_FLOOR, BOUND_CUTOFF, combine.py DEFAULT_MIN_VOTERS,
+// DEFAULT_PANEL_MIN_MEMBERS, DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE). Restated rather than left to
+// argparse, so the value that produced a run is always on the command line, where the run record and a
+// re-run both see it. A parameter carried only as a CLI default drifts the moment one side changes.
 DEFAULT_COUNT_FLOOR := 4
 DEFAULT_BOUND_CUTOFF := 75
 DEFAULT_MIN_VOTING_CELLS := 1
@@ -68,9 +67,9 @@ _intArg := func(value) {
 
 // build: the full argument vector, positionals first.
 //
-// `params` is the block's args map plus `hasLinker` and `hasQcSummary`, which say whether the caller
-// staged those two files. A flag naming a file the exec did not receive is a hard failure, so each is
-// emitted only with its file.
+// `params` is the block's args map plus `hasLinker` and `hasQcSummary`, which say whether the caller staged
+// those two files. A flag naming a file the exec did not receive is a hard failure, so each is emitted only
+// with its file.
 build := func(params) {
 	args := [FILE_COUNTS, FILE_PANEL]
 
@@ -86,16 +85,16 @@ build := func(params) {
 		add("--qc-summary", FILE_QC_SUMMARY)
 	}
 
-	// The panel-file column roles. Passed even when empty: an empty --sample-col declares one panel for
-	// every sample, and an empty --role-column declares no comparator designation. Both are readings rather
-	// than omissions.
+	// The panel-file column roles. Passed even when empty: an empty --sample-col declares one panel for every
+	// sample, and an empty --role-column declares no comparator designation. Both are readings rather than
+	// omissions.
 	add("--barcode-col", params.barcodeSeqColumn)
 	add("--feature-col", params.featureNameColumn)
 	add("--sample-col", is_undefined(params.sampleColumn) ? "" : params.sampleColumn)
 	add("--role-column", is_undefined(params.roleColumn) ? "" : params.roleColumn)
 
-	// Comma-separated, because that is what the CLI splits on. The args lambda has already de-duplicated
-	// and sorted the list, so the string is canonical and two equivalent selections produce one cache key.
+	// Comma-separated, because that is what the CLI splits on. The args lambda has already de-duplicated and
+	// sorted the list, so the string is canonical and two equivalent selections produce one cache key.
 	referenceValues := ""
 	if !is_undefined(params.referenceValues) {
 		for i, value in params.referenceValues {
@@ -104,9 +103,9 @@ build := func(params) {
 	}
 	add("--reference-values", referenceValues)
 
-	// Which baseline was asked for, and the only one the run can be answered under: a rung that cannot
-	// serve refuses rather than falling to another, so nothing substitutes for this. What the run
-	// established is read back from the run record, which also says where no baseline could be.
+	// Which baseline was asked for, and the only one the run can be answered under: a rung that cannot serve
+	// refuses rather than falling to another, so nothing substitutes for this. What the run established is
+	// read back from the run record, which also says where no baseline could be.
 	if !is_undefined(params.referenceSource) && params.referenceSource != "" {
 		add("--reference-source", params.referenceSource)
 	}
@@ -122,9 +121,9 @@ build := func(params) {
 	add("--min-voters", _intArg(_num(params.minVotingCells, DEFAULT_MIN_VOTING_CELLS)))
 	add("--high-reference-line", _intArg(_num(params.highReferenceLine, DEFAULT_HIGH_REFERENCE_LINE)))
 
-	// A switch, and it carries its value rather than standing alone. The vector is flag/value pairs:
-	// `valueOf` reads the next element, and the parity assertion at the end catches a dropped value. A bare
-	// flag would make every later value read as the wrong one's.
+	// A switch, and it carries its value rather than standing alone. The vector is flag/value pairs: `valueOf`
+	// reads the next element, and the parity assertion at the end catches a dropped value. A bare flag would
+	// make every later value read as the wrong one's.
 	//
 	// Present only when on. Off by default: the minimum removes what is not evidence of binding, and the
 	// comparator is not evidence of binding. Turning it on changes no verdict, because every rung reads its
@@ -153,8 +152,8 @@ build := func(params) {
 	if !is_undefined(params.grouping) {
 		add("--grouping", canonical.encode(params.grouping))
 	}
-	// Groups of identities declared to contend for one binding site. The args lambda drops any group of
-	// fewer than two members and sorts the rest, so an empty list here means nothing contends.
+	// Groups of identities declared to contend for one binding site. The args lambda drops any group of fewer
+	// than two members and sorts the rest, so an empty list here means nothing contends.
 	if !is_undefined(params.contendingGroups) && len(params.contendingGroups) > 0 {
 		add("--contending", canonical.encode(params.contendingGroups))
 	}
@@ -164,9 +163,9 @@ build := func(params) {
 		add("--capture-map", canonical.encode(params.captureMap))
 	}
 	// The panel file names samples the way the scientist does. Everything else here is keyed by sampleId.
-	// Without this map the two namespaces never meet, nothing is offered to any sample that exists, and
-	// every verdict comes back *never asked* — a correct answer to a question nobody asked, which is why it
-	// raises nothing. Passed only where the block has a sample column to key the panel by.
+	// Without this map the two namespaces never meet, nothing is offered to any sample that exists, and every
+	// verdict comes back *never asked* -- a correct answer to a question nobody asked, which is why it raises
+	// nothing. Passed only where the block has a sample column to key the panel by.
 	if !is_undefined(params.sampleLabels) {
 		add("--sample-labels", canonical.encode(params.sampleLabels))
 	}

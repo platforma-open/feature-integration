@@ -1,15 +1,13 @@
 """Rung 3's fit: does a tag's own distribution split, and where.
 
-Every bed here is generated from a seeded generator rather than written out by
-hand, because the thing under test is a density and a hand-written handful of
-counts has no density to speak of. The seed is fixed, so the beds are the same
-bytes on every run and on every machine.
+Every bed here is generated from a seeded generator rather than written out by hand, because the thing
+under test is a density and a hand-written handful of counts has no density to speak of. The seed is
+fixed, so the beds are the same bytes on every run and on every machine.
 
-The population sizes are the ones a real run carries: the manual bed's presets
-are 2000 cells per donor, and a binder fraction of a few percent is what this
-method exists to find. The published method it follows was built for exactly
-that shape -- its own paper rejects a Gaussian mixture and k-means because both
-degrade when the two populations are unequal.
+The population sizes are the ones a real run carries: the manual bed's presets are 2000 cells per
+donor, and a binder fraction of a few percent is what this method exists to find. The published method
+it follows was built for exactly that shape. Its own paper rejects a Gaussian mixture and k-means
+because both degrade when the two populations are unequal.
 """
 
 import numpy as np
@@ -48,10 +46,9 @@ def test_a_sample_below_the_cell_condition_gets_no_baseline():
 
 
 def test_the_cell_condition_counts_cells_not_readings():
-    # 400 cells, most of which read nothing. Counting only the observed readings
-    # would put this under the condition and lose a baseline the run can make --
-    # and the cells that read nothing are most of the background, so dropping
-    # them breaks the fit as well as the gate.
+    # 400 cells, most of which read nothing. Counting only the observed readings would put this under
+    # the condition and lose a baseline the run can make. The cells that read nothing are most of the
+    # background, so dropping them breaks the fit as well as the gate.
     counts = _mixture(380, 0.3, 20, 200)
     assert counts.size == 400
     assert int((counts > 0).sum()) < DEFAULT_DISTRIBUTION_MIN_CELLS
@@ -104,11 +101,10 @@ def test_a_tag_nothing_bound_does_not_separate():
 
 
 def test_integer_counts_do_not_split_on_their_own_teeth():
-    # The failure the bandwidth floor exists for, pinned directly. log2(n+1) of
-    # small integers lands on a comb -- 0, 1, 1.58, 2 -- and an unfloored
-    # bandwidth resolves the gap between a count of nothing and a count of one
-    # as two populations. Every count here is 0, 1 or 2 and there is nothing to
-    # separate.
+    # The failure the bandwidth floor exists for, pinned directly. log2(n+1) of small integers lands
+    # on a comb -- 0, 1, 1.58, 2 -- and an unfloored bandwidth resolves the gap between a count of
+    # nothing and a count of one as two populations. Every count here is 0, 1 or 2 and there is
+    # nothing to separate.
     rng = np.random.default_rng(SEED)
     fit = fit_tag_background(rng.integers(0, 3, 2000))
     assert fit.baseline is None
@@ -134,10 +130,9 @@ def test_two_populations_too_close_together_do_not_separate():
 
 
 def test_the_baseline_is_the_background_not_the_split_point():
-    # The published use of the split is a threshold. Nothing here thresholds.
-    # The comparator is the middle of the background, which is far below the
-    # split -- reporting the split instead would make every score harder to
-    # clear than the method it came from intends.
+    # The published use of the split is a threshold. Nothing here thresholds. The comparator is the
+    # middle of the background, which is far below the split. Reporting the split instead would make
+    # every score harder to clear than the method it came from intends.
     counts = _mixture(1940, 2, 60, 300)
     fit = fit_tag_background(counts)
     assert fit.split is not None
@@ -264,9 +259,9 @@ def test_a_duplicated_cell_is_refused():
 
 
 def test_a_tag_read_twice_in_one_cell_is_refused():
-    # More readings than cells makes the zero padding negative, and numpy
-    # returns an EMPTY array for that rather than raising -- so the fit would
-    # quietly run over the observed readings alone and look like it worked.
+    # More readings than cells makes the zero padding negative, and numpy returns an EMPTY array for
+    # that rather than raising. So the fit would quietly run over the observed readings alone and look
+    # like it worked.
     counts, cells = _bed()
     doubled = pl.concat([counts, counts.head(1)])
     with pytest.raises(ValueError, match="duplicated readings"):

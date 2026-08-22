@@ -39,8 +39,8 @@ const isUserConfigurable = computed(() => selectedPreset.value?.userConfigurable
 function setPresetId(id: string | undefined) {
   app.model.data.presetId = id;
   const p = getPreset(id);
-  // User-configurable preset: seed a starting pattern so the builder opens populated. A fixed preset owns
-  // its pattern, which args reads from preset.pattern, so there is nothing to write into data.
+  // User-configurable preset: seed a starting pattern so the builder opens populated. A fixed preset owns its
+  // pattern, which args reads from preset.pattern, so there is nothing to write into data.
   if (p?.userConfigurable && !app.model.data.pattern) {
     app.model.data.pattern = assemblePattern(DEFAULT_PARTS);
   }
@@ -82,17 +82,17 @@ const patternParseError = computed(() => {
   if (!isUserConfigurable.value) return null;
   const p = app.model.data.pattern;
   if (!p) return null;
-  // Loose check, the same rule as the model's args. mitool does the real parsing, and only the
-  // CELL/UMI/FEATURE tags and the R2 capture are required here. An extra flank, spacer or anchor is allowed
-  // through the string field.
+  // Loose check, the same rule as the model's args. mitool does the real parsing, and only the CELL/UMI/FEATURE
+  // tags and the R2 capture are required here. An extra flank, spacer or anchor is allowed through the string
+  // field.
   return validatePattern(p);
 });
 
-// ── Bidirectional sync (data.pattern ↔ builder fields). Hairpin-safe: both directions read and write
+// ── Bidirectional sync (data.pattern <-> builder fields). Hairpin-safe: both directions read and write
 //    data.pattern, which is persisted data, and local refs. Never a model output. ──
 const lastAssembled = ref<string | undefined>(undefined);
 
-// data.pattern → fields. Skips this component's own write, and leaves the fields untouched on an
+// data.pattern -> fields. Skips this component's own write, and leaves the fields untouched on an
 // unparseable write-mode string.
 watch(
   () => app.model.data.pattern,
@@ -109,7 +109,7 @@ watch(
   { immediate: true },
 );
 
-// fields → data.pattern (build mode only)
+// fields -> data.pattern (build mode only)
 function reassembleFromFields() {
   const assembled = preview.value;
   lastAssembled.value = assembled;
@@ -231,8 +231,8 @@ watch(editorMode, (mode) => {
       </template>
     </template>
 
-    <!-- Divider marking the end of the custom read-layout block (shown only for the configurable
-         preset), so it reads as its own section apart from the Tag-feature CSV below. -->
+    <!-- Divider marking the end of the custom read-layout block, shown only for the configurable preset, so
+         it reads as its own section apart from the Tag-feature CSV below. -->
     <PlSectionSeparator compact />
   </template>
 </template>

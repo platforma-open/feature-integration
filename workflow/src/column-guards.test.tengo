@@ -2,9 +2,9 @@ test := import("@platforma-sdk/workflow-tengo:test")
 columnSpecs := import(":column-specs")
 
 // The legacy per-cell contract keys features by NAME on pl7.app/feature/featureId. A new antigen table
-// reusing that axis while carrying barcode SEQUENCES would leave the axis identity untouched and invert its
-// value space, so nothing downstream would error and joins would return wrong rows. That is the worst
-// available failure, which is why it is asserted at import.
+// reusing that axis while carrying barcode SEQUENCES would leave the axis identity untouched and invert
+// its value space, so nothing downstream would error and joins would return wrong rows. That is the
+// worst available failure, which is why it is asserted at import.
 //
 // The predicate is tested rather than the assertion. Tengo has no try/catch, so a test cannot exercise a
 // panicking guard at all.

@@ -1,13 +1,13 @@
 """VDJ (BCR, single-cell) arm generator.
 
-Builds a *coherent* single-cell BCR repertoire ON TOP of the antigen arm: it reads each cell's planted
-dominant antigen (from the antigen arm's expected-consensus.tsv) and groups cells into clonotypes so a
-clonotype's cells bind the same antigen — exactly the biology vdj-multiomic-integration surfaces
-(per-clonotype antigen binding -> antibody lead selection).
+Builds a *coherent* single-cell BCR repertoire ON TOP of the antigen arm. It reads each cell's planted
+dominant antigen, from the antigen arm's expected-consensus.tsv, and groups cells into clonotypes so a
+clonotype's cells bind the same antigen. That is exactly the biology vdj-multiomic-integration surfaces:
+per-clonotype antigen binding, feeding antibody lead selection.
 
-Output = one AIRR-`airr-sc` rearrangement TSV per donor (import-vdj-data, format "AIRR single cell",
-cellKeyMode=direct -> cell_id used verbatim). cell_id is the SAME bare-16nt barcode the antigen FASTQ
-carries — the canonical cellId the convergence inner-join lines up on.
+Output is one AIRR-`airr-sc` rearrangement TSV per donor (import-vdj-data, format "AIRR single cell",
+cellKeyMode=direct, so cell_id is used verbatim). cell_id is the SAME bare-16nt barcode the antigen
+FASTQ carries, the canonical cellId the convergence inner-join lines up on.
 """
 
 import csv
@@ -84,8 +84,8 @@ def make_bcr(rng, heavy_only=False):
 
 
 def _clone_sizes(n, mean_size=25, singleton_cell_frac=0.10, alpha=0.9, tail_cycle=None):
-    """Clone sizes for `n` cells of one (donor, antigen) group, shaped like an IMMUNIZED, ANTIGEN-SORTED
-    repertoire — which is the only kind this bed's blocks are pointed at.
+    """Clone sizes for `n` cells of one (donor, antigen) group, shaped like an IMMUNIZED,
+    ANTIGEN-SORTED repertoire, which is the only kind this bed's blocks are pointed at.
 
     HOW MUCH EXPANSION IS A MEASURED QUESTION, AND THE ANSWER DEPENDS ON THE LIBRARY. Read this before
     changing a default here.
@@ -95,30 +95,30 @@ def _clone_sizes(n, mean_size=25, singleton_cell_frac=0.10, alpha=0.9, tail_cycl
     expansion is the signal being looked for. That argument is why this function replaced an earlier
     power-law version whose tail made ~97% of clonotypes singletons.
 
-    Real in-vivo BEAM libraries do not agree with it. Characterised 2026-08-21: 4,549 IGHeavy
-    clonotypes over 4,773 cells with paired chains, and 3,707 over 3,716 — about 1.05 cells per
-    clonotype, essentially all singletons. The public figures that supported the expanded shape came
-    from libraries that cannot carry the argument: two 10x BEAM-T runs holding deliberately expanded
-    spike-in populations, a transgenic monoclonal control, and one literature ratio formed by dividing a
-    FILTERED antigen-labelled clone count by a FULL cell count.
+    Real in-vivo BEAM libraries do not agree with it. Characterised 2026-08-21: 4,549 IGHeavy clonotypes
+    over 4,773 cells with paired chains, and 3,707 over 3,716. That is about 1.05 cells per clonotype,
+    essentially all singletons. The public figures that supported the expanded shape came from libraries
+    that cannot carry the argument: two 10x BEAM-T runs holding deliberately expanded spike-in
+    populations, a transgenic monoclonal control, and one literature ratio formed by dividing a FILTERED
+    antigen-labelled clone count by a FULL cell count.
 
     So both shapes are real and neither is the default for every run. `mean_size`,
-    `singleton_cell_frac` and `tail_cycle` carry the difference; the regime tables in realpanel.py set
-    them. At shallow depth a clonotype's verdict DOES rest on one cell almost everywhere, which is a
-    fact about the data rather than a defect in the bed — the per-clonotype agreement rules go
+    `singleton_cell_frac` and `tail_cycle` carry the difference, and the regime tables in realpanel.py
+    set them. At shallow depth a clonotype's verdict DOES rest on one cell almost everywhere, which is a
+    fact about the data rather than a defect in the bed. The per-clonotype agreement rules go
     unexercised because that real data does not exercise them either.
 
     Two compartments, because a real sorted sample has both:
       - an EXPANDED compartment holding `1 - singleton_cell_frac` of the cells, split into clones whose
-        sizes follow `i**-alpha` and average `mean_size`. A heavy head — the leads — and a graded tail.
+        sizes follow `i**-alpha` and average `mean_size`. A heavy head, the leads, and a graded tail.
       - a SMALL-CLONE tail holding the rest: mostly one-cell clonotypes, mixed with 2-4 cell ones. The
-        tail is NOT all singletons on purpose — a distribution that jumps from a wall of 1s straight to
+        tail is NOT all singletons on purpose. A distribution that jumps from a wall of 1s straight to
         clones of 7+ has a hole in it where real data is dense, and that hole is visible the moment
         anyone sorts a clonotype table by cell count.
     Singletons stay a large share of CLONOTYPES and a small share of CELLS, which is what the real
     distribution looks like.
 
-    Sizes sum to exactly `n` (largest-remainder apportionment): a size list that does not account for
+    Sizes sum to exactly `n` by largest-remainder apportionment. A size list that does not account for
     every cell drops or duplicates cells, and the cross-arm join then loses them silently."""
     if n <= 0:
         return []
@@ -154,9 +154,9 @@ def _clone_sizes(n, mean_size=25, singleton_cell_frac=0.10, alpha=0.9, tail_cycl
 # 2-4 band. Positional rather than drawn, so the tail is reproducible without touching the caller's RNG.
 TAIL_CYCLE = (1, 1, 1, 2, 1, 1, 1, 3, 1, 2, 1, 1, 4, 1, 2)
 
-# The tail real in-vivo libraries measure: 21 cells across 20 clonotypes, so 1.05 cells per
-# clonotype. TAIL_CYCLE averages 1.47 and is therefore a FLOOR no combination of `mean_size` and
-# `singleton_cell_frac` can get under — which is why this exists as a separate cycle rather than as
+# The tail real in-vivo libraries measure: 21 cells across 20 clonotypes, so 1.05 cells per clonotype.
+# TAIL_CYCLE averages 1.47 and is therefore a FLOOR no combination of `mean_size` and
+# `singleton_cell_frac` can get under. That is why this exists as a separate cycle rather than as
 # another parameter setting.
 TAIL_CYCLE_SPARSE = (1,) * 19 + (2,)
 
@@ -189,7 +189,7 @@ def build_clones(rng, cells, clear_antigens, heavy_only=False, clonal_profile="l
     cidx = 0
     for antigen, members in sorted(by_antigen.items()):
         rng.shuffle(members)
-        # "crossreactive" is not a panel feature name, so it is not in `clear_antigens` — but a
+        # "crossreactive" is not a panel feature name, so it is not in `clear_antigens`. But a
         # cross-reactive clone is a real and interesting lead, and leaving those cells as singletons
         # means no CLONOTYPE is ever cross-reactive with more than one cell agreeing.
         is_clear = antigen in clear_antigens or antigen == "crossreactive"
@@ -230,11 +230,11 @@ def write_airr(path, clones, rng, heavy_only=False, unpaired_frac=0.0):
 
     `unpaired_frac` is the share of cells that emit their HEAVY chain only, standing in for the cells a
     real run recovers one chain from. It is not cosmetic: in the two measured libraries the clonotypes
-    dropped for want of a pair OUTNUMBERED the paired ones (7,732 against 4,549; 23,127 against 3,707),
-    and a bed where every cell pairs perfectly never exercises the drop. Heavy is the chain kept because
-    heavy is the chain a VHH library has.
+    dropped for want of a pair OUTNUMBERED the paired ones, 7,732 against 4,549 and 23,127 against
+    3,707, and a bed where every cell pairs perfectly never exercises the drop. Heavy is the chain kept,
+    because heavy is the chain a VHH library has.
 
-    Ignored when `heavy_only` is set — there is no pair to break."""
+    Ignored when `heavy_only` is set, since there is no pair to break."""
     loci = ("IGH",) if heavy_only else ("IGH", "IGK")
     n_rows = 0
     n_unpaired = 0
@@ -277,14 +277,15 @@ def write_truth(path, all_clones, heavy_only=False):
 def build(tags_csv, consensus_tsv, out_dir, truth_dir, seed=VDJ_SEED, heavy_only=False,
           clonal_profile="lead", mean_size=25, singleton_cell_frac=0.10, unpaired_frac=0.0,
           tail_cycle=None):
-    """Build the VDJ arm from the antigen arm's ground truth. Writes out_dir/<donor>.tsv (AIRR-sc) +
+    """Build the VDJ arm from the antigen arm's ground truth. Writes out_dir/<donor>.tsv (AIRR-sc) plus
     truth_dir/truth_clonotypes.csv. The filename stem is the bare donor id so Samples & Data mints ONE
-    shared sampleId across all three arms — a per-library suffix would fork the donor into separate
-    samples and the convergence [sampleId,cellId] join would then match nothing.
+    shared sampleId across all three arms. A per-library suffix would fork the donor into separate
+    samples, and the convergence [sampleId,cellId] join would then match nothing.
 
-    heavy_only=True emits HEAVY-CHAIN-ONLY (IGH, no IGK) rearrangements — the shape a VHH single-domain
-    antibody library produces — so the heavy-only end-to-end path is reproducible synthetically. Each cell
-    keeps the SAME bare-16nt cell_id it carries in the antigen arm (the convergence join key)."""
+    heavy_only=True emits HEAVY-CHAIN-ONLY rearrangements, IGH with no IGK, which is the shape a VHH
+    single-domain antibody library produces, so the heavy-only end-to-end path is reproducible
+    synthetically. Each cell keeps the SAME bare-16nt cell_id it carries in the antigen arm, the
+    convergence join key."""
     os.makedirs(out_dir, exist_ok=True)
     os.makedirs(truth_dir, exist_ok=True)
     rng = new_rng(seed)

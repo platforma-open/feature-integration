@@ -2,13 +2,13 @@
 //
 // The linker is infrastructure: it carries pl7.app/isLinkerColumn, is hidden in tables, and so no user can
 // pick it. The model stores the single-cell VDJ dataset anchor instead, and the linker is resolved from the
-// bundle by name. A dataset may bring several linkers, since mixcr emits one per receptor, and the anchor
-// is receptor-scoped, so the linker whose clonotype axis IS the anchor's is the one the user chose. Pick by
+// bundle by name. A dataset may bring several linkers, since mixcr emits one per receptor, and the anchor is
+// receptor-scoped, so the linker whose clonotype axis IS the anchor's is the one the user chose. Pick by
 // that identity rather than panicking on a count, and a legitimate BCR + TCR run keeps working.
 //
 // Shared by verdict-run.tpl.tengo and verdict-import.tpl.tengo, which each resolve the bundle
-// independently. The run template holds it resolved, which cannot be serialized as a template input, so
-// the import template receives the unresolved reference and resolves it again.
+// independently. The run template holds it resolved, which cannot be serialized as a template input, so the
+// import template receives the unresolved reference and resolves it again.
 
 ll := import("@platforma-sdk/workflow-tengo:ll")
 maps := import("@platforma-sdk/workflow-tengo:maps")
@@ -49,9 +49,9 @@ pick := func(linkerCols, clonotypeAxis) {
 
 // sampleAxisMismatch: "" when the linker's sample axis is the block's, otherwise a readable reason.
 //
-// The block's sample axis comes from the FASTQ dataset. The linker's comes from the clonotyping run, and
-// on a multiplexed input that can be pl7.app/sampleGroupId instead. Joining across the two produces no rows
-// and no error, so the verdicts would come out empty. Named here so the caller can panic.
+// The block's sample axis comes from the FASTQ dataset. The linker's comes from the clonotyping run, and on
+// a multiplexed input that can be pl7.app/sampleGroupId instead. Joining across the two produces no rows and
+// no error, so the verdicts would come out empty. Named here so the caller can panic.
 sampleAxisMismatch := func(linkerSpec, sampleAxisSpec) {
 	linkerSampleAxis := linkerSpec.axesSpec[0]
 	if sameAxis(linkerSampleAxis, sampleAxisSpec) {
@@ -67,8 +67,8 @@ sampleAxisMismatch := func(linkerSpec, sampleAxisSpec) {
 //
 // The CSV export builds a linker index for a column flagged this way, and that index requires exactly two
 // connected components, which a three-axis cell linker does not have. The export wants the axis tuple as
-// flat rows, so the marker is dropped from a COPY. Mutating the resolved spec would change what every
-// other reader of the bundle sees.
+// flat rows, so the marker is dropped from a COPY. Mutating the resolved spec would change what every other
+// reader of the bundle sees.
 plainSpec := func(spec) {
 	annotations := {}
 	maps.forEach(is_undefined(spec.annotations) ? {} : spec.annotations, func(key, value) {

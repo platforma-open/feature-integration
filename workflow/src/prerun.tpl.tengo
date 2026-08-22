@@ -1,17 +1,16 @@
 // Prerun (staging) template.
 //
-// One job: import and export the user-uploaded tag->feature CSV, so that the staging phase DEMANDS its
-// blob and the client uploads it before production needs it (same as blocks/immune-assay-data
-// prerun.tpl.tengo). The production workflow consumes the CSV only deep inside the processColumn fan-out,
-// and the upload driver never picks up an upload requested only from inside that nested body — so without
-// driving it here the per-sample mitool exec stalls forever waiting on a blob whose bytes are never
-// pushed.
+// One job: import and export the user-uploaded tag->feature CSV, so that the staging phase DEMANDS its blob
+// and the client uploads it before production needs it (same as blocks/immune-assay-data prerun.tpl.tengo).
+// The production workflow consumes the CSV only deep inside the processColumn fan-out, and the upload driver
+// never picks up an upload requested only from inside that nested body -- so without driving it here the
+// per-sample mitool exec stalls forever waiting on a blob whose bytes are never pushed.
 //
-// This template used to run a second job: an emit-csv-meta exec that described the CSV's columns and
-// their distinct values for the block's dropdowns. The UI now reads the file itself — from disk on a local
-// pick, and from the csvFile blob exported below on a remote one — so the dropdowns fill on the pick
-// instead of waiting for an upload and an exec. That removed the only exec this template had, and with it
-// the venv the exec's artifact needed.
+// This template used to run a second job: an emit-csv-meta exec that described the CSV's columns and their
+// distinct values for the block's dropdowns. The UI now reads the file itself -- from disk on a local pick,
+// and from the csvFile blob exported below on a remote one -- so the dropdowns fill on the pick instead of
+// waiting for an upload and an exec. That removed the only exec this template had, and with it the venv the
+// exec's artifact needed.
 //
 // The csvFile export below is therefore load-bearing twice over: it drives the upload, and it is the byte
 // source the UI reads for any pick it cannot read from disk.
@@ -28,11 +27,11 @@ wf.body(func(args) {
 
 	outputs := {
 		csvFile: file.exportFile(csvImport.file),
-		// Import handle exposed so the model can drive the CSV upload during STAGING (via a ctx.prerun
-		// getImportProgress driver, mirroring samples-and-data). The exportFile demand above does NOT
-		// push the bytes on its own; without a staging-side driver the upload only fires from the main
-		// render, which is unreachable until args() passes — and args() needs the panel columns the user
-		// picks from. That circular dependency is the deadlock this fixes.
+		// Import handle exposed so the model can drive the CSV upload during STAGING, via a ctx.prerun
+		// getImportProgress driver, mirroring samples-and-data. The exportFile demand above does NOT push the
+		// bytes on its own. Without a staging-side driver the upload only fires from the main render, which
+		// is unreachable until args() passes -- and args() needs the panel columns the user picks from. That
+		// circular dependency is the deadlock this fixes.
 		tagFeatureCsvImportHandle: csvImport.handle
 	}
 

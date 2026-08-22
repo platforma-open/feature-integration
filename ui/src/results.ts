@@ -15,8 +15,8 @@ export type SampleResult = {
   // recovery columns. Absent while the sample is still running.
   quality?: QcStatus;
   recovery?: RecoveryBar;
-  // The raw per-sample metrics behind quality/recovery, carried through so the sample report panel can
-  // show the individual checks and figures without re-deriving them from a second source.
+  // The raw per-sample metrics behind quality/recovery, carried through so the sample report panel can show
+  // the individual checks and figures without re-deriving them from a second source.
   qc?: QcRow;
 };
 
@@ -36,8 +36,7 @@ export type RecoveryBar = {
 // status is undefined where the metric could not be evaluated at all. That is a real state rather than a
 // failure: panelAssignedFraction is "" whenever no refine report was produced, and calling that "OK" would
 // report a passing verdict on a measurement that never happened. PlStatusTag renders nothing for an absent
-// type, and the worst-of roll-up below skips these rows, so an unevaluated check stays silent everywhere
-// rather than being counted as a pass.
+// type, and the worst-of roll-up below skips these rows, so an unevaluated check stays silent everywhere.
 export type QcCheck = {
   label: string;
   status: QcStatus | undefined;
@@ -48,20 +47,20 @@ export type QcCheck = {
 const percent = (fraction: number) => `${(fraction * 100).toFixed(1)}%`;
 
 // The per-sample QC checks. Each status rests on a line with a stated source, or it is undefined and the
-// value speaks for itself. No number here is invented: a line comes from a figure the field published,
-// from a categorical fact, or from a stated recommendation, and from nowhere else. Where none of the
-// three applies, the check carries no status rather than a number with nothing behind it.
+// value speaks for itself. No number here is invented: a line comes from a figure the field published, from a
+// categorical fact, or from a stated recommendation, and from nowhere else. Where none of the three applies,
+// the check carries no status rather than a number with nothing behind it.
 //
 // The single definition of the sample's quality. The grid's one-tag Quality column is the worst of these
-// statuses (qualityStatus below), so the tag and the panel's rows can never disagree about one sample,
-// which they would if each carried its own copy of the thresholds.
+// statuses (qualityStatus below), so the tag and the panel's rows can never disagree about one sample, which
+// they would if each carried its own copy of the thresholds.
 //
-// These are NOT the software layer's quality measurements. That is a larger set with its own statuses,
-// its own line provenance and its own page. Bringing the two together is a separate change.
+// These are NOT the software layer's quality measurements. That is a larger set with its own statuses, its
+// own line provenance and its own page. Bringing the two together is a separate change.
 
 // Inherited from the field rather than calibrated here: the complement of the published 0.50
-// unrecognized-barcode fraction. `qc_measures.py` holds the same number for panelAssignedFraction, and
-// the two must not drift.
+// unrecognized-barcode fraction. `qc_measures.py` holds the same number for panelAssignedFraction, and the
+// two must not drift.
 const PANEL_ASSIGNED_LINE = 0.5;
 export function qcChecks(qc: QcRow): QcCheck[] {
   const paf = typeof qc.panelAssignedFraction === "number" ? qc.panelAssignedFraction : undefined;
@@ -72,8 +71,7 @@ export function qcChecks(qc: QcRow): QcCheck[] {
       // Categorical, not a quantity judged against a cutoff. Zero cells means nothing downstream of this
       // sample can be computed, and that is a fact rather than a threshold somebody chose. Above zero the
       // fact does not hold, which is all OK says here -- never that the yield was good. How many cells a
-      // sample *should* yield depends on the experiment, and no number for that is defensible, so none is
-      // applied.
+      // sample *should* yield depends on the experiment, and no number for that is defensible.
       status: qc.cellsDetected === 0 ? "ALERT" : "OK",
       printedValue: qc.cellsDetected.toLocaleString(),
       description:
@@ -85,7 +83,7 @@ export function qcChecks(qc: QcRow): QcCheck[] {
       label: "Reads assigned to the panel",
       // One line, inherited, and no second tier. The field publishes 0.50 and nothing else, so an ALERT
       // level below it would be a number invented here -- a confident label on an arbitrary cut, which is
-      // worse than saying less. A reader can act on WARN; they cannot act on a severity nobody calibrated.
+      // worse than saying less. A reader can act on WARN. They cannot act on a severity nobody calibrated.
       status: paf === undefined ? undefined : paf < PANEL_ASSIGNED_LINE ? "WARN" : "OK",
       printedValue: paf === undefined ? "not reported" : percent(paf),
       description:
@@ -102,7 +100,7 @@ export function qcChecks(qc: QcRow): QcCheck[] {
     {
       label: "Reads matching the read pattern",
       // Unjudged, and shown with its value beside it. The matched share is not one of the four numbers the
-      // field publishes for this assay, and nothing published says what a low one means -- so no status is
+      // field publishes for this assay, and nothing published says what a low one means, so no status is
       // claimed. The finding survives anyway: one sample at 40% beside its neighbours at 95% is visible in
       // the column, which is a comparison a reader makes rather than a line this code can apply.
       status: undefined,
@@ -204,7 +202,7 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
   const parseProgress = app.model.outputs.parseProgress;
   const earlyRosterIds = parseProgress ? parseProgress.data.map((p) => String(p.key[0])) : [];
 
-  // Per-[sampleId, step] live progress lines (parse / refine / tag-stat). Indexed by sampleId → step →
+  // Per-[sampleId, step] live progress lines (parse / refine / tag-stat). Indexed by sampleId -> step ->
   // progressLine, so deriveProgress can pull the line for whichever step the sample is on.
   const stepProgress = app.model.outputs.stepProgress;
   const lineBySampleStep = new Map<string, string | undefined>();

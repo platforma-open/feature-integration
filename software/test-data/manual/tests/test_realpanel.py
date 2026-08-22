@@ -1,9 +1,9 @@
 """Real-panel path tests.
 
-The point of `--real-panel` is that a panel supplied from outside the repository drives the run, so these
-tests write their OWN synthetic wide panel and drive the generator with that. Nothing here may carry a
-real panel's vocabulary — its sample names, antigen names, catalogue ids, sequences or channel values —
-because this file is committed and a real panel is not ours to commit.
+The point of `--real-panel` is that a panel supplied from outside the repository drives the run, so
+these tests write their OWN synthetic wide panel and drive the generator with that. Nothing here may
+carry a real panel's vocabulary -- its sample names, antigen names, catalogue ids, sequences or channel
+values -- because this file is committed and a real panel is not ours to commit.
 
 The synthetic panel reproduces the three shapes that matter: per-sample panels of unequal size, a
 sequence reused across two samples under different antigen names, and a role column that declares target
@@ -288,8 +288,8 @@ def test_arm_vdj_without_an_antigen_arm_says_so(panel_csv, tmp_path):
 
 def test_most_cells_sit_in_expanded_clones(panel_csv, tmp_path):
     """The shape that matters for an antibody-discovery bed: a clonotype's verdict must usually rest on
-    SEVERAL cells. Asserted on the share of CELLS in clones of >= 10, not on the share of clonotypes —
-    singletons are legitimately a large share of clonotypes and a small share of cells, and confusing
+    SEVERAL cells. Asserted on the share of CELLS in clones of >= 10, not on the share of clonotypes.
+    Singletons are legitimately a large share of clonotypes and a small share of cells, and confusing
     the two is what produced a 97%-singleton repertoire in the first place."""
     out = tmp_path / "run"
     assert run_generator(panel_csv, out).returncode == 0
@@ -339,9 +339,9 @@ def test_clone_sizes_account_for_every_cell():
 # --- regimes -------------------------------------------------------------------------------------
 #
 # Two measured calibrations exist and they disagree by more than an order of magnitude. `deep` is the
-# public 10x BEAM shape; `shallow` stands in for real in-vivo BEAM libraries. The contract these
+# public 10x BEAM shape, and `shallow` stands in for real in-vivo BEAM libraries. The contract these
 # tests hold is that `deep` is unchanged by the existence of `shallow`, and that `shallow` actually lands
-# in the regime it claims — not merely that it runs.
+# in the regime it claims rather than merely running.
 
 NARROW_ROWS = [
     ("grp1", SEQ["a"], "Ag Alpha"),
@@ -431,7 +431,7 @@ def test_shallow_run_lands_in_the_measured_regime(panel_csv, tmp_path):
 
 
 def test_shallow_tail_cycle_beats_the_deep_floor():
-    """TAIL_CYCLE averages 1.47 cells per clonotype and is a floor no parameter setting gets under; the
+    """TAIL_CYCLE averages 1.47 cells per clonotype and is a floor no parameter setting gets under. The
     sparse cycle is why the shallow regime can reach 1.05."""
     from lib import vdj
     assert sum(vdj.TAIL_CYCLE) / len(vdj.TAIL_CYCLE) > 1.4

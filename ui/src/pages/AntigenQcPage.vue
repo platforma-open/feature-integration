@@ -11,15 +11,15 @@ import { useApp } from "../app";
 
 const app = useApp();
 
-// Two readings of the same run, on one page because a reader checking whether a run can be trusted asks
-// both questions at once: did the measurements pass, and did the panel we declared match the barcodes the
+// Two readings of the same run, on one page because a reader checking whether a run can be trusted asks both
+// questions at once: did the measurements pass, and did the panel we declared match the barcodes the
 // sequencer actually returned.
 //
 // This page is the RUN's quality, never the sample's. The "Per-sample QC" page above shows the mitool
-// per-sample stats — reads parsed and matched, cells and features detected — one row per sample. What is
-// below is keyed (level, panel, entity, measurement): the measurements the verdict stage takes over the
-// whole run. The two pages are named apart for that reason, since "QC" alone would read as two views of
-// one set of numbers.
+// per-sample stats -- reads parsed and matched, cells and features detected -- one row per sample. What is
+// below is keyed (level, panel, entity, measurement): the measurements the verdict stage takes over the whole
+// run. The two pages are named apart for that reason, since "QC" alone would read as two views of one set of
+// numbers.
 const qcSettings = usePlDataTableSettingsV2({
   model: () => app.model.outputs.runQualityTable,
 });
@@ -29,20 +29,20 @@ const mismatchSettings = usePlDataTableSettingsV2({
 });
 
 // A missing V(D)J dataset is a legitimate state rather than a half-filled form: the block runs, and the
-// verdict stage alone is skipped — so neither table below has a source. Read from data rather than from an
-// output, because the point is what the user has chosen, including before the next run. Same device, and
-// the same reason, as the explore readout's own empty state.
+// verdict stage alone is skipped, so neither table below has a source. Read from data rather than from an
+// output, because the point is what the user has chosen, including before the next run. Same device, and the
+// same reason, as the explore readout's own empty state.
 const noDataset = computed(() => app.model.data.datasetRef === undefined);
 
 // An absent frame and an empty frame are different facts and get different words. Absent means the verdict
-// stage produced no report at all, so the frame is not there to read. Empty means it ran, imported its
-// frame and put no rows in it, which for the mismatch check is the wanted outcome and for the measurements
-// is a sign something went wrong upstream. So absence is answered here, by drawing no grid at all, and
-// emptiness inside the grid through `noRowsText`. Neither ends up as a bare empty table.
+// stage produced no report at all, so the frame is not there to read. Empty means it ran, imported its frame
+// and put no rows in it, which for the mismatch check is the wanted outcome and for the measurements is a
+// sign something went wrong upstream. So absence is answered here, by drawing no grid at all, and emptiness
+// inside the grid through `noRowsText`. Neither ends up as a bare empty table.
 //
-// `ok === false` is deliberately NOT treated as absence. An errored output belongs to the grid, which
-// renders the error it was handed. Swallowing it into "the stage did not run" would report a failure as a
-// choice the user made.
+// `ok === false` is deliberately NOT treated as absence. An errored output belongs to the grid, which renders
+// the error it was handed. Swallowing it into "the stage did not run" would report a failure as a choice the
+// user made.
 const qcAbsent = computed(() => {
   const output = app.model.outputs.runQualityTable;
   return output === undefined || (output.ok && output.value === undefined);
@@ -56,8 +56,8 @@ const mismatchAbsent = computed(() => {
 // Status is rendered as the plain string the workflow emitted, with the discrete filter its spec declares.
 // Deliberately not a status tag. The vocabulary is `acceptable` and `alerting` as a ranked pair PLUS
 // `unjudged` and `not evaluated`, and those last two are states rather than degrees of badness: `unjudged`
-// means no line exists to judge against, and `not evaluated` means nothing computed it. A tag vocabulary
-// of ALERT / WARN / OK / HOLD cannot carry that. It would either rank the two non-ranks as mild badness or
+// means no line exists to judge against, and `not evaluated` means nothing computed it. A tag vocabulary of
+// ALERT / WARN / OK / HOLD cannot carry that. It would either rank the two non-ranks as mild badness or
 // collapse them into one another, and both readings are the mistake this vocabulary exists to prevent.
 </script>
 

@@ -2,11 +2,11 @@
 
 Run from this directory:  python generate.py
 
-Stdlib only, and the only random thing is the barcode alphabet soup: every count, name, sample and
-set membership below is written out by hand, because each one is load-bearing against a threshold and
-a generated number would be load-bearing against nothing. The seed is passed to `random.Random`
-rather than seeding the module, so the bed regenerates byte-identically and a second generator
-running in the same process cannot disturb this one.
+Stdlib only, and the only random thing is the barcode alphabet soup. Every count, name, sample and set
+membership below is written out by hand, because each one is load-bearing against a threshold and a
+generated number would be load-bearing against nothing. The seed is passed to `random.Random` rather
+than seeding the module, so the bed regenerates byte-identically and a second generator running in the
+same process cannot disturb this one.
 
 Everything here is invented. The repository is public: no real barcode sequence, antigen name or
 sample identifier may appear. Barcodes are drawn from ACGT, antigens are `AgNN`, samples are `SNN`.
@@ -18,9 +18,9 @@ The thresholds the counts are chosen against, all shipped defaults in `verdict.p
   high-reference line 100   a comparator at or above this is flagged as an observation
 
 Against a comparator of 6 the score is 0.0001 at a count of 8, 3.1 at 50, 7.2 at 60 and 100 at 500.
-Against a comparator of 60 it is 0.1 at 500 and 100 at 5000. That is why 8 means *not bound*, 500
-means *bound* only while the comparator stays at 6, and 5000 is the count that survives the higher
-comparator of the two-control panel.
+Against a comparator of 60 it is 0.1 at 500 and 100 at 5000. That is why 8 means *not bound*, 500 means
+*bound* only while the comparator stays at 6, and 5000 is the count that survives the higher comparator
+of the two-control panel.
 """
 
 import random
@@ -28,21 +28,21 @@ import random
 SEED = 20260817
 BARCODE_LENGTH = 12
 
-# Slot names, not sequences. The tests never hard-code a sequence. They recover each barcode by the
-# role it plays in the panel (two names, two barcodes under one name, declared here and read there),
-# so a regenerated bed with different sequences still exercises the same shapes.
+# Slot names, not sequences. The tests never hard-code a sequence. They recover each barcode by the role
+# it plays in the panel -- two names, two barcodes under one name, declared here and read there -- so a
+# regenerated bed with different sequences still exercises the same shapes.
 ANTIGEN_SLOTS = ["A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7"]
 CONTROL_SLOTS = ["R0", "R1"]
 
 # (sample, antigen name, barcode slot). Panels of 3, 4, 4 and 5 tags across four samples.
 #
-#   A0, A1, A3, A4 each recur under two different names -- the case that makes name-keyed identity
-#       wrong, and the reason the pipeline keys on the barcode.
+#   A0, A1, A3, A4 each recur under two different names. That is the case that makes name-keyed
+#       identity wrong, and the reason the pipeline keys on the barcode.
 #   A2 recurs under ONE name, so a test can tell "recurs" from "recurs inconsistently".
 #   A6 and A7 both carry Ag07: one antigen on two barcodes, read by the highest member.
-#   A5 is declared by S03 alone and (see COUNTS) read in S02 alone, which is the only way both
-#       directions of the panel-versus-reads check can be seen to run per sample rather than
-#       globally: a global check would let S03's declaration excuse the reading in S02.
+#   A5 is declared by S03 alone and, see COUNTS, read in S02 alone. That is the only way both
+#       directions of the panel-versus-reads check can be seen to run per sample rather than globally:
+#       a global check would let S03's declaration excuse the reading in S02.
 PANEL = [
     ("S01", "Ag01", "A0"),
     ("S01", "Ag02", "A1"),
@@ -64,9 +64,9 @@ PANEL = [
 
 SAMPLES = ["S01", "S02", "S03", "S04"]
 
-# The comparator rows the two reference beds add, on every sample: a comparator declared in one
-# sample and not another is discarded by `consistent_properties` rather than honoured, so a tag is a
-# comparator everywhere or nowhere.
+# The comparator rows the two reference beds add, on every sample. A comparator declared in one sample
+# and not another is discarded by `consistent_properties` rather than honoured, so a tag is a comparator
+# everywhere or nowhere.
 CONTROL_NAMES = {"R0": "Ctrl1", "R1": "Ctrl2"}
 
 # (sample, cell, barcode slot, umiCount).
@@ -138,11 +138,12 @@ COUNTS = [
     ("S03", "c07", "A0", 500),
     ("S03", "c07", "A2", 500),
     ("S03", "c07", "A3", 8),
-    # No A5 row in S03 at all, though S03 is the only sample that declares it: the other direction
-    # of the same check. Both S03 cells were offered A5 and read nothing, so K03 reads *not bound*
-    # at A5 -- not *never asked*, which is the regression this shape exists to catch.
-    # c08's comparator reads 1: below the floor of 4, but the floor spares a DECLARED comparator, so
-    # it survives to be compared (0.96 against 8, 100 against 500 -- the same states a 6 gives). Read
+    # No A5 row in S03 at all, though S03 is the only sample that declares it: the other direction of
+    # the same check. Both S03 cells were offered A5 and read nothing, so K03 reads *not bound* at A5,
+    # not *never asked*, which is the regression this shape exists to catch.
+    #
+    # c08's comparator reads 1: below the floor of 4, but the floor spares a DECLARED comparator, so it
+    # survives to be compared -- 0.96 against 8, and 100 against 500, the same states a 6 gives. Read
     # without a declaration it is floored like any other count, which is what makes the exemption
     # observable. It used to be c11 that carried this, before c11 was raised to 400 for the gate.
     ("S03", "c08", "R0", 1),
@@ -221,16 +222,16 @@ def write_panel(path: str, seq: dict[str, str], controls: list[str]) -> None:
 # --- the two shapes real panel files arrive in --------------------------------------------------
 #
 # Projections of the same slots, samples and names as the panels above, so counts.csv and linker.csv
-# apply to them unchanged and the three panels differ only in the shape of the declaration. Both
-# shapes were observed in use at one account, at the same time, on two of its projects.
+# apply to them unchanged and the three panels differ only in the shape of the declaration. Both shapes
+# were observed in use at one account, at the same time, on two of its projects.
 #
 # NEITHER carries a value meaning "comparator", and that is the point of them. In both, the negative
-# control is one antigen the scientist points at by name in the interface -- so a run over either
-# resolves to the panel's own readings, and `--reference-values` has nothing correct to name. The
-# `Type` column of the wide shape declares what a member is TO THE QUESTION (a target, an off-target),
-# which is a different axis from what a count is read against. Naming `Off-Target` as the comparator
-# does not merely mis-set a baseline: reference tags are held out of the identity universe, so every
-# off-target stops being asked about at all -- the question an off-target exists to pose is deleted.
+# control is one antigen the scientist points at by name in the interface. So a run over either resolves
+# to the panel's own readings, and `--reference-values` has nothing correct to name. The `Type` column of
+# the wide shape declares what a member is TO THE QUESTION -- a target, an off-target -- which is a
+# different axis from what a count is read against. Naming `Off-Target` as the comparator does not merely
+# mis-set a baseline: reference tags are held out of the identity universe, so every off-target stops
+# being asked about at all, and the question an off-target exists to pose is deleted.
 
 # A per-slot catalogue id, 1:1 with the sequence. Real files carry both, and a reader who points the
 # barcode role at the catalogue id instead of the sequence joins to nothing.

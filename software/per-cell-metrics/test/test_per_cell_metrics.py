@@ -42,8 +42,8 @@ def test_combine_all_both_fire_emits_summed():
 
 
 def test_combine_all_one_missing_omits_feature():
-    # Only one BG505 barcode fired -> under AND the antigen is NOT called; the cell has no BG505 entry
-    # at all (omitted, not zero), so it never takes a fraction of that cell's signal.
+    # Only one BG505 barcode fired, so under AND the antigen is NOT called. The cell has no BG505
+    # entry at all -- omitted, not zero -- so it never takes a fraction of that cell's signal.
     assert combine_barcode_counts({"b1": 5}, _B2F, _FB, {"BG505": "all"}) == {}
 
 
@@ -262,8 +262,8 @@ def test_cli_rejects_colliding_feature_col(tagstat_tsv, tmp_path):
 def test_cli_empty_join_writes_header_only_not_crash(tags_csv, tmp_path, tagstat_body):
     # Regression: when no (cell, feature) pair survives the tag->feature join -- a wrong read geometry,
     # or a sample with no on-panel reads -- the run must still emit both CSVs header-only, never crash.
-    # (abundance and fractions are pure-polars transforms that carry their schema through the empty case;
-    # this guards that they stay header-only.)
+    # abundance and fractions are pure-polars transforms that carry their schema through the empty
+    # case, and this guards that they stay header-only.
     tagstat = tmp_path / "tagstat.tsv"
     tagstat.write_text("CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\n" + tagstat_body)
 
@@ -295,9 +295,9 @@ def test_cli_empty_join_writes_header_only_not_crash(tags_csv, tmp_path, tagstat
 
 @pytest.mark.slow
 def test_cli_per_cell_summary_maxima_match_exported_columns(tagstat_tsv, tags_csv, tmp_path):
-    # The per-cell summary's maxUmiCount / maxFraction are a collapse of the exported (cell x feature)
-    # columns -- they must equal the per-cell max of those exported CSVs, not a separately-recomputed
-    # value (guards the with_fraction single-compute reuse).
+    # The per-cell summary's maxUmiCount and maxFraction are a collapse of the exported
+    # (cell x feature) columns. They must equal the per-cell max of those exported CSVs, not a
+    # separately-recomputed value. This guards the with_fraction single-compute reuse.
     subprocess.run(
         [
             sys.executable,
@@ -398,9 +398,9 @@ def test_cli_rejects_conflicting_combine_mode(tmp_path):
 
 
 def test_a_cell_whose_every_count_is_zero_gets_a_zero_share_not_a_nan():
-    # 0/0 is NaN, and the NaN does not stay put: it reaches the exported fractions CSV as a float
-    # nothing downstream expects, and in per_cell_summary it slips past the "<1%" guard (which requires
-    # umiCount > 0) into a cast to Int64 that raises and takes the whole CLI down with a raw traceback.
+    # 0/0 is NaN, and the NaN does not stay put. It reaches the exported fractions CSV as a float
+    # nothing downstream expects, and in per_cell_summary it slips past the "<1%" guard, which requires
+    # umiCount > 0, into a cast to Int64 that raises and takes the whole CLI down with a raw traceback.
     # Real tag-stat cannot emit such a row, but this CLI is driven by hand during verification.
     frame = pl.DataFrame(
         {

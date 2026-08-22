@@ -14,18 +14,19 @@ import { createPlDataTableStateV2, wrapOutputs } from "@platforma-sdk/model";
 //
 // WHAT THIS FILE COVERS. The block has two halves and this file reaches one of them:
 //
-//   * the per-sample counting half, FASTQ in and per-cell UMI counts out, is exercised end to end by the
-//     second test below, when a backend can run it.
-//   * the ANTIGEN VERDICT half is not covered here at all. It needs a single-cell V(D)J dataset upstream
-//     to supply the clonotype sets, and the samples-and-data chain this file uses cannot produce one. The
-//     verdict logic is covered by the Python suite (software/per-cell-metrics/test/) and by the Tengo
-//     suite for the p-column specs (workflow/src/*.test.tengo). Neither substitutes for a live run, which
-//     is why the block is verified by hand against software/test-data/fixtures/verdicts/ before release.
+//   * the per-sample counting half, FASTQ in and per-cell UMI counts out, is exercised end to end by
+//     the second test below, when a backend can run it.
+//   * the ANTIGEN VERDICT half is not covered here at all. It needs a single-cell V(D)J dataset
+//     upstream to supply the clonotype sets, and the samples-and-data chain this file uses cannot
+//     produce one. The verdict logic is covered by the Python suite
+//     (software/per-cell-metrics/test/) and by the Tengo suite for the p-column specs
+//     (workflow/src/*.test.tengo). Neither substitutes for a live run, which is why the block is
+//     verified by hand against software/test-data/fixtures/verdicts/ before release.
 //
-// The upstream chain follows the proven samples-and-data FASTQ pattern (blocks/mixcr-amplicon-alignment).
-// The tag->feature CSV is a direct upload, set as the block arg `tagFeatureCsvHandle` through a local file
-// handle, and the workflow imports it with file.importFile and shares the blob across the per-sample
-// bodies.
+// The upstream chain follows the proven samples-and-data FASTQ pattern
+// (blocks/mixcr-amplicon-alignment). The tag->feature CSV is a direct upload, set as the block arg
+// `tagFeatureCsvHandle` through a local file handle, and the workflow imports it with file.importFile
+// and shares the blob across the per-sample bodies.
 //
 // Golden, decoded from test/assets/fb_small_R{1,2}.fastq.gz. Geometry is CELL 16 + UMI 10 on R1 and
 // feature 15 on R2, and tags.csv maps 15xG -> AGX and 15xC -> BGX:
@@ -79,15 +80,17 @@ blockTest("empty inputs", { timeout: 20000 }, async ({ rawPrj: project, expect }
 // parse -> refine-tags -> tag-stat -u exec chain, the per-cell-metrics Python, and the processColumn
 // export emitting pl7.app/feature/umiCount.
 //
-// SKIPPED (2026-07-06): it hangs on the CI and run-platforma FS-storage backend. The tag->feature CSV is a
-// DIRECT upload consumed by file.importFile (prerun.tpl and main.tpl), and a raw file.importFile of a local
-// handle never finalizes on that backend, so the prerun's `csvColumns` never resolves and awaitStableState
-// aborts with `field_not_resolved:csvColumns`. A test-backend limitation rather than a block bug: the block
-// runs correctly against a real backend, driven live. No block e2e-tests this direct-upload path. Every
-// block consuming a file.importFile handle (immune-assay-data, blast, makeblastdb,
-// antibody-sequence-liabilities) ships without block tests, and the Samples & Data upstream chain, the one
-// CI-working file-input pattern, cannot supply a direct CSV upload. Re-enable if the backend gains a
-// working local file.importFile, or if the CSV moves to a pool column.
+// SKIPPED (2026-07-06): it hangs on the CI and run-platforma FS-storage backend. The tag->feature CSV
+// is a DIRECT upload consumed by file.importFile, in prerun.tpl and main.tpl, and a raw
+// file.importFile of a local handle never finalizes on that backend. So the prerun's `csvColumns`
+// never resolves and awaitStableState aborts with `field_not_resolved:csvColumns`. A test-backend
+// limitation rather than a block bug: the block runs correctly against a real backend, driven live.
+//
+// No block e2e-tests this direct-upload path. Every block consuming a file.importFile handle
+// (immune-assay-data, blast, makeblastdb, antibody-sequence-liabilities) ships without block tests,
+// and the Samples & Data upstream chain, the one CI-working file-input pattern, cannot supply a direct
+// CSV upload. Re-enable if the backend gains a working local file.importFile, or if the CSV moves to a
+// pool column.
 blockTest.skip(
   "feature integration end-to-end emits per-cell umiCount",
   { timeout: 300000 },
@@ -149,17 +152,18 @@ blockTest.skip(
     // The tag->feature CSV is a direct upload (not a pool ref). Provision it as a local file handle.
     const csvHandle = await helpers.getLocalFileHandle("./assets/tags.csv");
 
-    // Configure the block. update-block-data must carry EVERY BlockArgsValid field, or the backend reports
-    // "currentArgs not set". controlFeature is optional, since there is no negative-control marker here, and
-    // so is datasetRef: this run has no single-cell V(D)J dataset, so it exercises the counting half alone.
-    // The reading's numeric parameters are required and carry the shipped defaults, the same values a
-    // freshly created block starts with.
+    // Configure the block. update-block-data must carry EVERY BlockArgsValid field, or the backend
+    // reports "currentArgs not set". controlFeature is optional, since there is no negative-control
+    // marker here, and so is datasetRef: this run has no single-cell V(D)J dataset, so it exercises the
+    // counting half alone. The reading's numeric parameters are required and carry the shipped
+    // defaults, the same values a freshly created block starts with.
     //
-    // What a datasetless run emits BESIDES the per-cell table is deliberately not asserted. Today the whole
-    // antigen stage is skipped, so nothing antigen-related is produced, while the spec's qc-measurement set
-    // requires the eight read-and-panel measurements and the panel mismatch report to survive a run with no
-    // cell list, marking the rest not-evaluated. That gap is open (decision log O-4), and asserting today's
-    // behaviour would have to be deleted to fix it, so this test asserts only what both readings agree on.
+    // What a datasetless run emits BESIDES the per-cell table is deliberately not asserted. Today the
+    // whole antigen stage is skipped, so nothing antigen-related is produced, while the spec's
+    // qc-measurement set requires the eight read-and-panel measurements and the panel mismatch report
+    // to survive a run with no cell list, marking the rest not-evaluated. That gap is open (decision
+    // log O-4), and asserting today's behaviour would have to be deleted to fix it, so this test
+    // asserts only what both readings agree on.
     await project.mutateBlockStorage(fiBlockId, {
       operation: "update-block-data",
       value: {
@@ -226,10 +230,10 @@ blockTest.skip(
     expect(maxFractions[1]).toBeCloseTo(1, 5);
 
     // No dominant-feature call, and it must never come back through this table. It answers a different
-    // question from the four-state verdict — one antigen per cell, chosen by a share threshold — and beside
-    // a verdict it would give a reader two disagreeing answers with no rule for which wins. `guardNoScore`
-    // in column-specs.lib.tengo refuses the score annotation at build time, and this is the same claim
-    // checked against what actually reached a table.
+    // question from the four-state verdict -- one antigen per cell, chosen by a share threshold -- and
+    // beside a verdict it would give a reader two disagreeing answers with no rule for which wins.
+    // `guardNoScore` in column-specs.lib.tengo refuses the score annotation at build time, and this is
+    // the same claim checked against what actually reached a table.
     const stringColumnValues = data.filter((c) => c.type === "String").map((c) => [...c.data]);
     expect(
       stringColumnValues.some((vals) => vals.every((v) => v === "AGX")),

@@ -8,10 +8,10 @@ _one := func(key) {
 	return m
 }
 
-// The whole point of the two-stage split: changing the reading must not re-run the per-sample mitool chain.
-// Every verdict-stage parameter is checked against both allowlists, so adding one to
-// verdict-args.PARAMETER_NAMES and to the fan-out at once fails here rather than costing every user a full
-// parse, refine-tags and tag-stat re-run with nothing in the logs to explain it.
+// The whole point of the two-stage split: changing the reading must not re-run the per-sample mitool
+// chain. Every verdict-stage parameter is checked against both allowlists, so adding one to
+// verdict-args.PARAMETER_NAMES and to the fan-out at once fails here. Otherwise it costs every user a
+// full parse, refine-tags and tag-stat re-run with nothing in the logs to explain it.
 Test_no_verdict_parameter_may_reach_the_fanout := func() {
 	for name in va.PARAMETER_NAMES {
 		test.isEqual([name], fanout.unlisted(_one(name), fanout.EXTRA_INPUT_KEYS),

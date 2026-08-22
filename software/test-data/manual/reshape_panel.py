@@ -11,14 +11,14 @@ Why this exists. `generate.py` emits one panel shape: `tag,feature,Type,Species,
 every sample, with the control carrying its own `Decoy` role. Two other shapes were observed in use at
 one account at the same time, on two of its projects, and neither looks like that:
 
-  narrow  sample, barcode, antigen name — and no fourth column. Nothing declares a role, so nothing can
+  narrow  sample, barcode, antigen name -- and no fourth column. Nothing declares a role, so nothing can
           be named as the comparator and the panel's own readings have to serve.
   wide    sample, name, catalogue id, barcode, channel, a constant, role. The role column declares what
           a member is TO THE QUESTION (target, off-target) and carries **no** comparator value.
 
 In both, the negative control is one antigen the scientist points at by name in the interface. So
-neither shape can reach the declared-comparator path, for two different reasons — which is the thing
-these files exist to make visible in the app rather than only in a CSV.
+neither shape can reach the declared-comparator path, for two different reasons. That is the thing these
+files exist to make visible in the app rather than only in a CSV.
 
 Both shapes rename a barcode between samples: the same sequence carries a different antigen name in
 different samples, which is the tag-inventory reuse the per-sample keying of the panel exists for. Under
@@ -106,11 +106,11 @@ def write_wide(path: str, tags: list[dict], samples: list[str], rename: int, dro
             for t_i, tag in enumerate(offered):
                 name = _renamed(tag["feature"], s_i) if (s_i and t_i < rename) else tag["feature"]
                 role = ROLE_OF.get(tag.get("Type", "Target"), "Target (Primary)")
-                # Two case-variant failure modes, kept apart so each can be told from the other:
-                #   tag 0 reads one spelling in the first sample and another in the rest, so it carries
-                #   two values, the property is dropped for it, and it ends up with no role at all;
-                #   tag 1 reads the other spelling everywhere, so it keeps its role but no longer
-                #   matches the same role written normally elsewhere.
+                # Two case-variant failure modes, kept apart so each can be told from the other. Tag 0
+                # reads one spelling in the first sample and another in the rest, so it carries two
+                # values, the property is dropped for it, and it ends up with no role at all. Tag 1
+                # reads the other spelling everywhere, so it keeps its role but no longer matches the
+                # same role written normally elsewhere.
                 if (t_i == 0 and s_i) or t_i == 1:
                     role = _lowercased(role)
                 w.writerow(

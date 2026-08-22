@@ -408,11 +408,10 @@ def test_a_literal_star_in_a_sample_column_is_fatal(tmp_path):
 
 
 def test_a_mixed_star_and_named_panel_does_not_go_global():
-    # Second line of defence: the reader refuses this frame, but a caller
-    # building one directly must not get an empty table for a real disagreement.
-    # The output is asserted in full, not just membership: a mixed frame reports
-    # every row as noise, including the star row compared as a literal sample
-    # name, and a future "clean that spurious row up" edit must not pass here.
+    # Second line of defence: the reader refuses this frame, but a caller building one directly must
+    # not get an empty table for a real disagreement. The output is asserted in full, not just
+    # membership. A mixed frame reports every row as noise, including the star row compared as a
+    # literal sample name, and a future "clean that spurious row up" edit must not pass here.
     panel = pl.DataFrame({"tag": ["AAAA", "CCCC"], "sample": ["*", "S1"], "Name": ["a", "c"]})
     seen = _counts([("S1", "c1", "AAAA", 5)])
     rows = {(r["sample"], r["tag"], r["direction"]) for r in panel_read_mismatch(panel, seen).to_dicts()}
@@ -424,9 +423,8 @@ def test_a_mixed_star_and_named_panel_does_not_go_global():
 
 
 def test_null_keys_on_either_side_do_not_raise():
-    # A null tag or a null sample cannot be placed on either side of the
-    # comparison, on either input — the panel side gets the same guard as the
-    # reads side, not a narrower one.
+    # A null tag or a null sample cannot be placed on either side of the comparison, on either input.
+    # The panel side gets the same guard as the reads side, not a narrower one.
     panel = pl.DataFrame(
         {"tag": ["AAAA", "CCCC", None], "sample": ["S1", None, "S1"], "Name": ["a", "c", "z"]},
         schema={"tag": pl.String, "sample": pl.String, "Name": pl.String},

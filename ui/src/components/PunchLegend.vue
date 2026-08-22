@@ -15,9 +15,9 @@ import { PUNCH_LEGEND_DIAMETER_PX, PUNCH_PAINT, type PunchGlyph } from "./punchM
 //
 // Which card this legend is above. The four glyphs are the same on both faces, which is the point of the
 // shared paint map, but what a glyph MEANS is not: a mark on the card is a verdict a majority of cells
-// produced, and a mark on the by-cell face is one cell's own reading. "A majority read it as bound" is
-// false of a single cell, and a legend that said it would teach the wrong thing about the very view a
-// reader opened to see individual cells.
+// produced, and a mark on the by-cell face is one cell's own reading. "A majority read it as bound" is false
+// of a single cell, and a legend that said it would teach the wrong thing about the very view a reader opened
+// to see individual cells.
 //
 // Both wordings live here, in the one component, so a glyph can never be paired with the wrong swatch.
 const props = withDefaults(defineProps<{ variant?: "set" | "cell" }>(), { variant: "set" });

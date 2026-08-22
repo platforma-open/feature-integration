@@ -71,9 +71,9 @@ Test_every_flag_is_threaded := func() {
 	}
 }
 
-// The per-sample read QC is the one input whose absence is invisible. Three of the fifteen measurements
-// have no other source, and they render as declared-but-unchecked rather than as an error. The flag must
-// name the file the run template stages, or the exec fails on a path it never received.
+// The per-sample read QC is the one input whose absence is invisible. Three of the fifteen measurements have
+// no other source, and they render as declared-but-unchecked rather than as an error. The flag must name the
+// file the run template stages, or the exec fails on a path it never received.
 Test_qc_summary_points_at_the_staged_file := func() {
 	args := va.build(_full)
 	test.isEqual(va.FILE_QC_SUMMARY, va.valueOf(args, "--qc-summary"),
@@ -148,8 +148,8 @@ Test_integer_flags_carry_no_decimal_point := func() {
 		"the cell condition reaches argparse as an integer")
 }
 
-// The role values are comma-separated because that is what the CLI splits on, and they arrive already
-// sorted so two equivalent selections produce one cache key.
+// The role values are comma-separated because that is what the CLI splits on, and they arrive already sorted
+// so two equivalent selections produce one cache key.
 Test_reference_values_are_comma_separated := func() {
 	args := va.build(_full)
 	test.isEqual("Control,Isotype", va.valueOf(args, "--reference-values"),

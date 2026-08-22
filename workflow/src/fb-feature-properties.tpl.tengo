@@ -1,7 +1,7 @@
 // Per-feature property import (render.create boundary).
 //
-// Feature Integration imports every EXTRA column of the tag->feature CSV — every column beyond the
-// user-mapped barcode-sequence and feature-name roles — as a per-feature property, and surfaces each as a
+// Feature Integration imports every EXTRA column of the tag->feature CSV -- every column beyond the
+// user-mapped barcode-sequence and feature-name roles -- as a per-feature property, and surfaces each as a
 // p-column keyed on the shared feature axis (pl7.app/feature/featureId). The properties then ride that axis
 // into VDJ Multiomic Integration's per-feature outputs and lead selection, so downstream can group and
 // aggregate the binding profile by property, such as all human against all cyno antigens, with no re-import
@@ -43,8 +43,8 @@ self.body(func(inputs) {
 	// Nothing to emit without extra property columns (A-0026) or a negative-control marker. Publish an empty
 	// frame otherwise, because an empty xsv `columns` list fails the import spec validation.
 	if len(propertyColumns) > 0 || hasControl {
-		// Same trace step as the per-cell contract columns, deterministic and seeded from the input FASTQ
-		// spec plus blockId, so the properties carry consistent provenance and labels.
+		// Same trace step as the per-cell contract columns, deterministic and seeded from the input FASTQ spec
+		// plus blockId, so the properties carry consistent provenance and labels.
 		trace := pSpec.makeTrace(inputs.traceSeedSpec, {
 			type: "milaboratories.feature-integration",
 			id: blockId,
@@ -67,8 +67,8 @@ self.body(func(inputs) {
 			}
 		}
 
-		// The negative-control marker column: hidden, and not a filter. It rides pl7.app/feature/featureId
-		// into VDJ Multiomic Integration, which removes the control from its antigen metrics.
+		// The negative-control marker column: hidden, and not a filter. It rides pl7.app/feature/featureId into
+		// VDJ Multiomic Integration, which removes the control from its antigen metrics.
 		if hasControl {
 			ctrlPf := xsv.importFile(inputs.negativeControlFile, "csv", {
 				axes: [{ column: "feature", spec: featureAxis }],

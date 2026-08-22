@@ -1,7 +1,7 @@
 // Per-sample feature-barcode pipeline (processColumn body).
 //
 // One invocation per sample group, since the FASTQ column is aggregated over lane and readIndex. Runs the
-// mitool chain — parse -> refine-tags -> tag-stat -u — for per-(cell, feature-barcode) distinct-UMI counts,
+// mitool chain -- parse -> refine-tags -> tag-stat -u -- for per-(cell, feature-barcode) distinct-UMI counts,
 // then hands that table plus the user's tag->feature CSV to the per-cell-metrics Python software, which
 // collapses to the (cell x feature) outputs.
 //
@@ -60,7 +60,7 @@ self.body(func(inputs) {
 
 	// Sample-aware tag->feature mapping (optional). Where a sample column is set, the tag CSV maps the same
 	// barcode to different features per sample, so filter it to THIS sample's rows before it feeds the panel
-	// (fb-refine) and the naming join (fb-downstream). sampleColumn == "" -> one global mapping, with the
+	// (fb-refine) and the naming join (fb-downstream). sampleColumn == "" means one global mapping, with the
 	// CSV passed through untouched.
 	sampleColumn := inputs.sampleColumn
 	tagsCsvForSample := tagsCsv
@@ -161,10 +161,9 @@ self.body(func(inputs) {
 		saveFile("refine_report_empty.json").
 		run()
 
-	// Step 3: gated refine-tags -> tag-stat (fb-refine-tagstat boundary). On a match it runs the normal
-	// chain. On no-match it returns the gate's header-only tag-stat and empty refine report, skipping the
-	// mitool steps that would crash on the empty parsed.mic. Either way it yields tagstatTsv and
-	// refineReport.
+	// Step 3: gated refine-tags -> tag-stat (fb-refine-tagstat boundary). On a match it runs the normal chain.
+	// On no-match it returns the gate's header-only tag-stat and empty refine report, skipping the mitool
+	// steps that would crash on the empty parsed.mic. Either way it yields tagstatTsv and refineReport.
 	refineTagstatRun := render.create(fbRefineTagstatTpl, {
 		decision: gate.getFileContent("decision.json"),
 		parsedMic: parsedMic,
@@ -186,7 +185,7 @@ self.body(func(inputs) {
 	stepLogs := refineTagstatRun.output("stepLogs")
 
 	// Step 4: QC report and per-cell metrics (fb-downstream boundary). These consume the drifting mitool
-	// files — tagstat.tsv plus the parse and refine reports — so they run inside a render boundary and
+	// files -- tagstat.tsv plus the parse and refine reports -- so they run inside a render boundary and
 	// return their per-sample outputs as render outputs. See the file header for the inline-consumer clash.
 	downstreamRun := render.create(fbDownstreamTpl, {
 		tagstatTsv: tagstatTsv,

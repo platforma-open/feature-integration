@@ -9,8 +9,8 @@ const line = (stage: string) => `${ProgressPrefix}${stage}`;
 
 describe("deriveProgress — label follows the live stream, not the report step", () => {
   it("does not flash 'Counting UMIs' while refine is still the furthest live step", () => {
-    // The report step has advanced to "counting" while only refine has a live line, so the label must stay
-    // on refine. Following the report step flashes "Counting UMIs" here.
+    // The report step has advanced to "counting" while only refine has a live line, so the label must stay on
+    // refine. Following the report step flashes "Counting UMIs" here.
     const cell = deriveProgress(
       S,
       new Set(),

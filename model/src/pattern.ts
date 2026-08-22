@@ -1,7 +1,7 @@
 // mitool tag-pattern (read-geometry) model for the Feature Integration block.
 //
 // Feature-barcode reads have a FIXED single-cell layout across every documented 10x 5' antigen-capture
-// variant (verified against the 10x docs):
+// variant, verified against the 10x docs:
 //   Read 1: CELL barcode + UMI          Read 2: [optional leading skip] + FEATURE barcode + remainder
 // so, unlike the general peptide-amplicon builder in blocks/peptide-extraction, there are no anchors, no
 // per-read insert assignment, no reverse-complement mirroring, and no single-end case. The only
@@ -9,8 +9,8 @@
 // TotalSeq-C and next-gen antigen-barcoding case, where the 15 nt barcode sits behind a 10 nt lead:
 // `5PNNNNNNNNNN(BC)`.
 
-// Tag names mitool registers for this pipeline, and the SINGLE source of truth. They are baked into
-// every assembled pattern here AND sent to the workflow in args.tags, so the downstream commands
+// Tag names mitool registers for this pipeline, and the SINGLE source of truth. They are baked into every
+// assembled pattern here AND sent to the workflow in args.tags, so the downstream commands
 // (`refine-tags -t CELL -t FEATURE -u UMI`, `tag-stat`, per_cell) reference exactly the names the pattern
 // declares. The workflow keeps no independent copy that could drift.
 export const CELL_TAG = "CELL";
@@ -51,7 +51,7 @@ export function parsePattern(s: string): PatternParts | null {
 /** Loose validation for a user-supplied pattern (write mode and args). mitool does the real parsing. This
  *  enforces only what the block's downstream commands depend on: `refine-tags`, `tag-stat` and `per_cell`
  *  reference the CELL, UMI and FEATURE tags plus the R2 capture by name, so those must be present. Any
- *  other content — constant flanks, an N-spacer, anchors — goes to mitool verbatim. Returns null when
+ *  other content -- constant flanks, an N-spacer, anchors -- goes to mitool verbatim. Returns null when
  *  valid, else a message naming what is missing. */
 export function validatePattern(s: string): string | null {
   const p = s.trim();
@@ -74,8 +74,8 @@ export function validatePattern(s: string): string | null {
 /** Assemble the mitool pattern string from structured parts (R1 trailing `*` and R2 offset optional). */
 export function assemblePattern(p: PatternParts): string {
   const trailing = p.r1TrailingWildcard ? "*" : "";
-  // Anonymous N-skip, bare and without parentheses. mitool reads `(...)` as a `(TAG:pattern)` group, so
-  // it rejects a parenthesized `(N{n})` with "Unexpected character in tag identifier". A bare `N{n}` is
+  // Anonymous N-skip, bare and without parentheses. mitool reads `(...)` as a `(TAG:pattern)` group, so it
+  // rejects a parenthesized `(N{n})` with "Unexpected character in tag identifier". A bare `N{n}` is
   // matched but not captured, which is what an offset should be. Verified against mitool 2.3.1.
   const skip = p.featureOffset > 0 ? `N{${p.featureOffset}}` : "";
   return (

@@ -4,16 +4,15 @@
 // File content can be inspected only inside a template that receives the file, which is why this
 // sub-template exists.
 //   - matched > 0  -> the normal chain: refine-tags (fb-refine), then tag-stat (fb-tagstat).
-//   - matched == 0 -> mitool wrote no parsed.mic, and fb-parse pre-wrote an empty placeholder, so refine
-//                     and tag-stat would crash on it. Skip both and return the header-only tag-stat TSV
-//                     and empty refine report the gate synthesized. The downstream Python is empty-safe,
-//                     since a header-only tag-stat yields empty results, so the sample completes with
-//                     zero cells instead of failing the whole block.
+//   - matched == 0 -> mitool wrote no parsed.mic, and fb-parse pre-wrote an empty placeholder, so refine and
+//                     tag-stat would crash on it. Skip both and return the header-only tag-stat TSV and
+//                     empty refine report the gate synthesized. The downstream Python is empty-safe, so the
+//                     sample completes with zero cells instead of failing the whole block.
 // It also assembles the per-sample step-report map of the parse, refine and tag-stat output files, keyed by
 // an ordinal step axis. These files are deterministic, so surfacing them is CID-safe. The model reads only
 // their PRESENCE to derive which step a sample has reached (see the model's sampleStep), and a report
-// appears once its step finishes. A no-match sample still gets all three — parse's real report plus the
-// gate's empty refine report and header-only tag-stat — so it advances to Done like any other sample.
+// appears once its step finishes. A no-match sample still gets all three -- parse's real report plus the
+// gate's empty refine report and header-only tag-stat -- so it advances to Done like any other sample.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 assets := import("@platforma-sdk/workflow-tengo:assets")

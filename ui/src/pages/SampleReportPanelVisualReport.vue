@@ -3,9 +3,9 @@ import { PlChartStackedBar } from "@platforma-sdk/ui-vue";
 import { computed } from "vue";
 import type { SampleResult } from "../results";
 
-// The Visual Report tab: where this sample's reads went. RecoveryBar is already the settings object a
-// stacked bar wants ({ title, data: [{ label, value, color, description }] }), so this tab presents data
-// results.ts builds for the grid anyway.
+// The Visual Report tab: where this sample's reads went. RecoveryBar is already the settings object a stacked
+// bar wants ({ title, data: [{ label, value, color, description }] }), so this tab presents data results.ts
+// builds for the grid anyway.
 //
 // PlChartStackedBar, never PlAgChartStackedBarCell. The Ag* one is an ag-grid cell renderer taking
 // ICellRendererParams, so using it outside a grid would mean fabricating a fake cell params object.
@@ -22,10 +22,10 @@ const settings = computed(() => {
   return recovery === undefined ? undefined : { ...recovery, showLegends: false };
 });
 
-// Read counts and shares per segment, for the written breakdown under the chart. The descriptions
-// results.ts attaches to each segment are otherwise reachable only by hovering the bar, and the equivalent
-// prose in the grid only by hovering the column header. A reader who does neither should still learn what
-// the segments mean.
+// Read counts and shares per segment, for the written breakdown under the chart. The descriptions results.ts
+// attaches to each segment are otherwise reachable only by hovering the bar, and the equivalent prose in the
+// grid only by hovering the column header. A reader who does neither should still learn what the segments
+// mean.
 const segments = computed(() => {
   const recovery = props.sampleData?.recovery;
   if (recovery === undefined) return undefined;

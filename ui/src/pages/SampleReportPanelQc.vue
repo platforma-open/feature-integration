@@ -3,14 +3,14 @@ import { computed } from "vue";
 import QcSection from "../components/QcSection.vue";
 import { qcChecks, type SampleResult } from "../results";
 
-// The Quality Checks tab: the per-sample QC status broken out into one row per check. The Main grid's
-// Quality column can only show the worst of these. Here the reader sees which metric produced it.
+// The Quality Checks tab: the per-sample QC status broken out into one row per check. The Main grid's Quality
+// column can only show the worst of these. Here the reader sees which metric produced it.
 const props = defineProps<{
   sampleData: SampleResult | undefined;
 }>();
 
-// qc is absent until the sample's QC settles at completion. qcChecks is the same function the grid's
-// tag is derived from, so a row here can never disagree with the tag in the grid.
+// qc is absent until the sample's QC settles at completion. qcChecks is the same function the grid's tag is
+// derived from, so a row here can never disagree with the tag in the grid.
 const checks = computed(() => {
   const qc = props.sampleData?.qc;
   return qc === undefined ? undefined : qcChecks(qc);

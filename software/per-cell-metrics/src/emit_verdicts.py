@@ -1,44 +1,36 @@
 """The entrypoint: counts, a panel and a cell list become a four-state verdict.
 
-Composes the reading in one order, and the order is load-bearing at every
-step. The floor works on the raw per-(cell, tag) counts. A cell's reference
-reading is taken from the floored frame. Tags combine into an identity by the
-highest of their counts. The identity's count is read against that cell's own
-reference. A set's cells combine by majority. Reversing any pair changes the
-answer: flooring after combining would floor one reading where two were
-taken, and taking the reference before the floor would compare against a
-number the floor has already been applied to elsewhere.
+Composes the reading in one order, and the order is load-bearing at every step. The
+floor works on the raw per-(cell, tag) counts. A cell's reference reading is taken from
+the floored frame. Tags combine into an identity by the highest of their counts. The
+identity's count is read against that cell's own reference. A set's cells combine by
+majority. Reversing any pair changes the answer: flooring after combining would floor
+one reading where two were taken, and taking the reference before the floor would
+compare against a number the floor has already been applied to elsewhere.
 
-**The grid of every cell against every identity is never built.** A silent
-cell -- one asked about an identity and showing no reading for it -- scores
-`specificity_score(0, r)`, at most ~0.0422 and falling as the reference rises,
-so it settles *not bound* unless the cell itself cannot be compared.
-`silent_tally` counts those positions analytically, because on a realistic
-panel the grid is 11-20x the sparse input and a pMHC panel does not fit at
-all. Two consequences are enforced here rather than downstream. A `--cutoff`
-at or below that ~0.0422 bound is refused, because below it the analytic count
-and the row-per-position reference disagree with no error raised. And the
-row-per-position reference implementation in verdict.py is never called from
-production, which the test suite asserts by checking this file does not name
-it.
+**The grid of every cell against every identity is never built.** A silent cell -- asked
+about an identity and showing no reading for it -- scores `specificity_score(0, r)`, at
+most ~0.0422 and falling as the reference rises, so it settles *not bound* unless the
+cell itself cannot be compared. `silent_tally` counts those positions analytically,
+because on a realistic panel the grid is 11-20x the sparse input and a pMHC panel does
+not fit at all. Two consequences are enforced here rather than downstream: a `--cutoff`
+at or below that ~0.0422 bound is refused, and verdict.py's row-per-position reference
+implementation is never called from production, which the test suite asserts by checking
+this file does not name it.
 
-`offered` is keyed by SAMPLE throughout and is never regrouped by set. What a
-panel offered is a property of the staining, which is done per sample, so a
-set spanning two samples was offered whatever either sample's panel offered,
-and `combine_cells` takes that union itself. Keying the map by set instead
-makes every lookup miss, reads every offered set as empty, and raises
-nothing.
+`offered` is keyed by SAMPLE throughout and is never regrouped by set. Staining is done
+per sample, so a set spanning two samples was offered whatever either panel offered, and
+`combine_cells` takes that union itself. Keying the map by set instead makes every lookup
+miss, reads every offered set as empty, and raises nothing.
 
-One `Admissibility` bundle is built and handed to `read_states`,
-`combine_cells` and `self_disagreement` alike. The bundle exists so those
-cannot be given different reference dicts and then disagree about which cells
-"cannot be compared", which surfaces as a silent-position count that is wrong
-or negative rather than as an error.
+One `Admissibility` bundle is built and handed to `read_states`, `combine_cells` and
+`self_disagreement` alike, so they cannot be given different reference dicts and then
+disagree about which cells "cannot be compared" -- which surfaces as a silent-position
+count that is wrong or negative rather than as an error.
 
-Every frame is sorted before it is written. `combine_tags_to_identities`
-groups without maintaining order, so an unsorted frame varies run to run. A
-p-column's identity is its content, and an unstable byte order costs every
-downstream node its dedup with nothing to show for it.
+Every frame is sorted before it is written. `combine_tags_to_identities` groups without
+maintaining order, so an unsorted frame varies run to run. A p-column's identity is its
+content, and an unstable byte order costs every downstream node its dedup.
 """
 
 from __future__ import annotations
@@ -114,13 +106,11 @@ CellKey = tuple[str, str]
 def _cell_keyed_reference(counts, reference_tags, source, analysed_cells, panel_size, args) -> Reference:
     """The comparator for the rungs keyed by cell: a declared reagent, or the panel's own readings.
 
-    Raw counts, never floored. Each rung computes its baseline from its own
-    source, and the minimum count acts on the identity's reading -- the
-    numerator -- never on the comparator. The floored frame makes the panel
-    rung's median a mixture of raw values (reference tags, which the minimum
-    exempts) and floored ones (every antigen tag), a property nobody chose. The
-    declared rung is unaffected either way, since a reference tag's reading is
-    already exempt.
+    Raw counts, never floored. Each rung computes its baseline from its own source, and
+    the minimum acts on the identity's reading -- the numerator -- never on the comparator.
+    The floored frame would make the panel rung's median a mixture of raw values (reference
+    tags, which the minimum exempts) and floored ones. The declared rung is unaffected
+    either way, since a reference tag's reading is already exempt.
     """
     return reference_by_cell(
         counts,
@@ -133,27 +123,25 @@ def _cell_keyed_reference(counts, reference_tags, source, analysed_cells, panel_
 
 
 # A silent cell's count is zero, and a zero count's best possible score is
-# specificity_score(0, 0). At or below it, the analytic silent count and
-# the row-per-position reference part company over a silent admissible
-# cell, quietly: one calls it bound, the other not bound, and nothing
-# raises. `silent_tally` states that refusing such a cutoff belongs to the
-# CLI.
+# specificity_score(0, 0). At or below it, the analytic silent count and the
+# row-per-position reference part company over a silent admissible cell, quietly: one
+# calls it bound, the other not bound, and nothing raises. `silent_tally` states that
+# refusing such a cutoff belongs to the CLI.
 ANALYTIC_CUTOFF_BOUND = float(specificity_score(0, 0))
 
-# The pivoted per-identity summary costs one column per identity, so it is
-# emitted only for a panel small enough that a wide frame is still a table
-# a reader can open. Declared rather than derived, since nothing published
-# says where a table stops being readable, and deliberately well under the
-# thousand-plus identities a pMHC panel carries.
+# The pivoted per-identity summary costs one column per identity, so it is emitted only
+# for a panel small enough that a wide frame is still a table a reader can open. Declared
+# rather than derived, since nothing published says where a table stops being readable,
+# and deliberately well under the thousand-plus identities a pMHC panel carries.
 IDENTITY_SUMMARY_MAX_IDENTITIES = 100
 
-# A rollup is reported in the same frame as the measurements it aggregates,
-# as a row whose measurement is the rollup itself. A measurement is an axis
-# value here, so a level's summary costs a row rather than a column.
+# A rollup is reported in the same frame as the measurements it aggregates, as a row whose
+# measurement is the rollup itself. A measurement is an axis value here, so a level's
+# summary costs a row rather than a column.
 ROLLUP = "rollup"
 ROLLUP_COUNTS = "The worst status among this level's measurements, and how much of it was checked."
-# The rollup has no declaration to borrow a readable name from, and a row reading `rollup` beside rows
-# reading `readsPerCell` leaves the reader to guess which is a measurement and which is a summary.
+# The rollup has no declaration to borrow a readable name from, and a row reading `rollup`
+# beside rows reading `readsPerCell` leaves the reader guessing which is which.
 ROLLUP_LABEL = "Worst status at this level"
 
 MEASUREMENT_BY_ID = {m.id: m for m in MEASUREMENTS}
@@ -162,16 +150,15 @@ MEASUREMENT_BY_ID = {m.id: m for m in MEASUREMENTS}
 class QcRow(NamedTuple):
     """One measurement at one level entity, before its declaration is attached.
 
-    `status` and `coverage` are both carried because a measurement's own
-    status is not recoverable from a coverage triple. `roll_up` reports *not
-    evaluated* for a level with nothing judgeable in it, so a row that was
-    computed and left unjudged would come back saying nobody looked. The
-    triple says how much of the level was checked. The status says whether
-    what was checked is wrong. `panel_id` is set on tag-level and
-    identity-level rows and left empty on the rest. A panel carries the
-    worst status among its per-tag and per-identity measurements, so those
-    rows have to say which panel they belong to, or the panel rollup has
-    nothing to gather.
+    `status` and `coverage` are both carried because a measurement's own status is not
+    recoverable from a coverage triple: `roll_up` reports *not evaluated* for a level with
+    nothing judgeable in it, so a row computed and left unjudged would come back saying
+    nobody looked. The triple says how much was checked. The status says whether what was
+    checked is wrong.
+
+    `panel_id` is set on tag-level and identity-level rows and left empty on the rest. A
+    panel carries the worst status among those measurements, so those rows have to say
+    which panel they belong to.
     """
 
     level: str
@@ -187,11 +174,10 @@ class QcRow(NamedTuple):
 def _write_sorted(frame: pl.DataFrame, path: str, by: list[str]) -> None:
     """Write a frame in a fixed row order, header-only when it has no rows.
 
-    Every frame reaching here is built with an explicit schema, so an empty
-    one still carries its columns and writes a header rather than an empty
-    file. A consumer meeting a header-only frame knows the step ran and found
-    nothing. One meeting an empty file cannot tell that from a step that
-    never ran.
+    Every frame reaching here is built with an explicit schema, so an empty one still
+    carries its columns and writes a header. A consumer meeting a header-only frame knows
+    the step ran and found nothing. One meeting an empty file cannot tell that from a step
+    that never ran.
     """
     frame.sort(by).write_csv(path)
 
@@ -199,10 +185,10 @@ def _write_sorted(frame: pl.DataFrame, path: str, by: list[str]) -> None:
 def _read_columns(path: str, columns: tuple[str, ...], what: str) -> pl.DataFrame:
     """Read a CSV as strings, keeping the named columns and stripping them.
 
-    Read as strings and stripped because these columns are join keys against
-    the panel, whose reader strips `tag` and `sample` for the same reason. A
-    tag written " AAAA " on one side and "AAAA" on the other joins to
-    nothing, and reports the barcode as both undeclared and never seen.
+    Stripped because these columns are join keys against the panel, whose reader strips
+    `tag` and `sample` for the same reason. A tag written " AAAA " on one side and "AAAA"
+    on the other joins to nothing, and reports the barcode as both undeclared and never
+    seen.
     """
     frame = pl.read_csv(path, infer_schema_length=0)
     missing = [c for c in columns if c not in frame.columns]
@@ -212,12 +198,11 @@ def _read_columns(path: str, columns: tuple[str, ...], what: str) -> pl.DataFram
 
 
 def _read_counts(path: str) -> pl.DataFrame:
-    """The counts frame, with umiCount as an integer or a curated exit saying which value was not.
+    """The counts frame, with umiCount as an integer, or a curated exit naming the bad value.
 
-    `_read_columns` reads every column as a string and fills nulls with "", so a blank cell and a
-    decimal both survive to the cast. A bare `.cast` dies there as a raw polars traceback naming
-    neither the file nor the column, the one thing a reader needs. This module's convention is that a
-    bad input exits with a message about the input.
+    `_read_columns` reads every column as a string and fills nulls with "", so a blank cell
+    and a decimal both survive to the cast. A bare `.cast` dies there as a raw polars
+    traceback naming neither the file nor the column, the one thing a reader needs.
     """
     counts = _read_columns(path, ("sampleId", "cellId", "tag", "umiCount"), "counts file")
     umi = counts["umiCount"].cast(pl.Int64, strict=False)
@@ -240,21 +225,21 @@ def _json_arg(raw: str | None, flag: str):
         raise SystemExit(f"{flag} is not valid JSON: {exc}") from exc
 
 
-# What joins several grouping columns into one identity key. A scientist may group on more than one
-# column, and the identity is the distinct combination of their values, so one string has to carry them
-# all: an identity is a single axis value. A panel value containing this separator would let two
-# different combinations produce one key. That is reported rather than silently merged, and the run
-# continues, because refusing the panel would reject a file that reads correctly under every other
-# grouping.
+# What joins several grouping columns into one identity key. A scientist may group on more
+# than one column, and the identity is the distinct combination of their values, so one
+# string has to carry them all. A panel value containing this separator would let two
+# different combinations produce one key. That is reported rather than silently merged, and
+# the run continues, because refusing the panel would reject a file that reads correctly
+# under every other grouping.
 GROUPING_KEY_SEPARATOR = " | "
 
 
 def _grouping_columns(rule: dict, declared: list[str]) -> list[str]:
     """The columns a property rule names, as a list.
 
-    Accepts `columns: [...]`, and the older `column: "..."` because a project stored before the rule
-    took a list carries that shape. Reading both here costs one function. The alternative is a data
-    migration over every stored project to avoid a failed run.
+    Accepts `columns: [...]`, and the older `column: "..."` because a project stored before
+    the rule took a list carries that shape. Reading both costs one function. The
+    alternative is a data migration over every stored project.
     """
     raw = rule.get("columns")
     if raw is None:
@@ -279,23 +264,24 @@ def _build_grouping(
 ) -> tuple[Grouping, str, list[str]]:
     """The tag -> identity map the run reads at, and the id of the rule behind it.
 
-    A property grouping is built from `consistent_properties`, never from the
-    panel column. The panel reader strips `tag` and `sample` and carries
-    property values through exactly as written, so reading the column
-    directly makes " Spike " and "Spike" two identities that no fixture
-    without stray whitespace would reveal. Reference tags are excluded here
-    rather than by `identity_universe`, which takes no reference tags and
-    never will. One place decides, so the two cannot drift. Leaving them in
-    would give the comparator an identity of its own, with a verdict read by
-    comparing it against itself. A tag the grouping column says nothing about
-    keeps its own identity rather than vanishing. Dropping it would remove a
-    declared reagent from the answer with nothing downstream able to tell the
-    panel was short.
+    A property grouping is built from `consistent_properties`, never from the panel column.
+    The panel reader strips `tag` and `sample` and carries property values through exactly
+    as written, so reading the column directly makes " Spike " and "Spike" two identities
+    that no clean fixture would reveal.
+
+    Reference tags are excluded here rather than by `identity_universe`, which takes no
+    reference tags and never will -- one place decides, so the two cannot drift. Leaving
+    them in would give the comparator an identity of its own, read by comparing it against
+    itself.
+
+    A tag the grouping column says nothing about keeps its own identity rather than
+    vanishing. Dropping it would remove a declared reagent from the answer with nothing
+    downstream able to tell the panel was short.
     """
     by_tag = default_grouping(panel, reference_tags)
-    # Type-checked before it is read as one. `--grouping '"tag"'` is valid JSON and not a mapping, and
-    # reaching `.get` on it raises an AttributeError instead of the usage message written two lines below
-    # for exactly this mistake.
+    # Type-checked before it is read as one. `--grouping '"tag"'` is valid JSON and not a
+    # mapping, and reaching `.get` on it raises an AttributeError instead of the usage
+    # message written two lines below for exactly this mistake.
     if rule is not None and not isinstance(rule, dict):
         raise SystemExit(
             f"--grouping must be a JSON object, {{'by':'tag'}} or {{'by':'property','columns':[...]}}; got {rule!r}"
@@ -308,23 +294,19 @@ def _build_grouping(
 
     columns = _grouping_columns(rule, property_columns(panel))
 
-    # Read PER PANEL ROW, never through `consistent_properties`. The panel declares
-    # per tag and sample, so a value differing between a tag's rows is a declaration
-    # -- this barcode carries that antigen in that sample -- and not a disagreement
-    # to collapse. The tag-grain accessor discards exactly the information the keying
-    # exists to carry, and every reused barcode then falls back to standing alone
-    # under its raw sequence. Values are stripped here for the same reason
-    # `consistent_properties` strips them: the panel reader carries property values
-    # through exactly as written, so " Spike " and "Spike" would otherwise be two
-    # identities that no fixture without stray whitespace would reveal.
+    # Read PER PANEL ROW, never through `consistent_properties`. The panel declares per tag
+    # and sample, so a value differing between a tag's rows is a declaration -- this barcode
+    # carries that antigen in that sample -- not a disagreement to collapse. The tag-grain
+    # accessor discards exactly the information the keying exists to carry, and every reused
+    # barcode then falls back to standing alone under its raw sequence. Values are stripped
+    # here for the same reason `consistent_properties` strips them.
     grouping: Grouping = {}
     ungrouped_pairs: list[tuple[str, str]] = []
-    # What each identity was grouped ON, recorded here because this is the one place that knows both
-    # the column and the row's value. `panel-file-authority` makes a grouped-on column a declaration of
-    # the identity, unique by construction: every member carries the same value, because that value is
-    # what put it there. It cannot be recovered later from tag-grain agreement, since a reused barcode
-    # has none, so the identity it forms would carry no declaration of the very thing it was grouped
-    # on.
+    # What each identity was grouped ON, recorded here because this is the one place that
+    # knows both the column and the row's value. `panel-file-authority` makes a grouped-on
+    # column a declaration of the identity, unique by construction: every member carries the
+    # same value, because that value is what put it there. It cannot be recovered later from
+    # tag-grain agreement, since a reused barcode has none.
     declared: dict[str, dict[str, str]] = {}
     flagged: set[str] = set()
     rows = zip(
@@ -336,30 +318,28 @@ def _build_grouping(
         if tag in reference_tags:
             continue
         values = [(v or "").strip() for v in raw_values]
-        # ALL named columns must carry a value. A combination missing one component is not that
-        # combination, and supplying the absent one would invent a declaration the panel never made.
+        # ALL named columns must carry a value. A combination missing one component is not
+        # that combination, and supplying the absent one would invent a declaration.
         if all(values):
             identity = GROUPING_KEY_SEPARATOR.join(values)
             grouping[(tag, sample)] = identity
             declared.setdefault(identity, {}).update(dict(zip(columns, values)))
             flagged.update(v for v in values if GROUPING_KEY_SEPARATOR.strip() in v)
         else:
-            # A pair the grouping column says nothing about keeps its own identity
-            # rather than vanishing. Dropping it would remove a declared reagent
-            # from the answer with nothing downstream able to tell the panel was
-            # short.
+            # A pair the grouping column says nothing about keeps its own identity rather
+            # than vanishing. Dropping it would remove a declared reagent from the answer
+            # with nothing downstream able to tell the panel was short.
             grouping[(tag, sample)] = tag
             ungrouped_pairs.append((tag, sample))
-    # Reported as distinct TAGS, never pairs. The returned list is a contract: it
-    # travels in the run meta as `tagsWithoutGroupingValue`, and the punchcard
-    # counts it in a banner naming barcodes rather than (barcode, sample) pairs.
+    # Reported as distinct TAGS, never pairs. The returned list is a contract: it travels in
+    # the run meta as `tagsWithoutGroupingValue`, and the punchcard counts it in a banner
+    # naming barcodes rather than (barcode, sample) pairs.
     ungrouped = sorted({tag for tag, _sample in ungrouped_pairs})
     if ungrouped:
-        # Also returned, not only logged. A property the file does not carry
-        # narrows what can be answered, and that narrowing has to be visible in
-        # the output rather than in a log line nobody reads afterwards. These
-        # tags are answered under a grouping that could not place them, so a
-        # bare barcode sits among the family identities and only this says why.
+        # Also returned, not only logged. A property the file does not carry narrows what can
+        # be answered, and that narrowing has to be visible in the output rather than in a log
+        # line nobody reads afterwards. These tags are answered under a grouping that could
+        # not place them, so a bare barcode sits among the family identities.
         print(
             f"[emit-verdicts] {len(ungrouped)} tag(s) carry no value for every one of {columns} and "
             f"stand as their own identity: {ungrouped[:8]}",
@@ -376,20 +356,18 @@ def _build_grouping(
 
 
 def _linker_frame(grouping: Grouping) -> pl.DataFrame:
-    """Which identities each tag feeds — one row per distinct (tag, identity).
+    """Which identities each tag feeds -- one row per distinct (tag, identity).
 
-    Not keyed by sample. The linker's job is to let a tag-keyed figure sit beside
-    an identity-keyed verdict, and neither side carries a sample: verdicts are
-    (set, identity) over clonotypes that span samples, and the per-tag figures are
-    run-level. An axis no joined table has disambiguates nothing. It makes the join
-    malformed. Many-to-many by construction: under (tag, sample) grouping one tag
-    can feed a different identity in each sample, and every one of those pairs is
-    real. Distinct rows matter, because two tags of one identity would otherwise
-    emit the same key twice, and duplicate axis keys break a grid silently,
-    rendering one row and an ellipsis with no error anywhere. The sample component
-    of the key is therefore read and discarded here, ANY_SAMPLE included: a global
-    declaration feeds the same identity everywhere, so it adds no pair the
-    per-sample rows do not already give.
+    Not keyed by sample. The linker lets a tag-keyed figure sit beside an identity-keyed
+    verdict, and neither side carries a sample: verdicts are (set, identity) over clonotypes
+    that span samples, and the per-tag figures are run-level. An axis no joined table has
+    disambiguates nothing -- it makes the join malformed.
+
+    Many-to-many by construction: under (tag, sample) grouping one tag can feed a different
+    identity in each sample. Distinct rows matter, because two tags of one identity would
+    otherwise emit the same key twice, and duplicate axis keys break a grid silently,
+    rendering one row and an ellipsis with no error. The sample component is therefore read
+    and discarded, ANY_SAMPLE included.
     """
     rows = {(tag, identity) for (tag, _sample), identity in grouping.items()}
     return pl.DataFrame(
@@ -408,30 +386,25 @@ def _identity_labels(
 ) -> dict[str, str]:
     """A readable name per identity, never two identities under one name.
 
-    Under a property grouping the identity is the property value, already the
-    name a reader recognises. Under the per-tag grouping the identity is a
-    barcode, so the panel's feature name stands in, and where two barcodes carry
-    the same name the tag is appended: two identities sharing a label are two
-    rows a reader cannot tell apart. `disagreed` is the exception, and it applies
-    to BOTH branches, because both lose a label the same way.
-    `consistent_properties` drops a property a tag's rows disagree about, so
-    under a property grouping the tag has no value to group on, and under the
-    per-tag grouping no feature name to borrow. Either way it stands under its
-    raw barcode, and a bare 15-mer among antigen names is the least readable
-    thing this can produce, at exactly the moment a reader most needs to
-    understand what happened. Such an identity is labelled with the names it DID
-    declare, joined: `SARS-TRI-S_WT / SARS-TRI-S_WT__alt1`. The reagent stays
-    recognisable and the conflict stays visible, where the barcode alone hid
-    both. Which column's disagreements arrive here depends on the rule -- the
-    grouping column for a property grouping, the feature-name column for per-tag
-    -- and the caller resolves that before calling. Both branches get the rescue,
-    because the argument is about a label lost rather than about how the grouping
-    was chosen. The uniqueness rule applies to the joined names too. Two tags can
-    disagree about the grouping column while declaring the SAME pair of names,
-    and they then join to one string, so the fallback that exists to make a
-    conflict readable would put two identities under one label -- the one thing
-    this function promises never to do. Where any label repeats, joined or plain,
-    the identity is appended, exactly as the per-tag path does.
+    Under a property grouping the identity is the property value, already the name a reader
+    recognises. Under the per-tag grouping the identity is a barcode, so the panel's feature
+    name stands in, and where two barcodes carry the same name the tag is appended.
+
+    `disagreed` is the exception, and it applies to BOTH branches, because both lose a label
+    the same way. `consistent_properties` drops a property a tag's rows disagree about, so
+    the tag has no value to group on and no feature name to borrow, and stands under its raw
+    barcode -- the least readable thing this can produce, at the moment a reader most needs
+    to understand what happened. Such an identity is labelled with the names it DID declare,
+    joined: `SARS-TRI-S_WT / SARS-TRI-S_WT__alt1`. The reagent stays recognisable and the
+    conflict stays visible.
+
+    Which column's disagreements arrive here depends on the rule, and the caller resolves
+    that before calling.
+
+    The uniqueness rule applies to joined names too. Two tags can disagree about the grouping
+    column while declaring the SAME pair of names, joining to one string -- so the fallback
+    would put two identities under one label. Where any label repeats, joined or plain, the
+    identity is appended.
     """
     if rule_id != "per-tag":
         joined = {tag: " / ".join(values) for tag, values in (disagreed or {}).items() if values}
@@ -441,14 +414,14 @@ def _identity_labels(
             identity: (f"{label} ({identity})" if repeated[label] > 1 else label)
             for identity, label in by_identity.items()
         }
-    # Three rungs, in this order: the name the samples agreed on, else the names they disagreed about
-    # joined, else the bare barcode for a tag the panel named nowhere. The collision rule below already
-    # covers the joined strings, so the uniqueness promise needs nothing added for them.
+    # Three rungs, in this order: the name the samples agreed on, else the names they
+    # disagreed about joined, else the bare barcode for a tag the panel named nowhere. The
+    # collision rule below already covers the joined strings.
     joined = {tag: " / ".join(values) for tag, values in (disagreed or {}).items() if values}
-    # Over the IDENTITIES, never the grouping's keys. Under the per-tag grouping an identity is a tag,
-    # but the grouping is keyed by (tag, sample), so its keys are pairs. Iterating them looks up a
-    # tuple in `properties`, finds nothing, and drops every label back to the bare barcode this
-    # function exists to avoid.
+    # Over the IDENTITIES, never the grouping's keys. Under the per-tag grouping an identity
+    # is a tag, but the grouping is keyed by (tag, sample), so its keys are pairs. Iterating
+    # them looks up a tuple in `properties`, finds nothing, and drops every label back to the
+    # bare barcode this function exists to avoid.
     names = {
         tag: (properties.get(tag, {}).get(feature_col) or joined.get(tag) or tag) for tag in set(grouping.values())
     }
@@ -456,10 +429,9 @@ def _identity_labels(
     return {tag: (f"{name} ({tag})" if collisions[name] > 1 else name) for tag, name in names.items()}
 
 
-# The key column of result_identity_properties.csv. A panel column of the same
-# name would collapse into the key as the frame is built: the property would not
-# be dropped, it would silently BECOME the identity. Such a column is excluded
-# from the export and reported, never merged.
+# The key column of result_identity_properties.csv. A panel column of the same name would
+# collapse into the key as the frame is built: the property would not be dropped, it would
+# silently BECOME the identity. Such a column is excluded from the export and reported.
 IDENTITY_KEY_COLUMN = "identity"
 
 
@@ -474,50 +446,34 @@ def _identity_properties(
 
     A declaration reaches an identity two ways, and `panel-file-authority` fixes both.
 
-    The columns the scientist GROUPED ON arrive in `declared`, from the builder that formed the
-    identities. They are declarations by construction: every member of an identity carries the same
-    value for them, because that value is what put it there. They are therefore taken rather than
-    tested, and they must be — a reused barcode has no tag-grain agreement to test, so an identity
-    formed from one would otherwise carry no declaration of the very thing it was grouped on.
+    The columns the scientist GROUPED ON arrive in `declared`, from the builder that formed
+    the identities. They are declarations by construction: every member carries the same
+    value, because that value is what put it there. They are taken rather than tested, and
+    they must be -- a reused barcode has no tag-grain agreement to test.
 
-    Every OTHER column holds only where all of the identity's member tags agree, which is the rule
-    below.
+    Every OTHER column holds only where all of the identity's member tags agree.
 
-    `panel-file-authority` requires whatever the panel file says consistently
-    about an identity's tags to travel with that identity's verdicts, so a
-    reader sees the declaration wherever the reading appears. Without this a
-    downstream reader sees that an identity was bound and not what the scientist
-    declared it to be, and can state nothing about a declared group, such as
-    binding the target and nothing in the control set. The rule is
-    `consistent_properties`' own rule lifted one grain: there it holds across a
-    tag's ROWS, here across an identity's TAGS. A property whose value differs
-    between member tags does not hold of the identity and is omitted, neither
-    blanked nor resolved to a winner, because an identity read as one thing
-    whose members disagree about what that thing is has no declaration to
-    travel. A tag that declares nothing does not block its neighbours, as the
-    row-grain rule has it. `disagreed` separates those two silences. A tag whose
-    own rows contradict each other has no agreed value, so without it the tag
-    reaches the test below as the empty string and is filtered out exactly like
-    a tag whose cell was blank -- and a blank member deliberately does not veto
-    its neighbours. On a panel with barcode reuse that inverts the outcome: on a
-    real sixteen-row panel grouped on its role column, an identity whose five
-    member tags declared six different antigen names between them came back
-    carrying ONE member's name, because four of the five had contradicted
-    themselves into silence and the survivor then agreed with nobody but itself.
-    A member that contradicted itself is a disagreement rather than a silence,
-    and it blocks the property. That is the row-grain rule's own direction:
-    `consistent_properties` keeps disagreements rather than dropping them,
-    because with barcode reuse an inconsistent declaration is the expected case
-    and dropping it silently breaks the panel file's no-silent-drop rule. This
-    stops that guarantee being undone one grain higher. Strictly more omission
-    and never more assertion, the conservative direction `panel-file-authority`
-    argues for. Reference tags need no exclusion here: `_build_grouping` keeps
-    them out of the grouping, so no identity has one as a member.
+    Whatever the panel says consistently about an identity's tags must travel with that
+    identity's verdicts, so a reader sees the declaration wherever the reading appears.
+    Without this a downstream reader sees that an identity was bound and not what the
+    scientist declared it to be. The rule is `consistent_properties`' own rule lifted one
+    grain: there it holds across a tag's ROWS, here across an identity's TAGS. A property
+    differing between member tags is omitted, neither blanked nor resolved to a winner.
+
+    A tag that declares nothing does not block its neighbours. `disagreed` separates that
+    silence from a tag whose own rows contradict each other, which without it reaches the
+    test below as the empty string and is filtered out like a blank cell. On a panel with
+    barcode reuse that inverts the outcome: on a real sixteen-row panel, an identity whose
+    five member tags declared six different antigen names came back carrying ONE member's
+    name, because four had contradicted themselves into silence and the survivor then agreed
+    with nobody but itself. A member that contradicted itself is a disagreement, not a
+    silence, and it blocks the property. Strictly more omission and never more assertion.
+
+    Reference tags need no exclusion: `_build_grouping` keeps them out of the grouping.
     """
-    # Distinct member tags per identity. The grouping is keyed (tag, sample), so one tag reaches an
-    # identity once per sample that declares it there. The membership test keeps a tag from counting
-    # twice: a repeat would not change the agreement test, but it would misreport how many tags an
-    # identity holds.
+    # Distinct member tags per identity. The grouping is keyed (tag, sample), so one tag
+    # reaches an identity once per sample that declares it there. The membership test keeps a
+    # tag from counting twice -- a repeat would misreport how many tags an identity holds.
     tags_of: dict[str, list[str]] = {}
     for (tag, _sample), identity in sorted(grouping.items()):
         members = tags_of.setdefault(identity, [])
@@ -527,15 +483,16 @@ def _identity_properties(
     conflicted = disagreed or {}
     held: dict[str, dict[str, str]] = {}
     for identity, tags in tags_of.items():
-        # Seeded with what the identity was grouped on. Those columns are settled, so the agreement
-        # test below skips them rather than re-deciding them from a grain that cannot answer.
+        # Seeded with what the identity was grouped on. Those columns are settled, so the
+        # agreement test below skips them rather than re-deciding them from a grain that
+        # cannot answer.
         agreed: dict[str, str] = dict(declared.get(identity, {}))
         for column in columns:
             if column in agreed:
                 continue
-            # A member that contradicted itself blocks the property. Checked BEFORE the values are
-            # gathered, because such a member contributes nothing to them and would otherwise be
-            # indistinguishable from one that declared nothing.
+            # A member that contradicted itself blocks the property. Checked BEFORE the
+            # values are gathered, because such a member contributes nothing to them and
+            # would otherwise look like one that declared nothing.
             if any(tag in conflicted.get(column, {}) for tag in tags):
                 continue
             values = {v for v in (properties.get(tag, {}).get(column, "") for tag in tags) if v}
@@ -548,9 +505,9 @@ def _identity_properties(
 def _panel_id(tags: frozenset[str]) -> str:
     """A stable id for a declared tag set.
 
-    No panel file names its panel, so the id is derived from the sorted tag
-    list and is the same in every re-run of the same declaration. Where one
-    panel covers every sample, the axis takes a single value and drops out.
+    No panel file names its panel, so the id is derived from the sorted tag list and is the
+    same in every re-run of the same declaration. Where one panel covers every sample, the
+    axis takes a single value and drops out.
     """
     return hashlib.sha256("\t".join(sorted(tags)).encode()).hexdigest()[:12]
 
@@ -567,9 +524,8 @@ def _declared_by_sample(panel: pl.DataFrame, samples: list[str]) -> dict[str, fr
 def _cells_by_set(linker: pl.DataFrame) -> dict[str, list[CellKey]]:
     """Set membership from the linker, each cell listed once under its set.
 
-    `combine_cells` asserts the map is disjoint, so a cell listed under two
-    sets fails loudly there rather than being counted twice into a tally that
-    counts every cell once.
+    `combine_cells` asserts the map is disjoint, so a cell listed under two sets fails loudly
+    there rather than being counted twice into a tally that counts every cell once.
     """
     members: dict[str, list[CellKey]] = {}
     seen: set[tuple[str, CellKey]] = set()
@@ -585,12 +541,11 @@ def _cells_by_set(linker: pl.DataFrame) -> dict[str, list[CellKey]]:
 def count_by_set(cells_by_set: dict[str, list], population: set) -> dict[str, int]:
     """How many of each clonotype's cells fall in `population`.
 
-    Two populations use it: the cells a gate set aside, and the cells that read nothing at all. Both
-    are properties of the cell rather than of a position, since a cell that answered nothing answered
-    nothing at every identity, so both are counted once for the clonotype. Every clonotype appears,
-    zeros included, because a reader of a table must not have to tell "none of them" apart from
-    "column missing". A caller writing into the run record drops the zeros itself: that file is parsed
-    on every render, and a dense map would cost one entry per clonotype.
+    Two populations use it: cells a gate set aside, and cells that read nothing at all. Both
+    are properties of the cell rather than of a position, since a cell that answered nothing
+    answered nothing at every identity. Every clonotype appears, zeros included, because a
+    reader must not have to tell "none of them" apart from "column missing". A caller writing
+    into the run record drops the zeros itself, since that file is parsed on every render.
     """
     return {set_id: sum(1 for key in cells if key in population) for set_id, cells in sorted(cells_by_set.items())}
 
@@ -598,41 +553,38 @@ def count_by_set(cells_by_set: dict[str, list], population: set) -> dict[str, in
 def _pivot_identity_summary(verdicts: pl.DataFrame, universe: set[str]) -> tuple[pl.DataFrame, pl.DataFrame, bool]:
     """The per-set verdict row and its support, one column per identity in each.
 
-    Pivoted onto the set axis alone, because the block that consumes this drops a
-    column carrying an axis the clonotype anchor does not have, with no error, so
-    a `(set, identity)` column is invisible there. Gated on identity count: the
-    pivot costs a column per identity, and a large panel would turn one artifact
-    into a thousand. The second frame is the readout's, and its cell carries
-    everything a reader needs to ask "why is this mark this colour":
-    `state|answered|couldAnswer|agreement|reason|bound`. `agreement` and `reason`
-    are empty where they do not apply, since a settled verdict has no reason and a
-    set nobody could ask has no agreement. `bound` is last because it was
-    appended, so a reader that destructures the first five fields positionally
-    still decodes a value written before it existed. No score, and no binding
-    level. `binary-narrowing` forbids a reading of the antigen counts as a level
-    or an order from leaving this block, so the cell explains a verdict by what it
-    RESTS on -- how many cells could answer, how many did, how far they agreed --
-    and never by how strongly anything bound. One column rather than five, for two
-    reasons. `support-travels-with-the-reading` obliges both counts to travel with
-    a verdict *wherever it appears*, because a reading resting on three cells must
-    not look like one resting on forty, and a punchcard drawn from the state pivot
-    alone would be exactly that. And the support cannot arrive as sibling columns:
-    a column name here IS an antigen name from a customer's panel file, so any
-    suffix marking a support column is a name some panel is entitled to use, and a
-    grid pairs a cell to another column's cell only by position, which no import
-    guarantees. One value per identity removes both problems, and keeps the pivot
-    one column wide per identity so the size gate above still means what it says.
-    The state pivot is left as it is, because lead selection reads it and a
-    compound value would not filter.
+    Pivoted onto the set axis alone, because the block that consumes this drops a column
+    carrying an axis the clonotype anchor does not have, with no error. Gated on identity
+    count: the pivot costs a column per identity, and a large panel would turn one artifact
+    into a thousand.
+
+    The second frame is the readout's, and its cell carries everything a reader needs to ask
+    "why is this mark this colour": `state|answered|couldAnswer|agreement|reason|bound`.
+    `agreement` and `reason` are empty where they do not apply. `bound` is last because it
+    was appended, so a reader that destructures the first five fields positionally still
+    decodes a value written before it existed.
+
+    No score, and no binding level. `binary-narrowing` forbids a reading of the antigen
+    counts as a level or an order from leaving this block, so the cell explains a verdict by
+    what it RESTS on -- how many cells could answer, how many did, how far they agreed.
+
+    One column rather than five, for two reasons. `support-travels-with-the-reading` obliges
+    both counts to travel with a verdict *wherever it appears*, and a punchcard drawn from
+    the state pivot alone would not. And the support cannot arrive as sibling columns: a
+    column name here IS an antigen name from a customer's panel file, so any suffix marking a
+    support column is a name some panel is entitled to use, and a grid pairs cells only by
+    position, which no import guarantees.
+
+    The state pivot is left as it is, because lead selection reads it and a compound value
+    would not filter.
     """
     if len(universe) > IDENTITY_SUMMARY_MAX_IDENTITIES or verdicts.height == 0:
         sets = verdicts.select("setId").unique() if verdicts.height else pl.DataFrame(schema={"setId": pl.String})
         return sets, sets, False
     ordered = ["setId", *sorted(universe)]
     states = verdicts.pivot(on="identity", index="setId", values="state").select(ordered)
-    # Every part is cast and null-filled before joining. concat_str propagates a
-    # null through the whole value, so one absent agreement would blank the state
-    # beside it and the cell would render unreadable rather than as its verdict.
+    # Every part is cast and null-filled before joining. concat_str propagates a null through
+    # the whole value, so one absent agreement would blank the state beside it.
     punch = verdicts.with_columns(
         pl.concat_str(
             [
@@ -641,10 +593,10 @@ def _pivot_identity_summary(verdicts: pl.DataFrame, universe: set[str]) -> tuple
                 pl.col("cellsCouldAnswer").cast(pl.String).fill_null(""),
                 pl.col("agreement").cast(pl.String).fill_null(""),
                 pl.col("unreliableReason").cast(pl.String).fill_null(""),
-                # Sixth, and APPENDED rather than inserted, so a reader that splits and destructures
-                # the first five fields positionally still reads them correctly and a project whose
-                # last run predates this field renders unchanged. The expansion needs it: at each
-                # identity, how many of its cells read bound.
+                # Sixth, and APPENDED rather than inserted, so a reader that destructures
+                # the first five fields positionally still reads them correctly and a project
+                # whose last run predates this field renders unchanged. The expansion needs
+                # it: at each identity, how many of its cells read bound.
                 pl.col("cellsBound").cast(pl.String).fill_null(""),
             ],
             separator="|",
@@ -653,12 +605,12 @@ def _pivot_identity_summary(verdicts: pl.DataFrame, universe: set[str]) -> tuple
     return states, punch.select(ordered), True
 
 
-# A run whose cell count passes this gets no per-cell punchcard. The frame below is the DENSE
-# per-cell-per-identity grid the rest of this module goes out of its way never to build: `silent_tally` exists
-# so silent positions are counted rather than materialised, and its docstring puts the dense grid at 11-20x
-# the sparse input on a realistic panel. The readout needs the grid, so it is built here, and bounded here,
-# because "needs it" is not "at any size". Above the line the export is skipped and the page says so, which is
-# a readout a reader can act on. A run that dies importing a Parquet file is not.
+# A run whose cell count passes this gets no per-cell punchcard. The frame below is the
+# DENSE per-cell-per-identity grid the rest of this module goes out of its way never to
+# build -- 11-20x the sparse input on a realistic panel. The readout needs the grid, so it is
+# built here, and bounded here, because "needs it" is not "at any size". Above the line the
+# export is skipped and the page says so, which is a readout a reader can act on. A run that
+# dies importing a Parquet file is not.
 CELL_PUNCH_MAX_CELLS = 200_000
 
 
@@ -671,24 +623,29 @@ def _pivot_cell_punch(
 ) -> tuple[pl.DataFrame, bool]:
     """One row per cell, one column per identity: that cell's own reading, not its set's verdict.
 
-    The same four states the set-level card uses, and for the same reason: a cell asked about an identity always
-    resolves to one of them. Three come straight from `read_states`. The fourth is structural -- an identity no
-    sample holding this cell offered is NEVER_ASKED -- and it is the only way a position here is blank. **A cell
-    with no row in `states` is not an absence.** It was asked and read nothing, its count is zero, and a zero
-    count resolves the same way every time: NOT_BOUND, unless the cell itself cannot be compared, in which case
-    UNRELIABLE. That is `silent_tally`'s rule, and it is not re-derived here because the deciding function,
-    `_admissibility_reason`, is the one both `read_states` and `silent_tally` already call. Drawing a silent
-    cell as an empty position would contradict the arithmetic that produced its set's verdict, where the same
-    cell voted. `setId` travels as a COLUMN rather than an axis. The readout shows one clonotype at a time and
-    filters on it, and a cell belongs to exactly one set, so the fact is a property of the row.
+    The same four states the set-level card uses, and for the same reason: a cell asked about
+    an identity always resolves to one of them. Three come straight from `read_states`. The
+    fourth is structural -- an identity no sample holding this cell offered is NEVER_ASKED --
+    and it is the only way a position here is blank.
+
+    **A cell with no row in `states` is not an absence.** It was asked and read nothing, its
+    count is zero, and a zero count resolves the same way every time: NOT_BOUND, unless the
+    cell cannot be compared, in which case UNRELIABLE. That is `silent_tally`'s rule, not
+    re-derived here because the deciding function, `_admissibility_reason`, is the one both
+    `read_states` and `silent_tally` already call. Drawing a silent cell as an empty position
+    would contradict the arithmetic that produced its set's verdict, where the same cell
+    voted.
+
+    `setId` travels as a COLUMN rather than an axis. The readout shows one clonotype at a
+    time and filters on it, and a cell belongs to exactly one set.
     """
     members = [(sample, cell, set_id) for set_id, keys in sorted(cells_by_set.items()) for sample, cell in keys]
     ordered_identities = sorted(universe)
     empty = pl.DataFrame(schema={"sampleId": pl.String, "cellId": pl.String, "setId": pl.String})
     if not members or not ordered_identities:
         return empty, False
-    # Both gates, and the identity one is the same limit the set-level pivot uses: a column per identity is
-    # a p-column per identity, whichever axis the rows are on.
+    # Both gates, and the identity one is the same limit the set-level pivot uses: a column
+    # per identity is a p-column per identity, whichever axis the rows are on.
     if len(ordered_identities) > IDENTITY_SUMMARY_MAX_IDENTITIES or len(members) > CELL_PUNCH_MAX_CELLS:
         return empty, False
 
@@ -700,10 +657,11 @@ def _pivot_cell_punch(
         orient="row",
         schema={"sampleId": pl.String, "identity": pl.String},
     )
-    # The cell's own half of the reason, the admissibility gate, is one row per member rather than one per
-    # member and identity, because no identity changes whether a cell was set aside. The other half, where
-    # a comparator is keyed by identity, is joined below as (sample, identity): a frame of samples by
-    # identities, thousands of rows against the grid's tens of millions.
+    # The cell's own half of the reason, the admissibility gate, is one row per member rather
+    # than one per member and identity, because no identity changes whether a cell was set
+    # aside. The other half, where a comparator is keyed by identity, is joined below as
+    # (sample, identity): a frame of samples by identities, thousands of rows against the
+    # grid's tens of millions.
     reasons = pl.DataFrame(
         [
             (
@@ -719,11 +677,12 @@ def _pivot_cell_punch(
         schema={"sampleId": pl.String, "cellId": pl.String, "cellReason": pl.String},
     )
 
-    # Joined to `offered` rather than crossed with the universe: a position no sample holding the cell
-    # offered must not appear at all, or the silent rule below would resolve a question nobody asked.
-    # Where the comparator is keyed by identity, a (sample, identity) with no fitted background is
-    # uncomparable for every cell of that sample, and only for that identity. Carried as the pairs that
-    # DID fit, so the missing ones fall out of a left join as nulls and need no second frame.
+    # Joined to `offered` rather than crossed with the universe: a position no sample holding
+    # the cell offered must not appear at all, or the silent rule below would resolve a
+    # question nobody asked. Where the comparator is keyed by identity, a (sample, identity)
+    # with no fitted background is uncomparable for every cell of that sample, and only for
+    # that identity. Carried as the pairs that DID fit, so the missing ones fall out of a left
+    # join as nulls.
     fitted = (
         pl.DataFrame(
             sorted(admissibility.by_identity),
@@ -760,32 +719,33 @@ def _pivot_cell_punch(
         .then(pl.lit(State.UNRELIABLE.value))
         .otherwise(pl.lit(State.NOT_BOUND.value))
         .alias("cellState"),
-        # The reason a POSITION is unreliable where one was recorded, and the cell's own reason where the
-        # position is silent. Never both: a recorded row already carries whichever applied.
+        # The reason a POSITION is unreliable where one was recorded, and the cell's own
+        # reason where the position is silent. Never both: a recorded row already carries
+        # whichever applied.
         pl.when(pl.col("unreliableReason").is_not_null())
         .then(pl.col("unreliableReason"))
         .otherwise(pl.col("cellReason"))
         .alias("reason"),
     )
 
-    # How many identities this cell read BOUND, over the identities it was asked. Counted before the pivot,
-    # where it is one group_by, and from the resolved state, so a silent position counts as the not-bound
-    # it is.
+    # How many identities this cell read BOUND, over the identities it was asked. Counted
+    # before the pivot, where it is one group_by, and from the resolved state, so a silent
+    # position counts as the not-bound it is.
     bound_counts = (
         grid.group_by("sampleId", "cellId")
         .agg((pl.col("cellState") == State.BOUND.value).sum().alias("boundIdentities"))
         .with_columns(pl.col("boundIdentities").cast(pl.Int64))
     )
 
-    # `state|reason`, two fields and nothing else. The set-level punch carries six because a verdict rests
-    # on counts a reader needs beside it. A cell IS the evidence, so there is nothing to report about how
-    # much of it there was.
+    # `state|reason`, two fields and nothing else. The set-level punch carries six because a
+    # verdict rests on counts a reader needs beside it. A cell IS the evidence, so there is
+    # nothing to report about how much of it there was.
     punch = grid.with_columns(
         pl.concat_str([pl.col("cellState"), pl.col("reason").fill_null("")], separator="|").alias("punch")
     ).pivot(on="identity", index=["sampleId", "cellId"], values="punch")
 
-    # Every identity gets a column even where no cell was offered it, so the readout's columns are the panel
-    # rather than whatever this run happened to ask. The same promise the set-level card makes.
+    # Every identity gets a column even where no cell was offered it, so the readout's columns
+    # are the panel rather than whatever this run happened to ask.
     for identity in ordered_identities:
         if identity not in punch.columns:
             punch = punch.with_columns(pl.lit(None, dtype=pl.String).alias(identity))
@@ -801,8 +761,8 @@ def _pivot_cell_punch(
 def _leaf(level, entity, measurement, value, detail, panel_id, status: Status) -> QcRow:
     """One measurement's row: its own status, and the coverage of that one status.
 
-    The triple comes from `roll_up`, so a leaf and a rollup are counted by
-    one rule, and the row keeps the status `roll_up` would have flattened.
+    The triple comes from `roll_up`, so a leaf and a rollup are counted by one rule, and the
+    row keeps the status `roll_up` would have flattened.
     """
     return QcRow(level, entity, measurement, value, detail, panel_id, status, roll_up([status]))
 
@@ -810,13 +770,12 @@ def _leaf(level, entity, measurement, value, detail, panel_id, status: Status) -
 def _qc_frame(rows: list[QcRow]) -> pl.DataFrame:
     """The measurement set as a frame keyed (level, entity, measurement).
 
-    Every declared measurement keeps its place whether or not this run could
-    compute it, and a measurement nothing computed reads *not evaluated* with
-    its reason rather than being absent. A reader must never mistake "nothing
-    computed this yet" for "this was checked and found fine". A field with
-    nothing in it is written null rather than as an empty string. polars
-    quotes an empty string to keep it apart from a null, and a quoted empty
-    cell is a value a downstream import would carry as one.
+    Every declared measurement keeps its place whether or not this run could compute it, and
+    a measurement nothing computed reads *not evaluated* with its reason rather than being
+    absent. A reader must never mistake "nothing computed this yet" for "checked and found
+    fine". A field with nothing in it is written null rather than as an empty string: polars
+    quotes an empty string to keep it apart from a null, and a quoted empty cell is a value a
+    downstream import would carry as one.
     """
     built = []
     for row in rows:
@@ -827,9 +786,9 @@ def _qc_frame(rows: list[QcRow]) -> pl.DataFrame:
                 "entity": row.entity,
                 "panelId": row.panel_id,  # "" not None: this is an AXIS key, and a null is not a usable one
                 "measurement": row.measurement,
-                # The readable name, carried beside the id rather than instead of it. The id is a p-column
-                # axis value and must stay stable. The label is what a reader who never opened this module
-                # sees, and without it the page shows a scientist `antigenCountDistribution`.
+                # The readable name, carried beside the id rather than instead of it. The id
+                # is a p-column axis value and must stay stable. The label is what a reader
+                # who never opened this module sees.
                 "label": ROLLUP_LABEL if declared is None else declared.label,
                 "value": row.value,
                 "detail": row.detail or None,
@@ -866,9 +825,9 @@ def _qc_frame(rows: list[QcRow]) -> pl.DataFrame:
 def _add(rows: list[QcRow], level: str, entity: str, measurement: str, value, detail: str = "", panel_id: str = ""):
     """Append one measurement row, taking its status from the lines in force.
 
-    Every declared measurement goes through here. One with no line in force reads
-    unjudged, which is the honest reading rather than a refusal: it was computed,
-    no line stands behind it, so its number is shown and nothing is claimed.
+    Every declared measurement goes through here. One with no line in force reads unjudged,
+    which is honest rather than a refusal: it was computed, no line stands behind it, so its
+    number is shown and nothing is claimed.
     """
     rows.append(
         _leaf(level, entity, measurement, value, detail, panel_id, status_for(measurement, value, DEFAULT_LINES))
@@ -879,10 +838,9 @@ def _median(values: list[float]) -> float | None:
     return float(pl.Series(values).median()) if values else None
 
 
-# Long on purpose and not decomposed. This is one composition taken in the
-# one order the reading has, and splitting it into stages would put that
-# order in the call sites rather than in the code a reader follows top to
-# bottom.
+# Long on purpose and not decomposed. This is one composition taken in the one order the
+# reading has, and splitting it into stages would put that order in the call sites rather
+# than in the code a reader follows top to bottom.
 def main() -> None:
     p = argparse.ArgumentParser(description="Read antigen counts into a four-state binding verdict per set.")
     p.add_argument("counts_csv", help="sparse per-(sampleId, cellId, tag) UMI counts")
@@ -897,9 +855,8 @@ def main() -> None:
     p.add_argument(
         "--reference-source",
         required=True,
-        # Derived from the enum, never restated. A hard-coded list lets the CLI
-        # reject a new rung that every layer above it accepts: an argparse usage
-        # error from a run that was configured correctly.
+        # Derived from the enum, never restated. A hard-coded list lets the CLI reject a new
+        # rung that every layer above it accepts.
         choices=[choice.value for choice in ReferenceChoice],
         help=(
             "which comparator to ask for; the run may serve 'none' instead, never a different one. "
@@ -922,8 +879,9 @@ def main() -> None:
     p.add_argument("--floor", type=int, default=DEFAULT_FLOOR, help="zero every non-comparator reading below this")
     p.add_argument(
         "--minimum-applies-to-baseline",
-        # A value rather than store_true. The workflow builds its vector as flag/value pairs and asserts
-        # the parity, so a bare flag makes every later value read as the wrong flag's.
+        # A value rather than store_true. The workflow builds its vector as flag/value pairs
+        # and asserts the parity, so a bare flag makes every later value read as the wrong
+        # flag's.
         choices=["true", "false"],
         default="false",
         help=(
@@ -941,11 +899,10 @@ def main() -> None:
     p.add_argument("--high-reference-line", type=int, default=DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE)
     p.add_argument("--grouping", default=None, help="JSON: {'by':'tag'} or {'by':'property','column':...}")
     p.add_argument("--contending", default=None, help="JSON: groups of identities that contend, as a list of lists")
-    # Accepted and not yet read. The capture rollup was its only reader, and only the
-    # sample carries an aggregated status now. It stays declared because the capture
-    # axis ships on the QC columns for the same reason: adding an axis to a released
-    # column changes that column's identity, where adding a value does not. So the
-    # plumbing waits for a capture assignment rather than being torn out and rebuilt.
+    # Accepted and not yet read. The capture rollup was its only reader, and only the sample
+    # carries an aggregated status now. It stays declared because the capture axis ships on the
+    # QC columns for the same reason: adding an axis to a released column changes that column's
+    # identity, where adding a value does not.
     p.add_argument("--capture-map", default=None, help="JSON: sampleId -> captureId (accepted, not yet read)")
     p.add_argument(
         "--sample-labels",
@@ -971,17 +928,14 @@ def main() -> None:
         roles["sample"] = args.sample_col
     panel, dropped_lines = read_panel(args.panel_csv, roles)
 
-    # The panel file names samples the way a scientist does, "donor01", while the
-    # counts, the linker and every axis this run emits are keyed by the platform's
-    # sampleId. Nothing else bridges the two namespaces. Unbridged, `offered` ends up
-    # keyed by labels, no sample that exists is offered anything, and every verdict
-    # comes back *never asked* -- the correct answer to a question nobody asked, so it
-    # raises nothing. Translation happens HERE, once, before the panel is used for
-    # anything, and everything downstream then works in one namespace: the identity
-    # universe, what each sample was offered, the panel-versus-reads check, the panel
-    # ids. A value the map does not mention is left alone rather than dropped, because a
-    # panel row naming a sample this run does not have is a real mismatch and should
-    # reach the mismatch report.
+    # The panel file names samples the way a scientist does, "donor01", while the counts, the
+    # linker and every axis this run emits are keyed by the platform's sampleId. Nothing else
+    # bridges the two namespaces. Unbridged, `offered` ends up keyed by labels, no sample that
+    # exists is offered anything, and every verdict comes back *never asked* -- the correct
+    # answer to a question nobody asked, so it raises nothing. Translation happens HERE, once,
+    # before the panel is used for anything. A value the map does not mention is left alone
+    # rather than dropped, because a panel row naming a sample this run does not have is a real
+    # mismatch and should reach the mismatch report.
     label_of_sample: dict[str, str] = _json_arg(args.sample_labels, "--sample-labels") or {}
     if label_of_sample and "sample" in panel.columns:
         by_label: dict[str, str] = {}
@@ -1006,17 +960,15 @@ def main() -> None:
             f"[emit-verdicts] tag {tag!r} declares {column!r} as {values}; it carries no agreed value", file=sys.stderr
         )
 
-    # The reference designation is read through `consistent_properties`, which
-    # strips the value and drops any property a tag's rows disagree about. A
-    # per-sample comparator designation is therefore discarded rather than
-    # honoured, which is what `apply_floor` documents: a tag is a comparator in
-    # every sample or in none.
+    # The reference designation is read through `consistent_properties`, which strips the value
+    # and drops any property a tag's rows disagree about. A per-sample comparator designation is
+    # therefore discarded rather than honoured, which is what `apply_floor` documents.
     reference_values = {v.strip() for v in args.reference_values.split(",") if v.strip()}
     reference_tags: set[str] = set()
-    # The column is checked whenever one is named, never only when values are named with it. Gating the
-    # check on `reference_values` leaves the worse half of the same mistake silent: a role column the
-    # panel does not declare designates no tag, and the baseline falls back to the panel's own readings
-    # without a word -- a different number reported as the requested one.
+    # The column is checked whenever one is named, never only when values are named with it.
+    # Gating the check on `reference_values` leaves the worse half silent: a role column the
+    # panel does not declare designates no tag, and the baseline falls back to the panel's own
+    # readings without a word -- a different number reported as the requested one.
     if args.role_column and args.role_column not in prop_cols:
         raise SystemExit(f"--role-column {args.role_column!r} is not a panel column; columns are {prop_cols}")
     if args.role_column and reference_values:
@@ -1030,10 +982,10 @@ def main() -> None:
     by_tag_grouping = default_grouping(panel, reference_tags)
     tag_universe = identity_universe(panel, by_tag_grouping)
 
-    # Validated as a list of lists before it is read as one. A flat `["AgA","AgB"]` is valid JSON, and
-    # `set("AgA")` is a set of CHARACTERS, so the run completes, no competitor note fires, every
-    # `wasCompeted` reads false, and the run record states a contention that was never tested. A silent
-    # wrong answer, and the shape a hand-driven run is most likely to reach for.
+    # Validated as a list of lists before it is read as one. A flat `["AgA","AgB"]` is valid
+    # JSON, and `set("AgA")` is a set of CHARACTERS, so the run completes, no competitor note
+    # fires, every `wasCompeted` reads false, and the run record states a contention that was
+    # never tested -- a silent wrong answer, and the shape a hand-driven run reaches for.
     contending_raw = _json_arg(args.contending, "--contending") or []
     if not isinstance(contending_raw, list):
         raise SystemExit(f"--contending must be a JSON list of lists of identities; got {contending_raw!r}")
@@ -1053,11 +1005,9 @@ def main() -> None:
 
     counts = _read_counts(args.counts_csv)
 
-    # The cell list is an input, never derived from the antigen readings:
-    # nothing in the counts separates a cell from a droplet that held none.
-    # `--cells` wins over the linker where both arrive, because a list from
-    # gene expression covers cells whose receptor never assembled and the
-    # linker cannot.
+    # The cell list is an input, never derived from the antigen readings: nothing in the counts
+    # separates a cell from a droplet that held none. `--cells` wins over the linker where both
+    # arrive, because a list from gene expression covers cells whose receptor never assembled.
     linker = (
         _read_columns(args.linker, ("sampleId", "cellId", "setId"), "linker file")
         if args.linker
@@ -1073,31 +1023,28 @@ def main() -> None:
         cell_list = linker_cells
         cell_list_source = "clonotype linker"
     else:
-        # No list arrived, and one is NOT derived from the counts. Nothing in
-        # the antigen readings separates a cell from a droplet that held none,
-        # so the observed barcodes are not a cell list: in droplet data they
-        # outnumber the cells by one to two orders of magnitude, because ambient
-        # antigen material lands on most barcodes. Standing them in would be
-        # worse than approximate, since `readsPerCell` divides by this and a
-        # healthy library would read undersequenced and alert. Every barcode is
-        # still analysed and every count still emitted. What is withheld is the
-        # claim that these barcodes are cells: `inCellList` is unknown rather
-        # than true, and the measurements that need a cell list read *not
-        # evaluated*, exactly the reading for "the run could not supply what
-        # this needed".
+        # No list arrived, and one is NOT derived from the counts. Nothing in the antigen
+        # readings separates a cell from a droplet that held none, so the observed barcodes are
+        # not a cell list: in droplet data they outnumber the cells by one to two orders of
+        # magnitude, because ambient material lands on most barcodes. Standing them in would be
+        # worse than approximate, since `readsPerCell` divides by this and a healthy library
+        # would read undersequenced and alert. Every barcode is still analysed and every count
+        # still emitted. What is withheld is the claim that these barcodes are cells:
+        # `inCellList` is unknown rather than true, and the measurements needing a cell list
+        # read *not evaluated*.
         cell_list = None
         cell_list_source = "none"
 
-    # `cell_list is None` means no list arrived, which differs from a list that
-    # arrived empty: the first cannot answer "is this barcode a cell", the
-    # second answers "no". `listed` collapses both for the set arithmetic below,
-    # where either way there are no barcodes to add.
+    # `cell_list is None` means no list arrived, which differs from a list that arrived empty:
+    # the first cannot answer "is this barcode a cell", the second answers "no". `listed`
+    # collapses both for the set arithmetic below, where either way there are no barcodes to
+    # add.
     listed = cell_list if cell_list is not None else set()
 
     observed_cells = set(counts.select("sampleId", "cellId").unique().iter_rows())
-    # Barcodes outside the cell list stay in the frame, labelled. One dropped
-    # here is indistinguishable afterwards from one that never existed, and
-    # its antigen counts are real whatever the list says about it.
+    # Barcodes outside the cell list stay in the frame, labelled. One dropped here is
+    # indistinguishable afterwards from one that never existed, and its antigen counts are real
+    # whatever the list says about it.
     analysed_cells = sorted(listed | observed_cells | linker_cells)
 
     panel_samples = {s for s in panel["sample"].to_list() if s != ANY_SAMPLE}
@@ -1105,10 +1052,9 @@ def main() -> None:
         {s for s, _ in observed_cells} | {s for s, _ in listed} | {s for s, _ in linker_cells} | panel_samples
     )
 
-    # The floor is applied per sample, so the counters it returns land in
-    # each sample's own QC row. A cell key carries its sample, so
-    # partitioning is exact on both counters and the run totals are their
-    # sums. There is no second implementation of the rule to drift from this
+    # The floor is applied per sample, so the counters it returns land in each sample's own QC
+    # row. A cell key carries its sample, so partitioning is exact on both counters and the run
+    # totals are their sums. There is no second implementation of the rule to drift from this
     # one.
     apply_minimum_to_baseline = args.minimum_applies_to_baseline == "true"
     floor_stats: dict[str, dict[str, int]] = {}
@@ -1126,40 +1072,36 @@ def main() -> None:
     readings_floored = sum(s["readingsFloored"] for s in floor_stats.values())
     cells_emptied = sum(s["cellsEmptied"] for s in floor_stats.values())
 
-    # One panel size, read once and passed to both. Deriving it separately for
-    # the default choice and for the resolution would let the two disagree about
-    # whether the panel is large enough to serve as its own comparator.
+    # One panel size, read once and passed to both. Deriving it separately for the default
+    # choice and for the resolution would let the two disagree about whether the panel is large
+    # enough to serve as its own comparator.
     panel_size = int(panel["tag"].n_unique())
 
-    # No default and no derivation. The rung is the scientist's choice, and a run
-    # that carried none is a configuration error rather than a run to guess at.
-    # argparse refuses it above, so this never sees an empty value.
+    # No default and no derivation. The rung is the scientist's choice, and a run that carried
+    # none is a configuration error rather than a run to guess at. argparse refuses it above,
+    # so this never sees an empty value.
     source = ReferenceChoice[args.reference_source.upper()]
     tag_fits: dict[tuple[str, str], TagBaseline] = {}
-    # Set only by the one rung whose conditions the settings cannot answer. The
-    # other two refuse in `served_source` before any of this runs.
+    # Set only by the one rung whose conditions the settings cannot answer. The other two
+    # refuse in `served_source` before any of this runs.
     no_baseline_reason: str | None = None
     if source is ReferenceChoice.DISTRIBUTION:
-        # Keyed by (sample, identity) and never by cell: this rung fits one
-        # distribution per tag across a sample's cells, so its answer is the
-        # same number for every cell of a sample and a different one for every
-        # identity. `reference_by_cell` has nothing to return for it. Fitted
-        # over the RAW counts and the FULL cell universe -- the cells that
-        # read nothing, and the cells a gate will later set aside. That second
-        # part is `baseline-over-all-returned-cells`: a population narrowed by
-        # the gate is narrowed by the baseline's own consequences, which is
-        # also why the fit runs before `gate_cells` below.
+        # Keyed by (sample, identity) and never by cell: this rung fits one distribution per
+        # tag across a sample's cells, so its answer is the same number for every cell of a
+        # sample and a different one for every identity. `reference_by_cell` has nothing to
+        # return for it. Fitted over the RAW counts and the FULL cell universe -- the cells that
+        # read nothing, and the cells a gate will later set aside. That second part is
+        # `baseline-over-all-returned-cells`, which is also why the fit runs before
+        # `gate_cells` below.
         tag_fits = fit_tag_baselines(
             counts, analysed_cells, panel, args.distribution_min_cells, args.distribution_separation
         )
         by_identity = identity_baselines(tag_fits, grouping, samples).baseline
-        # A run where no tag separated anywhere established no baseline. This is
-        # the one refusal that cannot be caught from the settings: whether a
-        # sample holds three hundred cells whose counts separate is a property of
-        # the data, so the only way to learn it is to count. So the run FINISHES,
-        # says so, and draws no punchcard -- rather than answering every position
-        # *unreliable*, which is honest and useless, or crashing after doing the
-        # work. The reason travels in the run record for the model to render.
+        # A run where no tag separated anywhere established no baseline. This is the one
+        # refusal that cannot be caught from the settings: whether a sample holds three hundred
+        # cells whose counts separate is a property of the data. So the run FINISHES, says so,
+        # and draws no punchcard -- rather than answering every position *unreliable*, which is
+        # honest and useless, or crashing after doing the work.
         reference = Reference({}, ReferenceChoice.DISTRIBUTION)
         if not by_identity:
             no_baseline_reason = (
@@ -1178,32 +1120,30 @@ def main() -> None:
 
     gated, cells_high_reference = gate_cells(reference.by_cell, args.gate_threshold, args.high_reference_line)
     if reference.served is ReferenceChoice.DISTRIBUTION:
-        # No per-cell comparator exists to read a gate against, so the gate
-        # sets nothing aside and the exposure count is not a measurement this
-        # run made. None, never 0: a zero would report a run with no high
-        # background rather than one where the question does not arise.
+        # No per-cell comparator exists to read a gate against, so the gate sets nothing aside
+        # and the exposure count is not a measurement this run made. None, never 0: a zero would
+        # report a run with no high background rather than one where the question does not
+        # arise.
         cells_high_reference = None
 
-    # Built once and handed to every consumer. Two bundles built from two
-    # reference dicts do not raise. They disagree about which cells cannot be
-    # compared, and the silent-position count comes out wrong or negative.
+    # Built once and handed to every consumer. Two bundles built from two reference dicts do
+    # not raise. They disagree about which cells cannot be compared, and the silent-position
+    # count comes out wrong or negative.
     admissibility = Admissibility(reference.by_cell, gated, by_identity)
 
     non_reference = floored.filter(~pl.col("tag").is_in(list(reference_tags))) if reference_tags else floored
     identities = combine_tags_to_identities(non_reference, grouping)
     states = read_states(identities, admissibility, args.cutoff)
 
-    # The per-tag reading is diagnostic only: it compares each tag against
-    # the reference separately, and no verdict is built from it. The
-    # measurement set carries it at both levels always, so where the chosen
-    # grouping is not the per-tag one it is read a second time.
+    # The per-tag reading is diagnostic only: it compares each tag against the reference
+    # separately, and no verdict is built from it. The measurement set carries it at both levels
+    # always, so where the chosen grouping is not the per-tag one it is read a second time.
     if grouping == by_tag_grouping:
         tag_states = states
     else:
-        # A second bundle, because the per-tag read asks about different
-        # identities. Where the comparator is keyed by identity, the bundle
-        # built for the chosen grouping answers about identities this read
-        # never mentions and knows nothing about the tags it does.
+        # A second bundle, because the per-tag read asks about different identities. Where the
+        # comparator is keyed by identity, the bundle built for the chosen grouping answers
+        # about identities this read never mentions.
         tag_admissibility = (
             Admissibility(reference.by_cell, gated, tag_by_identity) if by_identity is not None else admissibility
         )
@@ -1211,13 +1151,11 @@ def main() -> None:
             combine_tags_to_identities(non_reference, by_tag_grouping), tag_admissibility, args.cutoff
         )
 
-    # Which (sample, tag) pairs the reads actually carry, from the RAW counts.
-    # Never from `floored`: a count the minimum zeroed is a reading that happened
-    # and failed, and settles *not bound*, while a tag with no reads at all is a
-    # question nobody put. Reading the floored frame here would collapse the
-    # second into the first and turn a dead reagent into a confident clean
-    # negative on every clonotype in the run. The same frame feeds the
-    # panel-versus-reads check further down.
+    # Which (sample, tag) pairs the reads actually carry, from the RAW counts. Never from
+    # `floored`: a count the minimum zeroed is a reading that happened and failed, and settles
+    # *not bound*, while a tag with no reads at all is a question nobody put. Reading the
+    # floored frame here would turn a dead reagent into a confident clean negative on every
+    # clonotype in the run.
     seen_pairs = {
         (row["sampleId"], row["tag"]) for row in counts.select("sampleId", "tag").unique().iter_rows(named=True)
     }
@@ -1227,20 +1165,17 @@ def main() -> None:
     def _answers(frame: pl.DataFrame) -> pl.DataFrame:
         """The frame, or its headers alone where the run established no baseline.
 
-        A run with no baseline read no verdicts, so the frames carrying answers
-        carry no rows. They keep their schemas, because every reader still needs
-        to find its columns, and a missing file reads as a stage that crashed
-        rather than one that finished and said why.
+        A run with no baseline read no verdicts, so the frames carrying answers carry no rows.
+        They keep their schemas, because every reader still needs to find its columns, and a
+        missing file reads as a stage that crashed rather than one that finished and said why.
 
-        Emitting the answers instead would fill every position with *unreliable*.
-        That is honest and useless: it costs what a real run costs and looks like
-        a result at a glance, which is the outcome the required-baseline rule
-        exists to prevent.
+        Emitting the answers instead would fill every position with *unreliable*: honest and
+        useless, costing what a real run costs and looking like a result at a glance.
 
-        The STRUCTURAL frames are written in full either way -- which tags feed
-        which identity, what each sample was offered, the panel and identity
-        labels. Those describe the run rather than answering it, and a reader
-        working out why no baseline could be established needs them.
+        The STRUCTURAL frames are written in full either way -- which tags feed which identity,
+        what each sample was offered, the panel and identity labels. Those describe the run
+        rather than answering it, and a reader working out why no baseline could be established
+        needs them.
         """
         return frame.clear() if no_baseline_reason else frame
 
@@ -1257,32 +1192,30 @@ def main() -> None:
         contending,
     )
     _write_sorted(_answers(verdicts), f"{prefix}_verdicts.csv", ["setId", "identity"])
-    # The set's own cell count, joined on rather than computed inside `set_counts`, which is a pure
-    # reading of the verdicts frame at its (setId, identity) grain where a cell count does not live. It
-    # is the set's cells, NOT its answering cells: that number varies by identity and travels with the
-    # verdict as support. This one is a property of the clonotype, which is why `the-explore-readout`
-    # puts it beside the name instead of in every position -- a number repeated down a column teaches a
-    # reader to ignore it.
+    # The set's own cell count, joined on rather than computed inside `set_counts`, which is a
+    # pure reading of the verdicts frame at its (setId, identity) grain where a cell count does
+    # not live. It is the set's cells, NOT its answering cells: that number varies by identity
+    # and travels with the verdict as support. This one is a property of the clonotype, which is
+    # why `the-explore-readout` puts it beside the name instead of in every position.
     per_set_cells = pl.DataFrame(
         [(set_id, len(cells)) for set_id, cells in sorted(cells_by_set.items())],
         orient="row",
         schema={"setId": pl.String, "cellCount": pl.Int64},
     )
-    # Set-aside cells PER CLONOTYPE, never per run. `the-explore-readout` states them once for the
-    # clonotype, so the expansion needs them at this grain, and the run-level total in the run meta
-    # answers a different question that cannot be split back apart. `gated` holds (sampleId, cellId)
-    # keys and `cells_by_set` maps a set to its members, so this is a membership count over cells
-    # already read rather than a second pass over the reference frame.
+    # Set-aside cells PER CLONOTYPE, never per run. `the-explore-readout` states them once for
+    # the clonotype, and the run-level total in the run meta answers a different question that
+    # cannot be split back apart. `gated` holds (sampleId, cellId) keys and `cells_by_set` maps a
+    # set to its members, so this is a membership count over cells already read.
     per_set_gated = pl.DataFrame(
         list(count_by_set(cells_by_set, gated).items()),
         orient="row",
         schema={"setId": pl.String, "cellsSetAside": pl.Int64},
     )
-    # Cells that read nothing at all, PER CLONOTYPE. `the-explore-readout` carries this beside the
-    # clonotype's cell count rather than at every identity, because a cell with nothing left is
-    # empty at every identity and repeating the subtraction per position would report a per-identity
-    # failure that did not happen. It separates a negative resting on cells that read something from
-    # one resting on cells that read nothing, and changes no verdict.
+    # Cells that read nothing at all, PER CLONOTYPE. Carried beside the clonotype's cell count
+    # rather than at every identity, because a cell with nothing left is empty at every identity
+    # and repeating the subtraction per position would report a per-identity failure that did not
+    # happen. It separates a negative resting on cells that read something from one resting on
+    # cells that read nothing, and changes no verdict.
     per_set_empty = pl.DataFrame(
         list(count_by_set(cells_by_set, cells_reading_nothing(floored, linker_cells)).items()),
         orient="row",
@@ -1291,18 +1224,18 @@ def main() -> None:
     counts_frame = (
         set_counts(verdicts)
         .join(per_set_cells, on="setId", how="left")
-        # Filled rather than asserted, unlike cellCount below: with no gate declared `gated` is empty,
-        # so every set legitimately has nothing set aside and 0 is the true answer. A reader must not
-        # have to tell "no gate" apart from "column missing".
+        # Filled rather than asserted, unlike cellCount below: with no gate declared `gated` is
+        # empty, so every set legitimately has nothing set aside and 0 is the true answer.
         .join(per_set_gated, on="setId", how="left")
-        # Filled for the same reason, and the reason bites harder here: this column ships off by
-        # default, so the reader who turns it on is the one asking the question, and a null would
-        # answer it with a blank where zero is the truth.
+        # Filled for the same reason, and it bites harder here: this column ships off by
+        # default, so the reader who turns it on is the one asking the question, and a null
+        # would answer it with a blank where zero is the truth.
         .join(per_set_empty, on="setId", how="left")
         .with_columns(pl.col("cellsSetAside").fill_null(0), pl.col("cellsReadingNothing").fill_null(0))
     )
-    # Every set comes FROM the linker, so every set has cells. Asserted rather than filled with zero:
-    # a set with no cells is a contradiction, and writing 0 would report it as a real, empty clonotype.
+    # Every set comes FROM the linker, so every set has cells. Asserted rather than filled with
+    # zero: a set with no cells is a contradiction, and writing 0 would report it as a real,
+    # empty clonotype.
     missing = counts_frame.filter(pl.col("cellCount").is_null())["setId"].to_list()
     if missing:
         raise SystemExit(f"sets carry verdicts but no cells, which cannot happen: {missing[:8]}")
@@ -1315,22 +1248,18 @@ def main() -> None:
     cell_punch, cell_punch_emitted = _pivot_cell_punch(states, cells_by_set, offered_by_sample, admissibility, universe)
     _write_sorted(_answers(cell_punch), f"{prefix}_cell_punch.csv", ["setId", "sampleId", "cellId"])
 
-    # The sparse per-tag counts and the per-cell scalars together carry every
-    # per-cell state, at a small fraction of the size the dense
-    # per-cell-per-identity grid takes. They stay inside the block: reading the
-    # same experiment under another grouping is another execution rather than a
-    # re-derivation a reader performs, and the grouping enters after the
-    # counting, so a second execution over unchanged inputs re-does the verdict
-    # step alone.
+    # The sparse per-tag counts and the per-cell scalars together carry every per-cell state, at
+    # a small fraction of the dense grid's size. They stay inside the block: reading the same
+    # experiment under another grouping is another execution rather than a re-derivation a reader
+    # performs, and the grouping enters after the counting.
     #
-    # That argument used to end "so the dense grid is never exported", and it no
-    # longer holds: `_pivot_cell_punch` above exports it, because a readout that
-    # shows one clonotype's cells against the panel cannot be assembled from a
-    # sparse frame by a grid. What survives of the argument is the SIZE, which is
-    # why that function carries a cell gate and reports whether it emitted.
-    # With no list, membership is unknown rather than false: a barcode nobody
-    # classified is not a barcode classified as "not a cell". "false" would be
-    # a claim the run cannot support.
+    # That argument used to end "so the dense grid is never exported", and it no longer holds:
+    # `_pivot_cell_punch` above exports it, because a readout showing one clonotype's cells
+    # against the panel cannot be assembled from a sparse frame by a grid. What survives is the
+    # SIZE, which is why that function carries a cell gate and reports whether it emitted.
+    #
+    # With no list, membership is unknown rather than false: a barcode nobody classified is not a
+    # barcode classified as "not a cell".
     unlisted_reads = "false" if cell_list is not None else "unknown"
     in_list = pl.DataFrame(
         [(s, c, "true") for s, c in sorted(listed)],
@@ -1342,12 +1271,11 @@ def main() -> None:
         reason = cell_admissibility_reason(key, admissibility)
         return "admissible" if reason is None else reason.value
 
-    # Admissibility is built HERE, in the same row as its own cell, and not attached to a later frame as a
-    # positional column. Polars does not promise a left frame's row order survives a join
-    # (`maintain_order` defaults to "none"), so a positional attach after the joins below can give cells
-    # each other's labels -- and `_write_sorted` then sorts the file, which hides it rather than repairing
-    # it. Carrying the value in the tuple makes the pairing a property of construction instead of a
-    # property of whatever polars did in between.
+    # Admissibility is built HERE, in the same row as its own cell, and not attached to a later
+    # frame as a positional column. Polars does not promise a left frame's row order survives a
+    # join (`maintain_order` defaults to "none"), so a positional attach after the joins below can
+    # give cells each other's labels -- and `_write_sorted` then sorts the file, which hides it
+    # rather than repairing it.
     reference_frame = pl.DataFrame(
         [(s, c, reference.by_cell.get((s, c)), _admissibility((s, c))) for s, c in analysed_cells],
         orient="row",
@@ -1373,11 +1301,10 @@ def main() -> None:
     )
     _write_sorted(_answers(cell_scalars), f"{prefix}_cell_scalars.csv", ["sampleId", "cellId"])
 
-    # Both of these frames are pure key sets -- what a sample was offered, and
-    # which identity a tag feeds -- and each carries a constant value column so
-    # it can become a p-column at all. A frame of key columns alone imports as
-    # nothing: columns are built from value columns, so a key-only file yields
-    # no column and the fact it records never leaves the block.
+    # Both frames are pure key sets -- what a sample was offered, and which identity a tag feeds
+    # -- and each carries a constant value column so it can become a p-column at all. A frame of
+    # key columns alone imports as nothing: columns are built from value columns, so a key-only
+    # file yields no column and the fact it records never leaves the block.
     offered_frame = pl.DataFrame(
         [(sample, identity, "true") for sample in samples for identity in sorted(offered_by_sample[sample])],
         orient="row",
@@ -1385,45 +1312,41 @@ def main() -> None:
     )
     _write_sorted(offered_frame, f"{prefix}_offered.csv", ["sampleId", "identity"])
 
-    # The value column is named "1" and holds 1, matching the cell-linker
-    # convention already used for linker columns elsewhere in the platform.
+    # The value column is named "1" and holds 1, matching the cell-linker convention already used
+    # for linker columns elsewhere in the platform.
     #
-    # Deliberately NOT keyed by sample. The reason is the join, not the declaration.
+    # Deliberately NOT keyed by sample. The reason is the join, not the declaration. This linker
+    # puts a tag-keyed figure beside an identity-keyed verdict, and neither side carries a sample:
+    # verdicts are (set, identity) over clonotypes that span samples, and the per-tag figures are
+    # run-level. A sample axis here is an axis no participating table has. It does not sharpen the
+    # join -- it makes the join malformed, and `createPlDataTableV3` label discovery then rejects
+    # the spec frame.
     #
-    # This linker puts a tag-keyed figure beside an identity-keyed verdict. Neither side carries a
-    # sample. The verdicts are (set, identity), and a set is a clonotype that spans whatever samples
-    # its cells came from. The per-tag figures are run-level. A sample axis here is an axis no
-    # participating table has. It does not sharpen the join. It makes the join malformed, and
-    # `createPlDataTableV3` label discovery then rejects the spec frame.
-    #
-    # Under (tag, sample) grouping one tag can feed several identities. This frame is therefore
-    # many-to-many and carries one row per pair. `qc-measurement-set` asks for that shape: it shows
-    # the identity figures for the identities a tag feeds, plural. Distinct rows matter. Two tags of
-    # one identity would otherwise emit the same key twice, and duplicate axis keys break a grid
-    # silently.
+    # Under (tag, sample) grouping one tag can feed several identities, so this frame is
+    # many-to-many with one row per pair. Distinct rows matter: two tags of one identity would
+    # otherwise emit the same key twice, and duplicate axis keys break a grid silently.
     linker_frame = _linker_frame(grouping)
     _write_sorted(linker_frame, f"{prefix}_tag_identity.csv", ["tag", "identity"])
 
-    # Only the disagreements in the column that SUPPLIES the label matter: a tag that disagrees about some
-    # other property still carries an ordinary name. Which column that is depends on the rule -- a
-    # property grouping labels by the value it grouped on, while the per-tag grouping has no grouping
-    # column at all and borrows the feature name. Passing the grouping column either way made every
-    # per-tag run look up "", so a barcode two samples named differently fell through to its raw 15-mer
-    # with the conflict recorded in stderr and shown nowhere a reader would look.
-    # Under a property grouping on ONE column, that column supplies the rescue: a pair that fell back
-    # has no value for it, and the names it did declare are what a reader needs. Under several columns
-    # there is no single such column, so the feature column supplies it, exactly as the per-tag branch
-    # does -- a pair that fell back has no combination at all, and what a reader needs then is what the
-    # reagent is called rather than which combination it failed to join.
+    # Only disagreements in the column that SUPPLIES the label matter: a tag that disagrees about
+    # some other property still carries an ordinary name. Which column that is depends on the rule
+    # -- a property grouping labels by the value it grouped on, while the per-tag grouping borrows
+    # the feature name. Passing the grouping column either way made every per-tag run look up "",
+    # so a barcode two samples named differently fell through to its raw 15-mer with the conflict
+    # shown nowhere a reader would look.
+    #
+    # Under a property grouping on ONE column, that column supplies the rescue. Under several there
+    # is no single such column, so the feature column supplies it: a pair that fell back has no
+    # combination at all, and what a reader needs then is what the reagent is called.
     grouping_columns = (
         _grouping_columns(grouping_rule, property_columns(panel))
         if (isinstance(grouping_rule, dict) and grouping_rule.get("by") == "property")
         else []
     )
     label_column = grouping_columns[0] if len(grouping_columns) == 1 else args.feature_col
-    # Bound once and passed to both readers below. `_identity_labels` joins these names into the label a
-    # reader sees. The run record carries the same names apart so the readout can say WHY a label is
-    # joined. Deriving the second from the first -- splitting the label back on " / " -- would guess, and
+    # Bound once and passed to both readers below. `_identity_labels` joins these names into the
+    # label a reader sees. The run record carries the same names apart so the readout can say WHY a
+    # label is joined. Deriving the second from the first -- splitting the label back on " / " --
     # would guess wrong for a reagent whose own name contains a slash.
     label_disagreements = disagreed_by_column.get(label_column or "", {})
     labels = _identity_labels(
@@ -1440,16 +1363,14 @@ def main() -> None:
     )
     _write_sorted(identity_labels, f"{prefix}_identity_labels.csv", ["identity"])
 
-    # The declarations, keyed the same way the verdicts are. Wide -- one column
-    # per property -- because the workflow turns each into its own p-column with
-    # the property name in the DOMAIN, which is what makes two properties two
-    # distinct columns rather than one column a reader has to unstack.
+    # The declarations, keyed the same way the verdicts are. Wide -- one column per property --
+    # because the workflow turns each into its own p-column with the property name in the DOMAIN,
+    # which is what makes two properties two distinct columns rather than one a reader unstacks.
     #
-    # A property no identity agreed on is left out rather than exported empty: an
-    # all-blank filterable column offers a reader a filter with nothing to filter
-    # by. The names that survive are recorded in the run meta, because the
-    # workflow builds one spec per column and the headers are panel data, unknown
-    # until this runs.
+    # A property no identity agreed on is left out rather than exported empty: an all-blank
+    # filterable column offers a reader a filter with nothing to filter by. The surviving names are
+    # recorded in the run meta, because the workflow builds one spec per column and the headers are
+    # panel data, unknown until this runs.
     exportable = [c for c in prop_cols if c != IDENTITY_KEY_COLUMN]
     if len(exportable) < len(prop_cols):
         print(
@@ -1481,9 +1402,8 @@ def main() -> None:
     for sample in samples:
         samples_of_panel.setdefault(panel_of_sample[sample], []).append(sample)
 
-    # Named for a reader, so the sample is shown under the label the panel file used
-    # rather than the sampleId it was translated to. The KEY is the sampleId, because a
-    # key has to join. The label is the half a scientist recognises.
+    # Named for a reader, so the sample is shown under the label the panel file used rather than
+    # the sampleId it was translated to. The KEY is the sampleId, because a key has to join.
     panel_labels = pl.DataFrame(
         [
             (
@@ -1505,17 +1425,15 @@ def main() -> None:
     )
     _write_sorted(sample_panel, f"{prefix}_sample_panel.csv", ["sampleId"])
 
-    # Both directions of the panel-versus-reads check, re-keyed onto the
-    # panel: a per-tag failure is a property of the declared tag set rather
-    # than of any one sample that carries it. The samples reporting it travel
-    # in the row so nothing about where it was seen is lost.
+    # Both directions of the panel-versus-reads check, re-keyed onto the panel: a per-tag failure
+    # is a property of the declared tag set rather than of any one sample carrying it. The samples
+    # reporting it travel in the row.
     seen = counts.select("sampleId", "tag").unique()
     unknown_panel = _panel_id(frozenset())
     mismatch_rows: dict[tuple[str, str, str], set[str]] = {}
     for row in panel_read_mismatch(panel, seen).iter_rows(named=True):
-        # In the unkeyed case every row comes back under "*", which is not a
-        # sample id: the declaration really is global, so it reports against
-        # every sample in the run.
+        # In the unkeyed case every row comes back under "*", which is not a sample id: the
+        # declaration really is global, so it reports against every sample in the run.
         affected = samples if row["sample"] == ANY_SAMPLE else [row["sample"]]
         for sample in affected:
             key = (panel_of_sample.get(sample, unknown_panel), row["tag"], row["direction"])
@@ -1532,22 +1450,17 @@ def main() -> None:
     def _disagreement_rates(samples_here: list[str]) -> dict[str, float | None]:
         """The per-tag self-disagreement rate over one panel's samples only.
 
-        Scoped per panel rather than computed once over the run, because the row that carries this
-        figure is keyed `(tag, panelId)`. A run-global rate on a panel's row says something the panel
-        did not do: a reagent declared in panels P and Q but misbehaving only in Q's samples shows the
-        same inflated rate on P's row, so a reader comparing P's tags against each other is handed a
-        fault that belongs to Q -- pointing them at the wrong panel and the wrong remedy. A per-tag row
-        is keyed by its panel so a reagent fault lands on the panel that has it.
+        Scoped per panel rather than over the run, because the row carrying this figure is keyed
+        `(tag, panelId)`. A run-global rate on a panel's row says something the panel did not do: a
+        reagent declared in panels P and Q but misbehaving only in Q's samples shows the same
+        inflated rate on P's row, pointing a reader at the wrong panel and the wrong remedy.
 
-        Measured at the tag and nowhere else. The identity-level figure has nothing to compare against,
-        so it cannot separate a faulty reagent from a panel full of weak binders.
+        Measured at the tag and nowhere else. The identity-level figure has nothing to compare
+        against, so it cannot separate a faulty reagent from a panel full of weak binders.
 
-        This is the same restriction `per_antigen_measures` already gets from `panel_states` a few lines
-        below; disagreement was the one per-panel measure still reading a run-wide number.
-
-        The cell sets are restricted too, not only the states. A set spanning two panels' samples would
-        otherwise bring its other panel's cells into this panel's evaluable count, and self-disagreement
-        is precisely a count of a set's cells contradicting each other.
+        The cell sets are restricted too, not only the states. A set spanning two panels' samples
+        would otherwise bring its other panel's cells into this panel's evaluable count, and
+        self-disagreement is precisely a count of a set's cells contradicting each other.
         """
         here = set(samples_here)
         sets_here = {set_id: [key for key in members if key[0] in here] for set_id, members in cells_by_set.items()}
@@ -1586,14 +1499,10 @@ def main() -> None:
         matched_detail = "" if reads_matched is None else f"readsMatched={int(reads_matched)}"
         _add(rows, "sample", sample, "readsTotal", _number(qc, "readsTotal"), matched_detail)
         _add(rows, "sample", sample, "panelAssignedFraction", _number(qc, "panelAssignedFraction"))
-        # The denominator is the cell list, never the barcodes the reads
-        # happened to touch: the five-thousand recommendation is per called
-        # cell, and in droplet data observed barcodes run one to two orders of
-        # magnitude higher, so dividing by them would alert on a healthy run.
-        # No cell list means no denominator, so depth is *not evaluated* --
-        # the run could not supply what the measurement needed. Substituting
-        # the observed barcodes would answer a different question and, being
-        # one to two orders of magnitude larger, would alert on a fine library.
+        # The denominator is the cell list, never the barcodes the reads happened to touch: the
+        # five-thousand recommendation is per called cell, and in droplet data observed barcodes
+        # run one to two orders of magnitude higher, so dividing by them would alert on a healthy
+        # run. No cell list means no denominator, so depth is *not evaluated*.
         depth = (
             reads_per_cell(int(reads_matched), len(listed_here))
             if reads_matched is not None and listed_here is not None
@@ -1658,10 +1567,9 @@ def main() -> None:
         }
         observed_here = {tag for tag, total in here_total.items() if total > 0}
 
-        # A declared tag is alerting at zero reads, so every declared tag gets
-        # a row rather than only the ones that produced nothing: reporting
-        # only the failures leaves a reader unable to tell a clean panel from
-        # an unchecked one.
+        # A declared tag is alerting at zero reads, so every declared tag gets a row rather than
+        # only the ones that produced nothing: reporting only the failures leaves a reader unable
+        # to tell a clean panel from an unchecked one.
         for tag in sorted(panel_tags):
             _add(rows, "tag", tag, "declaredNeverSeen", here_total[tag], "", panel_id)
         for tag in sorted(observed_here - panel_tags):
@@ -1679,23 +1587,19 @@ def main() -> None:
                 panel_id,
             )
 
-        # No line stands behind this, so it reads unjudged and its value travels
-        # beside its siblings for a reader to compare. A tag standing clear of the
-        # other tags in its panel is misbehaving whatever the absolute rate, and
-        # that is a real finding -- but a finding a reader makes by looking, not a
-        # threshold this block can apply. Applying one would need a multiplier
-        # nobody published, which is a line invented here. Keeping the rows per
-        # panel is what makes the comparison the right one: a reagent's rate on
-        # P's row is P's cells, never Q's.
+        # No line stands behind this, so it reads unjudged and its value travels beside its
+        # siblings for a reader to compare. A tag standing clear of the other tags in its panel is
+        # misbehaving whatever the absolute rate -- a real finding, but one a reader makes by
+        # looking. Applying a threshold would need a multiplier nobody published. Keeping the rows
+        # per panel is what makes the comparison the right one.
         for tag in sorted(panel_tags & set(tag_rate)):
             _add(rows, "tag", tag, "tagDisagreement", tag_rate[tag], "", panel_id)
 
-    # Only the sample carries an aggregated status, over its OWN per-sample
-    # measurements. A per-tag failure is usually a property of the reagent across
-    # the whole run rather than of any one sample, so feeding a dead reagent in a
-    # panel of twenty tags into a sample status would mark every sample alerting
-    # and make that status noise within one run. It does not hide: the per-tag row
-    # states the reagent finding on its own, keyed by the panel that has it.
+    # Only the sample carries an aggregated status, over its OWN per-sample measurements. A
+    # per-tag failure is usually a property of the reagent across the whole run, so feeding a dead
+    # reagent in a panel of twenty tags into a sample status would mark every sample alerting and
+    # make that status noise. It does not hide: the per-tag row states the reagent finding on its
+    # own, keyed by the panel that has it.
     for sample in samples:
         coverage = sample_coverage[sample]
         rows.append(QcRow("sample", sample, ROLLUP, None, "", "", coverage.status, coverage))
@@ -1705,15 +1609,13 @@ def main() -> None:
     meta = {
         "referenceChoice": reference.served.value,
         "referenceSourceRequested": source.value,
-        # Whether a baseline was established, and where not, why. Only the
-        # tag-distribution rung can reach false: its conditions are properties of
-        # the data, so a run resting on it proceeds and reports afterwards. The
-        # other rungs refuse from the settings before anything is read.
+        # Whether a baseline was established, and where not, why. Only the tag-distribution rung
+        # can reach false: its conditions are properties of the data, so a run resting on it
+        # proceeds and reports afterwards. The other rungs refuse from the settings.
         #
-        # The model reads this and draws no punchcard where it is false, showing
-        # the reason in its place. The answer frames are header-only in that case,
-        # so a consumer that reads them anyway finds no rows rather than a full
-        # grid of non-answers.
+        # The model reads this and draws no punchcard where it is false, showing the reason in its
+        # place. The answer frames are header-only in that case, so a consumer that reads them
+        # anyway finds no rows rather than a full grid of non-answers.
         "baselineEstablished": no_baseline_reason is None,
         "noBaselineReason": no_baseline_reason,
         "cellListSource": cell_list_source,
@@ -1729,10 +1631,9 @@ def main() -> None:
         "panelMinMembers": args.panel_min_members,
         "distributionMinCells": args.distribution_min_cells,
         "distributionSeparation": args.distribution_separation,
-        # Per (sample, tag), and only where that rung was asked for: which tags
-        # could not be fitted, and why. A tag missing here fitted. The reader
-        # needs both halves to tell a panel that mostly worked from one that
-        # mostly did not.
+        # Per (sample, tag), and only where that rung was asked for: which tags could not be
+        # fitted, and why. A tag missing here fitted. The reader needs both halves to tell a panel
+        # that mostly worked from one that mostly did not.
         "distributionUnfitted": {
             f"{sample}/{tag}": fit.reason for (sample, tag), fit in sorted(tag_fits.items()) if fit.reason
         },
@@ -1741,41 +1642,40 @@ def main() -> None:
         "referenceTags": sorted(reference_tags),
         "grouping": grouping_rule or {"by": "tag"},
         "groupingId": grouping_id,
-        # The narrowing a short panel file costs, carried in the output
-        # rather than only in a log line: these tags were answered under a
-        # grouping that could not place them.
+        # The narrowing a short panel file costs, carried in the output rather than only in a log
+        # line: these tags were answered under a grouping that could not place them.
         "tagsWithoutGroupingValue": sorted(ungrouped_tags),
         "contending": [sorted(group) for group in contending],
         "identityCount": len(universe),
         # The identities themselves, in the order the pivot lays them out. The workflow builds one
-        # p-column per column of result_identity_summary.csv, and the column names are the identities --
-        # which are panel data, unknown until this runs. A count cannot name them, so without this the
-        # pivoted summary imports as nothing and the only per-antigen state a clonotype-anchored reader
-        # can see disappears with no error.
+        # p-column per column of result_identity_summary.csv, and the column names are the
+        # identities -- panel data, unknown until this runs. A count cannot name them, so without
+        # this the pivoted summary imports as nothing and the only per-antigen state a
+        # clonotype-anchored reader can see disappears with no error.
         "identities": sorted(universe),
-        # Read by the workflow to label the punchcard's columns. An identity whose grouping value was
-        # dropped is labelled with the names it did declare, so the card shows a reagent rather than a
-        # 15-mer. Every other identity labels itself.
+        # Read by the workflow to label the punchcard's columns. An identity whose grouping value
+        # was dropped is labelled with the names it did declare, so the card shows a reagent rather
+        # than a 15-mer. Every other identity labels itself.
         "identityLabels": {identity: labels.get(identity, identity) for identity in sorted(universe)},
-        # Why a label above is two names joined. Keyed exactly as `_identity_labels` keys its own lookup,
-        # so an entry here appears for precisely the identities whose label was joined and for no others.
-        # Only genuine conflicts: one declared name is the ordinary case and is not a disagreement.
-        # The workflow turns each entry into the column's description annotation, which the table shows as
-        # a header tooltip -- otherwise a reader meets two antigen names in one header with nothing saying
-        # whether the barcode was shared, the panel was inconsistent, or the block merged something.
+        # Why a label above is two names joined. Keyed exactly as `_identity_labels` keys its own
+        # lookup, so an entry appears for precisely the identities whose label was joined. Only
+        # genuine conflicts: one declared name is the ordinary case. The workflow turns each entry
+        # into the column's description annotation, shown as a header tooltip -- otherwise a reader
+        # meets two antigen names in one header with nothing saying whether the barcode was shared,
+        # the panel was inconsistent, or the block merged something.
         "identityNameConflicts": {
             identity: sorted(names)
             for identity in sorted(universe)
             if len(names := label_disagreements.get(identity, [])) > 1
         },
-        # The declaration columns that reached result_identity_properties.csv, and the distinct values
-        # each carries. Both are panel data: the workflow builds one p-column per name and annotates it
-        # with its own value set, so without these the declarations import as nothing.
+        # The declaration columns that reached result_identity_properties.csv, and the distinct
+        # values each carries. Both are panel data: the workflow builds one p-column per name and
+        # annotates it with its own value set, so without these the declarations import as nothing.
         "identityProperties": emitted_properties,
         "identityPropertyValues": {c: property_values[c] for c in emitted_properties},
         "identitySummaryEmitted": summary_emitted,
-        # False where the run was too wide or too deep for the dense per-cell grid, so the readout can say
-        # which of the two it was rather than showing an empty tab.
+        # False where the run was too wide or too deep for the dense per-cell grid, so the readout
+        # can say which of the two it was rather than showing an empty tab.
         "cellPunchEmitted": cell_punch_emitted,
         "cellPunchCells": len(cell_punch),
         "identitySummaryLimit": IDENTITY_SUMMARY_MAX_IDENTITIES,
@@ -1783,10 +1683,10 @@ def main() -> None:
         "cellsEmptied": cells_emptied,
         "cellsHighReference": cells_high_reference,
         "cellsSetAside": len(gated),
-        # The same tally per clonotype, for the expansion, and present only when a gate was declared:
-        # 206 shows this only where a gate is, so an absent key is the UI's whole condition. Sparse --
-        # a clonotype that lost nothing carries no entry, and an absent key reads as zero -- because
-        # this file is parsed on every render.
+        # The same tally per clonotype, for the expansion, and present only when a gate was
+        # declared: the UI's whole condition is an absent key. Sparse -- a clonotype that lost
+        # nothing carries no entry, and an absent key reads as zero -- because this file is parsed
+        # on every render.
         **(
             {"cellsSetAsideBySet": {k: v for k, v in count_by_set(cells_by_set, gated).items() if v > 0}}
             if args.gate_threshold
@@ -1795,12 +1695,10 @@ def main() -> None:
         "panelLinesDropped": dropped_lines,
         "samples": samples,
         "setCount": len(cells_by_set),
-        # How many DISTINCT panels the run carried. One means every sample was stained with the same
-        # tags, and then how many of a clonotype's cells could answer is the same at every identity --
-        # its own cell count, which the grid already shows beside its name. The readout uses this to
-        # decide whether the per-identity figure says anything: repeated down a column it teaches a
-        # reader to ignore it, and the whole reason for carrying it is that a verdict from three cells
-        # and one from forty print the same word.
+        # How many DISTINCT panels the run carried. One means every sample was stained with the
+        # same tags, and then how many of a clonotype's cells could answer is the same at every
+        # identity -- its own cell count, which the grid already shows beside its name. The readout
+        # uses this to decide whether the per-identity figure says anything.
         "samplePanelCount": len(set(panel_of_sample.values())),
     }
     with open(f"{prefix}_run_meta.json", "w") as out:

@@ -7,11 +7,11 @@
 // outputs as render outputs that flatten cleanly. Mirrors blocks/peptide-extraction
 // downstream-pipeline.tpl.tengo.
 //
-// Nothing here knows about the binding verdicts. The verdict stage reads the run as a whole, because a
-// panel is a property of a declared tag set rather than of one sample and the quality rollup spans
-// samples, so it runs once after this fan-out on the gathered counts. Keeping every one of its parameters
-// out of this template is what lets a change to the reading recover each per-sample body from cache
-// instead of re-running parse, refine-tags and tag-stat.
+// Nothing here knows about the binding verdicts. The verdict stage reads the run as a whole, because a panel
+// is a property of a declared tag set rather than of one sample and the quality rollup spans samples, so it
+// runs once after this fan-out on the gathered counts. Keeping every one of its parameters out of this
+// template is what lets a change to the reading recover each per-sample body from cache instead of
+// re-running parse, refine-tags and tag-stat.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
@@ -30,9 +30,9 @@ self.body(func(inputs) {
 	tagsCsv := inputs.tagsCsv
 	barcodeSeqColumn := inputs.barcodeSeqColumn
 	featureNameColumn := inputs.featureNameColumn
-	// Optional multi-barcode antigen combine mode. "" = off, and per_cell_metrics then defaults every
-	// feature to OR/sum. Where set, it names the tag-CSV column giving each feature's mode, sum or all.
-	// minUmi is the AND per-barcode "fired" floor.
+	// Optional multi-barcode antigen combine mode. "" = off, and per_cell_metrics then defaults every feature
+	// to OR/sum. Where set, it names the tag-CSV column giving each feature's mode, sum or all. minUmi is the
+	// AND per-barcode "fired" floor.
 	combineColumn := is_undefined(inputs.combineColumn) ? "" : inputs.combineColumn
 	minUmi := is_undefined(inputs.minUmi) ? 1 : inputs.minUmi
 
@@ -57,9 +57,9 @@ self.body(func(inputs) {
 		saveFileContent("result_qc.json").
 		run()
 
-	// Per-cell metrics (Python). sampleId is irrelevant here: processColumn prepends the real sample axis
-	// from the iteration key, so this passes a constant and the import ignores the CSV's sampleId column.
-	// The distinct-UMI polars read scales with input volume, so size RAM from the tagstat.tsv blob, tagged
+	// Per-cell metrics (Python). sampleId is irrelevant here: processColumn prepends the real sample axis from
+	// the iteration key, so this passes a constant and the import ignores the CSV's sampleId column. The
+	// distinct-UMI polars read scales with input volume, so size RAM from the tagstat.tsv blob, tagged
 	// "tagstat", on a floor rather than as a fixed request.
 	metricsBaseGB := 16
 	// workflow-tengo 6.7.0 fluent formula API fed via .resources({ onCPU }) (see fb-parse for the note).
@@ -97,8 +97,8 @@ self.body(func(inputs) {
 	}
 	metrics = metrics.run()
 
-	// No consensus (dominant-feature) or Cell Ranger specificity table. per_cell_metrics.py writes neither
-	// and takes none of the four flags that drove them (--control, --dominance-threshold, --offtarget-col,
+	// No consensus (dominant-feature) or Cell Ranger specificity table. per_cell_metrics.py writes neither and
+	// takes none of the four flags that drove them (--control, --dominance-threshold, --offtarget-col,
 	// --offtarget-values). The verdict stage asks the binding question of every antigen independently, so a
 	// cell that bound three antigens carries three verdicts rather than one winner and two absences. The
 	// negative-control designation survives as a per-feature marker column, emitted outside this fan-out.
@@ -110,9 +110,9 @@ self.body(func(inputs) {
 		qcJson: qc.getFileContent("result_qc.json"), // inline content (saveFileContent) so the model can read it
 		// per-cell-metrics (Python) stdout: the "4-metrics" step log. Surfaced separately rather than in the
 		// mitool stepLogs map, which fb-refine-tagstat builds before this step runs. Capturing it here is
-		// CID-safe through the content-hash persist of these metrics intermediates in main.tpl.tengo. The
-		// File outputs above ARE resolved downstream, so that persist loop, and not any avoidance of
-		// resolution, is what keeps this stdout capture from re-triggering CIDConflictError.
+		// CID-safe through the content-hash persist of these metrics intermediates in main.tpl.tengo. The File
+		// outputs above ARE resolved downstream, so that persist loop, and not any avoidance of resolution, is
+		// what keeps this stdout capture from re-triggering CIDConflictError.
 		metricsLogStream: metrics.getStdoutStream()
 	}
 })

@@ -1,46 +1,40 @@
 """The spec's acceptance scenarios, each driven from files through the CLI.
 
-Every scenario writes a counts CSV, a panel CSV and a linker CSV, runs
-`emit_verdicts.py` as a subprocess, and asserts on the CSVs it wrote. Nothing
-here builds a per-cell state frame, calls `read_states`, or reaches into a
-module: an earlier revision of these scenarios did exactly that and passed
-while the pipeline read a mutant whose cells all failed to bind as *never
-asked*. A scenario that constructs the states it then reads tests its own
-assertion, not the reading.
+Every scenario writes a counts CSV, a panel CSV and a linker CSV, runs `emit_verdicts.py` as a
+subprocess, and asserts on the CSVs it wrote. Nothing here builds a per-cell state frame, calls
+`read_states`, or reaches into a module. An earlier revision of these scenarios did exactly that
+and passed while the pipeline read a mutant whose cells all failed to bind as *never asked*. A
+scenario that constructs the states it then reads tests its own assertion, not the reading.
 
-**Absence in the counts file means two different things, and which one a bed
-carries decides the state it must produce.** A tag the SAMPLE's reads never
-carry is a reagent that produced nothing: it removes its cells from what could
-answer, and the position reads *never asked*. A tag the sample did measure that
-a particular CELL read nothing for is a reading that happened and failed, and
-that cell votes *not bound*. So a bed testing a failure to bind gives the tag
-ambient counts, and only the dead-reagent bed leaves a tag out entirely. Getting
-this backwards is how a dead reagent becomes a confident clean negative on every
-clonotype in the run.
+**Absence in the counts file means two different things, and which one a bed carries decides the
+state it must produce.** A tag the SAMPLE's reads never carry is a reagent that produced nothing:
+it removes its cells from what could answer, and the position reads *never asked*. A tag the
+sample did measure that a particular CELL read nothing for is a reading that happened and failed,
+and that cell votes *not bound*. So a bed testing a failure to bind gives the tag ambient counts,
+and only the dead-reagent bed leaves a tag out entirely. Getting this backwards is how a dead
+reagent becomes a confident clean negative on every clonotype in the run.
 
-Four numbers are load-bearing in the beds below, so they are stated once here
-rather than rediscovered by whoever next changes a count.
+Four numbers are load-bearing in the beds below, so they are stated once here rather than
+rediscovered by whoever next changes a count.
 
-*The cutoff is 75 and the score is a beta function, not a ratio.* Against a
-reference of 6, a count of 500 scores 100 and binds, while counts of 50 and 60
-score 3.1 and 7.2 and read *not bound* -- large-looking counts that cannot
-reach the cutoff. Against a reference of 20 a count of 500 still scores 99.85.
-Check the score before asserting a state; `specificity_score(count, reference)`
-in verdict.py answers directly.
+*The cutoff is 75 and the score is a beta function, not a ratio.* Against a reference of 6, a
+count of 500 scores 100 and binds. Counts of 50 and 60 score 3.1 and 7.2 and read *not bound* --
+large-looking counts that cannot reach the cutoff. Against a reference of 20 a count of 500 still
+scores 99.85. Check the score before asserting a state. `specificity_score(count, reference)` in
+verdict.py answers directly.
 
-*The floor is 4.* Any antigen reading of 1-3 is zeroed before anything else
-runs, so background counts here sit at 5 or above. A floored reading can also
-drag a panel-derived comparator to zero, against which every surviving count
-scores near 100, turning a whole run *bound* for a reason that has nothing to
-do with the scenario.
+*The floor is 4.* Any antigen reading of 1-3 is zeroed before anything else runs, so background
+counts here sit at 5 or above. A floored reading can also drag a panel-derived comparator to zero,
+against which every surviving count scores near 100, turning a whole run *bound* for a reason that
+has nothing to do with the scenario.
 
-*A cell with no comparator reading is inadmissible and votes nowhere.* Every
-bed declares a comparator tag whose role value matches `--reference-values`,
-and gives every one of its cells a count for it.
+*A cell with no comparator reading is inadmissible and votes nowhere.* Every bed declares a
+comparator tag whose role value matches `--reference-values`, and gives every one of its cells a
+count for it.
 
-Tags are the identities under the default per-tag grouping, so they are named
-for the part they play (`TARGET`, `OFF1`) rather than written as barcode
-sequences. The pipeline treats a tag as an opaque string.
+Tags are the identities under the default per-tag grouping, so they are named for the part they
+play (`TARGET`, `OFF1`) rather than written as barcode sequences. The pipeline treats a tag as an
+opaque string.
 """
 
 import json
@@ -98,10 +92,9 @@ BACKGROUND = 5
 
 
 def _verdicts(bed):
-    # Read without schema inference throughout: `unreliableReason` is null on a
-    # settled row, and polars would otherwise infer the counts back into
-    # integers and the reason column's nulls into something a test cannot tell
-    # from an empty string.
+    # Read without schema inference throughout. `unreliableReason` is null on a settled row, and
+    # polars would otherwise infer the counts back into integers and the reason column's nulls into
+    # something a test cannot tell from an empty string.
     return pl.read_csv(bed / "result_verdicts.csv", infer_schema_length=0)
 
 
@@ -153,8 +146,8 @@ def epitope_bed(tmp_path):
     rows = ["sampleId,cellId,tag,umiCount"]
     for cell in cells:
         rows.append(f"S1,{cell},CTRL,{COMPARATOR}")
-        # The clone binds the unmutated antigen and the first three mutants;
-        # the epitope it grabs survives those substitutions.
+        # The clone binds the unmutated antigen and the first three mutants. The epitope it grabs
+        # survives those substitutions.
         for tag in ("WT", "M1", "M2", "M3"):
             rows.append(f"S1,{cell},{tag},{BINDING}")
         # M4 is on the panel, in the reads, and bound by nothing.
@@ -189,10 +182,9 @@ def dead_reagent_bed(tmp_path):
 
 
 def test_the_mutant_no_cell_bound_reads_not_bound_not_never_asked(epitope_bed):
-    # The scientist's statement is "binds the unmutated antigen and fails on
-    # the fourth mutant", so *not bound* is the finding and the run must
-    # produce it from silence. Reading M4 as *never asked* -- the failure this
-    # scenario exists to catch -- turns the finding into a gap, and the
+    # The scientist's statement is "binds the unmutated antigen and fails on the fourth mutant", so
+    # *not bound* is the finding and the run must produce it from silence. Reading M4 as *never
+    # asked* is the failure this scenario exists to catch: it turns the finding into a gap, and the
     # clonotype whose whole value is that failure goes back as unsettled.
     r = _run(epitope_bed, *BASE)
     assert r.returncode == 0, r.stderr
@@ -211,10 +203,10 @@ def test_the_mutant_no_cell_bound_reads_not_bound_not_never_asked(epitope_bed):
 
 
 def test_a_live_mutant_nothing_bound_is_still_reported_as_seen(epitope_bed):
-    # The quality row and the verdict say different things and neither
-    # substitutes for the other. Here the reagent worked -- it returned ambient
-    # counts in every cell -- so the panel-versus-reads check must NOT report it
-    # as a tag the reads never show, and the verdict is the clone's failure.
+    # The quality row and the verdict say different things and neither substitutes for the other.
+    # Here the reagent worked, because it returned ambient counts in every cell. So the
+    # panel-versus-reads check must NOT report it as a tag the reads never show, and the verdict is
+    # the clone's failure.
     assert _run(epitope_bed, *BASE).returncode == 0
     qc = pl.read_csv(epitope_bed / "result_qc.csv", infer_schema_length=0)
     never_seen = qc.filter((pl.col("measurement") == "declaredNeverSeen") & (pl.col("entity") == "M4"))
@@ -224,17 +216,15 @@ def test_a_live_mutant_nothing_bound_is_still_reported_as_seen(epitope_bed):
 
 
 def test_a_dead_reagent_reads_never_asked_not_a_confident_negative(dead_reagent_bed):
-    # The headline failure this arrives by the one route the states were not
-    # watching. The antigen was declared, so *never asked* does not fire from the
-    # panel; zero counts fall below the minimum, so every cell settles *not
-    # bound*; and the result is a confident clean negative on every clone in the
-    # run -- which is exactly the claim that qualifies a lead.
+    # The headline failure, arriving by the one route the states were not watching. The antigen was
+    # declared, so *never asked* does not fire from the panel. Zero counts fall below the minimum, so
+    # every cell settles *not bound*. The result is a confident clean negative on every clone in the
+    # run, which is exactly the claim that qualifies a lead.
     #
-    # A tag the reads never show removes its cells from what could answer. That
-    # is not the reads overruling the file: the file declares what was offered,
-    # the reads say which cells were actually measured, and those were always
-    # different questions. No line is drawn and no threshold is chosen, and a
-    # real negative cannot trigger it, since a real negative still has reads.
+    # A tag the reads never show removes its cells from what could answer. That is not the reads
+    # overruling the file: the file declares what was offered, the reads say which cells were
+    # actually measured, and those were always different questions. No line is drawn and no threshold
+    # is chosen, and a real negative cannot trigger it, since a real negative still has reads.
     r = _run(dead_reagent_bed, *BASE)
     assert r.returncode == 0, r.stderr
 
@@ -286,16 +276,14 @@ def off_target_bed(tmp_path):
     for cell in ("a1", "a2", "a3"):
         rows.append(f"S1,{cell},CTRL,{COMPARATOR}")
         rows.append(f"S1,{cell},TARGET,{BINDING}")
-        # Two routes to *not bound* in one clonotype, so the clean off-target
-        # list does not rest on either route alone. OFF1 reads low in every
-        # cell. OFF2 reads ambient in a1 only and is silent in a2 and a3 --
-        # a tag the SAMPLE measured, which some of its cells read nothing for.
+        # Two routes to *not bound* in one clonotype, so the clean off-target list does not rest on
+        # either route alone. OFF1 reads low in every cell. OFF2 reads ambient in a1 only and is
+        # silent in a2 and a3 -- a tag the SAMPLE measured, which some of its cells read nothing for.
         # That per-cell silence is a reading that happened and failed.
         #
-        # OFF2 must appear in at least one of S1's cells. A tag absent from the
-        # whole sample is a reagent that produced nothing, which removes its
-        # cells from what could answer and reads *never asked* -- the dead
-        # reagent bed above, and a different finding from this one.
+        # OFF2 must appear in at least one of S1's cells. A tag absent from the whole sample is a
+        # reagent that produced nothing, which removes its cells from what could answer and reads
+        # *never asked* -- the dead reagent bed above, and a different finding from this one.
         rows.append(f"S1,{cell},OFF1,{BACKGROUND}")
         if cell == "a1":
             rows.append(f"S1,{cell},OFF2,{AMBIENT}")
@@ -334,11 +322,10 @@ def test_an_off_target_the_panel_omitted_is_present_and_reads_never_asked(off_ta
 
 
 def test_a_bound_off_target_survives_beside_an_unasked_one(off_target_bed):
-    # The other half of the check. The obvious way to satisfy the scenario
-    # above -- let any unsettled position make the whole statement unsettled --
-    # sends a demonstrated off-target binder back as a maybe, silently, which
-    # is the direction that costs money. KB's bound OFF1 must reach the output
-    # so a downstream statement can fail KB on it.
+    # The other half of the check. The obvious way to satisfy the scenario above is to let any
+    # unsettled position make the whole statement unsettled. That sends a demonstrated off-target
+    # binder back as a maybe, silently, which is the direction that costs money. KB's bound OFF1 must
+    # reach the output so a downstream statement can fail KB on it.
     r = _run(off_target_bed, *BASE)
     assert r.returncode == 0, r.stderr
 
@@ -368,10 +355,10 @@ def test_a_bound_off_target_survives_beside_an_unasked_one(off_target_bed):
 def support_bed(tmp_path):
     """One clonotype spanning two samples whose panels share nothing but the comparator.
 
-    Forty of the clone's cells sit in S1, which offered AGA and not AGB; three
-    sit in S2, which offered AGB and not AGA. Both positions bind, so the
-    states are identical and the only thing separating a reading resting on
-    forty cells from one resting on three is the support carried beside it.
+    Forty of the clone's cells sit in S1, which offered AGA and not AGB. Three sit in S2, which
+    offered AGB and not AGA. Both positions bind, so the states are identical and the only thing
+    separating a reading resting on forty cells from one resting on three is the support carried
+    beside it.
     """
     (tmp_path / "panel.csv").write_text(
         "Samples,Name,Sequence,Type\nS1,AgA,AGA,Target\nS1,Ctrl,CTRL,Control\nS2,AgB,AGB,Target\nS2,Ctrl,CTRL,Control\n"
@@ -395,10 +382,9 @@ def support_bed(tmp_path):
 
 
 def test_a_reading_on_forty_cells_and_one_on_three_are_distinguishable(support_bed):
-    # Cells of one clonotype are replicates of one measurement, so how many
-    # could answer is how much confidence the reading deserves. Both positions
-    # here read *bound*, so a row carrying only the state makes a decision
-    # taken on three cells indistinguishable from one taken on forty -- inside
+    # Cells of one clonotype are replicates of one measurement, so how many could answer is how much
+    # confidence the reading deserves. Both positions here read *bound*, so a row carrying only the
+    # state makes a decision taken on three cells indistinguishable from one taken on forty -- inside
     # a single clonotype's row set, which is where the two really do differ.
     r = _run(support_bed, *BASE)
     assert r.returncode == 0, r.stderr
@@ -425,21 +411,19 @@ def test_a_reading_on_forty_cells_and_one_on_three_are_distinguishable(support_b
 def gated_bed(tmp_path):
     """A clonotype whose every cell sits in high comparator background.
 
-    The comparator reads 20 in every cell, so a gate at 10 sets all three
-    aside. The antigen count of 500 scores 99.85 against a comparator of 20 and
-    binds outright with the gate off -- which is what makes the *unreliable*
-    reading the gate's doing rather than an absence of signal. Nothing injects
-    an `unreliable` row; the state is reached by running the same bed twice,
-    once through the gate and once past it.
+    The comparator reads 20 in every cell, so a gate at 10 sets all three aside. The antigen count of
+    500 scores 99.85 against a comparator of 20 and binds outright with the gate off, which is what
+    makes the *unreliable* reading the gate's doing rather than an absence of signal. Nothing injects
+    an `unreliable` row. The state is reached by running the same bed twice, once through the gate and
+    once past it.
     """
     (tmp_path / "panel.csv").write_text("Samples,Name,Sequence,Type\nS1,AgA,AGA,Target\nS1,Ctrl,CTRL,Control\n")
     cells = ("c1", "c2", "c3")
     rows = ["sampleId,cellId,tag,umiCount"]
     for cell in cells:
-        # 20 leaves these cells admissible until the gate is what sets them
-        # aside -- and it is below the
-        # high-reference observation line of 100, so the bed is not also
-        # exercising that measurement.
+        # 20 leaves these cells admissible until the gate is what sets them aside. It is also below
+        # the high-reference observation line of 100, so the bed is not also exercising that
+        # measurement.
         rows.append(f"S1,{cell},CTRL,20")
         rows.append(f"S1,{cell},AGA,{BINDING}")
     (tmp_path / "counts.csv").write_text("\n".join(rows) + "\n")
@@ -448,11 +432,10 @@ def gated_bed(tmp_path):
 
 
 def test_a_set_whose_every_cell_was_gated_reads_unreliable_and_never_not_bound(gated_bed):
-    # The cells were dropped because their readings could not be trusted, so
-    # nothing about the receptor was established. *Not bound* would assert a
-    # clean reading the run never produced, in the direction that costs money;
-    # *never asked* would claim the experiment did not put the question, which
-    # it did.
+    # The cells were dropped because their readings could not be trusted, so nothing about the
+    # receptor was established. *Not bound* would assert a clean reading the run never produced, in
+    # the direction that costs money. *Never asked* would claim the experiment did not put the
+    # question, which it did.
     r = _run(gated_bed, *BASE, "--gate-threshold", "10")
     assert r.returncode == 0, r.stderr
 
@@ -476,13 +459,13 @@ def test_a_set_whose_every_cell_was_gated_reads_unreliable_and_never_not_bound(g
 def test_420_an_unasked_off_target_is_reachable_only_because_the_panel_is_keyed_by_sample():
     """`420-unasked-off-target`, at the grain the keying decides.
 
-    A clonotype whose cells came from a sample whose panel omitted an off-target must read
-    *never asked* there — neither satisfied nor violated. That state is only reachable because
-    what a sample offered is worked out per sample (`242`), and under a reused panel it is only
-    CORRECT because the identity a barcode carries is read from that sample's own declaration.
+    A clonotype whose cells came from a sample whose panel omitted an off-target must read *never
+    asked* there, neither satisfied nor violated. That state is only reachable because what a sample
+    offered is worked out per sample (`242`), and under a reused panel it is only CORRECT because the
+    identity a barcode carries is read from that sample's own declaration.
 
-    The second half is the other side of `420`: the identity is still in the universe, so the
-    unasked position has a row to sit in rather than vanishing from the answer (`205`).
+    The second half is the other side of `420`: the identity is still in the universe, so the unasked
+    position has a row to sit in rather than vanishing from the answer (`205`).
     """
     from emit_verdicts import _build_grouping
     from panel import identity_universe, offered_identities

@@ -43,11 +43,10 @@ def test_every_declared_id_is_expected_and_every_expected_id_is_declared():
 
 
 def test_a_comparison_is_not_a_line():
-    # A comparison against siblings yields no boundary: nothing separates OK from
-    # alerting, so nothing can be computed, and a status derived from it would
-    # need a multiplier -- a median-absolute-deviation cut, an interquartile
-    # multiple -- that nobody has published for this measurement. The invention
-    # would move up a level rather than disappear.
+    # A comparison against siblings yields no boundary: nothing separates OK from alerting, so nothing
+    # can be computed. A status derived from it would need a multiplier -- a
+    # median-absolute-deviation cut, an interquartile multiple -- that nobody has published for this
+    # measurement. The invention would move up a level rather than disappear.
     assert LINE_ROUTES == {"inherited", "categorical", "recommended-and-observed"}
     assert {m.line for m in MEASUREMENTS if m.line} <= LINE_ROUTES
 
@@ -66,10 +65,9 @@ def test_no_measurement_is_refused_by_status_for():
 
 
 def test_self_disagreement_is_measured_at_the_tag_and_nowhere_else():
-    # The identity-level figure has nothing to compare against, so it cannot
-    # separate a faulty reagent from a panel full of weak binders -- it measures
-    # how many clonotypes sit near the line, which is a fact about the panel
-    # rather than a fault to fix. The tag-level figure is read against the other
+    # The identity-level figure has nothing to compare against, so it cannot separate a faulty reagent
+    # from a panel full of weak binders. It measures how many clonotypes sit near the line, which is a
+    # fact about the panel rather than a fault to fix. The tag-level figure is read against the other
     # tags in the same panel, under the same cells and the same line.
     ids = {m.id for m in MEASUREMENTS}
     assert "tagDisagreement" in ids
@@ -140,12 +138,11 @@ BANNED_ADVICE_PHRASES = (
     "recommend you",
 )
 
-# A sentence opening with one of these reads as an instruction regardless of
-# what follows -- "Replace the reagent." vs "A reagent that produced nothing
-# did not work" -- so this catches advice phrased as an imperative, which the
-# substring list above does not, since none of these words are banned outright
-# (several appear as ordinary nouns/adjectives elsewhere in the set, e.g. "the
-# vendor's recommended minimum").
+# A sentence opening with one of these reads as an instruction regardless of what follows. Compare
+# "Replace the reagent." against "A reagent that produced nothing did not work". So this catches advice
+# phrased as an imperative, which the substring list above does not: none of these words are banned
+# outright, and several appear as ordinary nouns or adjectives elsewhere in the set, such as "the
+# vendor's recommended minimum".
 IMPERATIVE_OPENERS = {
     "check",
     "verify",
@@ -219,10 +216,9 @@ def test_a_computed_measurement_carries_no_status():
 
 
 def test_per_antigen_measures_reports_signal_above_and_median():
-    # The cell reading 5 and not binding is what separates the two counters.
-    # Without it both land on the same rows and each reads 2, so a version that
-    # counted bound cells for both would pass -- and "cells with signal" would
-    # silently become "cells above the line" wherever it is reported.
+    # The cell reading 5 and not binding is what separates the two counters. Without it both land on
+    # the same rows and each reads 2, so a version that counted bound cells for both would pass. And
+    # "cells with signal" would silently become "cells above the line" wherever it is reported.
     states = pl.DataFrame(
         {
             "tag": ["T1", "T1", "T1", "T1"],
@@ -290,10 +286,9 @@ def _cell_counts(totals: dict[str, int], sample_id: str = "S1") -> pl.DataFrame:
 
 
 def test_antigen_count_deciles_on_a_known_distribution():
-    # 11 cells with totals 0, 10, ..., 100: with linear interpolation over 11
-    # sorted points, the p-th percentile lands exactly on index p/10, so every
-    # decile equals its own cell's total -- a fixture an off-by-one position
-    # error cannot pass unnoticed on.
+    # 11 cells with totals 0, 10, ..., 100. With linear interpolation over 11 sorted points, the p-th
+    # percentile lands exactly on index p/10, so every decile equals its own cell's total. That is a
+    # fixture an off-by-one position error cannot pass unnoticed on.
     counts = _cell_counts({f"c{i}": i * 10 for i in range(11)})
     out = antigen_count_deciles(counts)
     assert out["decile"].to_list() == list(range(0, 101, 10))
@@ -377,11 +372,10 @@ def test_at_least_is_acceptable_exactly_at_the_line():
 
 
 def test_at_most_is_acceptable_exactly_at_the_line(monkeypatch):
-    # No shipped measurement reads `at-most`: the only candidate was the
-    # undeclared-barcode fraction, which now ships unjudged. The reading stays in
-    # the vocabulary because a line can be an upper bound as easily as a lower
-    # one, so it is exercised against a registered stand-in rather than left as
-    # an untested branch.
+    # No shipped measurement reads `at-most`: the only candidate was the undeclared-barcode fraction,
+    # which now ships unjudged. The reading stays in the vocabulary because a line can be an upper
+    # bound as easily as a lower one, so it is exercised against a registered stand-in rather than
+    # left as an untested branch.
     monkeypatch.setitem(_COMPARISON, "syntheticUpperBound", "at-most")
     lines = {"syntheticUpperBound": 0.1}
     assert status_for("syntheticUpperBound", 0.1, lines) is Status.ACCEPTABLE
@@ -402,10 +396,9 @@ def test_the_undeclared_barcode_fraction_ships_unjudged():
 
 
 def test_a_tag_the_reads_never_show_carries_no_status():
-    # The verdict took this job: a tag with no reads removes its cells from what
-    # could answer, so the position reads *never asked* rather than a confident
-    # negative. The measurement is a fact on the tag's row, kept for the
-    # reagent's sake, and warning a reader off an answer that already says so
+    # The verdict took this job: a tag with no reads removes its cells from what could answer, so the
+    # position reads *never asked* rather than a confident negative. The measurement is a fact on the
+    # tag's row, kept for the reagent's sake, and warning a reader off an answer that already says so
     # would be a second voice on one fact.
     assert status_for("declaredNeverSeen", 0, DEFAULT_LINES) is Status.UNJUDGED
     assert status_for("declaredNeverSeen", 1, DEFAULT_LINES) is Status.UNJUDGED
@@ -449,10 +442,9 @@ def test_coverage_never_enters_the_ordinal():
 
 
 def test_coverage_is_reported_beside_the_status():
-    # Two unjudged against one not-evaluated, deliberately unequal: with one of
-    # each, a counter that reported the other's total would read correctly and
-    # the two questions "was a line defensible" and "did anybody look" would be
-    # silently interchangeable.
+    # Two unjudged against one not-evaluated, deliberately unequal. With one of each, a counter that
+    # reported the other's total would read correctly, and the two questions "was a line defensible"
+    # and "did anybody look" would be silently interchangeable.
     r = roll_up(
         [
             Status.ACCEPTABLE,
@@ -496,10 +488,9 @@ def test_a_dead_reagent_does_not_mark_every_sample_alerting():
 
 # --- corrupt numbers must never read green -------------------------------------------
 #
-# Every `<` and `>` comparison against NaN is False, so an unguarded NaN value falls
-# through to `bad = False` and the measurement reads ACCEPTABLE. For QC code,
-# corrupt-input-reads-green is the worst available failure mode: it is the one state a
-# reader will not investigate.
+# Every `<` and `>` comparison against NaN is False, so an unguarded NaN value falls through to
+# `bad = False` and the measurement reads ACCEPTABLE. For QC code, corrupt-input-reads-green is the
+# worst available failure mode: it is the one state a reader will not investigate.
 
 
 def test_a_nan_value_is_not_evaluated_rather_than_acceptable():
@@ -507,9 +498,8 @@ def test_a_nan_value_is_not_evaluated_rather_than_acceptable():
 
 
 def test_infinite_values_are_not_evaluated_rather_than_judged():
-    # +inf would have read ACCEPTABLE against an at-least line, which is the green
-    # reading again. -inf happens to alert, so only one direction was dangerous -- but
-    # neither is a measurement, and one rule for "not a finite number" is easier to
-    # defend than a rule that depends on the sign.
+    # +inf would have read ACCEPTABLE against an at-least line, which is the green reading again. -inf
+    # happens to alert, so only one direction was dangerous. But neither is a measurement, and one rule
+    # for "not a finite number" is easier to defend than a rule that depends on the sign.
     assert status_for("readsPerCell", float("inf"), DEFAULT_LINES) is Status.NOT_EVALUATED
     assert status_for("readsPerCell", float("-inf"), DEFAULT_LINES) is Status.NOT_EVALUATED

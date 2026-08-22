@@ -2,7 +2,7 @@
 """Single entry point for the manual BEAM-Ab test-data generators.
 
 Builds a full, colocated multiomic run (antigen + VDJ + GEX arms) into one folder, or an antigen-only
-behavioural scenario. Standard-library only, deterministic (seeded).
+behavioural scenario. Standard-library only, deterministic and seeded.
 
   # A full multiomic run (all three arms + shared panel/metadata + truth), then validate it offline:
   python3 generate.py realistic            # 24 donors x 2000 cells x 15-antigen panel + control
@@ -19,7 +19,7 @@ behavioural scenario. Standard-library only, deterministic (seeded).
 
 Output layout (everything under runs/ is gitignored):
 
-  runs/<preset>/                a full multiomic run — one folder, no jumping between arms
+  runs/<preset>/                a full multiomic run -- one folder, no jumping between arms
     antigen/  donorNN_R{1,2}.fastq.gz
     vdj/      donorNN.tsv
     gex/      donorNN.csv
@@ -464,7 +464,7 @@ def main():
         sys.exit(0 if validate.validate(run_dir) else 1)
 
     if args.scenario:
-        # scenarios default to a small scale for hand inspection; --samples/etc override
+        # scenarios default to a small scale for hand inspection. --samples and friends override it.
         samples = args.samples or 2
         cells = args.cells_per_sample or 80
         panel_size = args.panel_size or 4

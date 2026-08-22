@@ -5,9 +5,8 @@
 // content-hashed files map and drifts every getFile off it, which throws CIDConflictError on a stale
 // re-render. It is safe here only because main.tpl persists parsedMic and parseReport, and the refine and
 // tag-stat intermediates, by content hash, pinning their CIDs so getFile resolutions stay stable across
-// re-renders. See main.tpl and fb-pipeline. MI_PROGRESS_PREFIX makes mitool prefix its progress lines with
-// [==PROGRESS==], which the model scrapes for a live 0–100% parse bar (getProgressLogWithInfo). Mirrors
-// blocks/peptide-extraction.
+// re-renders. MI_PROGRESS_PREFIX makes mitool prefix its progress lines with [==PROGRESS==], which the model
+// scrapes for a live 0-100% parse bar (getProgressLogWithInfo). Mirrors blocks/peptide-extraction.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")

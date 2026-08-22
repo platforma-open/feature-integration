@@ -1,5 +1,5 @@
 """Panel-metadata tests: the generated tags.csv must carry the per-antigen Type / Species / Class
-columns a real panel declares (alongside the backward-compatible tag,feature role mapping), the
+columns a real panel declares, alongside the backward-compatible tag,feature role mapping. The
 --offtarget-count flag must designate exactly N non-control antigens as Off-Target, and out-of-range
 counts must be rejected on BOTH the full-run and the --beam paths."""
 
@@ -81,7 +81,7 @@ def test_messy_metadata_variants(tmp_path):
 
 
 def test_beam_panel_has_type_species(tmp_path):
-    # beam-exact: 2 samples x panel_size antigens; --offtarget-count applies per sample.
+    # beam-exact: 2 samples x panel_size antigens. --offtarget-count applies per sample.
     _run("--beam", "--offtarget-count", "2", "--cells-per-sample", "10", out=tmp_path)
     header, rows = _read_csv(tmp_path / "tags.csv")
     assert {"Type", "Species"} <= set(header)
@@ -103,13 +103,12 @@ def _top_two_ratio(counts):
 def test_generator_plants_crossreactive(tmp_path):
     """A planted cross-reactive cell carries a co-dominant pair of two ON-TARGET antigens.
 
-    This asserts the generator against its own output and reads nothing from the block. It used to
-    check the block's `consensus_category` instead, which no longer exists: a single dominant antigen
-    per cell answers a different question from the four-state verdict and was removed with it. What
-    the bed still owes is the planted shape, because the gex and vdj arms are both built from this
-    truth file.
+    This asserts the generator against its own output and reads nothing from the block. It used to check
+    the block's `consensus_category` instead, which no longer exists: a single dominant antigen per cell
+    answers a different question from the four-state verdict and was removed with it. What the bed still
+    owes is the planted shape, because the gex and vdj arms are both built from this truth file.
     """
-    # The antigen-only scenario bed rather than a full `tiny` run: a full run also builds the gex arm,
+    # The antigen-only scenario bed rather than a full `tiny` run. A full run also builds the gex arm,
     # which needs a gene-annotations asset that is downloaded rather than committed, so a full run
     # cannot be generated in a clean checkout. This test needs the antigen arm alone. The scenario bed
     # is self-contained and writes its truth files flat in the output directory.
@@ -197,8 +196,8 @@ def test_offtarget_count_out_of_range_errors(tmp_path):
             capture_output=True,
             text=True,
         )
-        # Asserting only a nonzero exit would pass for any failure at all — a missing asset, a syntax
-        # error, a bad path — so it must name the rejection it is checking for.
+        # Asserting only a nonzero exit would pass for any failure at all -- a missing asset, a syntax
+        # error, a bad path -- so it must name the rejection it is checking for.
         assert result.returncode != 0, f"expected nonzero exit for {extra}, got 0"
         assert "--offtarget-count must be between" in (result.stderr + result.stdout), (
             f"exited nonzero for {extra}, but not because the count was out of range:\n{result.stderr}"

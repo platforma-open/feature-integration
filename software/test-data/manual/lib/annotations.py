@@ -6,18 +6,18 @@ on running CellTypist over the GEX arm. It is an alternative to GEX -> cell-type
 replacement: the same cells, labelled directly.
 
 Source of cells: the antigen arm's ground truth (`truth/expected-consensus.tsv`, columns `sample`,
-`cellId`, `planted_consensus`). Reading cell ids from there guarantees the annotation's `cell_id`
-values are exactly the arm-shared bare 16-mers, so the annotation joins the other arms on
+`cellId`, `planted_consensus`). Reading cell ids from there guarantees the annotation's `cell_id` values
+are exactly the arm-shared bare 16-mers, so the annotation joins the other arms on
 `[sampleId, cellId]` with no barcode drift.
 
-Coherence with the GEX program map (lib/gex.py PROGRAMS): a cell's `planted_consensus` biases its
-cell type. A binder (planted_consensus is an antigen name) or a cross-reactive cell -> a plasma-like
-type; an ambiguous / non-binder cell (planted_consensus == "ambiguous") -> a naive-B type; a fixed
-share of cells is reassigned to a memory-B type so the small vocabulary has all three terms. The
+Coherence with the GEX program map (lib/gex.py PROGRAMS): a cell's `planted_consensus` biases its cell
+type. A binder, where planted_consensus is an antigen name, or a cross-reactive cell gets a plasma-like
+type. An ambiguous or non-binder cell, where planted_consensus == "ambiguous", gets a naive-B type. A
+fixed share of cells is reassigned to a memory-B type so the small vocabulary has all three terms. The
 integer `cluster` (0-4) is coherent with the cell type. Everything is deterministic under
 ANNOTATION_SEED.
 
-Output (genes-in-rows is irrelevant here — this is a plain per-cell table):
+Output -- genes-in-rows is irrelevant here, because this is a plain per-cell table:
   annotations/<donor>.tsv   columns: cell_id  cell_type  cluster    (one file per donor/sample)
 
 Canonical downstream axis order is [pl7.app/sampleId, pl7.app/sc/cellId] (see README).

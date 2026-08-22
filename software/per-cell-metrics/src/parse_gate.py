@@ -1,18 +1,17 @@
 """Parse gate for the Feature Integration block.
 
-This gate reads the parse report and emits a ``decision.json`` the workflow branches on:
-continue the mitool chain only when at least one read matched; otherwise skip
-refine/tag-stat (they would crash on the empty input) and feed the empty fallbacks this
-gate also writes into the unchanged downstream:
+Reads the parse report and writes ``decision.json``, which the workflow branches on.
+One or more matched reads: the mitool chain continues. Zero matched reads: refine and
+tag-stat are skipped, because they crash on empty input, and this gate writes the empty
+outputs they would have produced:
 
-  * ``--empty-tagstat``       a header-only tag-stat TSV (the columns mitool ``tag-stat -t CELL -t
-                              FEATURE -u UMI`` emits), which per_cell_metrics / qc_report already treat
-                              as an empty (0-cell) sample;
-  * ``--empty-refine-report`` an empty ``{}`` refine report, so qc_report's panel-assigned fraction is
-                              simply blank.
+  * ``--empty-tagstat``       header-only TSV with mitool's ``tag-stat -t CELL -t FEATURE
+                              -u UMI`` columns. per_cell_metrics and qc_report read it as
+                              a 0-cell sample.
+  * ``--empty-refine-report`` empty ``{}``. qc_report's panel-assigned fraction goes blank.
 
-The fallbacks are written unconditionally (they are trivial and are ignored on the matched>0 path, where
-real refine/tag-stat outputs are used instead). Stdlib only -- trivial and fast.
+Both fallbacks are always written. They are trivial, and the matched>0 path ignores them.
+Stdlib only.
 """
 
 import argparse
@@ -33,14 +32,14 @@ def main() -> None:
 
     with open(args.parse_report) as fh:
         rep = json.load(fh)
-    # mitool writes {"parseReport": {"total", "matched", ...}, ...}. Tolerate an unwrapped report too.
+    # mitool writes {"parseReport": {...}, ...}. Also accept an unwrapped report.
     pr = rep.get("parseReport", rep)
     total = int(pr.get("total", 0))
     matched = int(pr.get("matched", 0))
     should_continue = matched > 0
 
     if not should_continue:
-        # Surfaced in the exec's stderr. The block's analysis log separately flags the zero-cell sample.
+        # Goes to the exec's stderr. The analysis log flags the zero-cell sample separately.
         print(
             f"[parse-gate] parse matched {matched} of {total} reads — no features will be extracted "
             f"for this sample; check the read geometry / tag pattern against the data",
@@ -50,8 +49,8 @@ def main() -> None:
     with open(args.decision_out, "w") as out:
         json.dump({"total": total, "matched": matched, "shouldContinue": should_continue}, out)
 
-    # Header-only tag-stat fallback: exactly the columns mitool `tag-stat -t CELL -t FEATURE -u UMI`
-    # emits, so the downstream per_cell_metrics / qc_report see a well-formed empty table.
+    # Header-only fallback with mitool `tag-stat -t CELL -t FEATURE -u UMI` columns, so
+    # per_cell_metrics and qc_report see a well-formed empty table.
     header = f"{args.cell_tag}\t{args.feature_tag}\tcount\ttotalWeight\tunique_{args.umi_tag}\n"
     with open(args.empty_tagstat, "w") as out:
         out.write(header)

@@ -3,8 +3,8 @@ import { PlStatusTag } from "@platforma-sdk/ui-vue";
 import { reactive } from "vue";
 import type { QcCheck } from "../results";
 
-// One QC check row in the sample report's Quality Checks tab: status tag, label, the measured value,
-// and a description that stays folded until the reader asks for it. Same shape and styling as
+// One QC check row in the sample report's Quality Checks tab: status tag, label, the measured value, and a
+// description that stays folded until the reader asks for it. Same shape and styling as
 // blocks/mixcr-clonotyping's components/QcSection.vue, so the two blocks' reports read alike.
 const props = defineProps<{
   value: QcCheck;
@@ -19,9 +19,9 @@ const data = reactive({
   <div class="qc-section" :class="{ expanded: data.expanded }">
     <div class="qc-section__status" @click.stop="data.expanded = !data.expanded">
       <PlStatusTag v-if="props.value.status" :type="props.value.status" />
-      <!-- No status means the metric could not be evaluated for this sample. PlStatusTag renders
-           nothing for an absent type, and leaving the slot empty would read as an oversight rather
-           than as a deliberate "we have no verdict here". -->
+      <!-- No status means the metric could not be evaluated for this sample. PlStatusTag renders nothing for
+           an absent type, and leaving the slot empty would read as an oversight rather than as a deliberate
+           "we have no verdict here". -->
       <span v-else class="qc-section__no-status">NOT EVALUATED</span>
     </div>
     <div class="qc-section__text">
