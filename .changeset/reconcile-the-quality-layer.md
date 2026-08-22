@@ -44,3 +44,12 @@ its inherited 0.50 line and loses the second tier below it, which had no publish
 matching the read pattern now carries no status at all, the matched share being none of the four numbers
 the field publishes for this assay. Cells detected is unchanged and is now described as what it is, a
 categorical fact rather than a quantity judged against a cutoff.
+
+**A tag the reads never show is now *never asked*, not *not bound*.** Zero reads across a sample is
+categorical and cannot arise from biology: ambient reagent reaches every cell, so a tag that bound
+nothing still returns counts. What zero reads means is a reagent never added, a barcode mis-declared,
+or a library that failed — and none of those put the question the panel file says was put. Those cells
+now leave that identity's denominator instead of voting a confident negative on every clonotype in the
+run. A per-cell absence is unchanged: a cell that read nothing for a tag its sample did measure still
+votes *not bound*, which is a reading that happened and failed. `declaredNeverSeen` carries no status
+now, the verdict having taken that job.
