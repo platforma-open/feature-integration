@@ -549,7 +549,7 @@ export const platforma = BlockModelV3.create(dataModel)
         "The baseline source \u201CThe panel's own readings\u201D is no longer available. It read each " +
           "count against the median of the cell's other tags, which needs a decision at the clonotype " +
           "rather than at the cell, and every other rule here reads a cell first. Choose a declared " +
-          "baseline tag, or each tag's own distribution, under \u201CWhat sets the baseline\u201D.",
+          "baseline tag, or each tag's own distribution, under \u201CBaseline source\u201D.",
       );
     if (!data.datasetRef)
       throw new Error(

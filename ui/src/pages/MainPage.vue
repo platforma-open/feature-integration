@@ -717,10 +717,8 @@ const gridOptions = {
         @update:model-value="onFastqRefChanged"
       >
         <template #tooltip>
-          The tag-barcode FASTQ dataset to analyse. Its reads give the unique count for each tag
-          barcode in each cell.<br /><br />
-          Counts are not verdicts. Whether a cell bound an antigen is decided later, against the
-          baseline, and only when you also give a V(D)J dataset.
+          Select the FASTQ dataset with the tag-barcode reads. These reads give each tag's unique
+          count in each cell.
         </template>
       </PlDropdownRef>
       <PlDropdownRef
@@ -730,13 +728,40 @@ const gridOptions = {
         required
       >
         <template #tooltip>
-          The clonotypes each verdict is about. Every verdict is about one clonotype, so the block
-          produces none without it.
+          Select the dataset that supplies the clonotypes. Every verdict is about one clonotype.
         </template>
       </PlDropdownRef>
       <!-- Read layout: preset dropdown plus pattern builder/string (mitool tag pattern). Replaces the former
            cell/UMI/feature length fields, whose values are now decided inside the editor. -->
       <PatternEditor />
+      <!-- Above Panel Settings: it scopes the whole run rather than reading the panel, and it is the choice a
+           user revisits between runs while the panel columns stay put. -->
+      <PlBtnGroup v-model="app.model.data.runMode" :options="runModeOptions" label="Run mode">
+        <template #tooltip>
+          Preview uses only the first reads of each sample, up to the limit below. Use it to check
+          settings before a full run.<br /><br />
+          Preview verdicts rest on fewer cells, so more antigens read unreliable. Do not compare a
+          Preview card with a full run.
+        </template>
+      </PlBtnGroup>
+      <template v-if="app.model.data.runMode === 'dry'">
+        <PlNumberField
+          v-model="app.model.data.limitInput"
+          label="Reads per sample"
+          :clearable="true"
+          :min-value="1"
+          :error-message="
+            app.model.data.limitInput == null
+              ? 'Read limit is required for Preview mode'
+              : undefined
+          "
+        >
+          <template #tooltip>
+            How many reads Preview takes from each sample. The block takes the first reads of the
+            file, not a random sample. 500,000 reads is enough to check settings.
+          </template>
+        </PlNumberField>
+      </template>
       <PlSectionSeparator compact> Panel Settings </PlSectionSeparator>
       <PlFileInput
         v-model="app.model.data.tagFeatureCsvHandle"
@@ -747,11 +772,9 @@ const gridOptions = {
         @update:model-value="onCsvChanged"
       >
         <template #tooltip>
-          The panel file declaring which tag barcode is which antigen. One row per barcode — or one
-          row per barcode and sample, when you set a sample column below.
-          <br /><br />
-          This file is also the authority on what each sample was offered. An antigen it does not
-          declare for a sample is never asked about there.
+          Upload the CSV that maps each tag barcode to an antigen. One row per barcode, or one row
+          per barcode and sample.<br /><br />
+          The block asks a sample only about the antigens this file declares for it.
         </template>
       </PlFileInput>
       <PlAlert v-if="csvProcessing" type="info"> Reading columns from the uploaded CSV… </PlAlert>
@@ -761,106 +784,63 @@ const gridOptions = {
       <PlDropdown
         v-model="app.model.data.barcodeSeqColumn"
         :options="app.model.outputs.csvColumnOptions"
-        label="Panel column holding each tag's barcode sequence"
+        label="Barcode sequence column"
         @update:model-value="onBarcodeColumnChanged"
         :disabled="tagMappingDisabled"
         required
       >
         <template #tooltip>
-          The panel column holding each tag barcode's nucleotide sequence. The block matches these
-          sequences against the barcode that the <code>FEATURE</code> tag captures on Read 2 — the
-          second read of each pair.
+          Select the panel column with each tag barcode's nucleotide sequence. The block matches
+          these against the barcode captured on Read 2.
         </template>
       </PlDropdown>
       <PlDropdown
         v-model="app.model.data.featureNameColumn"
         :options="app.model.outputs.csvColumnOptions"
-        label="Panel column naming each antigen"
+        label="Antigen name column"
         :disabled="tagMappingDisabled"
         required
       >
         <template #tooltip>
-          The panel column holding the antigen name each tag barcode maps to. These names label the
-          antigens everywhere the block reports them.<br /><br />
+          Select the panel column with the antigen name for each barcode. These names label the
+          antigens in every result.<br /><br />
           Where two samples give one barcode different names, the antigen carries both names,
           joined.
         </template>
       </PlDropdown>
-      <!-- The dataset the verdicts are about. It sits with the inputs above rather than with the verdict
-           settings below, because it IS an input: choosing it re-runs the verdict stage, where everything in
-           `VerdictSettings` is a cheap re-read. It is the last input a user picks before choosing how much of
-           the data to run, which is why it sits directly above Run mode. -->
-      <!-- Identity is what a verdict is about, so the rule that mints identities belongs with the dataset
-           that supplies the clonotypes rather than among the reading thresholds below. -->
+      <!-- Identity is what a verdict is about, so the rule that mints identities belongs with the panel
+           columns that supply it rather than among the reading thresholds below. -->
       <PlDropdownMulti
         :model-value="groupingSelection"
         :options="groupingOptions"
-        label="Panel columns that group tags into identities"
+        label="Identity grouping"
         :disabled="panelUnread"
         :required="true"
         @update:model-value="setGrouping"
       >
         <template #tooltip>
-          A verdict is about an identity, not a barcode. Name one or more panel columns. Every tag
-          that shares a value in all of them becomes one identity. That is how an antigen on two
-          barcodes gives one column rather than two.<br /><br />
-          Name several columns and the identity becomes the combination. Antigen and concentration
-          together read the same antigen at two concentrations as two identities.<br /><br />
-          The barcode column is the finest grouping: one identity per barcode. Select it and the
-          block ignores the other columns, because any combination that includes the barcode gives
-          the same identities.<br /><br />
-          An identity's reading in a cell is the highest of its tags, never their sum. Tags differ
-          in uptake, so a sum would need the baseline scaled to match.
+          Select the panel columns that define an identity. Tags that share a value in all of them
+          become one identity. A verdict is about an identity, not a barcode.<br /><br />
+          Select the barcode column to get one identity per barcode.<br /><br />
+          An identity's reading in a cell is the highest of its tags, never their sum.
         </template>
       </PlDropdownMulti>
       <PlDropdown
         :model-value="app.model.data.sampleColumn"
         :options="roleFreeColumnOptions"
-        label="Panel column naming each row's sample"
+        label="Sample column"
         :disabled="tagMappingDisabled"
         clearable
         @update:model-value="setSampleColumn"
       >
         <template #tooltip>
-          <b>Set this when your panel file has more than one row per tag barcode</b> — normally
-          because it lists each barcode once per sample. Leave it blank when the panel file has
-          exactly one row per tag barcode.<br /><br />
-          Names the panel column holding each row's sample. Every sample in your dataset must appear
-          in it. Extra values are allowed.<br /><br />
-          The block then reads a separate panel for each sample. Each sample is asked only about the
-          identities its own rows declare. One barcode can also name a different antigen in a
-          different sample.<br /><br />
+          <b>Set this when the panel file lists each barcode once per sample.</b> Leave it blank
+          when each barcode has one row.<br /><br />
+          Each sample is then asked only about the identities its own rows declare. Every sample in
+          your dataset must appear in the column.<br /><br />
           The block selects this when it detects a matching column.
         </template>
       </PlDropdown>
-      <PlBtnGroup v-model="app.model.data.runMode" :options="runModeOptions" label="Run mode">
-        <template #tooltip>
-          Preview reads only the first reads of each sample, up to the limit below. Use it to check
-          your settings before a full run, which takes much longer.<br /><br />
-          Preview still produces counts and verdicts. They rest on fewer cells than a full run
-          gives, so more antigens read unreliable. Do not compare a Preview card with a full run.
-        </template>
-      </PlBtnGroup>
-      <template v-if="app.model.data.runMode === 'dry'">
-        <PlNumberField
-          v-model="app.model.data.limitInput"
-          label="Reads per sample limit"
-          :clearable="true"
-          :min-value="1"
-          :error-message="
-            app.model.data.limitInput == null
-              ? 'Read limit is required for Preview mode'
-              : undefined
-          "
-        >
-          <template #tooltip>
-            How many reads to use from each sample in Preview. The block takes the first reads of
-            the file, not a random sample.<br /><br />
-            Tag-barcode libraries are shallow per cell. 500,000 reads is enough to check that
-            settings work.
-          </template>
-        </PlNumberField>
-      </template>
       <!-- The baseline comes before the optional settings because it decides which of them apply: each
            baseline brings its own rule, and a setting belonging to one rule is shown only where that rule
            runs. A reader meeting Bound cutoff before choosing a baseline meets a field that appears and
@@ -869,22 +849,18 @@ const gridOptions = {
       <PlDropdown
         :model-value="chosenSource"
         :options="allSources"
-        label="What sets the baseline"
+        label="Baseline source"
         :disabled="panelUnread"
         required
         @update:model-value="setBaselineSource"
       >
         <template #tooltip>
-          You choose this. The block does not choose it for you: two runs answered against different
-          baselines produce numbers that do not compare, and a baseline nobody chose is a method
-          nobody knows they used.<br /><br />
-          <b>Declared baseline tag</b> — the tag your panel marks as the one nothing should bind.<br />
-          <b>The panel's own readings</b> — the median of each cell's own counts.<br />
+          Select what each count is read against. The block does not choose for you. Two baselines
+          give numbers that do not compare.<br /><br />
+          <b>Declared baseline tag</b> — the tag your panel marks as binding nothing.<br />
           <b>Each tag's own distribution</b> — that tag's counts across the sample's cells, split in
           two.<br /><br />
-          Pick one and this form asks for what that rung needs, and for nothing else.<br /><br />
-          The last two are local to this run: what a count was read against was a population of this
-          run, so those magnitudes do not travel between runs.
+          The form then asks only for what your choice needs.
         </template>
       </PlDropdown>
       <!-- What the chosen rung still needs. Not an error: the rung is a legitimate choice and the fields that
@@ -894,16 +870,14 @@ const gridOptions = {
         v-if="chosenSource === 'declared'"
         :model-value="app.model.data.roleColumn"
         :options="panelPropertyOptions"
-        label="Panel column declaring each tag's role"
+        label="Role column"
         :disabled="panelUnread"
         clearable
         @update:model-value="setRoleColumn"
       >
         <template #tooltip>
-          Name the panel column that declares each tag's role. One value of that column marks a tag
-          as the baseline. The block then judges every other count in the same cell against that
-          tag.<br /><br />
-          Leave it blank if your panel declares no role.
+          Select the panel column that declares each tag's role. One value in it marks the baseline
+          tag. Leave it blank if your panel declares no role.
         </template>
       </PlDropdown>
       <!-- Required exactly while a role column is named, and not otherwise. The column alone marks no tag: it is
@@ -914,20 +888,16 @@ const gridOptions = {
         v-if="chosenSource === 'declared'"
         :model-value="app.model.data.referenceValues?.[0]"
         :options="roleValueOptions"
-        label="Value that marks the baseline tag"
+        label="Baseline value"
         :disabled="panelUnread || !app.model.data.roleColumn"
         :required="!!app.model.data.roleColumn"
         clearable
         @update:model-value="setReferenceValue($event)"
       >
         <template #tooltip>
-          Select which value of the role column marks the baseline tag. A tag is the baseline in
-          every sample, or in none. You cannot give some samples a different baseline.<br /><br />
-          Required once you name a role column. That column says where each tag's role is written;
-          this value is what actually marks one. Named alone, the column changes nothing.<br /><br />
-          The block reads counts against <b>one</b> baseline tag. A panel may carry several control
-          tags, but only one is nominated to supply the baseline. If the value you pick marks more
-          than one tag, the run stops and names the tags it found.
+          Select the value that marks the baseline tag. Required once you name a role column.<br /><br />
+          The block reads counts against <b>one</b> baseline tag. If the value marks more than one
+          tag, the run stops and names them.
         </template>
       </PlDropdown>
 
@@ -943,15 +913,12 @@ const gridOptions = {
         v-if="chosenSource === 'distribution'"
         :min-value="1"
         :step="10"
-        label="Cells a sample needs for this baseline"
+        label="Minimum cells per sample"
       >
         <template #tooltip>
-          How many cells a sample needs before a tag's own counts across those cells can serve as
-          the baseline. Below this the block cannot separate binders from background, so every
-          reading in that sample is unreliable.<br /><br />
-          The default of 300 comes from the study this method comes from. Lowering it is a departure
-          from that method rather than a preference: below it the baseline is not conservative, it
-          is wrong.
+          How many cells a sample needs before a tag's own counts can serve as the baseline. Below
+          this, every reading in that sample is unreliable.<br /><br />
+          The default of 300 comes from the published method. Lowering it departs from that method.
         </template>
       </PlNumberField>
 
@@ -966,15 +933,13 @@ const gridOptions = {
         v-if="chosenSource === 'declared'"
         :min-value="1"
         :step="1"
-        label="Line where a baseline reading counts as high"
+        label="Sticky cell threshold"
       >
         <template #tooltip>
           The baseline reading, in unique counts, at or above which a cell counts as
-          <b>sticky</b> — one that took up reagent indiscriminately, so its counts report on the
-          cell rather than on its receptor.<br /><br />
-          This is a measurement and not a filter. The block counts these cells whether or not the
-          gate below is set, so a run's exposure is visible even where nothing is set aside. Setting
-          a cell aside is the gate's job.
+          <b>sticky</b>. A sticky cell absorbed reagent indiscriminately, so its counts report on
+          the cell, not its receptor.<br /><br />
+          This counts sticky cells. It does not set them aside — that is the gate's job.
         </template>
       </PlNumberField>
       <PlNumberField
@@ -983,15 +948,14 @@ const gridOptions = {
         :min-value="1"
         :step="1"
         clearable
-        label="Admissibility gate (baseline unique counts)"
+        label="Admissibility gate"
       >
         <template #tooltip>
-          The gate is off when this field is empty. When you set it, the block sets aside a cell
-          whose baseline reading reaches this value. That cell reads unreliable at every identity
-          and gives no verdict anywhere.<br /><br />
-          Off is a deliberate default, and a contested one. Published practice uses a gate. The
-          dominant tool does not. Off matches the tool, so first-run numbers stay recognisable. The
-          cost is that a sticky cell remains in the set and returns a confident "not bound".
+          Empty means off, which is the default. Set it, in baseline unique counts, and the block
+          sets aside any cell whose baseline reading reaches this value. That cell gives no verdict
+          anywhere.<br /><br />
+          Off matches Cell Ranger defaults. The cost is that a sticky cell stays in the set and
+          returns a confident "not bound".
         </template>
       </PlNumberField>
 
@@ -1003,11 +967,10 @@ const gridOptions = {
         label="Minimum count"
       >
         <template #tooltip>
-          Counts below this are not evidence of binding. The block reads them as zero rather than as
-          a small signal.<br /><br />
-          The minimum does not apply to the baseline tag. A minimum on the baseline would lower the
-          level every count is judged against, and push the whole run toward bound.<br /><br />
-          The default is 4. It is a declared default, not a calibrated line.
+          Counts below this are not evidence of binding. The block reads them as zero.<br /><br />
+          The minimum never applies to the baseline tag. A minimum there would push the whole run
+          toward bound.<br /><br />
+          The default of 4 is declared, not calibrated.
         </template>
       </PlNumberField>
       <PlNumberField
@@ -1016,23 +979,14 @@ const gridOptions = {
         :min-value="0"
         :max-value="100"
         :step="1"
-        label="Score at which a cell reads bound (0–100)"
+        label="Bound score cutoff"
       >
         <template #tooltip>
-          A cell reads this antigen as bound where its score reaches this number.<br /><br />
-          The score compares two counts in that cell: the antigen's reading, and the baseline
-          reading. It asks whether the antigen makes up more than 92.5% of the two together. The
-          score is how certain that answer is, from 0 to 100.<br /><br />
-          <b>Certainty, not strength.</b> Two counts against zero look perfect and score low,
-          because two counts prove little. Two hundred against two score high. Cell Ranger says of
-          this same score that it is not a measure of binding strength and cannot stand in for
-          affinity.<br /><br />
-          Raise this number to demand more evidence per cell. Lower it to accept thinner
-          readings.<br /><br />
-          A cell is one reading. The clonotype's verdict is the majority of its cells.<br /><br />
-          This setting belongs to the declared-baseline rule alone. The 92.5% and the default of 75
-          are Cell Ranger's code defaults. The 75 appears in none of its documentation, and its own
-          tutorial uses 90 beside a display filter of 25.
+          A cell reads bound where its score reaches this number, from 0 to 100. The score is how
+          certain it is that the antigen makes up more than 92.5% of the antigen and baseline
+          counts.<br /><br />
+          <b>Certainty, not strength</b> — two counts against zero score low. Cell Ranger says this
+          score does not measure binding strength.
         </template>
       </PlNumberField>
       <PlNumberField
@@ -1042,10 +996,9 @@ const gridOptions = {
         label="Minimum voting cells"
       >
         <template #tooltip>
-          How many cells must answer before their majority settles a verdict. Below this number the
-          verdict reads unreliable, and gives too few voters as the reason.<br /><br />
-          At 1 a verdict may rest on a single cell. The table carries the answering-cell count, so
-          you can see when it does.
+          How many cells must answer before their majority settles a verdict. Below this the verdict
+          reads unreliable.<br /><br />
+          At 1 a verdict may rest on one cell. The table carries the answering-cell count.
         </template>
       </PlNumberField>
       <PlNumberField
@@ -1055,16 +1008,13 @@ const gridOptions = {
         :step="1"
         clearable
         placeholder="51"
-        label="Voting cells that must agree (%)"
+        label="Minimum agreement (%)"
       >
         <template #tooltip>
-          <b>Off when the field is empty</b>, which is the default. A narrow majority then stands,
-          and the verdict reports how narrow it was. The 51 shown in an empty field is the lowest
-          value you can set, not a value in force.<br /><br />
-          Set it and a verdict reads unreliable where fewer than this share of the answering cells
-          hold the state the verdict took.<br /><br />
-          The range starts at 51%. Agreement is measured among the cells that answered, and the
-          verdict takes the majority, so agreement can never fall to half or below.
+          <b>Empty means off</b>, which is the default. A narrow majority then stands, and the
+          verdict reports how narrow it was.<br /><br />
+          Set it and a verdict reads unreliable below this share of the answering cells.<br /><br />
+          The lowest value is 50.001%, because the verdict already takes the majority.
         </template>
       </PlNumberField>
       <!-- The combine-mode column selector is not offered (MILAB-6496): with it unset, every antigen uses the
