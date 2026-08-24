@@ -292,7 +292,10 @@ const groupingSelection = computed<string[]>(() => {
 const groupingOptions = computed(() => [
   {
     value: TAG_GROUPING_VALUE,
-    label: `${app.model.data.barcodeSeqColumn || "Barcode"} — one identity per barcode`,
+    // Sits in the same list as the property columns on purpose: naming the barcode IS a grouping, the
+    // finest one available, rather than a mode beside grouping. It is labelled so it cannot be mistaken
+    // for one of the panel's own columns, which is what naming it after the barcode column did.
+    label: "Each barcode on its own — one identity per barcode",
   },
   ...panelPropertyOptions.value,
 ]);
@@ -783,6 +786,29 @@ const gridOptions = {
            settings below, because it IS an input: choosing it re-runs the verdict stage, where everything in
            `VerdictSettings` is a cheap re-read. It is the last input a user picks before choosing how much of
            the data to run, which is why it sits directly above Run mode. -->
+      <!-- Identity is what a verdict is about, so the rule that mints identities belongs with the dataset
+           that supplies the clonotypes rather than among the reading thresholds below. -->
+      <PlDropdownMulti
+        :model-value="groupingSelection"
+        :options="groupingOptions"
+        label="Panel columns that group tags into identities"
+        :disabled="panelUnread"
+        :required="true"
+        @update:model-value="setGrouping"
+      >
+        <template #tooltip>
+          A verdict is about an identity, not a barcode. Name one or more panel columns. Every tag
+          that shares a value in all of them becomes one identity. That is how an antigen on two
+          barcodes gives one column rather than two.<br /><br />
+          Name several columns and the identity becomes the combination. Antigen and concentration
+          together read the same antigen at two concentrations as two identities.<br /><br />
+          The barcode column is the finest grouping: one identity per barcode. Select it and the
+          block ignores the other columns, because any combination that includes the barcode gives
+          the same identities.<br /><br />
+          An identity's reading in a cell is the highest of its tags, never their sum. Tags differ
+          in uptake, so a sum would need the baseline scaled to match.
+        </template>
+      </PlDropdownMulti>
       <PlDropdown
         :model-value="app.model.data.sampleColumn"
         :options="roleFreeColumnOptions"
@@ -803,28 +829,6 @@ const gridOptions = {
           The block selects this when it detects a matching column.
         </template>
       </PlDropdown>
-      <!-- Identity is what a verdict is about, so the rule that mints identities belongs with the dataset
-           that supplies the clonotypes rather than among the reading thresholds below. -->
-      <PlDropdownMulti
-        :model-value="groupingSelection"
-        :options="groupingOptions"
-        label="Panel columns that group tags into identities"
-        :disabled="panelUnread"
-        @update:model-value="setGrouping"
-      >
-        <template #tooltip>
-          A verdict is about an identity, not a barcode. Name one or more panel columns. Every tag
-          that shares a value in all of them becomes one identity. That is how an antigen on two
-          barcodes gives one column rather than two.<br /><br />
-          Name several columns and the identity becomes the combination. Antigen and concentration
-          together read the same antigen at two concentrations as two identities.<br /><br />
-          The barcode column is the finest grouping: one identity per barcode. Select it and the
-          block ignores the other columns, because any combination that includes the barcode gives
-          the same identities.<br /><br />
-          An identity's reading in a cell is the highest of its tags, never their sum. Tags differ
-          in uptake, so a sum would need the baseline scaled to match.
-        </template>
-      </PlDropdownMulti>
       <PlBtnGroup v-model="app.model.data.runMode" :options="runModeOptions" label="Run mode">
         <template #tooltip>
           Preview reads only the first reads of each sample, up to the limit below. Use it to check
@@ -1046,11 +1050,13 @@ const gridOptions = {
         :max-value="100"
         :step="1"
         clearable
+        placeholder="51"
         label="Voting cells that must agree (%)"
       >
         <template #tooltip>
           <b>Off when the field is empty</b>, which is the default. A narrow majority then stands,
-          and the verdict reports how narrow it was.<br /><br />
+          and the verdict reports how narrow it was. The 51 shown in an empty field is the lowest
+          value you can set, not a value in force.<br /><br />
           Set it and a verdict reads unreliable where fewer than this share of the answering cells
           hold the state the verdict took.<br /><br />
           The range starts at 51%. Agreement is measured among the cells that answered, and the
