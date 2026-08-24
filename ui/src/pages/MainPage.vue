@@ -926,41 +926,46 @@ const gridOptions = {
           is wrong.
         </template>
       </PlNumberField>
-      <PlAccordionSection label="Sticky cells">
-        <PlNumberField
-          v-model="app.model.data.highReferenceLine"
-          v-if="chosenSource !== 'distribution'"
-          :min-value="1"
-          :step="1"
-          label="Line where a baseline reading counts as high"
-        >
-          <template #tooltip>
-            The baseline reading, in unique counts, at or above which a cell counts as
-            <b>sticky</b> — one that took up reagent indiscriminately, so its counts report on the
-            cell rather than on its receptor.<br /><br />
-            This is a measurement and not a filter. The block counts these cells whether or not the
-            gate below is set, so a run's exposure is visible even where nothing is set aside.
-            Setting a cell aside is the gate's job.
-          </template>
-        </PlNumberField>
-        <PlNumberField
-          v-model="app.model.data.gateThreshold"
-          v-if="chosenSource !== 'distribution'"
-          :min-value="1"
-          :step="1"
-          clearable
-          label="Admissibility gate (baseline unique counts)"
-        >
-          <template #tooltip>
-            The gate is off when this field is empty. When you set it, the block sets aside a cell
-            whose baseline reading reaches this value. That cell reads unreliable at every identity
-            and gives no verdict anywhere.<br /><br />
-            Off is a deliberate default, and a contested one. Published practice uses a gate. The
-            dominant tool does not. Off matches the tool, so first-run numbers stay recognisable.
-            The cost is that a sticky cell remains in the set and returns a confident "not bound".
-          </template>
-        </PlNumberField>
-      </PlAccordionSection>
+
+      <!-- The sticky-cell controls sit in the baseline section rather than under a header of their own.
+           Both read a cell's own baseline reading, so both exist only where a declared tag supplies one --
+           a fitted population gives no per-cell reading to compare against. A header for two fields that
+           appear and vanish with the rung above them was a section the reader met empty more often than
+           not. Sticky is the glossary's word: a cell that took up reagent indiscriminately, so its counts
+           report on the cell rather than on its receptor. -->
+      <PlNumberField
+        v-model="app.model.data.highReferenceLine"
+        v-if="chosenSource === 'declared'"
+        :min-value="1"
+        :step="1"
+        label="Line where a baseline reading counts as high"
+      >
+        <template #tooltip>
+          The baseline reading, in unique counts, at or above which a cell counts as
+          <b>sticky</b> — one that took up reagent indiscriminately, so its counts report on the
+          cell rather than on its receptor.<br /><br />
+          This is a measurement and not a filter. The block counts these cells whether or not the
+          gate below is set, so a run's exposure is visible even where nothing is set aside. Setting
+          a cell aside is the gate's job.
+        </template>
+      </PlNumberField>
+      <PlNumberField
+        v-model="app.model.data.gateThreshold"
+        v-if="chosenSource === 'declared'"
+        :min-value="1"
+        :step="1"
+        clearable
+        label="Admissibility gate (baseline unique counts)"
+      >
+        <template #tooltip>
+          The gate is off when this field is empty. When you set it, the block sets aside a cell
+          whose baseline reading reaches this value. That cell reads unreliable at every identity
+          and gives no verdict anywhere.<br /><br />
+          Off is a deliberate default, and a contested one. Published practice uses a gate. The
+          dominant tool does not. Off matches the tool, so first-run numbers stay recognisable. The
+          cost is that a sticky cell remains in the set and returns a confident "not bound".
+        </template>
+      </PlNumberField>
 
       <PlSectionSeparator compact> The reading </PlSectionSeparator>
       <PlNumberField
