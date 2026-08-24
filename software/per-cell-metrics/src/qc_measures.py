@@ -21,6 +21,7 @@ totals in ``qc_report.py``. This module declares the full set and computes the r
 from __future__ import annotations
 
 import math
+from collections.abc import Collection
 from dataclasses import dataclass
 from enum import Enum
 
@@ -158,11 +159,20 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         # share of cells is too high, so the share is shown and the reader judges.
         "Cells whose reference reading is at or above the observation line.",
     ),
+    # The id is a value on the `measurement` axis, so renaming it does not break the column --
+    # it splits the rows. Old runs would carry one measurement name and new runs another, and a
+    # table holding both reads as two measurements. Keep it.
+    #
+    # Its three figures changed meaning in 330-the-quality-readout: cells-with-count is now read
+    # before the minimum, the median is taken over every cell holding a count rather than over
+    # the bound ones, and every declared tag keeps a row so a dead reagent reads as a zero
+    # rather than as an absence.
     Measurement(
         "perAntigen",
-        "Per antigen: signal, above the line, and the median",
+        "Per antigen: cells with a count, cells called bound, and the median",
         "tag",
-        "Per tag: cells with any reading, cells whose reading was bound, and the median count among those.",
+        "Per tag: cells with any count and their median count, both before the minimum, "
+        "and cells called bound after it.",
     ),
     # Self-disagreement at an IDENTITY is deliberately not measured. Keeping the tag-level
     # figure while dropping this one rests on which confound cancels: marginal binding
@@ -322,26 +332,68 @@ def measurement_rows() -> list[dict]:
     return [measurement_row(m) for m in MEASUREMENTS]
 
 
-def per_antigen_measures(states: pl.DataFrame) -> pl.DataFrame:
-    """Per tag: cells with any reading, cells whose reading was bound, and the median count among those.
+def per_antigen_measures(
+    counts: pl.DataFrame,
+    states: pl.DataFrame,
+    declared_tags: Collection[str],
+    reference_tags: Collection[str] = (),
+) -> pl.DataFrame:
+    """Per tag: cells with any count, cells called bound, and the median count per cell.
 
     Grouped by tag, not identity: a tag's own reagent behaviour is the question, and an
     identity built from several tags would let one weak tag hide behind a stronger one.
 
-    `states` is the tag-grain shape -- one row per (cell, tag) with an explicit reading,
-    columns `tag`, `umiCount`, `state` -- not the frame tags have been combined on.
+    Two frames, and which one each column comes from is the whole point.
 
-    The sparse frame is the right input: "cells with any reading" means cells with an
-    observed reading, and a cell silent for this tag has no count to contribute. There is
-    no asked population to complete this against, unlike a per-cell total or a
-    reads-per-cell rate.
+    `counts` is the RAW sparse frame, before the minimum -- one row per (sampleId, cellId,
+    tag) with `umiCount`, reference tags included. `states` is the tag-grain frame after the
+    minimum, with `tag` and `state`.
+
+    `cellsWithCount` and `medianCountPerCell` come from `counts`, `cellsAboveTheLine` from
+    `states`. 330-the-quality-readout fixes that split: the first measures what the reagent
+    delivered and the second what survived the minimum, so a reagent putting two counts into
+    every cell reads as delivering something rather than as delivering nothing. A median
+    below the minimum is that same finding and not an error.
+
+    The median is taken over every cell holding a count. Taken over bound cells it could only
+    ever print a number above the cutoff's floor, because clearing the cutoff is what bound
+    means, so a half-degraded reagent would show a healthy figure computed from the few cells
+    that scraped over. It also then depends on no threshold, which matters on a first run
+    where the cutoff is still being settled -- this is a page read in order to settle it.
+
+    One row per declared tag, whether or not the reads ever show it. A dead reagent is read
+    as a zero under cells-with-count, and a tag with no row at all offers nothing to read.
+
+    Reference tags keep a row and carry `cellsAboveTheLine` as None. They are held out of the
+    verdict read, so no state exists for them -- and a blank and a zero are opposite findings
+    here. Their median is the run's ambient floor, which is why they belong in this table.
     """
-    return (
-        states.group_by("tag")
+    references = sorted(set(reference_tags))
+    spine = pl.DataFrame(
+        {"tag": sorted(set(declared_tags) | set(references))},
+        schema={"tag": pl.Utf8},
+    )
+
+    delivered = (
+        counts.filter(pl.col("umiCount") > 0)
+        .group_by("tag")
         .agg(
-            (pl.col("umiCount") > 0).sum().alias("cellsWithSignal"),
-            (pl.col("state") == "bound").sum().alias("cellsAboveTheLine"),
-            pl.col("umiCount").filter(pl.col("state") == "bound").median().alias("medianAboveTheLine"),
+            pl.len().alias("cellsWithCount"),
+            pl.col("umiCount").median().alias("medianCountPerCell"),
+        )
+    )
+    bound = states.group_by("tag").agg((pl.col("state") == "bound").sum().alias("cellsAboveTheLine"))
+
+    is_reference = pl.col("tag").is_in(references) if references else pl.lit(False)  # noqa: FBT003
+    return (
+        spine.join(delivered, on="tag", how="left")
+        .join(bound, on="tag", how="left")
+        .with_columns(
+            pl.col("cellsWithCount").fill_null(0).cast(pl.Int64),
+            pl.when(is_reference)
+            .then(pl.lit(None, dtype=pl.Int64))
+            .otherwise(pl.col("cellsAboveTheLine").fill_null(0).cast(pl.Int64))
+            .alias("cellsAboveTheLine"),
         )
         .sort("tag")
     )

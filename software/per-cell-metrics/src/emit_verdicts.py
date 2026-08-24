@@ -1579,14 +1579,25 @@ def main() -> None:
             _add(rows, "tag", tag, "undeclaredBarcodes", here_total[tag], "", panel_id)
 
         panel_states = tag_states.filter(pl.col("sampleId").is_in(panel_samples_here)).rename({"identity": "tag"})
-        for row in per_antigen_measures(panel_states).iter_rows(named=True):
+        # RAW counts, not `floored`. Cells-with-count and the median are what the reagent
+        # delivered, and the minimum is what survived it. Passing the floored frame here is the
+        # defect 330-the-quality-readout names: a reagent putting two counts into every cell
+        # would read the same as one that delivered nothing.
+        panel_counts = counts.filter(pl.col("sampleId").is_in(panel_samples_here))
+        for row in per_antigen_measures(panel_counts, panel_states, panel_tags, reference_tags).iter_rows(named=True):
+            above = row["cellsAboveTheLine"]
+            # None only for a reference tag, which is held out of the verdict read. Say so rather
+            # than printing a zero: no cell was called bound because none was asked.
+            detail = f"cellsWithCount={row['cellsWithCount']}|medianCountPerCell={row['medianCountPerCell']}"
+            if above is None:
+                detail += "|cellsAboveTheLine=none asked, this tag supplies the baseline"
             _add(
                 rows,
                 "tag",
                 row["tag"],
                 "perAntigen",
-                float(row["cellsAboveTheLine"]),
-                f"cellsWithSignal={row['cellsWithSignal']}|medianAboveTheLine={row['medianAboveTheLine']}",
+                float(above) if above is not None else None,
+                detail,
                 panel_id,
             )
 

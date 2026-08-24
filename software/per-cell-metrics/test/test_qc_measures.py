@@ -215,44 +215,87 @@ def test_a_computed_measurement_carries_no_status():
 # --- per_antigen_measures: tag grain -----------------------------------------
 
 
-def test_per_antigen_measures_reports_signal_above_and_median():
-    # The cell reading 5 and not binding is what separates the two counters. Without it both land on
-    # the same rows and each reads 2, so a version that counted bound cells for both would pass. And
-    # "cells with signal" would silently become "cells above the line" wherever it is reported.
-    states = pl.DataFrame(
-        {
-            "tag": ["T1", "T1", "T1", "T1"],
-            "umiCount": [0, 5, 10, 40],
-            "state": ["not bound", "not bound", "bound", "bound"],
-        }
-    )
-    out = per_antigen_measures(states).row(0, named=True)
-    assert out["cellsWithSignal"] == 3
+def _counts(tag: list[str], umi: list[int]) -> pl.DataFrame:
+    return pl.DataFrame({"tag": tag, "umiCount": umi})
+
+
+def _states(tag: list[str], state: list[str]) -> pl.DataFrame:
+    return pl.DataFrame({"tag": tag, "state": state})
+
+
+def test_per_antigen_measures_separates_delivered_from_bound():
+    # The reagent 330-the-quality-readout names: two counts into every cell. Counted after the
+    # minimum it delivered nothing, which is the reading that must not come back. Counted before
+    # it, it delivered into every cell and none of them cleared the line.
+    counts = _counts(["T1"] * 3, [2, 2, 2])
+    states = _states(["T1"] * 3, ["not bound"] * 3)
+
+    out = per_antigen_measures(counts, states, ["T1"]).row(0, named=True)
+
+    assert out["cellsWithCount"] == 3
+    assert out["cellsAboveTheLine"] == 0
+    # Below the minimum on purpose. The atom calls that the finding rather than an error.
+    assert out["medianCountPerCell"] == 2.0
+
+
+def test_per_antigen_measures_medians_over_every_cell_holding_a_count():
+    # The regression this guards. Over the bound cells alone the median is 50, which is a healthy
+    # figure for a half-degraded reagent, computed from the two cells that scraped over. Over every
+    # cell holding a count it is 22, which moves with the reagent.
+    counts = _counts(["T1"] * 4, [2, 4, 40, 60])
+    states = _states(["T1"] * 4, ["not bound", "not bound", "bound", "bound"])
+
+    out = per_antigen_measures(counts, states, ["T1"]).row(0, named=True)
+
+    assert out["medianCountPerCell"] == 22.0
+    assert out["medianCountPerCell"] != 50.0
+    assert out["cellsWithCount"] == 4
     assert out["cellsAboveTheLine"] == 2
-    assert out["medianAboveTheLine"] == 25.0
+
+
+def test_per_antigen_measures_keeps_a_row_for_a_tag_the_reads_never_show():
+    # A dead reagent reads as a zero under cells-with-count. Grouping the observed frame gave it no
+    # row at all, and a row that is not there cannot be scanned against its neighbours.
+    counts = _counts(["T1", "T1"], [10, 20])
+    states = _states(["T1", "T1"], ["bound", "bound"])
+
+    out = per_antigen_measures(counts, states, ["T1", "DEAD"])
+    dead = out.filter(pl.col("tag") == "DEAD").row(0, named=True)
+
+    assert out.height == 2
+    assert dead["cellsWithCount"] == 0
+    assert dead["cellsAboveTheLine"] == 0
+    # No counts at all, so no median exists. Distinct from a median that computed to zero.
+    assert dead["medianCountPerCell"] is None
+
+
+def test_per_antigen_measures_gives_the_reference_tag_no_bound_count():
+    # The reference is held out of the verdict read, so no cell was ever asked about it. A zero
+    # here would read as "asked and never bound", which is the opposite finding. Its median stays,
+    # because that is the run's ambient floor and the reason it belongs in this table.
+    counts = _counts(["T1", "T1", "REF", "REF"], [10, 20, 3, 5])
+    states = _states(["T1", "T1"], ["bound", "bound"])
+
+    out = per_antigen_measures(counts, states, ["T1"], reference_tags=["REF"])
+    ref = out.filter(pl.col("tag") == "REF").row(0, named=True)
+
+    assert ref["cellsAboveTheLine"] is None
+    assert ref["cellsWithCount"] == 2
+    assert ref["medianCountPerCell"] == 4.0
 
 
 def test_per_antigen_measures_differs_between_tag_and_identity_grain():
     # T1 and T2 both feed one identity. As tags, T1 shows one weak cell (one
     # bound of two). As the combined identity, the same cells collapse to one
     # row and T1's weak showing is no longer visible on its own.
-    tag_grain = pl.DataFrame(
-        {
-            "tag": ["T1", "T1", "T2", "T2"],
-            "umiCount": [8, 1, 20, 15],
-            "state": ["bound", "not bound", "bound", "bound"],
-        }
-    )
-    identity_grain = pl.DataFrame(
-        {
-            "tag": ["ID1", "ID1", "ID1"],  # the identity each cell's highest tag reading combined into
-            "umiCount": [20, 1, 15],
-            "state": ["bound", "not bound", "bound"],
-        }
-    )
+    tag_counts = _counts(["T1", "T1", "T2", "T2"], [8, 1, 20, 15])
+    tag_states = _states(["T1", "T1", "T2", "T2"], ["bound", "not bound", "bound", "bound"])
+    # The identity each cell's highest tag reading combined into.
+    identity_counts = _counts(["ID1"] * 3, [20, 1, 15])
+    identity_states = _states(["ID1"] * 3, ["bound", "not bound", "bound"])
 
-    by_tag = per_antigen_measures(tag_grain)
-    by_identity = per_antigen_measures(identity_grain)
+    by_tag = per_antigen_measures(tag_counts, tag_states, ["T1", "T2"])
+    by_identity = per_antigen_measures(identity_counts, identity_states, ["ID1"])
 
     assert by_tag.height == 2
     assert by_identity.height == 1

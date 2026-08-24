@@ -1243,8 +1243,10 @@ qcImportSpec := func(levelAxisSpec, entityAxisSpec, measurementAxisSpec, panelAx
 		columns: [
 			// The measurement's readable name, ordered ahead of the value so a row reads as a sentence: what
 			// was measured, then what it came to. The `measurement` AXIS carries the id, which must stay
-			// stable because it is part of column identity. This carries the name a reader recognises.
-			// Without it the page shows a scientist `antigenCountDistribution`.
+			// stable -- not because it is column identity, which it is not, but because renaming it splits
+			// the rows: old runs carry one name and new runs another, and a table holding both reads as two
+			// measurements. This carries the name a reader recognises. Without it the page shows a scientist
+			// `antigenCountDistribution`.
 			col("label", "pl7.app/antigen/qcLabel", "String", "Measurement name", 73000, true, {}),
 			col("value", "pl7.app/antigen/qcValue", "Double", "Value", 72000, true, {}),
 			col("detail", "pl7.app/antigen/qcDetail", "String", "Detail", 71000, true, {}),
