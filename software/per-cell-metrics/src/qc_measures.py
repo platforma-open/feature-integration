@@ -293,6 +293,23 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "Of the cells whose set had another cell to compare against, the share reading the opposite way "
         "from the rest of their own set, by this tag's count alone. Two states cap it at half.",
     ),
+    # Available only where an identity carries more than one tag, and the cleanest reagent
+    # check on this surface: the scientist declared those tags to be one thing, so nothing
+    # biological explains a difference between them in one cell.
+    #
+    # It earns a place beside `tagDisagreement` rather than replacing it. Self-disagreement
+    # asks only whether one tag's own cells are consistent, so a weak reagent whose siblings
+    # agree with each other and not with it sits among the lowest there while standing right
+    # out here.
+    #
+    # No line. Nothing published says what share is too high, so nothing here claims to.
+    Measurement(
+        "siblingDisagreement",
+        "Disagreement with the tags sharing its identity",
+        "tag",
+        "Of the cells holding this tag beside a sibling, the share reading the opposite way from the "
+        "majority of the identity's tags in that cell. A cell splitting evenly convicts nobody.",
+    ),
     # Whether a clonotype of known specificity came back correctly is deliberately NOT
     # measured. It would be the only end-to-end check of the pipeline, and nothing computes
     # it because nothing declares it: no surface asks a scientist which clonotype they
@@ -558,6 +575,61 @@ def per_antigen_measures(
         )
         .sort("tag")
     )
+
+
+def sibling_disagreement(
+    states: pl.DataFrame,
+    tags_by_identity: dict[str, list[str]],
+) -> dict[str, float | None]:
+    """Per tag: the share of its cells that contradict the majority of its identity's tags.
+
+    Siblings are the other tags the same identity carries. The scientist declared those tags
+    to be one thing, so nothing biological separates them in one cell.
+
+    Judged within one cell, over the identity's tags holding an explicit row there. A tag
+    with no row in a cell does not vote: `states` is sparse and carries no silent cell.
+
+    A majority is strict -- more than half the votes. A cell splitting evenly convicts
+    nobody, and still counts as a cell compared.
+
+    None, never zero, where no comparison exists: an identity carrying one tag, or a tag no
+    cell holds beside a sibling.
+
+    `states` is the tag-grain frame after the minimum, with `sampleId`, `cellId`, `tag` and
+    `state`.
+    """
+    rates: dict[str, float | None] = {}
+    for tags in tags_by_identity.values():
+        members = sorted(set(tags))
+        if len(members) < 2:
+            for tag in members:
+                rates[tag] = None
+            continue
+
+        here = states.filter(pl.col("tag").is_in(members)).select("sampleId", "cellId", "tag", "state")
+        counted = here.group_by("sampleId", "cellId", "state").agg(pl.len().alias("n"))
+        totals = counted.group_by("sampleId", "cellId").agg(pl.col("n").sum().alias("total"))
+        # Filtered on the strict majority rather than on the largest count, so at most one
+        # state survives per cell and no row ordering decides which.
+        majority = (
+            counted.join(totals, on=["sampleId", "cellId"], how="inner")
+            .filter(pl.col("n") * 2 > pl.col("total"))
+            .select("sampleId", "cellId", pl.col("state").alias("majority"))
+        )
+        present = here.group_by("sampleId", "cellId").agg(pl.col("tag").n_unique().alias("tagsHere"))
+        compared = (
+            here.join(present, on=["sampleId", "cellId"], how="inner")
+            .filter(pl.col("tagsHere") > 1)
+            .join(majority, on=["sampleId", "cellId"], how="left")
+        )
+        for tag in members:
+            mine = compared.filter(pl.col("tag") == tag)
+            if mine.height == 0:
+                rates[tag] = None
+                continue
+            against = mine.filter(pl.col("majority").is_not_null() & (pl.col("state") != pl.col("majority")))
+            rates[tag] = against.height / mine.height
+    return rates
 
 
 def reads_per_cell(reads_matched: int, cells_in_list: int) -> float | None:

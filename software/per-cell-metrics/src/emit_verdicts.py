@@ -75,6 +75,7 @@ from qc_measures import (
     per_antigen_measures,
     reads_per_cell,
     roll_up,
+    sibling_disagreement,
     status_for,
 )
 from tag_distribution import (
@@ -1744,6 +1745,34 @@ def main() -> None:
         # per panel is what makes the comparison the right one.
         for tag in sorted(panel_tags & set(tag_rate)):
             _add(rows, "tag", tag, "tagDisagreement", tag_rate[tag], "", panel_id)
+
+        # The identity -> tags map comes from `grouping`, the one place that settles which tags
+        # an identity carries. Restricted to this panel's samples and declarations, matching how
+        # the row is keyed: a tag misbehaving against its siblings in one panel must not report
+        # that on another panel's row.
+        siblings_of_identity: dict[str, list[str]] = {}
+        identity_of_tag: dict[str, str] = {}
+        for (tag, sample), identity in grouping.items():
+            if tag not in panel_tags or (sample not in set(panel_samples_here) and sample != ANY_SAMPLE):
+                continue
+            members = siblings_of_identity.setdefault(identity, [])
+            if tag not in members:
+                members.append(tag)
+            identity_of_tag[tag] = identity
+        sibling_rate = sibling_disagreement(panel_states, siblings_of_identity)
+
+        # No line stands behind this either, so it reads unjudged beside its siblings. A blank
+        # and a zero are opposite findings here, so a row with no rate says which case it is.
+        for tag in sorted(panel_tags & set(sibling_rate)):
+            rate = sibling_rate[tag]
+            detail = ""
+            if rate is None:
+                detail = (
+                    "this identity carries one tag, so it has no sibling"
+                    if len(siblings_of_identity[identity_of_tag[tag]]) < 2
+                    else "no cell holds this tag beside a sibling"
+                )
+            _add(rows, "tag", tag, "siblingDisagreement", rate, detail, panel_id)
 
     # One row for the whole run, and the entity is the run: 320 puts the score spread at that
     # grain because the cutoff is one number for the run, so a per-sample figure would answer a

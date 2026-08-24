@@ -17,6 +17,7 @@ from qc_measures import (
     per_antigen_measures,
     reads_per_cell,
     roll_up,
+    sibling_disagreement,
     status_for,
 )
 
@@ -39,6 +40,7 @@ EXPECTED_LEVEL_BY_ID = {
     "fittedBackground": "tag",
     "scoreDistribution": "run",
     "tagDisagreement": "tag",
+    "siblingDisagreement": "tag",
 }
 
 DEFERRED_IDS = {"aggregateBarcodeFraction"}
@@ -235,8 +237,22 @@ def _counts(tag: list[str], umi: list[int], sample: list[str] | None = None) -> 
     return pl.DataFrame({"sampleId": sample or ["S1"] * len(tag), "tag": tag, "umiCount": umi})
 
 
-def _states(tag: list[str], state: list[str]) -> pl.DataFrame:
-    return pl.DataFrame({"tag": tag, "state": state})
+def _states(
+    tag: list[str],
+    state: list[str],
+    sample: list[str] | None = None,
+    cell: list[str] | None = None,
+) -> pl.DataFrame:
+    # One cell by default. Sibling disagreement is judged within one cell, so tags spread
+    # across cells never meet.
+    return pl.DataFrame(
+        {
+            "sampleId": sample or ["S1"] * len(tag),
+            "cellId": cell or ["C1"] * len(tag),
+            "tag": tag,
+            "state": state,
+        }
+    )
 
 
 def test_per_antigen_measures_separates_delivered_from_bound():
@@ -708,3 +724,57 @@ def test_the_denominator_is_the_declared_roster_not_the_observed_samples():
 
     assert row["samplesSeenIn"] == 2
     assert row["samplesInPanel"] == 3
+
+
+# --- sibling disagreement: a tag against the other tags of its identity ------
+
+
+def test_a_tag_with_no_sibling_has_no_sibling_disagreement():
+    # An identity carrying one tag has no sibling. None, not 0.
+    states = _states(["AAAA"], ["bound"])
+    out = sibling_disagreement(states, {"IDENT": ["AAAA"]})
+    assert out["AAAA"] is None
+
+
+def test_a_tag_agreeing_with_its_siblings_reports_zero():
+    states = _states(["AAAA", "BBBB", "CCCC"], ["bound", "bound", "bound"])
+    out = sibling_disagreement(states, {"IDENT": ["AAAA", "BBBB", "CCCC"]})
+    assert out["AAAA"] == 0.0
+
+
+def test_a_tag_contradicting_its_siblings_reports_one():
+    # Two siblings say bound, this one says not bound, in the same cell.
+    states = _states(["AAAA", "BBBB", "CCCC"], ["not bound", "bound", "bound"])
+    out = sibling_disagreement(states, {"IDENT": ["AAAA", "BBBB", "CCCC"]})
+    assert out["AAAA"] == 1.0
+    assert out["BBBB"] == 0.0
+
+
+def test_a_tie_among_siblings_is_not_a_disagreement():
+    # One sibling each way. No majority exists.
+    states = _states(["AAAA", "BBBB"], ["not bound", "bound"])
+    out = sibling_disagreement(states, {"IDENT": ["AAAA", "BBBB"]})
+    assert out["AAAA"] == 0.0
+
+
+def test_disagreement_is_judged_within_one_cell():
+    # The same two readings in two cells. Neither tag ever meets a sibling, so neither
+    # has a comparison to report.
+    states = _states(
+        ["AAAA", "BBBB"],
+        ["not bound", "bound"],
+        cell=["C1", "C2"],
+    )
+    out = sibling_disagreement(states, {"IDENT": ["AAAA", "BBBB"]})
+    assert out["AAAA"] is None
+    assert out["BBBB"] is None
+
+
+def test_the_rate_is_the_share_of_cells_that_contradict():
+    states = _states(
+        ["AAAA", "BBBB", "CCCC"] * 2,
+        ["not bound", "bound", "bound", "bound", "bound", "bound"],
+        cell=["C1"] * 3 + ["C2"] * 3,
+    )
+    out = sibling_disagreement(states, {"IDENT": ["AAAA", "BBBB", "CCCC"]})
+    assert out["AAAA"] == 0.5
