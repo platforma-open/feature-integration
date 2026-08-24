@@ -146,11 +146,18 @@ function stepDisplay(
 // Progress cell for one sample. Done once its QC settles (completedSamples). Otherwise the band floor comes
 // from the deterministic sampleStep, which is monotonic, and where the current step is streaming a live line
 // the rich mitool prose fills the text and, for monotonic phases, the within-band bar.
+// One step's stream: its last line, and whether the stream is still open. `live` matters because a closed
+// stream's last line is HISTORY, not a reading. mitool prints progress on a timer and the process usually
+// finishes between ticks, so the final line is whatever tick landed last -- 97.8% with an ETA of one second
+// is a normal way for a finished parse to end. Replayed as if current it reads as a stall, and that is
+// exactly how it was read.
+export type StepStream = { line?: string; live?: boolean };
+
 export function deriveProgress(
   sampleId: string,
   completed: Set<string>,
   sampleStep: Record<string, SampleStep> | undefined,
-  liveLines?: Partial<Record<string, string>>,
+  liveLines?: Partial<Record<string, StepStream>>,
 ): ProgressCell {
   if (completed.has(sampleId)) return { status: "done", percent: 100, text: "Done" };
 
@@ -163,11 +170,14 @@ export function deriveProgress(
   // emitting its last (UMI, 3/3) line. The live stream is the source of truth for WHAT is running.
   let liveWf: string | undefined;
   let liveLine: string | undefined;
+  let streamOpen = true;
   if (liveLines) {
     for (const wf of WF_STEPS) {
-      if (liveLines[wf]) {
+      const stream = liveLines[wf];
+      if (stream?.line) {
         liveWf = wf;
-        liveLine = liveLines[wf];
+        liveLine = stream.line;
+        streamOpen = stream.live !== false;
       }
     }
   }
@@ -179,6 +189,19 @@ export function deriveProgress(
     return {
       status: "running",
       percent: Math.round(reportFloor),
+      text: STEP_LABEL[step],
+      suffix: "",
+    };
+  }
+
+  // A closed stream means that step finished, whatever percentage its last tick happened to carry. Hold
+  // at the TOP of its band and drop the label's stale figures: an ETA of one second that never elapses is
+  // worse than no ETA, because it invites a reader to wait for something that already happened.
+  if (!streamOpen) {
+    const finishedFloor = (WF_ORDINAL[liveWf] + 1) * BAND;
+    return {
+      status: "running",
+      percent: Math.round(Math.max(reportFloor, finishedFloor)),
       text: STEP_LABEL[step],
       suffix: "",
     };

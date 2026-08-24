@@ -3,7 +3,7 @@ import type { Color } from "@platforma-sdk/ui-vue";
 import { Gradient } from "@platforma-sdk/ui-vue";
 import { computed } from "vue";
 import { useApp } from "./app";
-import { deriveProgress, type ProgressCell } from "./progress";
+import { deriveProgress, type ProgressCell, type StepStream } from "./progress";
 
 export type { ProgressCell } from "./progress";
 
@@ -205,22 +205,25 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
   // it: `stepLogs` is built by fb-refine-tagstat, so nothing lands in the per-step map below until parse
   // is over and the next template runs. Read only for the roster, the bar spent every parse showing the
   // bare step label while a percent and an ETA sat right here.
-  const parseLineBySample = new Map<string, string | undefined>();
+  const parseStreamBySample = new Map<string, StepStream>();
   if (parseProgress) {
     for (const p of parseProgress.data) {
       const v = p.value as { progressLine?: string; live: boolean } | undefined;
-      parseLineBySample.set(String(p.key[0]), v?.progressLine);
+      parseStreamBySample.set(String(p.key[0]), { line: v?.progressLine, live: v?.live });
     }
   }
 
   // Per-[sampleId, step] live progress lines (parse / refine / tag-stat). Indexed by sampleId -> step ->
   // progressLine, so deriveProgress can pull the line for whichever step the sample is on.
   const stepProgress = app.model.outputs.stepProgress;
-  const lineBySampleStep = new Map<string, string | undefined>();
+  const streamBySampleStep = new Map<string, StepStream>();
   if (stepProgress) {
     for (const p of stepProgress.data) {
       const v = p.value as { progressLine?: string; live: boolean } | undefined;
-      lineBySampleStep.set(`${String(p.key[0])} ${String(p.key[1])}`, v?.progressLine);
+      streamBySampleStep.set(`${String(p.key[0])} ${String(p.key[1])}`, {
+        line: v?.progressLine,
+        live: v?.live,
+      });
     }
   }
   // Every streaming step's live line for a sample, so deriveProgress can pick the furthest one actually
@@ -229,19 +232,19 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
   // different template. Keyed by sample alone, so it is indexed here and joined under the step name the
   // bar knows it by.
   const metricsProgress = app.model.outputs.metricsProgress;
-  const metricsLineBySample = new Map<string, string | undefined>();
+  const metricsStreamBySample = new Map<string, StepStream>();
   if (metricsProgress) {
     for (const p of metricsProgress.data) {
       const v = p.value as { progressLine?: string; live: boolean } | undefined;
-      metricsLineBySample.set(String(p.key[0]), v?.progressLine);
+      metricsStreamBySample.set(String(p.key[0]), { line: v?.progressLine, live: v?.live });
     }
   }
-  const liveLinesFor = (sampleId: string): Record<string, string | undefined> => ({
+  const liveLinesFor = (sampleId: string): Record<string, StepStream | undefined> => ({
     // The per-step map wins once it fills, since it keeps streaming after the flat stream closes.
-    "1-parse": lineBySampleStep.get(`${sampleId} 1-parse`) ?? parseLineBySample.get(sampleId),
-    "2-refine": lineBySampleStep.get(`${sampleId} 2-refine`),
-    "3-tagstat": lineBySampleStep.get(`${sampleId} 3-tagstat`),
-    "4-metrics": metricsLineBySample.get(sampleId),
+    "1-parse": streamBySampleStep.get(`${sampleId} 1-parse`) ?? parseStreamBySample.get(sampleId),
+    "2-refine": streamBySampleStep.get(`${sampleId} 2-refine`),
+    "3-tagstat": streamBySampleStep.get(`${sampleId} 3-tagstat`),
+    "4-metrics": metricsStreamBySample.get(sampleId),
   });
 
   // Roster: dataset labels ∪ completed ∪ QC'd ∪ any sample with a step signal ∪ early parse signal.
