@@ -226,7 +226,11 @@ const allSources = computed(() => referenceSources.value?.options ?? []);
 const agreementPercent = computed({
   get: () => {
     const share = app.model.data.minAgreement;
-    return typeof share === "number" ? Math.round(share * 100) : undefined;
+    // NOT rounded. The field accepts a typed fraction of a percent -- `step` drives only the arrow
+    // buttons, and `commitValue` in PlNumberField assigns whatever was typed. Rounding here would show
+    // 51 for a stored 50.5, and 50 for a stored 50.001, so the number on screen would stop being the
+    // number in force.
+    return typeof share === "number" ? share * 100 : undefined;
   },
   set: (percent: number | undefined) => {
     app.model.data.minAgreement = typeof percent === "number" ? percent / 100 : undefined;
@@ -1046,7 +1050,7 @@ const gridOptions = {
       </PlNumberField>
       <PlNumberField
         v-model="agreementPercent"
-        :min-value="51"
+        :min-value="50.001"
         :max-value="100"
         :step="1"
         clearable

@@ -333,6 +333,11 @@ BOUND_CUTOFF = 75.0
 # the probability its count belongs to the signal component. `count-becomes-a-state` is
 # explicit that the score above does not apply here -- each baseline brings its own rule, and
 # a run selects one baseline, so exactly one rule calls the state.
+#
+# NOT A SETTING, and it must not become one. It comes from the literature -- "what every
+# published result using this method reports at" -- so there is nothing here for a customer to
+# decide. Offering it as a dial would only produce runs that cannot be compared against the
+# work the method came from.
 DISTRIBUTION_BOUND_PROBABILITY = 0.9
 
 
