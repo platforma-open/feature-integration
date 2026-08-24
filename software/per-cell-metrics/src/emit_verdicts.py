@@ -170,6 +170,12 @@ ROLLUP_LABEL = "Worst status at this level"
 MEASUREMENT_BY_ID = {m.id: m for m in MEASUREMENTS}
 
 
+def _rolls_up(measurement: str) -> bool:
+    """Whether a measurement's status reaches its level's rollup. Unknown ids do, as before."""
+    declared = MEASUREMENT_BY_ID.get(measurement)
+    return True if declared is None else declared.rolls_up
+
+
 class QcRow(NamedTuple):
     """One measurement at one level entity, before its declaration is attached.
 
@@ -1506,6 +1512,7 @@ def main() -> None:
         matched_detail = "" if reads_matched is None else f"readsMatched={int(reads_matched)}"
         _add(rows, "sample", sample, "readsTotal", _number(qc, "readsTotal"), matched_detail)
         _add(rows, "sample", sample, "panelAssignedFraction", _number(qc, "panelAssignedFraction"))
+        _add(rows, "sample", sample, "cellBarcodeValidFraction", _number(qc, "cellBarcodeValidFraction"))
         # The denominator is the cell list, never the barcodes the reads happened to touch: the
         # five-thousand recommendation is per called cell, and in droplet data observed barcodes
         # run one to two orders of magnitude higher, so dividing by them would alert on a healthy
@@ -1555,7 +1562,12 @@ def main() -> None:
         _, high_here = gate_cells(here, None, args.high_reference_line)
         _add(rows, "sample", sample, "highReferenceCells", float(high_here), f"cellsWithAComparator={len(here)}")
 
-        sample_coverage[sample] = roll_up([Reading(r.status, r.value) for r in rows[first:]])
+        # A measurement declaring `rolls_up=False` states a reagent's condition on a sample's
+        # row, and `310` keeps a reagent's failure off every sample: one bad reagent marking
+        # twenty samples is how a sample status becomes noise. Its own row keeps its status.
+        sample_coverage[sample] = roll_up(
+            [Reading(r.status, r.value) for r in rows[first:] if _rolls_up(r.measurement)]
+        )
 
     per_sample_tag_total = {
         (row["sampleId"], row["tag"]): row["total"]

@@ -23,6 +23,7 @@ FIELDNAMES = [
     "totalUniqueUmis",
     "medianUmisPerCell",
     "panelAssignedFraction",
+    "cellBarcodeValidFraction",
 ]
 
 
@@ -33,13 +34,13 @@ def _parse_report(path: str) -> tuple[int, int]:
     return int(pr.get("total", 0)), int(pr.get("matched", 0))
 
 
-def _refine_assigned_fraction(path: str | None, feature_tag: str = "FEATURE") -> float | None:
-    """Panel-assigned fraction from the refine-tags JSON report.
+def _refine_kept_fraction(path: str | None, tag_name: str = "FEATURE") -> float | None:
+    """The share of reads one refine-tags step kept, as ``outputCount / inputCount``.
 
-    The feature refine step corrects each barcode against the panel whitelist and drops reads
-    whose barcode is not within correction distance of any entry. The fraction is that step's
-    ``outputCount / inputCount`` -- the share of reads entering correction that were kept.
-    ``feature_tag`` is the mitool tag name to match against the report's ``tagName``.
+    Each step corrects one tag's barcode against a whitelist and drops reads whose barcode is
+    not within correction distance of any entry. Which whitelist depends on the tag: the
+    FEATURE step corrects against the panel, the CELL step against the chemistry's barcodes.
+    ``tag_name`` is the mitool tag to match against the report's ``tagName``.
 
     Returns None, blank in the CSV, when the report is absent or unreadable, carries no
     matching step, or that step has zero input reads. QC never crashes on an edge-case report.
@@ -53,7 +54,7 @@ def _refine_assigned_fraction(path: str | None, feature_tag: str = "FEATURE") ->
         return None
     steps = rep.get("steps", [])
     for step in steps:
-        if step.get("tagName") == feature_tag:
+        if step.get("tagName") == tag_name:
             input_count = step.get("inputCount", 0)
             if not input_count:
                 return None
@@ -62,7 +63,7 @@ def _refine_assigned_fraction(path: str | None, feature_tag: str = "FEATURE") ->
     # drifted. Surface it rather than silently blanking the metric for every sample.
     if steps:
         print(
-            f"[qc-report] refine report has no {feature_tag!r} step "
+            f"[qc-report] refine report has no {tag_name!r} step "
             f"(saw tags {[s.get('tagName') for s in steps]}); panel-assigned fraction left blank",
             file=sys.stderr,
         )
@@ -93,7 +94,11 @@ def main() -> None:
     total_umis = int(stat[args.umi_col].sum())
     per_cell = stat.group_by(args.cell_col).agg(pl.col(args.umi_col).sum().alias("u"))
     median_umis = float(per_cell["u"].median()) if per_cell.height else 0.0
-    assigned = _refine_assigned_fraction(args.refine_report, args.feature_col)
+    assigned = _refine_kept_fraction(args.refine_report, args.feature_col)
+    # The same report's CELL step. It corrects each cell barcode against the chemistry's
+    # whitelist rather than against the panel, so its kept share is the share of reads whose
+    # barcode the chemistry could have produced.
+    cell_valid = _refine_kept_fraction(args.refine_report, args.cell_col)
 
     row = {
         "sampleId": args.sample_id,
@@ -105,6 +110,7 @@ def main() -> None:
         "totalUniqueUmis": total_umis,
         "medianUmisPerCell": median_umis,
         "panelAssignedFraction": "" if assigned is None else assigned,
+        "cellBarcodeValidFraction": "" if cell_valid is None else cell_valid,
     }
     with open(args.output, "w", newline="") as out:
         w = csv.DictWriter(out, fieldnames=FIELDNAMES)

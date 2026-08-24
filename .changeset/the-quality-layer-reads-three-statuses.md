@@ -1,0 +1,21 @@
+---
+'@platforma-open/milaboratories.feature-integration.model': minor
+'@platforma-open/milaboratories.feature-integration.workflow': minor
+'@platforma-open/milaboratories.feature-integration.per-cell-metrics': minor
+---
+
+The quality layer reads three statuses, and the reagent table reads the frame each figure is about.
+
+A measurement is now **OK**, **warn** or **alert** and nothing else. One with no line behind it carries no status, and which of the two cases it is reads from the value: a number means nothing judges it, a reason in place of a number means nothing computed it. The row is there either way, and the coverage triple beside it still separates the two.
+
+**Warn is new.** Every inherited line arrives with a warn threshold and an error threshold, and the block held one number per measurement, so each pair was collapsed and a calibrated distinction discarded. Reads per cell at 4,000 read *alerting* and now warns, since one published number gives one boundary. The panel-assigned fraction at 0.49 read *alerting* and now warns, since only a wholly failed sample alerts.
+
+The two thresholds of a line are read independently, because the field warns on a direction and puts error at total failure for three of its four lines.
+
+**The reagent table's figures now come from the right side of the minimum.** Cells with any count and the median count per cell are read from the raw counts, cells called bound from the post-minimum states. The median was taken over bound cells alone, where it could only ever print a number above the cutoff's floor, so a half-degraded reagent showed a healthy figure. Every declared tag keeps a row, so a dead reagent reads as a zero rather than as an absence, and reference tags keep a row whose bound count is empty rather than zero.
+
+**Two measurements changed hands.** The panel-assigned fraction was filed against the *usable antigen reads* row and satisfies the *undeclared barcodes* row: its complement is that quantity exactly, and the line transfers with it. Its status no longer reaches its sample's rollup, because a reagent belongs to the run rather than to any one sample.
+
+**One measurement is new.** The fraction of reads whose cell barcode the chemistry could have produced, warning below 0.75 and alerting below 0.50. The refine-tags report already carried the step it reads. It is the one inherited line with a gradient at both ends rather than a catastrophe, and the reason a third status level exists.
+
+The per-sample quality frame gains a **Valid cell-barcode fraction** column.

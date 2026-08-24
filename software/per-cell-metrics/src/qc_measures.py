@@ -95,6 +95,10 @@ class Measurement:
     implies: str | None = None  # what a bad value means, where a line exists
     line: str | None = None  # which defence route backs `implies`, if any
     deferred_reason: str | None = None  # set only when nothing computes this yet
+    # Whether this measurement's status reaches its level's rollup. False only where the
+    # measurement is a property of a reagent rather than of the sample it was measured on --
+    # see `310-qc-status-and-rollup`, which keeps a reagent's failure off every sample.
+    rolls_up: bool = True
 
 
 MEASUREMENTS: tuple[Measurement, ...] = (
@@ -109,19 +113,42 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         # what a low matched share means, so nothing here claims to.
         "Every read the parser saw, and the share matching the tag pattern.",
     ),
-    # The label names the recognized fraction rather than the spec row's "usable"
-    # fraction, because that is what this block computes: `qc_report._refine_assigned_fraction`
-    # returns refine-tags' outputCount/inputCount, the share of reads kept after correcting
-    # the barcode against the panel. The field's "usable" fraction also requires a
-    # cell-associated barcode and a valid UMI, and carries a different line (0.20 against
-    # this one's 0.50). The shipped p-column's description already says recognized -- only
-    # this label had drifted. The id is a p-column name and must NOT be renamed.
+    # This satisfies the spec's UNDECLARED-BARCODE row, not its "fraction of antigen reads
+    # usable" row, and it was filed against the wrong one. `qc_report._refine_kept_fraction`
+    # returns the FEATURE step's outputCount/inputCount -- the share of matched reads whose
+    # barcode corrects onto a panel entry. Its complement is the share landing in barcodes the
+    # panel never declared, which is the field's quantity exactly, and the line transfers with
+    # it: warn above 0.50 undeclared is warn below 0.50 assigned, error at 1.0 is error at 0.0.
+    #
+    # The usable row needs matched reads that also carry a cell-associated barcode and a valid
+    # UMI. Nothing here computes that, and it stays unimplemented rather than borrowing this.
+    #
+    # `rolls_up=False` per `310`: the field publishes this line on a sample's share, but the
+    # finding belongs to a reagent, and a reagent belongs to the run rather than to any one
+    # sample. Rolled into the sample it would mark a sample for a panel's failure.
+    #
+    # The id is a value on the `measurement` axis and a p-column name in the per-sample QC
+    # frame. Renaming it breaks both. Only the label and the wording moved.
     Measurement(
         "panelAssignedFraction",
-        "Fraction of antigen reads matching the panel",
+        "Fraction of reads in undeclared barcodes (as its complement)",
         "sample",
         "Reads whose corrected barcode is on the panel, over reads matched.",
         "A low share means most reads carry barcodes the panel never declared.",
+        "inherited",
+        rolls_up=False,
+    ),
+    # The fourth inherited line, and the one `315` says the third status level exists for: the
+    # only one whose thresholds step the same way twice rather than putting error at total
+    # failure. The refine-tags report already carries the CELL step this reads, beside the
+    # FEATURE step above.
+    Measurement(
+        "cellBarcodeValidFraction",
+        "Fraction of reads whose cell barcode the chemistry could have produced",
+        "sample",
+        "Reads whose cell barcode corrects onto the chemistry's whitelist, over reads entering correction.",
+        "A low share means the reads carry cell barcodes this chemistry does not produce, "
+        "which points at the wrong whitelist or the wrong read geometry.",
         "inherited",
     ),
     # Saturation is deliberately NOT measured. The vendor's own report carries it, and
@@ -264,17 +291,17 @@ LINE_ROUTES: frozenset[str] = frozenset({"inherited", "categorical", "recommende
 # them. No line is invented -- where none of the three routes applies the measurement carries
 # no status rather than being given a number with nothing behind it.
 #
-# Three of the five lines `315-where-the-lines-come-from` publishes are missing, and two of
-# the three are missing because the measurement itself is: the aggregate-barcode fraction is
-# deferred, and the barcode-validity fraction is not computed here at all. The third, the
-# undeclared-barcode fraction, is an open question -- the field's line is on a per-sample
-# share and this block reports per sequence.
+# Three of `315`'s five lines are in force. The two missing ones are missing because their
+# measurement is: the aggregate-barcode fraction is deferred, and nothing computes the usable
+# fraction, which needs a cell-associated barcode and a valid UMI that this block never sees.
 DEFAULT_LINES: dict[str, Line] = {
     # `error` at total failure, which is where three of the four inherited lines put it: a
     # catastrophe rather than a degree. `warn` is 0.5 rather than the field's 0.20 because the
     # quantity differs -- see the drift recorded on the measurement above. Resolving that is
     # what moves this number.
     "panelAssignedFraction": Line(warn=0.5, error=0.0),
+    # Both thresholds step the same way. This is the line with a real gradient at the far end.
+    "cellBarcodeValidFraction": Line(warn=0.75, error=0.50),
     # One published number gives one boundary, so depth warns and never alerts.
     "readsPerCell": Line(warn=5_000),
 }
@@ -306,11 +333,12 @@ DEFAULT_LINES: dict[str, Line] = {
 #
 # The second entry is None where the line published no error threshold.
 #
-# `at-most` has no member. Two of the field's four inherited lines read that way and neither is
-# registered: the aggregate-barcode fraction is deferred, and the undeclared-barcode fraction
-# ships with no line for want of a defensible one rather than a direction.
+# `at-most` has no member. The field's two upward lines are the undeclared-barcode fraction,
+# which is registered above as its complement and so reads at-least, and the aggregate-barcode
+# fraction, which is deferred. The reading stays because a line can bound from above.
 _COMPARISON: dict[str, tuple[str, str | None]] = {
     "panelAssignedFraction": ("at-least", "alerting-at"),
+    "cellBarcodeValidFraction": ("at-least", "at-least"),
     "readsPerCell": ("at-least", None),
 }
 

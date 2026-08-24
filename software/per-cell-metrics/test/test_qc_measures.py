@@ -1,4 +1,5 @@
 import dataclasses
+import re
 
 import polars as pl
 from qc_measures import (
@@ -25,6 +26,7 @@ from qc_measures import (
 EXPECTED_LEVEL_BY_ID = {
     "readsTotal": "sample",
     "panelAssignedFraction": "sample",
+    "cellBarcodeValidFraction": "sample",
     "readsPerCell": "sample",
     "antigenCountDistribution": "sample",
     "aggregateBarcodeFraction": "sample",
@@ -176,7 +178,11 @@ def test_no_measurement_carries_advice():
     for m in MEASUREMENTS:
         text = f"{m.counts} {m.implies or ''}"
         lowered = text.lower()
-        assert not any(phrase in lowered for phrase in BANNED_ADVICE_PHRASES), m.id
+        # Word boundaries, not bare substrings. "try " matched inside "chemistry does", which
+        # would have rejected honest prose -- "industry", "poultry", "symmetry" all carry it.
+        assert not any(re.search(rf"\b{re.escape(phrase.strip())}\b", lowered) for phrase in BANNED_ADVICE_PHRASES), (
+            m.id
+        )
 
         for sentence in text.split("."):
             first_word = sentence.strip().split(" ", 1)[0].strip(",:;").lower()
@@ -387,6 +393,37 @@ def test_a_measurement_with_a_route_has_a_line_and_a_comparison_and_nothing_else
     routed = {m.id for m in MEASUREMENTS if m.line}
     assert set(DEFAULT_LINES) == routed
     assert set(_COMPARISON) == routed
+
+
+def test_the_undeclared_barcode_line_transfers_as_its_complement():
+    # 315 publishes this line on the UNDECLARED share: warn above 0.50, error at 1.0. The block
+    # measures the assigned share, which is one minus that, so both thresholds mirror. A run
+    # where every read carries an undeclared barcode assigns nothing and alerts.
+    line = DEFAULT_LINES["panelAssignedFraction"]
+    assert (line.warn, line.error) == (1 - 0.50, 1 - 1.0)
+    assert status_for("panelAssignedFraction", 1 - 0.60, DEFAULT_LINES) is Status.WARN
+    assert status_for("panelAssignedFraction", 1 - 1.0, DEFAULT_LINES) is Status.ALERT
+
+
+def test_barcode_validity_is_the_line_with_a_gradient_at_both_ends():
+    # The one inherited line whose thresholds step the same way twice, and the reason 310 admits
+    # a third status level at all. The other three put error at total failure.
+    line = DEFAULT_LINES["cellBarcodeValidFraction"]
+    assert (line.warn, line.error) == (0.75, 0.50)
+    assert _COMPARISON["cellBarcodeValidFraction"] == ("at-least", "at-least")
+    assert status_for("cellBarcodeValidFraction", 0.80, DEFAULT_LINES) is Status.OK
+    assert status_for("cellBarcodeValidFraction", 0.75, DEFAULT_LINES) is Status.OK
+    assert status_for("cellBarcodeValidFraction", 0.60, DEFAULT_LINES) is Status.WARN
+    assert status_for("cellBarcodeValidFraction", 0.40, DEFAULT_LINES) is Status.ALERT
+
+
+def test_a_reagent_condition_declares_that_it_does_not_roll_up():
+    # 310 keeps a reagent's failure off every sample: one bad panel marking twenty samples is how
+    # a sample status becomes noise. The undeclared-barcode share is the one measurement whose
+    # line is published per sample while the finding belongs to the run.
+    by_id = {m.id: m for m in MEASUREMENTS}
+    assert by_id["panelAssignedFraction"].rolls_up is False
+    assert [m.id for m in MEASUREMENTS if not m.rolls_up] == ["panelAssignedFraction"]
 
 
 def test_a_line_without_an_error_threshold_declares_no_error_comparison():

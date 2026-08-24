@@ -191,6 +191,7 @@ export type QcRow = {
   totalUniqueUmis: number;
   medianUmisPerCell: number;
   panelAssignedFraction: number | ""; // "" when no refine report (qc_report leaves it blank)
+  cellBarcodeValidFraction: number | ""; // same blank rule; the refine report's CELL step
 };
 
 // Panel-assigned fraction below this flags a sample in the analysis log (panel / read-geometry issue).
