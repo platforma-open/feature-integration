@@ -293,14 +293,9 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "Of the cells whose set had another cell to compare against, the share reading the opposite way "
         "from the rest of their own set, by this tag's count alone. Two states cap it at half.",
     ),
-    # Available only where an identity carries more than one tag, and the cleanest reagent
-    # check on this surface: the scientist declared those tags to be one thing, so nothing
-    # biological explains a difference between them in one cell.
+    # Available only where an identity carries more than one tag.
     #
-    # It earns a place beside `tagDisagreement` rather than replacing it. Self-disagreement
-    # asks only whether one tag's own cells are consistent, so a weak reagent whose siblings
-    # agree with each other and not with it sits among the lowest there while standing right
-    # out here.
+    # Distinct from tagDisagreement: cross-tag within one cell, not within-tag across cells.
     #
     # No line. Nothing published says what share is too high, so nothing here claims to.
     Measurement(
@@ -583,12 +578,9 @@ def sibling_disagreement(
 ) -> dict[str, float | None]:
     """Per tag: the share of its judged cells contradicting the majority of its siblings.
 
-    Siblings are the OTHER tags the same identity carries. The scientist declared those tags
-    to be one thing, so nothing biological separates them in one cell.
+    Siblings are the OTHER tags the same identity carries.
 
-    The tag being judged is not one of its own siblings and casts no vote in the majority it
-    is compared against. Letting it vote would make the figure partly self-referential: a tag
-    could prop up the majority it is then found to agree with.
+    A tag is excluded from the majority it is judged against.
 
     Judged within one cell, over the siblings holding an explicit row there. A tag with no
     row in a cell does not vote: `states` is sparse and carries no silent cell.

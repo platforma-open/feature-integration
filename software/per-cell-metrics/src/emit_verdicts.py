@@ -1747,9 +1747,7 @@ def main() -> None:
             _add(rows, "tag", tag, "tagDisagreement", tag_rate[tag], "", panel_id)
 
         # The identity -> tags map comes from `grouping`, the one place that settles which tags
-        # an identity carries. Restricted to this panel's samples and declarations, matching how
-        # the row is keyed: a tag misbehaving against its siblings in one panel must not report
-        # that on another panel's row.
+        # an identity carries. Scoped to this panel's samples and declarations.
         siblings_of_identity: dict[str, list[str]] = {}
         identity_of_tag: dict[str, str] = {}
         for (tag, sample), identity in grouping.items():
