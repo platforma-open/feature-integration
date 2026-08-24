@@ -214,10 +214,22 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
   }
   // Every streaming step's live line for a sample, so deriveProgress can pick the furthest one actually
   // streaming. The report-derived step advances a beat early and flashes the next step's label in the gap.
+  // The Python step streams on its own output rather than into the per-step map, because it runs in a
+  // different template. Keyed by sample alone, so it is indexed here and joined under the step name the
+  // bar knows it by.
+  const metricsProgress = app.model.outputs.metricsProgress;
+  const metricsLineBySample = new Map<string, string | undefined>();
+  if (metricsProgress) {
+    for (const p of metricsProgress.data) {
+      const v = p.value as { progressLine?: string; live: boolean } | undefined;
+      metricsLineBySample.set(String(p.key[0]), v?.progressLine);
+    }
+  }
   const liveLinesFor = (sampleId: string): Record<string, string | undefined> => ({
     "1-parse": lineBySampleStep.get(`${sampleId} 1-parse`),
     "2-refine": lineBySampleStep.get(`${sampleId} 2-refine`),
     "3-tagstat": lineBySampleStep.get(`${sampleId} 3-tagstat`),
+    "4-metrics": metricsLineBySample.get(sampleId),
   });
 
   // Roster: dataset labels ∪ completed ∪ QC'd ∪ any sample with a step signal ∪ early parse signal.

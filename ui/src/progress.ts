@@ -32,8 +32,13 @@ const BAND = 100 / TOTAL_STEPS;
 // early: a step's report settles before the next step's live stream starts. Driving the label off reports
 // made the bar flash the next step's name ("Counting UMIs") during that gap while refine was still
 // streaming. Keying off the live stream keeps the label honest to what is actually running.
-const WF_STEPS = ["1-parse", "2-refine", "3-tagstat"] as const;
-const WF_ORDINAL: Record<string, number> = { "1-parse": 0, "2-refine": 1, "3-tagstat": 2 };
+const WF_STEPS = ["1-parse", "2-refine", "3-tagstat", "4-metrics"] as const;
+const WF_ORDINAL: Record<string, number> = {
+  "1-parse": 0,
+  "2-refine": 1,
+  "3-tagstat": 2,
+  "4-metrics": 3,
+};
 
 // Fallback step label, used when no live line is available for the current step yet.
 const STEP_LABEL: Record<SampleStep, string> = {
@@ -116,6 +121,17 @@ function stepDisplay(
     return { text: "Counting UMIs", suffix: "" };
   }
 
+  // The Python step names its own phase and carries no ETA: these are whole-frame operations with no
+  // iteration count to extrapolate from, and an invented ETA is worse than none.
+  if (step === "4-metrics") {
+    const pct = percentage ? Number(percentage) : undefined;
+    return {
+      text: stage ? `Computing metrics: ${stage}` : "Computing metrics",
+      suffix: "",
+      localPercent: pct,
+    };
+  }
+
   // parse, and any other monotonic step: show the live percent when present, else the bare stage name.
   if (percentage) {
     return {
@@ -156,9 +172,10 @@ export function deriveProgress(
     }
   }
 
-  // metrics (the Python step, no stream) or nothing streaming yet: hold at the report floor with the step
-  // name. metrics sits at 75% through the whole slow Python run.
-  if (step === "metrics" || liveWf === undefined || liveLine === undefined) {
+  // Nothing streaming yet: hold at the report floor with the step name. The metrics step used to land
+  // here unconditionally and sat at 75% through the whole slow Python run; it now streams like the
+  // others, so only the gap before a step's first line reaches this.
+  if (liveWf === undefined || liveLine === undefined) {
     return {
       status: "running",
       percent: Math.round(reportFloor),

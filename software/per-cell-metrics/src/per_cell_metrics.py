@@ -227,6 +227,22 @@ def _load(
     return counts
 
 
+# The live-progress contract the mitool steps already use. The workflow captures this step's stdout as
+# a stream and the model scrapes lines carrying this prefix, so printing one here puts the Python step
+# on the same bar as parse, refine and tag-stat. Without it the bar sat at the band floor for the whole
+# of this step, which is the slowest one on a large run.
+#
+# The percent is the share of THIS step done when the named phase begins, so the bar advances as each
+# phase starts rather than jumping at the end. No ETA: these phases are whole-frame polars operations
+# with no iteration count to extrapolate from, and an invented ETA is worse than none.
+_PROGRESS_PREFIX = "[==PROGRESS==]"
+
+
+def _progress(stage: str, percent: float) -> None:
+    """Emit one progress line. Flushed, or it sits in the pipe buffer until the step ends."""
+    print(f"{_PROGRESS_PREFIX}{stage}: {percent:.1f}%", flush=True)
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("tag_stat_tsv")
@@ -292,6 +308,7 @@ def main() -> None:
                 f"{name}={val!r} collides with a tag-stat column ({sorted(reserved)}); choose a different CSV column"
             )
 
+    _progress("Reading counts", 0.0)
     counts = _load(
         args.tag_stat_tsv,
         args.tag_feature_csv,
@@ -305,6 +322,7 @@ def main() -> None:
     )
     counts = counts.with_columns(pl.lit(args.sample_id).alias("sampleId"))
 
+    _progress("Writing counts per cell", 45.0)
     # abundance matrix (cell x feature) UMI counts
     (
         counts.select(["sampleId", "cellId", "feature", "umiCount"])
@@ -312,6 +330,7 @@ def main() -> None:
         .write_csv(f"{args.output_prefix}_abundance.csv")
     )
 
+    _progress("Computing within-cell fractions", 65.0)
     # Within-cell fractions, computed once here and reused by the per-cell summary.
     cf = with_fraction(counts)
     cf.select(["sampleId", "cellId", "feature", "fraction"]).sort(["sampleId", "cellId", "feature"]).write_csv(
@@ -320,7 +339,9 @@ def main() -> None:
 
     # Per-cell summary: one row per (sampleId, cellId) with max UMI count and fraction, plus the
     # "feature (fraction%, umi) | ..." string. cf already carries fraction.
+    _progress("Summarising cells", 85.0)
     per_cell_summary(cf).write_csv(f"{args.output_prefix}_per_cell_summary.csv")
+    _progress("Metrics complete", 100.0)
 
 
 if __name__ == "__main__":

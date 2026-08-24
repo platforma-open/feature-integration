@@ -1151,6 +1151,18 @@ export const platforma = BlockModelV3.create(dataModel)
         )
       : undefined,
   )
+  // The Python per-cell-metrics step's live progress, scraped from the same stream `metricsLog` exposes
+  // as a handle. That step is the slowest one on a large run and the only one whose bar used to hold at
+  // its band floor from start to finish, because nothing read its stdout for a percentage.
+  .output("metricsProgress", (ctx) =>
+    ctx.outputs !== undefined
+      ? parseResourceMap(
+          ctx.outputs.resolve("metricsLogStream"),
+          (acc) => acc.getProgressLogWithInfo(ProgressPrefix),
+          false,
+        )
+      : undefined,
+  )
   // Live per-sample parse progress (0-100%), read from the flat parseLogStream Log, registered the moment
   // the per-sample body runs and before parse finishes. Mainly an EARLY roster signal: it appears before the
   // stepLogs map fills. The per-step bar detail comes from stepProgress below.
