@@ -695,3 +695,16 @@ def test_a_reference_tag_reports_its_own_seen_in():
 
     assert ref["samplesSeenIn"] == 2
     assert ref["cellsAboveTheLine"] is None
+
+
+def test_the_denominator_is_the_declared_roster_not_the_observed_samples():
+    # S3 is in the panel and contributed no rows at all -- a failed library. It must stay in the
+    # denominator, or a tag seen in the two surviving samples reads as seen everywhere.
+    counts = _counts(["T1", "T1"], [5, 5], ["S1", "S2"])
+    states = _states(["T1"], ["bound"])
+
+    out = per_antigen_measures(counts, states, ["T1"], panel_samples=["S1", "S2", "S3"])
+    row = out.filter(pl.col("tag") == "T1").row(0, named=True)
+
+    assert row["samplesSeenIn"] == 2
+    assert row["samplesInPanel"] == 3

@@ -1714,7 +1714,9 @@ def main() -> None:
         # defect 330-the-quality-readout names: a reagent putting two counts into every cell
         # would read the same as one that delivered nothing.
         panel_counts = counts.filter(pl.col("sampleId").is_in(panel_samples_here))
-        for row in per_antigen_measures(panel_counts, panel_states, panel_tags, reference_tags).iter_rows(named=True):
+        for row in per_antigen_measures(
+            panel_counts, panel_states, panel_tags, reference_tags, panel_samples_here
+        ).iter_rows(named=True):
             above = row["cellsAboveTheLine"]
             # None only for a reference tag, which is held out of the verdict read. Say so rather
             # than printing a zero: no cell was called bound because none was asked.
