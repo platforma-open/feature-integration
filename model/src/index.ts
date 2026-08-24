@@ -144,22 +144,24 @@ export type VerdictRunMeta = {
 // verdict.py resolve_default_source: a declared reagent, else the panel's own readings where the panel is
 // big enough, else nothing.
 export type ReferenceSourceChoices = {
-  options: { value: ReferenceSource; label: string; description: string }[];
-  /** One line per source this panel cannot serve, saying why. */
-  unavailable: string[];
+  /**
+   * EVERY rung, always, in ladder order, and every one selectable. The scientist picks the rung first and
+   * then supplies what it needs -- which is why an unmet requirement cannot withhold the option. Offering
+   * only the rungs already satisfied made the declared rung unreachable until its own sub-settings were
+   * filled in, with nothing on screen saying which those were.
+   */
+  options: {
+    value: ReferenceSource;
+    label: string;
+    description: string;
+    /** What this rung still needs before it can serve, as a sentence. Undefined once it can. */
+    needs?: string;
+  }[];
   /**
    * What a run with nothing chosen is answered under, as a sentence. Constant now that nothing derives,
    * and kept because the sentence is what a reader needs rather than the token.
    */
   fallback: string;
-  /**
-   * Set only for the one combination a user is likely to have got wrong: a control feature marked on the
-   * Main page while no tag is declared the baseline. `unavailable` already says a baseline is undeclared,
-   * but it cannot tell the benign case (no control in the panel at all) from this one, where the user has
-   * DEMONSTRATED they have a background control and still wired none of it to the arithmetic. The two
-   * fields are independent by design and neither is required.
-   */
-  controlNotBaseline?: string;
 };
 
 // Ordinal step key -> the step a sample is CURRENTLY on once that report has settled. A stepReports entry
@@ -298,15 +300,6 @@ function readCsvMeta(ctx: BlockRenderCtx<BlockArgs, BlockData>): CsvMeta | undef
 // The grouping columns a rule names, whichever shape it is stored in. A project saved before the rule took
 // a list carries `column` rather than `columns`. Reading both here costs one function, where a data
 // migration would have to run against every stored project. Every reader goes through this.
-// The negative-control features, whichever shape they are stored in. A project saved before the setting
-// took a list carries `controlFeature` rather than `controlFeatures`. Reading both here costs one function,
-// where a data migration would have to run against every stored project. Every reader goes through this.
-export function controlFeatures(data: BlockData): string[] {
-  if (data.controlFeatures !== undefined)
-    return data.controlFeatures.filter((f: string) => f !== "");
-  return data.controlFeature ? [data.controlFeature] : [];
-}
-
 export function groupingColumns(rule: GroupingRule | undefined): string[] {
   if (rule === undefined || rule.by !== "property") return [];
   if (rule.columns !== undefined) return rule.columns.filter((c: string) => c !== "");
@@ -548,7 +541,15 @@ export const platforma = BlockModelV3.create(dataModel)
     if (!data.fbFastqRef) throw new Error("Select the feature-barcode FASTQ");
     if (!data.tagFeatureCsvHandle) throw new Error("Upload the tag→feature CSV");
     if (!data.barcodeSeqColumn) throw new Error("Select the barcode-sequence column in the CSV");
-    if (!data.featureNameColumn) throw new Error("Select the feature-name column in the CSV");
+    if (!data.featureNameColumn) throw new Error("Select the panel column naming each antigen");
+    // REQUIRED. The block used to run without one and emit counts, per-cell values and per-sample quality
+    // with no verdicts at all. Verdicts are what the block is for, so that run was a stage sold as a
+    // deliverable: nobody adds a binding-profiling block to obtain read statistics.
+    if (!data.datasetRef)
+      throw new Error(
+        "Select the single-cell V(D)J dataset the verdicts are about. Every verdict is about one " +
+          "clonotype, so the block cannot produce any without it.",
+      );
     // The barcode-sequence and feature-name roles must map to different CSV columns. The Python guards this
     // too, but only after the full mitool chain runs. Rejecting it here disables Run up front instead of
     // burning the pipeline to fail at the end.
@@ -742,7 +743,6 @@ export const platforma = BlockModelV3.create(dataModel)
       tagFeatureCsvHandle: data.tagFeatureCsvHandle,
       barcodeSeqColumn: data.barcodeSeqColumn,
       featureNameColumn: data.featureNameColumn,
-      controlFeatures: controlFeatures(data),
       // Optional multi-barcode antigen combine mode. combineColumn names a tag-CSV column giving each
       // feature's mode: sum = OR, the default, and all = AND, where a feature is called only when every
       // member barcode fires. Projected only when set, so the workflow default stands otherwise. minUmi is
@@ -916,14 +916,6 @@ export const platforma = BlockModelV3.create(dataModel)
     // leaves them intact. Replace periods with spaces and collapse the doubles that creates. A subtitle the
     // user types in the sidebar does not pass through this output, so an override is safe.
     return parts.join(" / ").replace(/\./g, " ").replace(/ {2,}/g, " ").trim();
-  })
-  // Negative-control dropdown options: the distinct values of the chosen feature-name column, indexed out
-  // of the snapshot's valuesByColumn map. Picking the feature column only re-indexes here, because the
-  // snapshot already carries every column's values. Retentive avoids a flicker to [] on rerun.
-  .retentiveOutput("controlOptions", (ctx): { value: string; label: string }[] => {
-    const col = ctx.data.featureNameColumn;
-    const names = col ? (readCsvMeta(ctx)?.valuesByColumn?.[col] ?? []) : [];
-    return names.map((name) => ({ value: name, label: name }));
   })
   // The panel's column headers, feeding the barcode/feature column dropdowns. Retentive so the dropdowns do
   // not blank on rerun. Empty until the panel has been read.
@@ -1699,58 +1691,50 @@ export const platforma = BlockModelV3.create(dataModel)
     const roleValues = new Set(roleColumn ? (meta?.valuesByColumn?.[roleColumn] ?? []) : []);
     const declaredTags = (ctx.data.referenceValues ?? []).filter((v) => roleValues.has(v));
 
-    // Where a control feature is marked and no tag is the baseline, `controlNotBaseline` below and the
-    // "Declared baseline tag" line here would both fire, since both test declaredTags being empty. The
-    // warning wins that overlap: it gives the same fix plus what is serving instead, and says the marker does
-    // not set the baseline. This line stands down rather than repeating it.
-    const markerWithoutBaseline = controlFeatures(ctx.data).length > 0 && declaredTags.length === 0;
-
-    const options: ReferenceSourceChoices["options"] = [];
-    const unavailable: string[] = [];
-    if (declaredTags.length > 0)
-      options.push({
+    // EVERY rung is offered and every one is selectable, whether or not it can serve yet. The scientist
+    // chooses the rung and then supplies what it needs: withholding the option until its requirements were
+    // already met made the declared rung unreachable, because the requirements only appear once it is
+    // chosen. `needs` carries what is still missing, and the form shows it against the chosen rung.
+    const options: ReferenceSourceChoices["options"] = [
+      {
         value: "declared",
         label: "Declared baseline tag",
         description:
           "The block judges each count against the tag your panel marks as the baseline, in the " +
           "same cell. Verdicts read this way compare across runs.",
-      });
-    else if (!markerWithoutBaseline)
-      unavailable.push(
-        "Declared baseline tag — you have not marked a tag as the baseline yet. Choose the panel " +
-          "column that declares each tag's role. Then choose the values of that column that mark " +
-          "the baseline tag.",
-      );
-    if (panelSize >= minMembers)
-      options.push({
+        needs:
+          declaredTags.length > 0
+            ? undefined
+            : "Name the panel column that declares each tag's role, then pick the value of it that " +
+              "marks the baseline tag. Both fields are below.",
+      },
+      {
         value: "panel",
         label: "The panel's own readings",
         description:
           `The block judges each count against the rest of the panel (${panelSize} tags). This ` +
           `holds even where your panel declares a baseline tag. Pick this source to ignore that ` +
           `tag deliberately.`,
-      });
-    else
-      unavailable.push(
-        `The panel's own readings — your panel declares ${panelSize} ` +
-          `${panelSize === 1 ? "tag" : "tags"}, and this source needs at least ${minMembers}. ` +
-          `Lower "Minimum panel size to serve as baseline" under "Baseline thresholds". You can ` +
-          `also declare a baseline tag.`,
-      );
-    // Always offered, and the only option with no condition attached. Whether it can serve turns on the
-    // sample's cell count and on whether each tag's counts separate. This block has read neither, and the
-    // second is answered per tag rather than per run. So the conditions live in the description, and the RUN
-    // reports which tags fitted, which did not, and why.
-    options.push({
-      value: "distribution",
-      label: "Each tag's own distribution",
-      description:
-        `The block splits each tag's counts across a sample's cells into two components and judges ` +
-        `counts against the lower one. It needs at least ${Math.round(ctx.data.distributionMinCells)} ` +
-        `cells in the sample, and it needs that tag's counts to actually separate. A tag whose counts ` +
-        `do not separate gets no baseline, and only the antigens that tag carries read unreliable. ` +
-        `Pick this where your panel declares no baseline tag and is too small to stand in for one.`,
-    });
+        needs:
+          panelSize >= minMembers
+            ? undefined
+            : `Your panel declares ${panelSize} ${panelSize === 1 ? "tag" : "tags"}, and this ` +
+              `source needs at least ${minMembers}. Lower the minimum below, or pick another source.`,
+      },
+      // No `needs`. Whether this rung can serve turns on the sample's cell count and on whether each tag's
+      // counts separate. This block has read neither, and the second is answered per tag rather than per
+      // run. So the conditions live in the description, and the RUN reports which tags fitted and why not.
+      {
+        value: "distribution",
+        label: "Each tag's own distribution",
+        description:
+          `The block splits each tag's counts across a sample's cells into two components and judges ` +
+          `counts against the lower one. It needs at least ${Math.round(ctx.data.distributionMinCells)} ` +
+          `cells in the sample, and it needs that tag's counts to actually separate. A tag whose counts ` +
+          `do not separate gets no baseline, and only the antigens that tag carries read unreliable. ` +
+          `Pick this where your panel declares no baseline tag and is too small to stand in for one.`,
+      },
+    ];
 
     // `none` is NOT offered, and there is no fourth option. A baseline is required and a run without one
     // does not happen, so "no baseline" is not a position a scientist can select here -- it is a
@@ -1760,18 +1744,8 @@ export const platforma = BlockModelV3.create(dataModel)
 
     // What an unselected run is answered under. Nothing falls anywhere, so this states the consequence of
     // leaving the field alone rather than naming a fallback.
-    const fallback = "no baseline — every verdict that needs one reads unreliable";
-
-    // A warning and never a block. A panel that declares no baseline is a legitimate configuration, so this
-    // flags a likely mistake rather than an invalid state. No other rung steps in.
-    const controlNotBaseline = markerWithoutBaseline
-      ? "You marked a control feature, but no tag is the baseline. The control feature marker only " +
-        "labels that feature in the output. It does not set the level a count must exceed. Unless you " +
-        "choose a baseline below, this run judges counts against nothing and every verdict that needs " +
-        "a baseline reads unreliable. To use your control as the baseline, select the panel column " +
-        "that declares it. Then select the value that marks it."
-      : undefined;
-    return { options, unavailable, fallback, controlNotBaseline };
+    const fallback = "no baseline -- every verdict that needs one reads unreliable";
+    return { options, fallback };
   })
   .title(() => "Feature Barcode Profiling")
   // Standard block-label subtitle. The subtitle render context is args-only -- touching the result pool or
@@ -1794,10 +1768,15 @@ export const platforma = BlockModelV3.create(dataModel)
             // columns, and the page saying so is the only place a user learns why. Hiding the tab would leave
             // the absence unexplained.
             { type: "link" as const, href: "/punchcard" as const, label: "Explore readout" },
-            // Shown for every run too, and for the same reason. Labelled "Run quality" and not "QC" so it
-            // cannot be read as another view of the per-sample mitool stats above: that page is per sample,
-            // this one is per run.
-            { type: "link" as const, href: "/antigen-qc" as const, label: "Run quality" },
+            // "Run quality" (`/antigen-qc`) is HIDDEN, not removed: the quality layer it renders is
+            // specified and not yet built, so the page shows measurements the spec has since re-cut. The
+            // route, the page component and the two grid states stay, and restoring the tab is this one
+            // line. Re-enable it with the quality readout.
+            //
+            // When it returns, keep the label "Run quality" rather than "QC" so it cannot be read as
+            // another view of the per-sample mitool stats above: that page is per sample, this one is per
+            // run. It is shown for every run, including one with no V(D)J dataset, for the same reason the
+            // readout is.
           ]
         : []),
     ];

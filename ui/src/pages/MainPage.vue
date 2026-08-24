@@ -25,6 +25,7 @@ import {
   createAgGridColDef,
   makeRowNumberColDef,
 } from "@platforma-sdk/ui-vue";
+import type { GroupingRule } from "@platforma-open/milaboratories.feature-integration.model";
 import { groupingColumns } from "@platforma-open/milaboratories.feature-integration.model";
 import type { ImportFileHandle } from "@platforma-sdk/model";
 import { parseTagCsvMeta } from "../csvMeta";
@@ -83,12 +84,6 @@ const selectedSampleLabel = computed(() =>
     : "",
 );
 
-// No-negative-control info note in the Settings drawer. Appears once the tag-feature CSV is added, and
-// hides as soon as a negative control feature is selected.
-const controlInfoVisible = computed(
-  () => !!app.model.data.tagFeatureCsvHandle && !app.model.data.controlFeatures?.length,
-);
-
 // True while the panel CSV has been picked but not yet read: the handle is set and csvMetaSnapshot is not.
 // For a local pick that window is a single tick, so the note below never appears. For a remote pick it lasts
 // until the upload lands and the blob watcher parses it. Drives a "reading columns..." note and disables the
@@ -114,6 +109,74 @@ const roleFreeColumnOptions = computed(() =>
       o.value !== app.model.data.barcodeSeqColumn && o.value !== app.model.data.featureNameColumn,
   ),
 );
+
+// The panel's headers as they stand now. Snapshotted into data on the gesture that names a panel column, so
+// args() can refuse a column the panel does not carry without reaching outside data. Left to a watcher this
+// would be an output written back into data, which two open clients would race to write.
+function snapshotPanelColumns() {
+  app.model.data.panelColumnSnapshot = (app.model.outputs.csvColumnOptions ?? []).map(
+    (o) => o.value,
+  );
+}
+
+// The panel-derived dropdowns have nothing to offer until the panel file is uploaded and staging has read
+// its columns. Disabled and dimmed, so their empty state reads as "waiting" rather than "nothing found".
+const panelUnread = computed(
+  () => !app.model.data.tagFeatureCsvHandle || app.model.outputs.csvColumnsLoading === true,
+);
+
+// The panel's PROPERTY columns: every header except the ones the panel reader consumes as keys, which are
+// the barcode column and the sample column where one is set. Mirrors panel.py's own rule. A column the
+// reader strips is not one the grouping setting may name, and emit_verdicts.py ends the run rather than
+// degrading when handed one.
+const panelPropertyOptions = computed(() =>
+  (app.model.outputs.csvColumnOptions ?? []).filter(
+    (o) => o.value !== app.model.data.barcodeSeqColumn && o.value !== app.model.data.sampleColumn,
+  ),
+);
+
+// One control for the whole rule, taking SEVERAL columns: an identity is the distinct combination of the
+// named columns' values, so naming antigen and concentration together makes the same antigen at two
+// concentrations two identities.
+//
+// The barcode column sits in the same list as the property columns, because naming it IS a grouping -- the
+// finest one available, one identity per barcode -- rather than a mode beside grouping. It cannot be offered
+// as a property column, since the panel reader consumes it as the `tag` key, so it maps to the `tag` rule,
+// which produces exactly that reading. A sentinel value stands for it, prefixed with a space so no real
+// column name can collide.
+const TAG_GROUPING_VALUE = " tag";
+
+const groupingSelection = computed<string[]>(() => {
+  const rule = app.model.data.grouping;
+  if (rule === undefined) return [];
+  if (rule.by === "tag") return [TAG_GROUPING_VALUE];
+  return groupingColumns(rule);
+});
+
+const groupingOptions = computed(() => [
+  {
+    value: TAG_GROUPING_VALUE,
+    label: `${app.model.data.barcodeSeqColumn || "Barcode"} — one identity per barcode`,
+  },
+  ...panelPropertyOptions.value,
+]);
+
+function setGrouping(selected: string[] | undefined) {
+  const picked = (selected ?? []).filter((c) => c !== "");
+  // The barcode column is the finest grouping there is, so it does not combine with a coarser one: a
+  // combination including it is already one identity per barcode. Picking it therefore wins alone, and
+  // picking nothing leaves the rule absent, which reads the same way.
+  const rule: GroupingRule | undefined = picked.includes(TAG_GROUPING_VALUE)
+    ? { by: "tag" }
+    : picked.length > 0
+      ? { by: "property", columns: picked }
+      : undefined;
+  app.model.data.grouping = rule;
+  // The identities ARE the values of the grouping columns, so groups declared under the previous rule name
+  // things that no longer exist. Cleared on the gesture that invalidates them rather than left to fail.
+  app.model.data.contendingGroups = undefined;
+  snapshotPanelColumns();
+}
 
 // Visible reason when the Combine-mode column is invalid, so a disabled Run button is explained rather than
 // mysterious. The model's args() is the authoritative gate, throwing and greying out Run, and this mirrors
@@ -150,23 +213,7 @@ watch(
   },
 );
 
-// A negative control is one of the feature-name column's values, so changing the CSV or the feature-name
-// column can leave the current selection naming a feature that no longer exists. Clear it on that user
-// gesture. A data-to-data write on an explicit gesture, and never a watcher on the controlOptions output,
-// which is the spec-facts-resync hairpin (see hairpin.md). Left stale, args() would still send it and the
-// workflow would silently score specificity against a zero control: inflated scores, no error. Where the
-// control is still valid after the change the user re-picks, which is cheaper than snapshotting the valid set
-// into data to validate in args().
-function clearControlOnInputChange() {
-  app.model.data.controlFeatures = undefined;
-}
-
-// SEVERAL controls, because being a control is a property of the tag and a panel may carry more than one.
-// Which single control supplies the baseline is `referenceValues`, a different setting on the verdict page.
 // Empty stores as undefined so the no-control note below reads one condition rather than two.
-function setControlFeatures(features: string[]) {
-  app.model.data.controlFeatures = features.length > 0 ? features : undefined;
-}
 
 // A GESTURE IS NOT A CHANGE. Every clear below must compare the new value against the old one: a control
 // re-emitting the value it already held -- a user re-picking the dataset they had picked, or a re-render
@@ -274,11 +321,6 @@ function onBarcodeColumnChanged(next: unknown) {
   clearVerdictSettingsNaming(app.model.data.barcodeSeqColumn);
 }
 
-function onFeatureColumnChanged(next: unknown) {
-  if (!changed(seenFeatureColumn, next)) return;
-  clearControlOnInputChange();
-}
-
 // CSV swap invalidates every CSV-derived selection: the barcode / feature-name columns, since the new file's
 // headers differ, the negative control, the sample-aware selection, and every setting of the binding reading
 // that names a panel column or a panel value. The last group matters most: emit_verdicts.py ends the whole
@@ -363,7 +405,6 @@ function clearOnCsvChange() {
   app.model.data.grouping = undefined;
   app.model.data.contendingGroups = undefined;
   app.model.data.panelColumnSnapshot = undefined;
-  clearControlOnInputChange();
   clearSampleAwareState();
 }
 
@@ -528,12 +569,12 @@ const gridOptions = {
       <PlDropdownRef
         v-model="app.model.data.fbFastqRef"
         :options="app.model.outputs.fastqOptions"
-        label="Feature-barcode FASTQ dataset"
+        label="Tag-barcode FASTQ dataset"
         @update:model-value="onFastqRefChanged"
       >
         <template #tooltip>
-          The feature-barcode FASTQ dataset to analyse. Its reads give the UMI count for each
-          antigen barcode in each cell.<br /><br />
+          The tag-barcode FASTQ dataset to analyse. Its reads give the unique count for each tag
+          barcode in each cell.<br /><br />
           Counts are not verdicts. Whether a cell bound an antigen is decided later, against the
           baseline, and only when you also give a V(D)J dataset.
         </template>
@@ -543,15 +584,15 @@ const gridOptions = {
       <PatternEditor />
       <PlFileInput
         v-model="app.model.data.tagFeatureCsvHandle"
-        label="Tag-feature CSV"
+        label="Panel file"
         placeholder="tags.csv"
         :extensions="['csv']"
         required
         @update:model-value="onCsvChanged"
       >
         <template #tooltip>
-          The CSV that declares your panel: which feature barcode is which antigen. One row per
-          barcode — or one row per barcode and sample, when you set a sample column below.
+          The panel file declaring which tag barcode is which antigen. One row per barcode — or one
+          row per barcode and sample, when you set a sample column below.
           <br /><br />
           This file is also the authority on what each sample was offered. An antigen it does not
           declare for a sample is never asked about there.
@@ -564,13 +605,13 @@ const gridOptions = {
       <PlDropdown
         v-model="app.model.data.barcodeSeqColumn"
         :options="app.model.outputs.csvColumnOptions"
-        label="Barcode sequence column"
+        label="Panel column holding each tag's barcode sequence"
         @update:model-value="onBarcodeColumnChanged"
         :disabled="tagMappingDisabled"
         required
       >
         <template #tooltip>
-          CSV column holding the feature-barcode nucleotide sequence. The block matches these
+          The panel column holding each tag barcode's nucleotide sequence. The block matches these
           sequences against the barcode that the <code>FEATURE</code> tag captures on Read 2 — the
           second read of each pair.
         </template>
@@ -578,18 +619,54 @@ const gridOptions = {
       <PlDropdown
         v-model="app.model.data.featureNameColumn"
         :options="app.model.outputs.csvColumnOptions"
-        label="Feature name column"
+        label="Panel column naming each antigen"
         :disabled="tagMappingDisabled"
         required
-        @update:model-value="onFeatureColumnChanged"
       >
         <template #tooltip>
-          The CSV column holding the antigen name each barcode maps to. These names label the
+          The panel column holding the antigen name each tag barcode maps to. These names label the
           antigens everywhere the block reports them.<br /><br />
           Where two samples give one barcode different names, the antigen carries both names,
           joined.
         </template>
       </PlDropdown>
+      <!-- The dataset the verdicts are about. It sits with the inputs above rather than with the verdict
+           settings below, because it IS an input: choosing it re-runs the verdict stage, where everything in
+           `VerdictSettings` is a cheap re-read. It is the last input a user picks before choosing how much of
+           the data to run, which is why it sits directly above Run mode. -->
+      <PlDropdownRef
+        v-model="app.model.data.datasetRef"
+        :options="app.model.outputs.datasetOptions"
+        label="Single-cell V(D)J dataset"
+        required
+      >
+        <template #tooltip>
+          The clonotypes each verdict is about. Every verdict is about one clonotype, so the block
+          produces none without it.
+        </template>
+      </PlDropdownRef>
+      <!-- Identity is what a verdict is about, so the rule that mints identities belongs with the dataset
+           that supplies the clonotypes rather than among the reading thresholds below. -->
+      <PlDropdownMulti
+        :model-value="groupingSelection"
+        :options="groupingOptions"
+        label="Panel columns that define an identity"
+        :disabled="panelUnread"
+        @update:model-value="setGrouping"
+      >
+        <template #tooltip>
+          A verdict is about an identity, not a barcode. Name one or more panel columns. Every tag
+          that shares a value in all of them becomes one identity. That is how an antigen on two
+          barcodes gives one column rather than two.<br /><br />
+          Name several columns and the identity becomes the combination. Antigen and concentration
+          together read the same antigen at two concentrations as two identities.<br /><br />
+          The barcode column is the finest grouping: one identity per barcode. Select it and the
+          block ignores the other columns, because any combination that includes the barcode gives
+          the same identities.<br /><br />
+          An identity's reading in a cell is the highest of its tags, never their sum. Tags differ
+          in uptake, so a sum would need the baseline scaled to match.
+        </template>
+      </PlDropdownMulti>
       <PlBtnGroup v-model="app.model.data.runMode" :options="runModeOptions" label="Run mode">
         <template #tooltip>
           Preview reads only the first reads of each sample, up to the limit below. Use it to check
@@ -613,7 +690,7 @@ const gridOptions = {
           <template #tooltip>
             How many reads to use from each sample in Preview. The block takes the first reads of
             the file, not a random sample.<br /><br />
-            Feature-barcode libraries are shallow per cell. 500,000 reads is enough to check that
+            Tag-barcode libraries are shallow per cell. 500,000 reads is enough to check that
             settings work.
           </template>
         </PlNumberField>
@@ -627,16 +704,16 @@ const gridOptions = {
       <PlDropdown
         :model-value="app.model.data.sampleColumn"
         :options="roleFreeColumnOptions"
-        label="Sample column"
+        label="Panel column naming each row's sample"
         :disabled="tagMappingDisabled"
         clearable
         @update:model-value="setSampleColumn"
       >
         <template #tooltip>
-          <b>Set this when your panel CSV has more than one row per barcode</b> — normally because
-          it lists each barcode once per sample. Leave it blank when the CSV has exactly one row per
-          barcode.<br /><br />
-          Names the CSV column holding each row's sample. Every sample in your dataset must appear
+          <b>Set this when your panel file has more than one row per tag barcode</b> — normally
+          because it lists each barcode once per sample. Leave it blank when the panel file has
+          exactly one row per tag barcode.<br /><br />
+          Names the panel column holding each row's sample. Every sample in your dataset must appear
           in it. Extra values are allowed.<br /><br />
           The block then reads a separate panel for each sample. Each sample is asked only about the
           identities its own rows declare. One barcode can also name a different antigen in a
@@ -644,41 +721,12 @@ const gridOptions = {
           The block selects this when it detects a matching column.
         </template>
       </PlDropdown>
-
-      <PlDropdownMulti
-        :model-value="app.model.data.controlFeatures ?? []"
-        :options="app.model.outputs.controlOptions"
-        label="Control feature markers (output only)"
-        :disabled="tagMappingDisabled"
-        @update:model-value="setControlFeatures($event)"
-      >
-        <template #tooltip>
-          <b>Pick the panel members nothing should bind, if the panel has any.</b> A panel may carry
-          several controls.<br /><br />
-          This setting only labels those features in the block output. A downstream block reads the
-          label and can keep the controls out of its antigen metrics. It changes no count and no
-          verdict here.<br /><br />
-          <b>It does not make a control your baseline.</b> Exactly one control supplies the
-          baseline, and you nominate it under "Baseline (background) level" below.<br /><br />
-          Leave it blank if you have no control.
-        </template>
-      </PlDropdownMulti>
       <!-- The combine-mode column selector is not offered (MILAB-6496): with it unset, every antigen uses the
            default "sum" mode. The parameter itself is live -- combineColumn and minUmi still reach
            per_cell_metrics.py -- so a value carried in from an older project is still honoured, and the alert
            below explains a Run button greyed out by one that collides with a role. -->
       <PlAlert v-if="combineColumnError" type="warn">
         {{ combineColumnError }}
-      </PlAlert>
-      <!-- "Nothing else changes" was the only informative half of this alert, and it was the vague half: what
-           it meant is that this block's own numbers do not move. Said outright instead. No downstream block
-           is named here on purpose. The mark's only consumer today reads it out of the feature axis, and
-           which block that is can change without this text being revisited, so naming one would drift into a
-           lie. "A downstream block" stays true either way. -->
-      <PlAlert v-if="controlInfoVisible" type="info">
-        You marked no control, so the output marks no feature as one. A downstream block cannot then
-        tell your control apart from the antigens. This block's own counts and verdicts stay the
-        same.
       </PlAlert>
       <PlAlert v-if="sampleMappingWarning?.length" type="warn">
         <div v-for="(line, i) in sampleMappingWarning" :key="i">{{ line }}</div>

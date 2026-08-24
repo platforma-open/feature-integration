@@ -3,8 +3,6 @@ import {
   PlAgDataTableV2,
   PlAlert,
   PlBlockPage,
-  PlBtnGhost,
-  PlMaskIcon24,
   PlAgTextAndButtonCell,
   PlSlideModal,
   PlTabs,
@@ -23,7 +21,6 @@ import { useClonotypeLabels } from "../clonotypeLabels";
 import CellPunchCell from "../components/CellPunchCell.vue";
 import PunchCell from "../components/PunchCell.vue";
 import PunchLegend from "../components/PunchLegend.vue";
-import VerdictSettings from "../components/VerdictSettings.vue";
 
 const app = useApp();
 
@@ -155,7 +152,6 @@ const cellPunchRendererSelector = (params: { colDef?: { context?: PunchColumnCon
 };
 
 // The reading's own settings, reachable from the page they explain.
-const settingsOpen = ref(false);
 
 // The expansion: one clonotype's identities read DOWN, which `the-explore-readout` puts opposite this card's
 // read ACROSS. The card stays a field of colour with no number in any position, and every number the atom
@@ -340,19 +336,11 @@ const nothingToOffer = computed(() => !noDataset.value && identityOptions.value.
 <template>
   <PlBlockPage>
     <template #title>Explore readout</template>
-    <template #append>
-      <PlBtnGhost @click.stop="settingsOpen = true">
-        Settings
-        <template #append>
-          <PlMaskIcon24 name="settings" />
-        </template>
-      </PlBtnGhost>
-    </template>
 
     <PlAlert v-if="noDataset" type="warn">
       This run has no rows to punch: the verdict stage only runs once a single-cell V(D)J dataset is
-      picked, so the run counted barcodes per cell and stopped there. Pick a dataset in Settings and
-      run again.
+      picked, so the run counted barcodes per cell and stopped there. Pick a dataset in the Main
+      page's Settings and run again.
     </PlAlert>
 
     <PlAlert v-else-if="noBaseline" type="warn">
@@ -361,8 +349,8 @@ const nothingToOffer = computed(() => !noDataset.value && identityOptions.value.
       No punchcard is drawn, because there are no verdicts to draw. Every reading is a comparison
       against a baseline, so a run that established none produced no answers — and a grid where
       every position read <b>unreliable</b> would cost what a real run costs while looking like a
-      result at a glance. Pick a baseline this run's data can support in Settings, or a sample with
-      more cells, and run again.
+      result at a glance. Pick a baseline this run's data can support in the Main page's Settings,
+      or a sample with more cells, and run again.
     </PlAlert>
 
     <PlAlert v-else-if="nothingToOffer" type="info">
@@ -389,11 +377,6 @@ const nothingToOffer = computed(() => !noDataset.value && identityOptions.value.
         @row-double-clicked="openExpansion"
       />
     </template>
-
-    <PlSlideModal v-model="settingsOpen" width="448px">
-      <template #title>Binding verdict settings</template>
-      <VerdictSettings />
-    </PlSlideModal>
 
     <!-- Full width, where the settings drawer beside it stays narrow. The by-cell face is a matrix as wide as
          the panel, and a 720px drawer showed a handful of its columns with the rest behind a scrollbar --

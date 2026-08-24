@@ -11,24 +11,22 @@ import {
   PlBtnGhost,
   PlDropdown,
   PlDropdownMulti,
-  PlDropdownRef,
   PlNumberField,
   PlSectionSeparator,
 } from "@platforma-sdk/ui-vue";
 import { computed } from "vue";
 import { useApp } from "../app";
 
-// The settings for the binding reading. Rendered in the Main page's Settings drawer and again in the Explore
-// readout page's own: one component, one set of controls, both writing the same data. A scientist who meets a
-// card of grey punches can change the rule that produced it without leaving the page.
+// The settings for the binding reading. Rendered in the Main page's Settings drawer, and there ONLY. A block
+// puts its settings in one place, and the Explore readout offered this same drawer until that second copy was
+// removed. Do not mount it from a results page again: two drawers editing one set of controls is not the
+// idiom, whatever it costs to recompute.
 //
 // Everything this component EDITS is below the "binding reading" line in BlockArgs, so a change here recovers
-// every per-sample mitool body from cache and re-runs the verdict stage alone. That is what makes it safe to
-// offer from a results page. It also READS three fields it must never edit -- tagFeatureCsvHandle,
-// barcodeSeqColumn, sampleColumn -- to tell whether the panel has loaded, and to keep a role or grouping
-// setting from naming a column the panel reader consumes as a key. Those three force the whole per-sample
-// fan-out to re-run and belong to the Main page alone. A control for one of them here would make the explore
-// readout's drawer silently expensive.
+// every per-sample mitool body from cache and re-runs the verdict stage alone. It also READS three fields it
+// must never edit -- tagFeatureCsvHandle, barcodeSeqColumn, sampleColumn -- to tell whether the panel has
+// loaded, and to keep a role or grouping setting from naming a column the panel reader consumes as a key.
+// Those three force the whole per-sample fan-out to re-run, and the Main page owns their controls.
 //
 // VOCABULARY, and the split is deliberate. Everything a USER reads says "baseline": the level a count must
 // exceed, measured in the same cell from a tag declared to bind nothing. The DATA layer keeps `reference` --
@@ -36,9 +34,10 @@ import { useApp } from "../app";
 // is part of column identity and renaming one would change what every emitted column IS. Code comments here
 // describe the data layer, so they still say reference and comparator.
 //
-// One user-facing word, never four. "control" is not it: that word belongs to the separate `controlFeature`
-// field on the Main page, a marker for downstream readers that changes no number and no verdict, and it must
-// never appear here.
+// One user-facing word, never four. "control" is not it. The glossary keeps control and reference apart --
+// being a control is a property of the tag, and a panel may carry several, where being the reference that
+// supplies the baseline is a job given to exactly one of them. This form nominates the reference, so it says
+// baseline throughout and never "control".
 const app = useApp();
 
 // The panel-derived dropdowns have nothing to offer until the panel file is uploaded and staging has read its
@@ -114,49 +113,6 @@ function setReferenceValue(value: string | undefined) {
   clearBaselineChoice();
 }
 
-// One control for the whole rule, taking SEVERAL columns: an identity is the distinct combination of the
-// named columns' values, so naming antigen and concentration together makes the same antigen at two
-// concentrations two identities.
-//
-// The barcode column sits in the same list as the property columns, because naming it IS a grouping -- the
-// finest one available, one identity per barcode -- rather than a mode beside grouping. It cannot be offered
-// as a property column, since the panel reader consumes it as the `tag` key, so it maps to the `tag` rule,
-// which produces exactly that reading. A sentinel value stands for it, prefixed with a space so no real
-// column name can collide.
-const TAG_GROUPING_VALUE = " tag";
-
-const groupingSelection = computed<string[]>(() => {
-  const rule = app.model.data.grouping;
-  if (rule === undefined) return [];
-  if (rule.by === "tag") return [TAG_GROUPING_VALUE];
-  return groupingColumns(rule);
-});
-
-const groupingOptions = computed(() => [
-  {
-    value: TAG_GROUPING_VALUE,
-    label: `${app.model.data.barcodeSeqColumn || "Barcode"} — one identity per barcode`,
-  },
-  ...panelPropertyOptions.value,
-]);
-
-function setGrouping(selected: string[] | undefined) {
-  const picked = (selected ?? []).filter((c) => c !== "");
-  // The barcode column is the finest grouping there is, so it does not combine with a coarser one: a
-  // combination including it is already one identity per barcode. Picking it therefore wins alone, and
-  // picking nothing leaves the rule absent, which reads the same way.
-  const rule: GroupingRule | undefined = picked.includes(TAG_GROUPING_VALUE)
-    ? { by: "tag" }
-    : picked.length > 0
-      ? { by: "property", columns: picked }
-      : undefined;
-  app.model.data.grouping = rule;
-  // The identities ARE the values of the grouping columns, so groups declared under the previous rule name
-  // things that no longer exist. Cleared on the gesture that invalidates them rather than left to fail.
-  app.model.data.contendingGroups = undefined;
-  snapshotPanelColumns();
-}
-
 // The comparator sources this panel can serve. Both the option list and the reasons come from a model output
 // rather than from a watcher: the facts behind them are the panel's, and copying them into data would make
 // the output depend on the data it feeds.
@@ -174,7 +130,21 @@ const referenceSources = computed(() => app.model.outputs.referenceSources);
 // No derivation exists anywhere. The block does not choose a baseline, because a baseline nobody chose is a
 // methodology nobody knows they used. `effectiveReferenceSource` is the stored choice, or the bottom rung
 // where none was made. Reading an output to display it is not a hairpin: nothing here writes back.
-const serviceableSources = computed(() => referenceSources.value?.options ?? []);
+// EVERY rung, always, and every one selectable. The scientist picks the rung first and the form then asks
+// for what that rung needs. Offering only the rungs already satisfied made the declared rung unreachable:
+// its requirements are the two fields that appear once it is chosen, so it could never become serviceable
+// while it was hidden.
+const allSources = computed(() => referenceSources.value?.options ?? []);
+
+// The chosen rung, from DATA. `effectiveReferenceSource` is not usable here: the form now reveals fields
+// against what the user picked, and that must not move on its own.
+const chosenSource = computed(() => app.model.data.referenceSource);
+
+// What the chosen rung still needs, if anything. The model computes it, because whether a rung can serve
+// turns on panel facts this component must not re-derive.
+const chosenNeeds = computed(
+  () => allSources.value.find((o) => o.value === chosenSource.value)?.needs,
+);
 const shownSource = computed(() => app.model.outputs.effectiveReferenceSource);
 // Whether the scientist has actually chosen. Read from data rather than from the output above, which answers
 // "none" both for an explicit choice of no baseline and for no choice at all. The two look the same to a run
@@ -222,30 +192,36 @@ function removeContendingGroup(index: number) {
 </script>
 
 <template>
-  <PlSectionSeparator compact> Binding verdicts </PlSectionSeparator>
-  <PlDropdownRef
-    v-model="app.model.data.datasetRef"
-    :options="app.model.outputs.datasetOptions"
-    label="Single-cell V(D)J dataset (optional)"
-    clearable
-  >
-    <template #tooltip>
-      The clonotypes each verdict is about. Leave it blank to run the block without verdicts. The
-      block still emits the tag counts, the per-cell values and the per-sample QC. The fifteen
-      quality measurements and the panel-versus-reads check belong to the verdict stage. They need a
-      dataset.
-    </template>
-  </PlDropdownRef>
-  <PlAlert v-if="!app.model.data.datasetRef" type="info">
-    Without a V(D)J dataset the block skips the verdict stage. It emits no verdicts, no per-identity
-    columns and no panel check. It still emits everything that is not keyed by a clonotype.
-  </PlAlert>
-
   <PlSectionSeparator compact> Baseline (background) level </PlSectionSeparator>
   <PlDropdown
+    :model-value="chosenSource"
+    :options="allSources"
+    label="What sets the baseline"
+    :disabled="panelUnread"
+    required
+    @update:model-value="setBaselineSource"
+  >
+    <template #tooltip>
+      You choose this. The block does not choose it for you: two runs answered against different
+      baselines produce numbers that do not compare, and a baseline nobody chose is a method nobody
+      knows they used.<br /><br />
+      <b>Declared baseline tag</b> — the tag your panel marks as the one nothing should bind.<br />
+      <b>The panel's own readings</b> — the median of each cell's own counts.<br />
+      <b>Each tag's own distribution</b> — that tag's counts across the sample's cells, split in
+      two.<br /><br />
+      Pick one and this form asks for what that rung needs, and for nothing else.<br /><br />
+      The last two are local to this run: what a count was read against was a population of this
+      run, so those magnitudes do not travel between runs.
+    </template>
+  </PlDropdown>
+  <!-- What the chosen rung still needs. Not an error: the rung is a legitimate choice and the fields that
+       satisfy it are directly below, so this names the gap rather than refusing it. -->
+  <PlAlert v-if="chosenNeeds" type="warn">{{ chosenNeeds }}</PlAlert>
+  <PlDropdown
+    v-if="chosenSource === 'declared'"
     :model-value="app.model.data.roleColumn"
     :options="panelPropertyOptions"
-    label="Panel column naming the baseline tag"
+    label="Panel column declaring each tag's role"
     :disabled="panelUnread"
     clearable
     @update:model-value="setRoleColumn"
@@ -253,8 +229,6 @@ function removeContendingGroup(index: number) {
     <template #tooltip>
       Name the panel column that declares each tag's role. One value of that column marks a tag as
       the baseline. The block then judges every other count in the same cell against that tag.<br /><br />
-      <b>This setting changes the numbers.</b> "Control feature marker" on the Main page only labels
-      a feature in the output.<br /><br />
       Leave it blank if your panel declares no role.
     </template>
   </PlDropdown>
@@ -263,6 +237,7 @@ function removeContendingGroup(index: number) {
        form. Blank column plus blank values stays legitimate -- that is the panel which declares no baseline,
        which `292-no-declared-reference` serves. -->
   <PlDropdown
+    v-if="chosenSource === 'declared'"
     :model-value="app.model.data.referenceValues?.[0]"
     :options="roleValueOptions"
     label="Value that marks the baseline tag"
@@ -282,49 +257,6 @@ function removeContendingGroup(index: number) {
     </template>
   </PlDropdown>
 
-  <PlDropdown
-    :model-value="shownSource"
-    :options="serviceableSources"
-    label="What sets the baseline"
-    :disabled="serviceableSources.length === 0"
-    @update:model-value="setBaselineSource"
-  >
-    <template #tooltip>
-      You choose this. The block does not choose it for you and does not change it when you change
-      what you declared above: two runs answered against different baselines produce numbers that do
-      not compare, and a baseline nobody chose is a method nobody knows they used.<br /><br />
-      <b>Declared baseline tag</b> — the tag your panel marks as the one nothing should bind.<br />
-      <b>The panel's own readings</b> — the median of each cell's own counts.<br />
-      <b>Each tag's own distribution</b> — that tag's counts across the sample's cells, split in
-      two.<br />
-      <b>No baseline</b> — nothing is compared. Every verdict that needs a baseline reads
-      unreliable.<br /><br />
-      The last three are local to this run: what a count was read against was a population of this
-      run, so those magnitudes do not travel between runs.<br /><br />
-      If the rule you chose cannot serve — you raise the minimum panel size past your panel, or
-      clear the values that marked your baseline tag — the run does not quietly use a different one.
-      It reports no baseline, leaves every verdict that needs one unreliable, and records both what
-      you asked for and what served.
-    </template>
-  </PlDropdown>
-  <!-- Not an error and not a block: leaving this unchosen is answered under the bottom rung, which is a
-       legitimate position. It is a loud one, though, because the reader gets no verdicts out of it and the
-       field itself shows nothing to explain why. -->
-  <PlAlert v-if="baselineUnchosen && serviceableSources.length > 0" type="warn">
-    No baseline is chosen, so this run judges no count against anything and every verdict that needs
-    a baseline will read unreliable. Choose one above. "No baseline" is on that list if it is what
-    you mean.
-  </PlAlert>
-  <!-- Above the info alert, and warn rather than info: this is the one case the user has shown us is a
-       mistake rather than a configuration. It sits in this section instead of beside the control field on
-       the Main page because the fix -- the two dropdowns above -- is here. -->
-  <PlAlert v-if="referenceSources?.controlNotBaseline" type="warn">
-    {{ referenceSources.controlNotBaseline }}
-  </PlAlert>
-  <PlAlert v-if="referenceSources?.unavailable.length" type="info">
-    <div v-for="(line, i) in referenceSources.unavailable" :key="i">{{ line }}</div>
-  </PlAlert>
-
   <!-- Directly under the baseline section rather than with the other accordion at the foot of the form.
        Grouping the accordions together sorted this form by how advanced a control is, which split the
        baseline's own thresholds away from the baseline. Collapsed, this costs the reader one line and puts
@@ -335,13 +267,14 @@ function removeContendingGroup(index: number) {
   <PlAccordionSection label="Baseline thresholds">
     <PlNumberField
       v-model="app.model.data.panelReferenceMinMembers"
+      v-if="chosenSource === 'panel'"
       :min-value="1"
       :step="1"
       label="Minimum panel size to serve as baseline"
     >
       <template #tooltip>
         How many tags the panel needs before its own readings can serve as the baseline. Below this,
-        the block does not offer that source.<br /><br />
+        the block reports that this source cannot serve, and the run produces no verdicts.<br /><br />
         The default of 25 comes from one preprint, whose own panels held 50 and 100 tags. Nothing
         validates it lower. Lowering it is a departure from the method rather than a preference:
         comparing a count against a handful of other antigens is not a background estimate.<br /><br />
@@ -351,6 +284,7 @@ function removeContendingGroup(index: number) {
     </PlNumberField>
     <PlNumberField
       v-model="app.model.data.distributionMinCells"
+      v-if="chosenSource === 'distribution'"
       :min-value="1"
       :step="10"
       label="Cells needed to fit a tag's own distribution"
@@ -366,6 +300,7 @@ function removeContendingGroup(index: number) {
     </PlNumberField>
     <PlNumberField
       v-model="app.model.data.distributionSeparation"
+      v-if="chosenSource === 'distribution'"
       :min-value="0.01"
       :max-value="1"
       :step="0.05"
@@ -381,6 +316,7 @@ function removeContendingGroup(index: number) {
     </PlNumberField>
     <PlNumberField
       v-model="app.model.data.highReferenceLine"
+      v-if="chosenSource !== 'distribution'"
       :min-value="1"
       :step="1"
       label="High baseline reading"
@@ -393,6 +329,7 @@ function removeContendingGroup(index: number) {
     </PlNumberField>
     <PlNumberField
       v-model="app.model.data.gateThreshold"
+      v-if="chosenSource !== 'distribution'"
       :min-value="1"
       :step="1"
       clearable
@@ -410,26 +347,6 @@ function removeContendingGroup(index: number) {
   </PlAccordionSection>
 
   <PlSectionSeparator compact> The binding reading </PlSectionSeparator>
-  <PlDropdownMulti
-    :model-value="groupingSelection"
-    :options="groupingOptions"
-    label="Panel columns that define an identity"
-    :disabled="panelUnread"
-    @update:model-value="setGrouping"
-  >
-    <template #tooltip>
-      A verdict is about an identity, not a barcode. Name one or more panel columns. Every tag that
-      shares a value in all of them becomes one identity. That is how an antigen on two barcodes
-      gives one column rather than two.<br /><br />
-      Name several columns and the identity becomes the combination. Antigen and concentration
-      together read the same antigen at two concentrations as two identities.<br /><br />
-      The barcode column is the finest grouping: one identity per barcode. Select it and the block
-      ignores the other columns, because any combination that includes the barcode gives the same
-      identities.<br /><br />
-      An identity's reading in a cell is the highest of its tags, never their sum. Tags differ in
-      uptake, so a sum would need the baseline scaled to match.
-    </template>
-  </PlDropdownMulti>
 
   <PlNumberField v-model="app.model.data.countFloor" :min-value="0" :step="1" label="Minimum count">
     <template #tooltip>
@@ -525,7 +442,7 @@ function removeContendingGroup(index: number) {
   -->
 
   <PlAccordionSection label="Advanced reading settings">
-    <PlCheckbox v-model="minimumAppliesToBaseline">
+    <PlCheckbox v-if="chosenSource === 'declared'" v-model="minimumAppliesToBaseline">
       Apply the minimum count to the baseline tag
       <template #tooltip>
         By default the minimum count is not applied to the tag your panel marks as the baseline. The

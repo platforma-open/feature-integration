@@ -34,15 +34,6 @@ export type BlockArgs = {
   tagFeatureCsvHandle: ImportFileHandle; // tag->feature CSV, user-uploaded
   barcodeSeqColumn: string; // CSV column holding the feature barcode (whitelist/panel)
   featureNameColumn: string; // CSV column holding the feature/antigen name
-  // Negative-control feature names. They gate no per-cell rule, because the verdict asks the binding
-  // question of every antigen independently. main.tpl.tengo passes each to emit_feature_properties.py as a
-  // repeated --control-feature, which emits the pl7.app/feature/negativeControl marker column consumers
-  // read. Empty or omitted leaves that marker header-only.
-  //
-  // SEVERAL, because being a control is a property of the tag and a panel may carry more than one. Being
-  // the reference that supplies the baseline is a job given to exactly one of them, and that job is
-  // `referenceValues`, not this.
-  controlFeatures?: string[];
   pattern: string; // Mitool tag pattern
   // mitool tag names baked into `pattern`
   tags: { cell: string; umi: string; feature: string };
@@ -78,8 +69,9 @@ export type BlockArgs = {
   // pl7.app/isAnchor). Not a linker ref: the cell linker carries pl7.app/isLinkerColumn and is hidden in
   // tables, so no user can pick it, and the workflow resolves it from this anchor by name. The anchor is
   // receptor-scoped, so choosing the dataset is choosing the receptor, which is what lets a BCR + TCR run
-  // bring two linkers without a panic. Optional: without it the block still emits every column not keyed
-  // by a clonotype set, and only the verdict stage is skipped.
+  // bring two linkers without a panic. REQUIRED: `args()` refuses a run without one. It stays optional in
+  // this type because the workflow still carries its no-dataset branch, which is now unreachable and left
+  // as a guard rather than deleted.
   datasetRef?: PlRef;
   // The panel column declaring each tag's role, and the values of it that mark a tag as the comparator.
   roleColumn?: string;
@@ -148,11 +140,6 @@ export type BlockData = {
   csvImportError?: string;
   barcodeSeqColumn?: string;
   featureNameColumn?: string;
-  // The chosen negative-control features. `controlFeature` is the shape a project saved before the setting
-  // took a list, and it is still read: every reader goes through `controlFeatures()` in index.ts, which
-  // reads either. Nothing writes the singular form now.
-  controlFeatures?: string[];
-  controlFeature?: string;
   sampleColumn?: string;
   sampleLabelSnapshot?: Record<string, string>;
   // Distinct values of the chosen sample column at pick time, snapshotted alongside the label map so
