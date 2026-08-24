@@ -1718,7 +1718,11 @@ def main() -> None:
             above = row["cellsAboveTheLine"]
             # None only for a reference tag, which is held out of the verdict read. Say so rather
             # than printing a zero: no cell was called bound because none was asked.
-            detail = f"cellsWithCount={row['cellsWithCount']}|medianCountPerCell={row['medianCountPerCell']}"
+            detail = (
+                f"cellsWithCount={row['cellsWithCount']}"
+                f"|medianCountPerCell={row['medianCountPerCell']}"
+                f"|samplesSeenIn={row['samplesSeenIn']}/{row['samplesInPanel']}"
+            )
             if above is None:
                 detail += "|cellsAboveTheLine=none asked, this tag supplies the baseline"
             _add(

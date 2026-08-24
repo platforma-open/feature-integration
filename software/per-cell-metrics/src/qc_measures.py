@@ -513,6 +513,9 @@ def per_antigen_measures(
     One row per declared tag, whether or not the reads ever show it. A dead reagent is read
     as a zero under cells-with-count, and a tag with no row at all offers nothing to read.
 
+    `samplesSeenIn` counts distinct samples carrying any count of the tag, and `samplesInPanel`
+    is the denominator. A tag absent from every sample reads 0.
+
     Reference tags keep a row and carry `cellsAboveTheLine` as None. They are held out of the
     verdict read, so no state exists for them -- and a blank and a zero are opposite findings
     here. Their median is the run's ambient floor, which is why they belong in this table.
@@ -529,8 +532,10 @@ def per_antigen_measures(
         .agg(
             pl.len().alias("cellsWithCount"),
             pl.col("umiCount").median().alias("medianCountPerCell"),
+            pl.col("sampleId").n_unique().alias("samplesSeenIn"),
         )
     )
+    samples_in_panel = counts["sampleId"].n_unique()
     bound = states.group_by("tag").agg((pl.col("state") == "bound").sum().alias("cellsAboveTheLine"))
 
     is_reference = pl.col("tag").is_in(references) if references else pl.lit(False)  # noqa: FBT003
@@ -539,6 +544,8 @@ def per_antigen_measures(
         .join(bound, on="tag", how="left")
         .with_columns(
             pl.col("cellsWithCount").fill_null(0).cast(pl.Int64),
+            pl.col("samplesSeenIn").fill_null(0).cast(pl.Int64),
+            pl.lit(samples_in_panel, dtype=pl.Int64).alias("samplesInPanel"),
             pl.when(is_reference)
             .then(pl.lit(None, dtype=pl.Int64))
             .otherwise(pl.col("cellsAboveTheLine").fill_null(0).cast(pl.Int64))

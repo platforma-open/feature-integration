@@ -231,8 +231,8 @@ def test_a_computed_measurement_carries_no_status():
 # --- per_antigen_measures: tag grain -----------------------------------------
 
 
-def _counts(tag: list[str], umi: list[int]) -> pl.DataFrame:
-    return pl.DataFrame({"tag": tag, "umiCount": umi})
+def _counts(tag: list[str], umi: list[int], sample: list[str] | None = None) -> pl.DataFrame:
+    return pl.DataFrame({"sampleId": sample or ["S1"] * len(tag), "tag": tag, "umiCount": umi})
 
 
 def _states(tag: list[str], state: list[str]) -> pl.DataFrame:
@@ -648,3 +648,50 @@ def test_infinite_values_are_not_evaluated_rather_than_judged():
     # for "not a finite number" is easier to defend than a rule that depends on the sign.
     assert status_for("readsPerCell", float("inf"), DEFAULT_LINES) is None
     assert status_for("readsPerCell", float("-inf"), DEFAULT_LINES) is None
+
+
+def test_seen_in_counts_distinct_samples_not_cells():
+    # Two cells in one sample must read as one sample, not two.
+    counts = _counts(["T1", "T1"], [5, 3], ["S1", "S1"])
+    states = _states(["T1"], ["bound"])
+
+    row = per_antigen_measures(counts, states, ["T1"]).row(0, named=True)
+
+    assert row["samplesSeenIn"] == 1
+
+
+def test_seen_in_is_zero_for_a_dead_tag():
+    # A declared tag with no counts anywhere. Zero, never null: a blank and a zero are opposite
+    # findings on this table.
+    counts = _counts(["T1"], [5])
+    states = _states(["T1"], ["bound"])
+
+    out = per_antigen_measures(counts, states, ["T1", "DEAD"])
+    dead = out.filter(pl.col("tag") == "DEAD").row(0, named=True)
+
+    assert dead["samplesSeenIn"] == 0
+    assert dead["cellsWithCount"] == 0
+
+
+def test_seen_in_reports_the_panel_size_beside_it():
+    # "Most samples" is unreadable without the denominator.
+    counts = _counts(["T1", "T1"], [5, 5], ["S1", "S2"])
+    states = _states(["T1"], ["bound"])
+
+    row = per_antigen_measures(counts, states, ["T1"]).row(0, named=True)
+
+    assert row["samplesSeenIn"] == 2
+    assert row["samplesInPanel"] == 2
+
+
+def test_a_reference_tag_reports_its_own_seen_in():
+    # Held out of the verdict read, so cellsAboveTheLine is None. The reagent still delivered it,
+    # and seen-in says so.
+    counts = _counts(["REF", "REF"], [9, 9], ["S1", "S2"])
+    states = _states(["T1"], ["bound"])
+
+    out = per_antigen_measures(counts, states, ["T1"], reference_tags=["REF"])
+    ref = out.filter(pl.col("tag") == "REF").row(0, named=True)
+
+    assert ref["samplesSeenIn"] == 2
+    assert ref["cellsAboveTheLine"] is None
