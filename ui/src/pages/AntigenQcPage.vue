@@ -6,9 +6,10 @@ import {
   PlAlert,
   PlBlockPage,
   PlSectionSeparator,
+  PlTabs,
   usePlDataTableSettingsV2,
 } from "@platforma-sdk/ui-vue";
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { useApp } from "../app";
 
 const app = useApp();
@@ -66,14 +67,29 @@ const mismatchAbsent = computed(() => {
 // a filter GraphMaker applies from the default options below.
 const distributionsAbsent = computed(() => app.model.outputs.runQualityDistributions === undefined);
 
-// A run served by a population baseline produces no score, so that plot has nothing to draw and the
-// section says so rather than showing an empty chart.
-// `referenceChoice` is the rung that actually SERVED, not the one requested: a request the panel
-// cannot honour degrades, and the plots follow what happened rather than what was asked for.
+// The rung that actually SERVED, not the one requested: a request the panel cannot honour degrades,
+// and the plots follow what happened rather than what was asked for. Undefined until the run reports
+// its own meta, and that case is NOT "some other rung served" -- reading it that way told a reader
+// both that there were no scores and that there was no background, which cannot both be true of one
+// run, since a run is served by exactly one rung.
 const served = computed(() => app.model.outputs.verdictRunMeta?.referenceChoice);
-const noScores = computed(() => served.value !== "declared");
-// A run served by a declared baseline fits no background, symmetrically.
-const noBackgrounds = computed(() => served.value !== "distribution");
+const rungUnknown = computed(() => served.value === undefined);
+
+// Only the declared rung produces a score: the others yield a probability, which is not on the same
+// scale. Only a population rung fits a background. So each of these is empty on exactly the runs the
+// other is not, and neither is a failure.
+const noScores = computed(() => !rungUnknown.value && served.value !== "declared");
+const noBackgrounds = computed(() => !rungUnknown.value && served.value !== "distribution");
+
+// One tab per plot. Three plots stacked put the one a reader wants below the fold, and the two that
+// cannot exist on a given run pushed it further. A tab also lets each plot own the full height a
+// chart needs. Local rather than stored: which tab is open is a glance, not a setting.
+const DISTRIBUTION_TABS = [
+  { label: "Scores", value: "score" as const },
+  { label: "Reference readings", value: "reference" as const },
+  { label: "Fitted background", value: "background" as const },
+];
+const activeDistribution = ref<"score" | "reference" | "background">("score");
 
 const DECILE_VALUE = "pl7.app/antigen/qcDecileValue";
 const DECILE_AXIS = "pl7.app/antigen/qcDecile";
@@ -177,37 +193,48 @@ const backgroundOptions = computed(
         the measurements above, so they arrive with them.
       </PlAlert>
       <template v-else>
-        <PlAlert v-if="noScores" type="info">
-          This run was read against a population baseline, which yields a probability rather than a
-          score, so there are no scores to spread. The plot appears on a run read against a declared
-          baseline tag.
-        </PlAlert>
-        <div v-else :class="$style.plot">
+        <PlTabs v-model="activeDistribution" :options="DISTRIBUTION_TABS" />
+
+        <div v-if="activeDistribution === 'score'" :class="$style.plot">
+          <PlAlert v-if="rungUnknown" type="info">
+            This run has not reported which baseline served it yet.
+          </PlAlert>
+          <PlAlert v-else-if="noScores" type="info">
+            This run was read against each tag's own distribution, which yields a probability rather
+            than a score, so there are no scores to spread. This plot is drawn for a run read
+            against a declared baseline tag.
+          </PlAlert>
           <GraphMaker
+            v-else
             v-model="app.model.data.scoreDistributionGraphState"
-            chartType="discrete"
+            chart-type="discrete"
             :p-frame="app.model.outputs.runQualityDistributions"
             :default-options="scoreOptions"
           />
         </div>
 
-        <div :class="$style.plot">
+        <div v-else-if="activeDistribution === 'reference'" :class="$style.plot">
           <GraphMaker
             v-model="app.model.data.referenceReadingGraphState"
-            chartType="discrete"
+            chart-type="discrete"
             :p-frame="app.model.outputs.runQualityDistributions"
             :default-options="referenceOptions"
           />
         </div>
 
-        <PlAlert v-if="noBackgrounds" type="info">
-          This run was read against a declared baseline tag, so no background was fitted. The plot
-          appears on a run read against each tag's own distribution.
-        </PlAlert>
         <div v-else :class="$style.plot">
+          <PlAlert v-if="rungUnknown" type="info">
+            This run has not reported which baseline served it yet.
+          </PlAlert>
+          <PlAlert v-else-if="noBackgrounds" type="info">
+            This run was read against a declared baseline tag, so no background was fitted and there
+            is nothing to draw here. The other two plots are unaffected. This plot is drawn for a
+            run read against each tag's own distribution.
+          </PlAlert>
           <GraphMaker
+            v-else
             v-model="app.model.data.fittedBackgroundGraphState"
-            chartType="scatterplot"
+            chart-type="scatterplot"
             :p-frame="app.model.outputs.runQualityDistributions"
             :default-options="backgroundOptions"
           />

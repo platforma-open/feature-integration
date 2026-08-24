@@ -948,19 +948,35 @@ const gridOptions = {
       </PlNumberField>
 
       <PlSectionSeparator compact> Threshold Parameters </PlSectionSeparator>
-      <PlNumberField
-        v-model="app.model.data.countFloor"
-        :min-value="0"
-        :step="1"
-        label="Minimum count"
-      >
-        <template #tooltip>
-          Counts below this are not evidence of binding. The block reads them as zero.<br /><br />
-          The minimum never applies to the baseline tag. A minimum there would push the whole run
-          toward bound.<br /><br />
-          The default of 4 is declared, not calibrated.
-        </template>
-      </PlNumberField>
+      <!-- Paired on one line: both are minimums on how much evidence a reading needs, both are always
+           shown, and side by side a reader sets them as the one decision they are. -->
+      <PlRow>
+        <PlNumberField
+          v-model="app.model.data.countFloor"
+          :min-value="0"
+          :step="1"
+          label="Minimum count"
+        >
+          <template #tooltip>
+            Counts below this are not evidence of binding. The block reads them as zero.<br /><br />
+            The minimum never applies to the baseline tag. A minimum there would push the whole run
+            toward bound.<br /><br />
+            The default of 4 is declared, not calibrated.
+          </template>
+        </PlNumberField>
+        <PlNumberField
+          v-model="app.model.data.minVotingCells"
+          :min-value="1"
+          :step="1"
+          label="Minimum voting cells"
+        >
+          <template #tooltip>
+            How many cells must answer before their majority settles a verdict. Below this the
+            verdict reads unreliable.<br /><br />
+            At 1 a verdict may rest on one cell. The table carries the answering-cell count.
+          </template>
+        </PlNumberField>
+      </PlRow>
       <PlNumberField
         v-if="chosenSource === 'declared'"
         v-model="app.model.data.boundCutoff"
@@ -975,18 +991,6 @@ const gridOptions = {
           counts.<br /><br />
           <b>Certainty, not strength</b> — two counts against zero score low. Cell Ranger says this
           score does not measure binding strength.
-        </template>
-      </PlNumberField>
-      <PlNumberField
-        v-model="app.model.data.minVotingCells"
-        :min-value="1"
-        :step="1"
-        label="Minimum voting cells"
-      >
-        <template #tooltip>
-          How many cells must answer before their majority settles a verdict. Below this the verdict
-          reads unreliable.<br /><br />
-          At 1 a verdict may rest on one cell. The table carries the answering-cell count.
         </template>
       </PlNumberField>
       <PlNumberField
