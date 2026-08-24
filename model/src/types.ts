@@ -105,7 +105,6 @@ export type BlockArgs = {
   // The admissibility gate, in comparator UMIs. Undefined means off. Zero would set aside every cell, so
   // the args lambda projects it only when positive.
   gateThreshold?: number;
-  highReferenceLine: number; // where a reference reading counts as high, with the gate off
   grouping?: GroupingRule;
   // Identities declared to contend for one binding site. Canonicalised by the args lambda: each group
   // sorted, groups sorted, groups of fewer than two members dropped.
@@ -191,7 +190,6 @@ export type BlockData = {
   minVotingCells: number;
   minAgreement?: number;
   gateThreshold?: number;
-  highReferenceLine: number;
   grouping?: GroupingRule;
   /**
    * Written on a user gesture only. The identities to choose from come from the identityOptions model

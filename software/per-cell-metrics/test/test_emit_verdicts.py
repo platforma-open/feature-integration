@@ -698,7 +698,6 @@ DECLARED_FLAGS = (
     "--min-voters",
     "--min-agreement",
     "--gate-threshold",
-    "--high-reference-line",
     "--grouping",
     "--contending",
     "--capture-map",
@@ -2364,6 +2363,46 @@ def test_the_tag_distribution_rung_serves_and_says_so(tmp_path):
     assert meta["referenceChoice"] == ReferenceChoice.DISTRIBUTION.value
     assert meta["referenceSourceRequested"] == ReferenceChoice.DISTRIBUTION.value
     assert meta["distributionMinCells"] == 300
+
+
+def test_the_sticky_measurement_is_a_spread_when_no_gate_is_declared(bed):
+    # The default, and therefore the first run every scientist sees. 290: where no threshold is
+    # declared there is no *high* to count, and the measurement is the distribution of those
+    # readings instead -- which is what a scientist reads in order to declare a gate. A count here
+    # would assert a boundary nobody drew.
+    _run(bed, *BASE)
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    row = qc.filter(pl.col("measurement") == "highReferenceCells").row(0, named=True)
+
+    assert "noGateDeclared" in row["detail"]
+    assert "gate=" not in row["detail"]
+    # Eleven decile points ride in the detail, and the value is their median.
+    points = [p.split(":")[0] for p in row["detail"].split("|")[2:]]
+    assert points == [str(p) for p in range(0, 101, 10)]
+
+
+def test_the_sticky_measurement_counts_the_cells_the_gate_set_aside(bed):
+    # With a gate declared the two jobs are one number: the cells counted high are the cells set
+    # aside, by construction. A second line used to let those two sets differ.
+    _run(bed, *BASE, "--gate-threshold", "1")
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    row = qc.filter(pl.col("measurement") == "highReferenceCells").row(0, named=True)
+
+    assert "gate=1" in row["detail"]
+    assert "noGateDeclared" not in row["detail"]
+    meta = json.loads((bed / "result_run_meta.json").read_text())
+    # Same cells, counted once. The per-sample rows sum to the run's set-aside total.
+    per_sample = qc.filter(pl.col("measurement") == "highReferenceCells")["value"].to_list()
+    assert sum(int(float(v)) for v in per_sample if v is not None) == meta["cellsSetAside"]
+
+
+def test_no_observation_line_parameter_survives(bed):
+    # One threshold, not two. 060-parameter-set lists seven parameters and a sticky line is not
+    # among them, so a run must not accept one.
+    assert "--high-reference-line" not in _run(bed, "--help").stdout
+    meta_run = _run(bed, *BASE)
+    assert meta_run.returncode == 0
+    assert "highReferenceLine" not in json.loads((bed / "result_run_meta.json").read_text())
 
 
 def test_the_run_carries_its_score_spread(bed):

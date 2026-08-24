@@ -925,25 +925,11 @@ const gridOptions = {
       </PlNumberField>
 
       <!-- The sticky-cell controls sit in the baseline section rather than under a header of their own.
-           Both read a cell's own baseline reading, so both exist only where a declared tag supplies one --
-           a fitted population gives no per-cell reading to compare against. A header for two fields that
-           appear and vanish with the rung above them was a section the reader met empty more often than
-           not. Sticky is the glossary's word: a cell that took up reagent indiscriminately, so its counts
-           report on the cell rather than on its receptor. -->
-      <PlNumberField
-        v-model="app.model.data.highReferenceLine"
-        v-if="chosenSource === 'declared'"
-        :min-value="1"
-        :step="1"
-        label="Sticky cell threshold"
-      >
-        <template #tooltip>
-          The baseline reading, in unique counts, at or above which a cell counts as
-          <b>sticky</b>. A sticky cell absorbed reagent indiscriminately, so its counts report on
-          the cell, not its receptor.<br /><br />
-          This counts sticky cells. It does not set them aside — that is the gate's job.
-        </template>
-      </PlNumberField>
+           It reads a cell's own baseline reading, so it exists only where a declared tag supplies one --
+           a fitted population gives no per-cell reading to compare against. Sticky is the glossary's word:
+           a cell that took up reagent indiscriminately, so its counts report on the cell rather than on
+           its receptor. ONE threshold, not two: only a declared gate supplies a *high*, so with the gate
+           off nothing is counted and the quality readout carries the spread of the readings instead. -->
       <PlNumberField
         v-model="app.model.data.gateThreshold"
         v-if="chosenSource === 'declared'"

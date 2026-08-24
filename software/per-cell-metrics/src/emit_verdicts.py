@@ -85,7 +85,6 @@ from tag_distribution import (
 from verdict import (
     BOUND_CUTOFF,
     DEFAULT_FLOOR,
-    DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE,
     DEFAULT_PANEL_MIN_MEMBERS,
     Admissibility,
     Reference,
@@ -869,6 +868,25 @@ def _add(rows: list[QcRow], level: str, entity: str, measurement: str, value, de
     )
 
 
+def _sticky_measure(readings: dict[tuple[str, str], int], gate: int | None) -> tuple[float | None, str]:
+    """One sample's sticky exposure, in whichever form the gate allows.
+
+    A declared gate supplies a *high*, so the measurement is a count of the cells at or above
+    it. With no gate there is no high, and a count against a line nobody drew would assert a
+    boundary; the spread of the readings goes out instead, which is what a scientist reads in
+    order to place one. The value is then the median, matching the other spreads here.
+    """
+    comparator_detail = f"cellsWithAComparator={len(readings)}"
+    if gate is not None:
+        return float(sum(1 for v in readings.values() if v >= gate)), f"{comparator_detail}|gate={gate}"
+    deciles = deciles_of(np.asarray(list(readings.values()), dtype=float))
+    points = "|".join(
+        f"{d}:{'' if v is None else round(v, 3)}" for d, v in zip(deciles["decile"], deciles["value"], strict=True)
+    )
+    middle = deciles.filter(pl.col("decile") == 50)["value"].to_list()
+    return (middle[0] if middle else None), f"{comparator_detail}|noGateDeclared|{points}"
+
+
 def _score_spread(states: pl.DataFrame, served: ReferenceChoice) -> tuple[float | None, str]:
     """The run's scores as deciles, or why there are none.
 
@@ -961,7 +979,6 @@ def main() -> None:
     p.add_argument("--min-voters", type=int, default=DEFAULT_MIN_VOTERS)
     p.add_argument("--min-agreement", type=float, default=DEFAULT_MIN_AGREEMENT)
     p.add_argument("--gate-threshold", type=int, default=None, help="set aside cells whose comparator reads this high")
-    p.add_argument("--high-reference-line", type=int, default=DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE)
     p.add_argument("--grouping", default=None, help="JSON: {'by':'tag'} or {'by':'property','column':...}")
     p.add_argument("--contending", default=None, help="JSON: groups of identities that contend, as a list of lists")
     # Accepted and not yet read. The capture rollup was its only reader, and only the sample
@@ -1181,7 +1198,7 @@ def main() -> None:
         tag_probabilities = None
         reference = _cell_keyed_reference(counts, reference_tags, source, analysed_cells, panel_size, args)
 
-    gated, cells_high_reference = gate_cells(reference.by_cell, args.gate_threshold, args.high_reference_line)
+    gated, cells_high_reference = gate_cells(reference.by_cell, args.gate_threshold)
     if reference.served is ReferenceChoice.DISTRIBUTION:
         # No per-cell comparator exists to read a gate against, so the gate sets nothing aside
         # and the exposure count is not a measurement this run made. None, never 0: a zero would
@@ -1610,9 +1627,13 @@ def main() -> None:
             f"cellsWithAReading={len(listed_totals)}",
         )
 
+        # Two forms, and the gate decides which. With a gate declared this counts the cells it
+        # set aside. With none there is no *high* to count, so the measurement is the spread of
+        # the readings themselves -- which `290-reference-two-roles` names as what a scientist
+        # reads in order to declare a gate.
         here = {key: value for key, value in reference.by_cell.items() if key[0] == sample}
-        _, high_here = gate_cells(here, None, args.high_reference_line)
-        _add(rows, "sample", sample, "highReferenceCells", float(high_here), f"cellsWithAComparator={len(here)}")
+        high_value, high_detail = _sticky_measure(here, args.gate_threshold)
+        _add(rows, "sample", sample, "highReferenceCells", high_value, high_detail)
 
         # A measurement declaring `rolls_up=False` states a reagent's condition on a sample's
         # row, and `310` keeps a reagent's failure off every sample: one bad reagent marking
@@ -1737,7 +1758,6 @@ def main() -> None:
         "minVoters": args.min_voters,
         "minAgreement": args.min_agreement,
         "gateThreshold": args.gate_threshold,
-        "highReferenceLine": args.high_reference_line,
         "panelMinMembers": args.panel_min_members,
         "distributionMinCells": args.distribution_min_cells,
         # Per (sample, tag), and only where that rung was asked for: which tags could not be

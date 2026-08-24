@@ -412,7 +412,6 @@ wf.body(func(args) {
 		setParam("minVotingCells", args.minVotingCells)
 		setParam("minAgreement", args.minAgreement)
 		setParam("gateThreshold", args.gateThreshold)
-		setParam("highReferenceLine", args.highReferenceLine)
 		setParam("grouping", args.grouping)
 		setParam("contendingGroups", args.contendingGroups)
 		setParam("captureMap", args.captureMap)

@@ -23,7 +23,6 @@ _full := {
 	minVotingCells: 3,
 	minAgreement: 0.6,
 	gateThreshold: 40,
-	highReferenceLine: 250,
 	grouping: { by: "property", column: "family" },
 	contendingGroups: [["AgA", "AgB"]],
 	captureMap: { S1: "lane1" }
@@ -39,7 +38,7 @@ Test_every_flag_is_threaded := func() {
 		"--barcode-col", "--feature-col", "--sample-col", "--role-column", "--reference-values",
 		"--reference-source", "--panel-min-members", "--distribution-min-cells",
 		"--floor", "--cutoff",
-		"--min-voters", "--min-agreement", "--gate-threshold", "--high-reference-line",
+		"--min-voters", "--min-agreement", "--gate-threshold",
 		"--grouping", "--contending", "--capture-map", "--output-prefix"
 	]
 	for flag in flags {
@@ -60,8 +59,7 @@ Test_every_flag_is_threaded := func() {
 		"--cutoff": "90",
 		"--min-voters": "3",
 		"--min-agreement": "0.6",
-		"--gate-threshold": "40",
-		"--high-reference-line": "250"
+		"--gate-threshold": "40"
 	}
 	for flag, want in expected {
 		test.isEqual(want, string(va.valueOf(args, flag)), "wrong value threaded for " + flag)
@@ -120,18 +118,17 @@ Test_shaping_parameters_are_always_present := func() {
 	test.isEqual("75", va.valueOf(args, "--cutoff"), "the bound cutoff is stated even when defaulted")
 	test.isEqual("1", va.valueOf(args, "--min-voters"), "the voter minimum is stated even when defaulted")
 	test.isEqual("25", va.valueOf(args, "--panel-min-members"), "the panel minimum is stated")
-	test.isEqual("100", va.valueOf(args, "--high-reference-line"), "the high-reference line is stated")
 	test.isEqual("300", va.valueOf(args, "--distribution-min-cells"), "the cell condition is stated")
 }
 
-// argparse declares --floor, --min-voters, --panel-min-members, --high-reference-line and --gate-threshold
+// argparse declares --floor, --min-voters, --panel-min-members and --gate-threshold
 // as `type=int`, which rejects "4.0". A model that rounds to a whole number still hands it over as a JSON
 // number, so the conversion happens here.
 Test_integer_flags_carry_no_decimal_point := func() {
 	args := va.build({
 		barcodeSeqColumn: "Sequence", featureNameColumn: "Name",
 		countFloor: 4.0, minVotingCells: 2.0, gateThreshold: 40.0,
-		panelReferenceMinMembers: 8.0, highReferenceLine: 100.0,
+		panelReferenceMinMembers: 8.0,
 		distributionMinCells: 300.0
 	})
 	test.isEqual("4", va.valueOf(args, "--floor"), "the count floor reaches argparse as an integer")

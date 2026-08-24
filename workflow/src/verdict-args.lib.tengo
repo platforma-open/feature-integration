@@ -32,7 +32,6 @@ PARAMETER_NAMES := [
 	"distributionMinCells",
 	"gateThreshold",
 	"grouping",
-	"highReferenceLine",
 	"minAgreement",
 	"minVotingCells",
 	"panelReferenceMinMembers",
@@ -42,14 +41,13 @@ PARAMETER_NAMES := [
 ]
 
 // Defaults mirroring the CLI's own (verdict.py DEFAULT_FLOOR, BOUND_CUTOFF, combine.py DEFAULT_MIN_VOTERS,
-// DEFAULT_PANEL_MIN_MEMBERS, DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE). Restated rather than left to
+// DEFAULT_PANEL_MIN_MEMBERS). Restated rather than left to
 // argparse, so the value that produced a run is always on the command line, where the run record and a
 // re-run both see it. A parameter carried only as a CLI default drifts the moment one side changes.
 DEFAULT_COUNT_FLOOR := 4
 DEFAULT_BOUND_CUTOFF := 75
 DEFAULT_MIN_VOTING_CELLS := 1
 DEFAULT_PANEL_MIN_MEMBERS := 25
-DEFAULT_HIGH_REFERENCE_LINE := 100
 DEFAULT_DISTRIBUTION_MIN_CELLS := 300
 
 _num := func(value, fallback) {
@@ -115,7 +113,6 @@ build := func(params) {
 	add("--floor", _intArg(_num(params.countFloor, DEFAULT_COUNT_FLOOR)))
 	add("--cutoff", string(_num(params.boundCutoff, DEFAULT_BOUND_CUTOFF)))
 	add("--min-voters", _intArg(_num(params.minVotingCells, DEFAULT_MIN_VOTING_CELLS)))
-	add("--high-reference-line", _intArg(_num(params.highReferenceLine, DEFAULT_HIGH_REFERENCE_LINE)))
 
 	// A switch, and it carries its value rather than standing alone. The vector is flag/value pairs: `valueOf`
 	// reads the next element, and the parity assertion at the end catches a dropped value. A bare flag would

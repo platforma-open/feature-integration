@@ -130,7 +130,6 @@ def cells_reading_nothing(floored: pl.DataFrame, cells: set[tuple[str, str]]) ->
 # fifteen-tag cap of an antibody kit, so a panel declaring no comparator falls to the
 # per-tag distribution rung rather than standing in as its own background.
 DEFAULT_PANEL_MIN_MEMBERS = 25
-DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE = 100
 
 
 class ReferenceChoice(str, Enum):
@@ -305,21 +304,26 @@ def reference_by_cell(
 def gate_cells(
     reference: dict[tuple[str, str], int],
     threshold: int | None,
-    observation_line: int = DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE,
-) -> tuple[set[tuple[str, str]], int]:
-    """Which cells a declared gate sets aside, and how many read high regardless.
+) -> tuple[set[tuple[str, str]], int | None]:
+    """Which cells a declared gate sets aside, and how many read high.
 
-    The gate defaults off. The exposure count is returned either way, so a scientist
-    who left the gate off can still see the run's exposure. A sticky cell left in
-    returns as a confident *not bound*, the collapse the four-state model prevents.
+    ONE threshold does both jobs. `290-reference-two-roles` allows no second line: *how
+    many are high* needs a high, and only a declared gate supplies one. So the cells set
+    aside and the cells counted high are the same cells, by construction.
+
+    The gate defaults off, and then the count is None rather than zero. There is no
+    boundary to count against, so the run's exposure is reported as the SPREAD of the
+    readings instead -- which is what a scientist reads in order to declare a gate. A
+    count against a line nobody drew would assert a boundary and answer a question
+    nobody asked.
+
+    A sticky cell left in returns as a confident *not bound*, the collapse the four-state
+    model prevents, so the exposure is surfaced either way -- in one form or the other.
     """
-    # Independent of the gate: it measures how many cells sat in high background,
-    # whether or not anything was set aside. Folding it into the threshold would lose
-    # that measurement.
-    high = sum(1 for v in reference.values() if v >= observation_line)
     if threshold is None:
-        return set(), high
-    return {k for k, v in reference.items() if v >= threshold}, high
+        return set(), None
+    gated = {k for k, v in reference.items() if v >= threshold}
+    return gated, len(gated)
 
 
 # The cutoff and the three beta constants are the dominant tool's, inherited rather

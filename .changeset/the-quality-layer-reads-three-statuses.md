@@ -27,3 +27,9 @@ Under a declared baseline nothing is fitted, and every row says that rather than
 **The run's scores now have a spread.** The score is computed for every cell and identity, used for one comparison against the cutoff, and was then dropped. It reaches the measurement set as deciles: one figure for the whole run, because the cutoff is one number for the run. A scientist may move that cutoff to where their own run's scores separate, and that licence is unusable unless the scores are in front of them — until now it was set blind.
 
 The measurement carries no line, since a line here would be the block placing the cutoff instead. A population baseline yields a probability rather than a score, and under it the row says so rather than printing a number from the wrong rule. The measurement set gains a **run** grain, which is a grain of one.
+
+**The sticky measurement takes two forms, and the gate decides which.** The block carried two thresholds on a cell's reference reading: the admissibility gate, which sets a cell aside, and a separate observation line defaulted to 100, which counted cells as sticky. Only one exists in the spec. `060-parameter-set` lists seven parameters and a sticky line is not among them, and `290-reference-two-roles` is explicit that *how many are high* needs a high, and only a declared gate supplies one.
+
+So **Sticky cell threshold** is gone from the settings, along with its parameter and its `--high-reference-line` flag. With a gate declared, the cells counted high are the cells it set aside — one number, both jobs. With no gate declared, which is the default, there is no *high* to count and the measurement is the **spread of the reference readings** instead. That spread is what a scientist reads in order to place a gate, and until now a first run offered a count against a line nobody had chosen.
+
+A stored project carrying the old value keeps running; the field is simply no longer read.

@@ -182,7 +182,6 @@ blockTest.skip(
         // .meta/milab-6496-ui-first-logic-debt-20260824.md.
         panelReferenceMinMembers: 25,
         distributionMinCells: 300,
-        highReferenceLine: 100,
         tableState: createPlDataTableStateV2(),
         qcSummaryTableState: createPlDataTableStateV2(),
         punchcardTableState: createPlDataTableStateV2(),

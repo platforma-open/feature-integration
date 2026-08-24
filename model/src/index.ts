@@ -31,7 +31,7 @@ export { createPlDataTableStateV2 } from "@platforma-sdk/model";
 export type { PTableKey } from "@platforma-sdk/model";
 
 // The reading's shipped defaults, restating the Python's own (verdict.py DEFAULT_FLOOR, BOUND_CUTOFF,
-// DEFAULT_PANEL_MIN_MEMBERS, DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE, combine.py DEFAULT_MIN_VOTERS) so
+// DEFAULT_PANEL_MIN_MEMBERS, combine.py DEFAULT_MIN_VOTERS) so
 // the user can see and change the value that produced a run. Each is a declared default, not a
 // calibrated line: nothing published sets any of them.
 const DEFAULT_COUNT_FLOOR = 4;
@@ -47,7 +47,6 @@ const DEFAULT_PANEL_REFERENCE_MIN_MEMBERS = 25;
 // deep one must be -- so it ships as a declared default a run can move and report moving. Mirrors
 // tag_distribution.py.
 const DEFAULT_DISTRIBUTION_MIN_CELLS = 300;
-const DEFAULT_HIGH_REFERENCE_LINE = 100;
 
 // The punchcard's frame is keyed on the clonotype set alone, and each identity is a COLUMN rather than
 // an axis value: that is what a punchcard needs, and a (set, identity) frame cannot give it to a table.
@@ -430,7 +429,6 @@ type BlockDataV2 = Omit<
   | "minVotingCells"
   | "minAgreement"
   | "gateThreshold"
-  | "highReferenceLine"
   | "grouping"
   | "contendingGroups"
   | "verdictTableState"
@@ -485,7 +483,6 @@ const dataModel = new DataModelBuilder()
       minVotingCells: DEFAULT_MIN_VOTING_CELLS,
       panelReferenceMinMembers: DEFAULT_PANEL_REFERENCE_MIN_MEMBERS,
       distributionMinCells: DEFAULT_DISTRIBUTION_MIN_CELLS,
-      highReferenceLine: DEFAULT_HIGH_REFERENCE_LINE,
       verdictTableState: createPlDataTableStateV2(),
       antigenQcTableState: createPlDataTableStateV2(),
       panelMismatchTableState: createPlDataTableStateV2(),
@@ -523,7 +520,6 @@ const dataModel = new DataModelBuilder()
     minVotingCells: DEFAULT_MIN_VOTING_CELLS,
     panelReferenceMinMembers: DEFAULT_PANEL_REFERENCE_MIN_MEMBERS,
     distributionMinCells: DEFAULT_DISTRIBUTION_MIN_CELLS,
-    highReferenceLine: DEFAULT_HIGH_REFERENCE_LINE,
     tableState: createPlDataTableStateV2(),
     qcSummaryTableState: createPlDataTableStateV2(),
     punchcardTableState: createPlDataTableStateV2(),
@@ -794,7 +790,6 @@ export const platforma = BlockModelV3.create(dataModel)
         typeof data.gateThreshold === "number" && data.gateThreshold > 0
           ? Math.round(data.gateThreshold)
           : undefined,
-      highReferenceLine: Math.round(data.highReferenceLine),
       // A rule over declared panel properties, never a tag->identity map. Absent means one identity per tag,
       // which is the reading's own default, so no hand-built { by: "tag" } is sent in its place. Normalised
       // to a list here so the software receives one shape. It reads the older `column` too, but a run

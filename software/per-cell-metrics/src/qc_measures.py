@@ -217,14 +217,18 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "sample",
         "Reads and distinct UMIs per cell barcode.",
     ),
+    # Two forms, and the gate decides which. `290-reference-two-roles`: how many are high
+    # needs a high, and only a declared gate supplies one. With a gate the value counts the
+    # cells it set aside; with none it is the median of the readings and the detail carries
+    # their deciles, which is what a scientist reads in order to declare a gate.
+    #
+    # No line either way. Nothing published says what share of cells is too high, nor what a
+    # background reading of any size means -- both are read against the run's own spread.
     Measurement(
         "highReferenceCells",
-        "Cells carrying a high reference reading",
+        "Sticky cells, or the spread of the readings where no gate is declared",
         "sample",
-        # No line: the observation line is the per-cell threshold deciding which cells to
-        # count, not a defended line on the share reported. Nothing published says what
-        # share of cells is too high, so the share is shown and the reader judges.
-        "Cells whose reference reading is at or above the observation line.",
+        "Cells whose reference reading reached the declared gate, or the spread of those readings.",
     ),
     # The id is a value on the `measurement` axis, so renaming it does not break the column --
     # it splits the rows. Old runs would carry one measurement name and new runs another, and a

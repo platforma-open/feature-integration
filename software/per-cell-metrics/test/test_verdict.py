@@ -7,7 +7,6 @@ from scipy.stats import beta
 from verdict import (
     BOUND_CUTOFF,
     DEFAULT_FLOOR,
-    DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE,
     DEFAULT_PANEL_MIN_MEMBERS,
     Admissibility,
     ReferenceChoice,
@@ -231,7 +230,6 @@ def test_shipped_defaults_are_pinned():
     # supports. At 25 the rung is out of reach of any antibody panel, since those kits cap at fifteen
     # tags, and such a panel falls to the tag-distribution rung instead.
     assert DEFAULT_PANEL_MIN_MEMBERS == 25
-    assert DEFAULT_HIGH_REFERENCE_OBSERVATION_LINE == 100
 
 
 def test_panel_source_serves_exactly_at_the_minimum():
@@ -257,30 +255,36 @@ def test_the_gate_boundary_includes_the_line_itself():
     # comparison is a deliberate act.
     at_line = {("S1", "c1"): 100}
     just_below = {("S1", "c2"): 99}
-    aside_at, high_at = gate_cells(at_line, threshold=100, observation_line=100)
-    aside_below, high_below = gate_cells(just_below, threshold=100, observation_line=100)
+    aside_at, high_at = gate_cells(at_line, threshold=100)
+    aside_below, high_below = gate_cells(just_below, threshold=100)
     assert aside_at == {("S1", "c1")} and high_at == 1
     assert aside_below == set() and high_below == 0
 
 
-def test_the_observation_line_is_independent_of_the_gate_threshold():
-    # The two lines are separate parameters and must be given separate values
-    # here: with them equal, no assertion can tell whether the exposure count
-    # follows the observation line or the gate. It must follow the observation
-    # line, because it measures how many cells sat in high background — true
-    # whether or not the gate removed any of them.
+def test_one_threshold_does_both_jobs():
+    # 290-reference-two-roles allows one line here, not two: how many are high needs a high, and
+    # only a declared gate supplies one. So the cells set aside and the cells counted high are the
+    # SAME cells, by construction. A second observation line used to make the count independent of
+    # the gate, which meant counting against a boundary nobody declared.
     ref = {("S1", "a"): 500, ("S1", "b"): 50, ("S1", "c"): 2000}
 
-    aside_off, high_off = gate_cells(ref, threshold=None, observation_line=100)
-    assert aside_off == set() and high_off == 2
+    aside_hi, high_hi = gate_cells(ref, threshold=1000)
+    assert aside_hi == {("S1", "c")}
+    assert high_hi == len(aside_hi)
 
-    # Gate stricter than the observation line: fewer set aside, same exposure.
-    aside_hi, high_hi = gate_cells(ref, threshold=1000, observation_line=100)
-    assert aside_hi == {("S1", "c")} and high_hi == 2
+    aside_lo, high_lo = gate_cells(ref, threshold=10)
+    assert aside_lo == {("S1", "a"), ("S1", "b"), ("S1", "c")}
+    assert high_lo == len(aside_lo)
 
-    # Gate looser than the observation line: more set aside, same exposure.
-    aside_lo, high_lo = gate_cells(ref, threshold=10, observation_line=100)
-    assert aside_lo == {("S1", "a"), ("S1", "b"), ("S1", "c")} and high_lo == 2
+
+def test_no_gate_counts_nothing_rather_than_counting_zero():
+    # None, never 0. A zero would report a run in which no cell read high, which is a finding. With
+    # no gate there is no *high* to read against at all, and the caller reports the spread of the
+    # readings instead -- what a scientist reads in order to declare a gate.
+    ref = {("S1", "a"): 500, ("S1", "b"): 50, ("S1", "c"): 2000}
+    aside, high = gate_cells(ref, threshold=None)
+    assert aside == set()
+    assert high is None
 
 
 def test_a_source_that_cannot_be_served_refuses_and_never_moves_sideways():
