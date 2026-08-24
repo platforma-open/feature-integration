@@ -24,23 +24,63 @@ import math
 from collections.abc import Collection
 from dataclasses import dataclass
 from enum import Enum
+from typing import NamedTuple
 
 import numpy as np
 import polars as pl
 
 
+# Three values and no fourth. `310-qc-status-and-rollup` refuses a fourth and a fifth on the
+# grounds that a reader meeting five words in one column reads them as a scale. The two cases
+# a fourth word covered are read from the VALUE instead: a computed measurement shows its
+# number, and one the run could not supply the inputs for shows the reason in place of one.
+#
+# So a measurement with no line behind it carries no status -- `status_for` returns None --
+# and the row is still there. The strings are the atom's own, casing included, so a reader
+# checking the column against the spec finds the same words.
 class Status(str, Enum):
-    ACCEPTABLE = "acceptable"
-    ALERTING = "alerting"
-    UNJUDGED = "unjudged"
-    NOT_EVALUATED = "not evaluated"
+    OK = "OK"
+    WARN = "warn"
+    ALERT = "alert"
+
+
+class Line(NamedTuple):
+    """Where a measurement's boundaries sit.
+
+    Two thresholds, because all four inherited lines arrive with both and collapsing them
+    loses a distinction somebody calibrated. `315-where-the-lines-come-from` keeps the
+    field's word *error* for the second threshold while the status it produces is *alert*.
+
+    `error` is None where only one boundary was published. A stated recommendation gives one
+    number, so sequencing depth warns and never alerts.
+    """
+
+    warn: float
+    error: float | None = None
+
+
+class Reading(NamedTuple):
+    """How one measurement came back, as `roll_up` needs to count it.
+
+    The status alone is no longer enough. Both no-status cases return None from
+    `status_for`, and the coverage triple still separates them, so the value has to travel
+    with the status -- a number means computed-but-unjudged, its absence means nothing
+    computed it.
+    """
+
+    status: Status | None
+    value: float | None
 
 
 @dataclass(frozen=True)
 class Coverage:
-    """A level's status, and how much of it was actually checked."""
+    """A level's status, and how much of it was actually checked.
 
-    status: Status
+    `status` is None where nothing at this level carried one. A level with nothing judged
+    makes no claim, which is the same refusal one level up.
+    """
+
+    status: Status | None
     judged: int
     unjudged: int
     not_evaluated: int
@@ -221,11 +261,22 @@ MEASUREMENTS: tuple[Measurement, ...] = (
 LINE_ROUTES: frozenset[str] = frozenset({"inherited", "categorical", "recommended-and-observed"})
 
 # Every line is a parameter with a shipped default, and the operator may override any of
-# them. No line is invented -- where none of the three routes applies the measurement stays
-# unjudged rather than being given a number with nothing behind it.
-DEFAULT_LINES: dict[str, float] = {
-    "panelAssignedFraction": 0.5,  # inherited: complement of the field's 0.50 unrecognized line
-    "readsPerCell": 5_000,  # recommended-and-observed: the vendor's per-cell depth
+# them. No line is invented -- where none of the three routes applies the measurement carries
+# no status rather than being given a number with nothing behind it.
+#
+# Three of the five lines `315-where-the-lines-come-from` publishes are missing, and two of
+# the three are missing because the measurement itself is: the aggregate-barcode fraction is
+# deferred, and the barcode-validity fraction is not computed here at all. The third, the
+# undeclared-barcode fraction, is an open question -- the field's line is on a per-sample
+# share and this block reports per sequence.
+DEFAULT_LINES: dict[str, Line] = {
+    # `error` at total failure, which is where three of the four inherited lines put it: a
+    # catastrophe rather than a degree. `warn` is 0.5 rather than the field's 0.20 because the
+    # quantity differs -- see the drift recorded on the measurement above. Resolving that is
+    # what moves this number.
+    "panelAssignedFraction": Line(warn=0.5, error=0.0),
+    # One published number gives one boundary, so depth warns and never alerts.
+    "readsPerCell": Line(warn=5_000),
 }
 
 # How each line is read. Deliberately *not* overridable: an operator moves a number, never
@@ -237,62 +288,99 @@ DEFAULT_LINES: dict[str, float] = {
 #
 # In every case the named value satisfies the condition it names.
 #
-# `at-most` and `alerting-at` have no member. Both are kept because each is one of the
-# three readings a line can have. `alerting-at` was `declaredNeverSeen`, which now carries
-# no status. The only `at-most` candidate was the undeclared-barcode fraction, which ships
-# unjudged for want of a defensible line rather than a direction.
-_COMPARISON: dict[str, str] = {
-    "panelAssignedFraction": "at-least",
-    "readsPerCell": "at-least",
+# How each line's thresholds are read. Deliberately *not* in DEFAULT_LINES: an operator moves
+# a number, never a direction.
+#
+#   at-least    OK at or above the threshold, bad strictly below
+#   at-most     OK at or below the threshold, bad strictly above
+#   alerting-at bad where the value equals the threshold
+#
+# In every case the named value satisfies the condition it names.
+#
+# The two thresholds of one line are read INDEPENDENTLY, because `315-where-the-lines-come-from`
+# reads them that way. Three of the four inherited lines warn on a direction and put error at
+# total failure -- "at 0", "at 1.0" -- which is `alerting-at` and not a further step along the
+# warn direction. Only the fourth, barcode validity, steps the same way twice: warn below 0.75,
+# error below 0.50. One direction per measurement collapsed those into one, and a fraction whose
+# error sits "at 0" could then never alert, since nothing is below zero.
+#
+# The second entry is None where the line published no error threshold.
+#
+# `at-most` has no member. Two of the field's four inherited lines read that way and neither is
+# registered: the aggregate-barcode fraction is deferred, and the undeclared-barcode fraction
+# ships with no line for want of a defensible one rather than a direction.
+_COMPARISON: dict[str, tuple[str, str | None]] = {
+    "panelAssignedFraction": ("at-least", "alerting-at"),
+    "readsPerCell": ("at-least", None),
 }
 
-_ORDINAL = {Status.ACCEPTABLE: 0, Status.ALERTING: 1}
+
+def _breaches(value: float, threshold: float, comparison: str) -> bool:
+    """Whether a value falls the wrong side of one threshold."""
+    if comparison == "at-least":
+        return value < threshold
+    if comparison == "at-most":
+        return value > threshold
+    return value == threshold
+
+
+_ORDINAL = {Status.OK: 0, Status.WARN: 1, Status.ALERT: 2}
 
 _DEFERRED: frozenset[str] = frozenset(m.id for m in MEASUREMENTS if m.deferred_reason)
 
 
-def status_for(measurement: str, value: float | None, lines: dict[str, float]) -> Status:
-    """How one measurement reads, given the lines in force.
+def _computed(value: float | None) -> bool:
+    """Whether a number came back at all.
 
-    A deferred measurement is not evaluated whatever it is handed: nothing computes it, so
-    a value reaching here is a caller's mistake and must not be laundered into a judgement
-    about the run.
-
-    Every declared measurement gets an answer. One with no line in force reads unjudged,
-    which is honest: it was computed, no line stands behind it, so nothing is claimed.
+    A non-finite value counts as absent. Every `<` and `>` against NaN is False, so treating
+    it as a number let it fall through to the acceptable branch -- corrupt input reading
+    green, the one status a reader will not investigate. +inf read green too against an
+    at-least line, and -inf happened to alert. One rule for "not a finite number" is easier
+    to defend than a rule whose answer depends on the sign.
     """
-    # A non-finite value is treated exactly as an absent one. Every `<` and `>` against NaN
-    # is False, so without this a NaN fell through to `bad = False` and read ACCEPTABLE --
-    # corrupt input reading green, the one status a reader will not investigate. +inf read
-    # green too, against an at-least line, and -inf happened to alert. One rule for "not a
-    # finite number" is easier to defend than a rule whose answer depends on the sign.
-    if measurement in _DEFERRED or value is None or not math.isfinite(value):
-        return Status.NOT_EVALUATED
+    return value is not None and math.isfinite(value)
+
+
+def status_for(measurement: str, value: float | None, lines: dict[str, Line]) -> Status | None:
+    """How one measurement reads, given the lines in force. None where no line stands behind it.
+
+    Three answers and no fourth. A deferred measurement, a measurement with no number, and a
+    measurement with no line all carry no status -- and which of those happened is read from
+    the value, not from a fourth word in this column.
+
+    A deferred measurement carries none whatever it is handed: nothing computes it, so a
+    value reaching here is a caller's mistake and must not be laundered into a judgement
+    about the run.
+    """
+    if measurement in _DEFERRED or not _computed(value):
+        return None
     if measurement not in lines:
-        return Status.UNJUDGED
+        return None
     line = lines[measurement]
-    comparison = _COMPARISON[measurement]
-    if comparison == "at-least":
-        bad = value < line
-    elif comparison == "at-most":
-        bad = value > line
-    else:
-        bad = value == line
-    return Status.ALERTING if bad else Status.ACCEPTABLE
+    warn_comparison, error_comparison = _COMPARISON[measurement]
+    # Error first, so a value past both boundaries reads alert rather than warn. Where the line
+    # published no error threshold the measurement warns and never alerts, whatever its value.
+    if line.error is not None and error_comparison is not None and _breaches(value, line.error, error_comparison):
+        return Status.ALERT
+    if _breaches(value, line.warn, warn_comparison):
+        return Status.WARN
+    return Status.OK
 
 
-def roll_up(statuses: list[Status]) -> Coverage:
+def roll_up(readings: list[Reading]) -> Coverage:
     """The worst status among those that carry one, plus coverage.
 
-    Coverage stays out of the ordinal because acceptable/alerting and not-evaluated answer
-    different questions. The first says whether something is wrong, the second whether
-    anybody looked. Ranked on one scale, an unchecked run becomes indistinguishable from a
-    checked one.
+    Coverage stays out of the ordinal because a status and a non-status answer different
+    questions. The first says whether something is wrong, the second whether anybody looked.
+    Ranked on one scale, an unchecked run becomes indistinguishable from a checked one.
+
+    A level with nothing judged carries no status. Given one of OK the run would look
+    checked, and given one of alert a scientist would chase a problem that does not exist.
     """
-    judged = [s for s in statuses if s in _ORDINAL]
-    unjudged = sum(1 for s in statuses if s is Status.UNJUDGED)
-    not_evaluated = sum(1 for s in statuses if s is Status.NOT_EVALUATED)
-    status = max(judged, key=lambda s: _ORDINAL[s]) if judged else Status.NOT_EVALUATED
+    judged = [r.status for r in readings if r.status is not None]
+    unjudged = sum(1 for r in readings if r.status is None and _computed(r.value))
+    not_evaluated = sum(1 for r in readings if r.status is None and not _computed(r.value))
+    status = max(judged, key=lambda s: _ORDINAL[s]) if judged else None
     return Coverage(status, len(judged), unjudged, not_evaluated)
 
 
@@ -322,7 +410,9 @@ def measurement_row(m: Measurement) -> dict:
         "level": m.level,
         "counts": m.counts,
         "implies": m.implies,
-        "status": Status.NOT_EVALUATED if m.deferred_reason else None,
+        # No status, ever. A declaration is not a reading, and a deferred measurement carries
+        # its reason in place of a number rather than a fourth status word.
+        "status": None,
         "reason": m.deferred_reason,
     }
 

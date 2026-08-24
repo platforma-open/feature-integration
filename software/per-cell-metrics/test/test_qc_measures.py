@@ -7,7 +7,9 @@ from qc_measures import (
     LINE_ROUTES,
     MEASUREMENTS,
     Coverage,
+    Line,
     Measurement,
+    Reading,
     Status,
     antigen_count_deciles,
     measurement_rows,
@@ -54,14 +56,16 @@ def test_a_comparison_is_not_a_line():
 def test_tag_disagreement_reads_unjudged():
     # Such measurements read unjudged and are shown where the comparison is free
     # to make: a column beside its siblings. The value still travels.
-    assert status_for("tagDisagreement", 0.24, DEFAULT_LINES) is Status.UNJUDGED
+    assert status_for("tagDisagreement", 0.24, DEFAULT_LINES) is None
 
 
 def test_no_measurement_is_refused_by_status_for():
     # The against-the-run route was the only case `status_for` raised on. With it
-    # gone, every declared measurement gets an answer rather than an exception.
+    # gone, every declared measurement gets an answer rather than an exception. None is
+    # an answer: it says no line stands behind this one.
     for m in MEASUREMENTS:
-        assert isinstance(status_for(m.id, 0.5, DEFAULT_LINES), Status), m.id
+        answer = status_for(m.id, 0.5, DEFAULT_LINES)
+        assert answer is None or isinstance(answer, Status), m.id
 
 
 def test_self_disagreement_is_measured_at_the_tag_and_nowhere_else():
@@ -191,7 +195,7 @@ def test_deferred_measurement_reasons_are_stated():
             assert m.implies is None, m.id
 
 
-def test_deferred_measurement_produces_a_not_evaluated_row_with_its_reason():
+def test_deferred_measurement_produces_a_row_with_its_reason_and_no_status():
     rows = measurement_rows()
     # Never absent: every declared id, deferred or not, has a row.
     assert {r["id"] for r in rows} == {m.id for m in MEASUREMENTS}
@@ -199,7 +203,9 @@ def test_deferred_measurement_produces_a_not_evaluated_row_with_its_reason():
     by_id = {r["id"]: r for r in rows}
     for deferred_id in DEFERRED_IDS:
         row = by_id[deferred_id]
-        assert row["status"] == "not evaluated"
+        # A declaration is not a reading, so no row here carries a status. The reason is what
+        # tells a reader nothing computed this one.
+        assert row["status"] is None
         assert row["reason"]
 
 
@@ -353,8 +359,15 @@ def test_antigen_count_deciles_empty_sample():
     assert all(v is None for v in out["value"].to_list())
 
 
-def test_four_readings_only_two_are_statuses():
-    assert {s.value for s in Status} == {"acceptable", "alerting", "unjudged", "not evaluated"}
+def test_three_statuses_and_no_fourth():
+    # Atom 310 refuses a fourth and a fifth: a reader meeting five words in one column reads
+    # them as a scale. The two cases a fourth word covered are read from the value instead.
+    assert {s.value for s in Status} == {"OK", "warn", "alert"}
+
+
+def test_a_measurement_with_no_line_carries_no_status_rather_than_a_fourth_word():
+    assert status_for("antigenCountDistribution", 12, DEFAULT_LINES) is None
+    assert status_for("readsPerCell", None, DEFAULT_LINES) is None
 
 
 # --- the route is the single authority -------------------------------------
@@ -376,6 +389,14 @@ def test_a_measurement_with_a_route_has_a_line_and_a_comparison_and_nothing_else
     assert set(_COMPARISON) == routed
 
 
+def test_a_line_without_an_error_threshold_declares_no_error_comparison():
+    # Two places say "this line has no error threshold" and they must agree, or a line would
+    # carry a direction for a boundary it does not have.
+    for measurement, line in DEFAULT_LINES.items():
+        _, error_comparison = _COMPARISON[measurement]
+        assert (line.error is None) == (error_comparison is None), measurement
+
+
 def test_an_unjudged_measurement_claims_nothing_about_a_bad_value():
     # Atom 315: where no line can be defended, nothing is said about what a bad
     # value would mean, because nothing is known.
@@ -388,7 +409,7 @@ def test_reads_total_and_high_reference_cells_are_unjudged():
     by_id = {m.id: m for m in MEASUREMENTS}
     assert by_id["readsTotal"].line is None
     assert by_id["highReferenceCells"].line is None
-    assert status_for("readsTotal", 0.5, DEFAULT_LINES) is Status.UNJUDGED
+    assert status_for("readsTotal", 0.5, DEFAULT_LINES) is None
 
 
 def test_the_invented_matched_fraction_line_is_gone():
@@ -400,18 +421,48 @@ def test_the_invented_matched_fraction_line_is_gone():
 
 
 def test_depth_line_is_a_parameter_not_a_literal():
-    assert DEFAULT_LINES["readsPerCell"] == 5_000
-    assert status_for("readsPerCell", 4_000, {"readsPerCell": 5_000}) is Status.ALERTING
-    assert status_for("readsPerCell", 4_000, {"readsPerCell": 1_000}) is Status.ACCEPTABLE
+    assert DEFAULT_LINES["readsPerCell"] == Line(warn=5_000)
+    assert status_for("readsPerCell", 4_000, {"readsPerCell": Line(5_000)}) is Status.WARN
+    assert status_for("readsPerCell", 4_000, {"readsPerCell": Line(1_000)}) is Status.OK
+
+
+def test_a_stated_recommendation_warns_and_never_alerts():
+    # Atom 315: "One number gives one boundary, so it warns and never alerts." Depth has no
+    # published error threshold, so no value of it can reach alert -- not even zero.
+    assert DEFAULT_LINES["readsPerCell"].error is None
+    assert status_for("readsPerCell", 0, DEFAULT_LINES) is Status.WARN
+    assert status_for("readsPerCell", -1_000_000, DEFAULT_LINES) is Status.WARN
+
+
+def test_two_thresholds_give_three_levels():
+    # The distinction collapsing them lost. Three of the four inherited lines put error at total
+    # failure, so a low-but-non-zero share warns and only a wholly failed one alerts.
+    line = DEFAULT_LINES["panelAssignedFraction"]
+    assert (line.warn, line.error) == (0.5, 0.0)
+    assert status_for("panelAssignedFraction", 0.6, DEFAULT_LINES) is Status.OK
+    assert status_for("panelAssignedFraction", 0.1, DEFAULT_LINES) is Status.WARN
+    assert status_for("panelAssignedFraction", 0.0, DEFAULT_LINES) is Status.ALERT
+
+
+def test_error_is_tested_before_warn(monkeypatch):
+    # A value past both boundaries reads alert. Tested warn-first it would read warn, and the
+    # worse finding would be the one that never showed. Barcode validity is the shipped line
+    # that steps the same way twice -- warn below 0.75, error below 0.50 -- and it is not
+    # computed here yet, so the case is exercised against a registered stand-in.
+    monkeypatch.setitem(_COMPARISON, "syntheticTwoStep", ("at-least", "at-least"))
+    lines = {"syntheticTwoStep": Line(warn=0.75, error=0.50)}
+    assert status_for("syntheticTwoStep", 0.80, lines) is Status.OK
+    assert status_for("syntheticTwoStep", 0.60, lines) is Status.WARN
+    assert status_for("syntheticTwoStep", 0.40, lines) is Status.ALERT
 
 
 def test_at_least_is_acceptable_exactly_at_the_line():
     # Atom 315 alerts *below* the recommendation, so the recommendation itself
     # is acceptable. The named value satisfies the condition it names.
-    assert status_for("readsPerCell", 5_000, DEFAULT_LINES) is Status.ACCEPTABLE
-    assert status_for("readsPerCell", 4_999, DEFAULT_LINES) is Status.ALERTING
-    assert status_for("panelAssignedFraction", 0.5, DEFAULT_LINES) is Status.ACCEPTABLE
-    assert status_for("panelAssignedFraction", 0.49, DEFAULT_LINES) is Status.ALERTING
+    assert status_for("readsPerCell", 5_000, DEFAULT_LINES) is Status.OK
+    assert status_for("readsPerCell", 4_999, DEFAULT_LINES) is Status.WARN
+    assert status_for("panelAssignedFraction", 0.5, DEFAULT_LINES) is Status.OK
+    assert status_for("panelAssignedFraction", 0.49, DEFAULT_LINES) is Status.WARN
 
 
 def test_at_most_is_acceptable_exactly_at_the_line(monkeypatch):
@@ -419,10 +470,10 @@ def test_at_most_is_acceptable_exactly_at_the_line(monkeypatch):
     # which now ships unjudged. The reading stays in the vocabulary because a line can be an upper
     # bound as easily as a lower one, so it is exercised against a registered stand-in rather than
     # left as an untested branch.
-    monkeypatch.setitem(_COMPARISON, "syntheticUpperBound", "at-most")
-    lines = {"syntheticUpperBound": 0.1}
-    assert status_for("syntheticUpperBound", 0.1, lines) is Status.ACCEPTABLE
-    assert status_for("syntheticUpperBound", 0.11, lines) is Status.ALERTING
+    monkeypatch.setitem(_COMPARISON, "syntheticUpperBound", ("at-most", None))
+    lines = {"syntheticUpperBound": Line(warn=0.1)}
+    assert status_for("syntheticUpperBound", 0.1, lines) is Status.OK
+    assert status_for("syntheticUpperBound", 0.11, lines) is Status.WARN
 
 
 def test_the_undeclared_barcode_fraction_ships_unjudged():
@@ -435,7 +486,7 @@ def test_the_undeclared_barcode_fraction_ships_unjudged():
     assert by_id["undeclaredBarcodes"].line is None
     assert by_id["undeclaredBarcodes"].implies is None
     assert "undeclaredBarcodes" not in DEFAULT_LINES
-    assert status_for("undeclaredBarcodes", 0.4, DEFAULT_LINES) is Status.UNJUDGED
+    assert status_for("undeclaredBarcodes", 0.4, DEFAULT_LINES) is None
 
 
 def test_a_tag_the_reads_never_show_carries_no_status():
@@ -443,8 +494,8 @@ def test_a_tag_the_reads_never_show_carries_no_status():
     # position reads *never asked* rather than a confident negative. The measurement is a fact on the
     # tag's row, kept for the reagent's sake, and warning a reader off an answer that already says so
     # would be a second voice on one fact.
-    assert status_for("declaredNeverSeen", 0, DEFAULT_LINES) is Status.UNJUDGED
-    assert status_for("declaredNeverSeen", 1, DEFAULT_LINES) is Status.UNJUDGED
+    assert status_for("declaredNeverSeen", 0, DEFAULT_LINES) is None
+    assert status_for("declaredNeverSeen", 1, DEFAULT_LINES) is None
     assert "declaredNeverSeen" not in DEFAULT_LINES
 
 
@@ -457,31 +508,31 @@ def test_the_categorical_route_is_kept_with_no_member():
 
 
 def test_no_defensible_line_means_unjudged():
-    assert status_for("antigenCountDistribution", 12, DEFAULT_LINES) is Status.UNJUDGED
+    assert status_for("antigenCountDistribution", 12, DEFAULT_LINES) is None
 
 
 def test_a_deferred_measurement_is_never_unjudged_even_holding_a_value():
-    assert status_for("aggregateBarcodeFraction", 0.9, DEFAULT_LINES) is Status.NOT_EVALUATED
+    assert status_for("aggregateBarcodeFraction", 0.9, DEFAULT_LINES) is None
 
 
 def test_a_missing_value_is_not_evaluated():
-    assert status_for("readsPerCell", None, DEFAULT_LINES) is Status.NOT_EVALUATED
+    assert status_for("readsPerCell", None, DEFAULT_LINES) is None
 
 
 # --- the three-level rollup -----------------------------------------------
 
 
 def test_rollup_takes_the_worst_status():
-    assert roll_up([Status.ACCEPTABLE, Status.ALERTING]).status is Status.ALERTING
+    assert roll_up([Reading(Status.OK, 1.0), Reading(Status.ALERT, 1.0)]).status is Status.ALERT
 
 
 def test_a_rollup_returns_a_coverage():
-    assert isinstance(roll_up([Status.ACCEPTABLE]), Coverage)
+    assert isinstance(roll_up([Reading(Status.OK, 1.0)]), Coverage)
 
 
 def test_coverage_never_enters_the_ordinal():
-    r = roll_up([Status.ACCEPTABLE, Status.UNJUDGED, Status.NOT_EVALUATED])
-    assert r.status is Status.ACCEPTABLE
+    r = roll_up([Reading(Status.OK, 1.0), Reading(None, 1.0), Reading(None, None)])
+    assert r.status is Status.OK
 
 
 def test_coverage_is_reported_beside_the_status():
@@ -490,23 +541,33 @@ def test_coverage_is_reported_beside_the_status():
     # and "did anybody look" would be silently interchangeable.
     r = roll_up(
         [
-            Status.ACCEPTABLE,
-            Status.ALERTING,
-            Status.UNJUDGED,
-            Status.UNJUDGED,
-            Status.NOT_EVALUATED,
+            Reading(Status.OK, 1.0),
+            Reading(Status.ALERT, 1.0),
+            # No status but a number came back: computed, and no line to judge it against.
+            Reading(None, 1.0),
+            Reading(None, 1.0),
+            # No status and no number: nothing computed it.
+            Reading(None, None),
         ]
     )
     assert (r.judged, r.unjudged, r.not_evaluated) == (2, 2, 1)
 
 
+def test_the_two_no_status_cases_are_told_apart_by_the_value():
+    # Both return None from `status_for`, so the coverage triple is the only thing keeping
+    # "no line to judge it against" apart from "nothing computed it".
+    assert roll_up([Reading(None, 0.0)]).unjudged == 1
+    assert roll_up([Reading(None, 0.0)]).not_evaluated == 0
+    assert roll_up([Reading(None, float("nan"))]).not_evaluated == 1
+
+
 def test_a_level_with_nothing_judgeable_is_not_evaluated():
-    assert roll_up([Status.UNJUDGED, Status.NOT_EVALUATED]).status is Status.NOT_EVALUATED
+    assert roll_up([Reading(None, 1.0), Reading(None, None)]).status is None
 
 
 def test_a_level_with_no_measurements_at_all_is_not_evaluated():
     r = roll_up([])
-    assert r.status is Status.NOT_EVALUATED
+    assert r.status is None
     assert (r.judged, r.unjudged, r.not_evaluated) == (0, 0, 0)
 
 
@@ -525,8 +586,8 @@ def test_a_dead_reagent_does_not_mark_every_sample_alerting():
     # rather than of any one sample. Fed into a sample status, one dead reagent in
     # a panel of twenty tags would mark every sample alerting, which makes that
     # status noise within one run. The sample rolls up its OWN measurements only.
-    samples = [roll_up([Status.ACCEPTABLE]).status for _ in range(3)]
-    assert samples == [Status.ACCEPTABLE] * 3
+    samples = [roll_up([Reading(Status.OK, 1.0)]).status for _ in range(3)]
+    assert samples == [Status.OK] * 3
 
 
 # --- corrupt numbers must never read green -------------------------------------------
@@ -537,12 +598,12 @@ def test_a_dead_reagent_does_not_mark_every_sample_alerting():
 
 
 def test_a_nan_value_is_not_evaluated_rather_than_acceptable():
-    assert status_for("readsPerCell", float("nan"), DEFAULT_LINES) is Status.NOT_EVALUATED
+    assert status_for("readsPerCell", float("nan"), DEFAULT_LINES) is None
 
 
 def test_infinite_values_are_not_evaluated_rather_than_judged():
     # +inf would have read ACCEPTABLE against an at-least line, which is the green reading again. -inf
     # happens to alert, so only one direction was dangerous. But neither is a measurement, and one rule
     # for "not a finite number" is easier to defend than a rule that depends on the sign.
-    assert status_for("readsPerCell", float("inf"), DEFAULT_LINES) is Status.NOT_EVALUATED
-    assert status_for("readsPerCell", float("-inf"), DEFAULT_LINES) is Status.NOT_EVALUATED
+    assert status_for("readsPerCell", float("inf"), DEFAULT_LINES) is None
+    assert status_for("readsPerCell", float("-inf"), DEFAULT_LINES) is None

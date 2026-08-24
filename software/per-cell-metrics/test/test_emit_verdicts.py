@@ -232,8 +232,8 @@ def test_a_tag_noisy_in_one_panel_reads_clean_on_the_panel_it_was_clean_in(bed):
     # Neither row carries a status. A comparison against the other tags in a panel is not
     # a line, so no status can be computed from it, and the value travels instead for a
     # reader to compare.
-    assert by_panel[clean]["status"] == "unjudged"
-    assert by_panel[noisy]["status"] == "unjudged"
+    assert by_panel[clean]["status"] is None
+    assert by_panel[noisy]["status"] is None
 
 
 def test_the_key_only_frames_carry_a_value_column_so_they_can_become_columns(bed):
@@ -330,7 +330,9 @@ def test_no_cell_list_leaves_membership_unknown_and_depth_unevaluated(bed):
 
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
     depth = qc.filter(pl.col("measurement") == "readsPerCell").row(0, named=True)
-    assert depth["status"] == "not evaluated"
+    # No cell list, so no rate. No number means no status, and the row is still there.
+    assert depth["status"] is None
+    assert depth["value"] is None
 
     counts = pl.read_csv(bed / "result_cell_counts.csv", infer_schema_length=0)
     assert set(counts["inCellList"].to_list()) == {"unknown"}, "unclassified is not the same as classified 'no'"
@@ -483,7 +485,7 @@ def test_sequencing_depth_divides_by_the_cell_list_not_by_observed_barcodes(bed)
     # 18000 / 3 listed cells = 6000, which clears the 5000 line.
     # 18000 / 4 observed barcodes = 4500, which would not.
     assert float(depth["value"]) == pytest.approx(6000.0)
-    assert depth["status"] == "acceptable"
+    assert depth["status"] == "OK"
 
 
 def test_the_dense_oracle_is_not_reachable_from_the_entrypoint():
@@ -697,20 +699,25 @@ def test_output_is_byte_stable_across_runs(bed):
 
 
 def test_a_computed_but_unjudged_measurement_is_not_reported_as_unchecked(bed):
-    # `roll_up` answers *not evaluated* for a level with nothing judgeable in it, which is
-    # right for a level and wrong for the measurement itself: a measurement that WAS computed
-    # and carries no defensible line is unjudged, and reporting it as not evaluated collapses
-    # "nothing was wrong" into "nobody looked" -- the one distinction the status set exists to
-    # keep apart. The row keeps its own status. The triple beside it says how much was
-    # checked.
+    # Both no-status cases now leave the status column empty, so the distinction they carry has
+    # to survive somewhere else: the VALUE and the coverage triple beside it. "Computed, and no
+    # line stands behind it" and "nothing computed this" are the one pair the status set exists
+    # to keep apart, and collapsing them reads "nothing was wrong" as "nobody looked".
     _run(bed, *BASE)
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+
+    # Computed, no line: a number, and the triple counts it unjudged.
     floor_row = qc.filter(pl.col("measurement") == "floorRemoved").row(0, named=True)
-    assert floor_row["status"] == "unjudged"
+    assert floor_row["status"] is None
+    assert floor_row["value"] is not None
     assert (floor_row["judged"], floor_row["unjudged"], floor_row["notEvaluated"]) == ("0", "1", "0")
 
+    # Nothing computed it: no number, the reason in its place, and the triple counts it
+    # not-evaluated. Same empty status column, opposite finding.
     deferred = qc.filter(pl.col("measurement") == "aggregateBarcodeFraction").row(0, named=True)
-    assert deferred["status"] == "not evaluated"
+    assert deferred["status"] is None
+    assert deferred["value"] is None
+    assert (deferred["judged"], deferred["unjudged"], deferred["notEvaluated"]) == ("0", "0", "1")
     assert deferred["reason"]  # a deferred measurement says why nothing computed it
 
 

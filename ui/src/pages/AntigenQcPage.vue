@@ -54,11 +54,10 @@ const mismatchAbsent = computed(() => {
 });
 
 // Status is rendered as the plain string the workflow emitted, with the discrete filter its spec declares.
-// Deliberately not a status tag. The vocabulary is `acceptable` and `alerting` as a ranked pair PLUS
-// `unjudged` and `not evaluated`, and those last two are states rather than degrees of badness: `unjudged`
-// means no line exists to judge against, and `not evaluated` means nothing computed it. A tag vocabulary of
-// ALERT / WARN / OK / HOLD cannot carry that. It would either rank the two non-ranks as mild badness or
-// collapse them into one another, and both readings are the mistake this vocabulary exists to prevent.
+// The vocabulary is now OK / warn / alert and nothing else, which IS a rank, so a status tag would fit the
+// three. It stays plain text because of the fourth case a tag cannot render: a measurement with no line
+// behind it leaves this column empty, and an empty cell beside three tags reads as a tag that failed to
+// load. Which of the two no-status cases it is reads from the value column, not from here.
 </script>
 
 <template>
@@ -83,7 +82,7 @@ const mismatchAbsent = computed(() => {
         v-else
         v-model="app.model.data.runQualityTableState"
         :settings="qcSettings"
-        no-rows-text="The report imported with no measurements in it. Every declared measurement should keep a row — a deferred one reads 'not evaluated' with its reason — so an empty report means the measurements were lost on the way here, not that the run was clean."
+        no-rows-text="The report imported with no measurements in it. Every declared measurement should keep a row — a deferred one carries no status and gives its reason in place of a value — so an empty report means the measurements were lost on the way here, not that the run was clean."
         show-export-button
       />
 

@@ -151,7 +151,7 @@ build := func(params) {
 		add("--contending", canonical.encode(params.contendingGroups))
 	}
 	// No capture assignment reaches the block yet, so this is normally absent and every capture rolls up as
-	// not evaluated. Threaded already, so supplying the map is a model change alone.
+	// no status and no value. Threaded already, so supplying the map is a model change alone.
 	if !is_undefined(params.captureMap) {
 		add("--capture-map", canonical.encode(params.captureMap))
 	}

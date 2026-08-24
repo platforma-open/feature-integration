@@ -419,7 +419,7 @@ panelAxis := func(blockId) {
 
 // captureAxis: the physical capture a sample came off. Minted before any capture assignment reaches the
 // block, because adding an axis to a released QC column changes that column's identity, where adding a
-// value to an existing axis does not. Every capture presently rolls up as "not evaluated", the honest
+// value to an existing axis does not. Every capture presently rolls up to no status at all, the honest
 // reading. No emitted column is keyed on it yet. The capture rollup travels as a row in the QC frame, and
 // the axis is exported so the sample->capture map can be added without re-identifying anything.
 captureAxis := func(blockId) {
@@ -476,7 +476,10 @@ ADMISSIBILITY_VALUES := string(json.encode([
 	"admissible",
 	"cell set aside by the admissibility gate",
 	"no comparator for this cell"]))
-QC_STATUSES := string(json.encode(["acceptable", "alerting", "unjudged", "not evaluated"]))
+// Three and no fourth. A measurement with no line behind it leaves this column EMPTY rather than
+// taking a fourth word, and which of the two no-status cases it is reads from the value: a number
+// means computed-with-no-line, its absence means nothing computed it.
+QC_STATUSES := string(json.encode(["OK", "warn", "alert"]))
 MISMATCH_DIRECTIONS := string(json.encode(["declared-never-seen", "undeclared-in-panel"]))
 
 // servedDomain: which comparator and which cell list actually served this run.
@@ -1253,7 +1256,7 @@ qcImportSpec := func(levelAxisSpec, entityAxisSpec, measurementAxisSpec, panelAx
 			col("status", "pl7.app/antigen/qcStatus", "String", "Status", 70000, true, {
 				"pl7.app/isDiscreteFilter": "true",
 				"pl7.app/discreteValues": QC_STATUSES,
-				"pl7.app/description": "'unjudged' means no line exists to judge this against; 'not evaluated' means nothing computed it. Neither is a pass."
+				"pl7.app/description": "Empty means no line stands behind this measurement, which is not a pass. Its value says which: a number was computed and nothing judges it, or the reason there is no number."
 			}),
 			// The coverage triple is shown by default, beside the status rather than folded into it. A status
 			// says whether what was checked is wrong, and the triple says how much of the level was checked at
@@ -1269,7 +1272,7 @@ qcImportSpec := func(levelAxisSpec, entityAxisSpec, measurementAxisSpec, panelAx
 			// that those are deciles of the total antigen count per cell barcode.
 			col("counts", "pl7.app/antigen/qcCounts", "String", "What it counts", 66000, true, {}),
 			col("implies", "pl7.app/antigen/qcImplies", "String", "What a bad value means", 65000, true, {}),
-			// Also shown by default. A row reading "not evaluated" carries the reason nothing computed it, and
+			// Also shown by default. A row nothing computed carries the reason in place of a value, and
 			// a deferral whose reason is one click away is a blank cell to everyone who does not click. That
 			// reads as "checked, and fine", the one thing this vocabulary exists to prevent.
 			col("reason", "pl7.app/antigen/qcReason", "String", "Why deferred", 64000, true, {})

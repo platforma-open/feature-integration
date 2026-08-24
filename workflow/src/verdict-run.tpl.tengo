@@ -103,7 +103,7 @@ self.body(func(inputs) {
 		addFile(va.FILE_LINKER, linkerCsvFile)
 
 	// The per-sample read QC. Without it readsTotal, panelAssignedFraction and readsPerCell have no source and
-	// read "not evaluated", silently, because a non-evaluation is a legitimate state rather than an error.
+	// carry no status and no value, silently, because that is a legitimate state rather than an error.
 	// readsPerCell is the only sequencing-depth alert the block ships.
 	if params.hasQcSummary {
 		b = b.addFile(va.FILE_QC_SUMMARY, inputs.qcSummaryFile)

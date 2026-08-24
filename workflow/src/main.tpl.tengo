@@ -424,7 +424,7 @@ wf.body(func(args) {
 			countsFile: countsGather.output("countsFile"),
 			panelFile: csvFile,
 			// The combined per-sample read QC, from the same child template that imports it as a table. Without
-			// it readsTotal, panelAssignedFraction and readsPerCell have no source and read "not evaluated",
+			// it readsTotal, panelAssignedFraction and readsPerCell have no source and carry no status,
 			// silently, since a non-evaluation is a legitimate state rather than an error. readsPerCell is the
 			// only sequencing-depth alert the block ships.
 			qcSummaryFile: qcSummaryResult.output("qcSummaryCsv"),

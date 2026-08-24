@@ -66,6 +66,7 @@ from qc_measures import (
     DEFAULT_LINES,
     MEASUREMENTS,
     Coverage,
+    Reading,
     Status,
     antigen_count_deciles,
     per_antigen_measures,
@@ -189,7 +190,7 @@ class QcRow(NamedTuple):
     value: float | None
     detail: str
     panel_id: str
-    status: Status
+    status: Status | None
     coverage: Coverage
 
 
@@ -780,13 +781,14 @@ def _pivot_cell_punch(
     )
 
 
-def _leaf(level, entity, measurement, value, detail, panel_id, status: Status) -> QcRow:
+def _leaf(level, entity, measurement, value, detail, panel_id, status: Status | None) -> QcRow:
     """One measurement's row: its own status, and the coverage of that one status.
 
     The triple comes from `roll_up`, so a leaf and a rollup are counted by one rule, and the
     row keeps the status `roll_up` would have flattened.
     """
-    return QcRow(level, entity, measurement, value, detail, panel_id, status, roll_up([status]))
+    reading = Reading(status, value)
+    return QcRow(level, entity, measurement, value, detail, panel_id, status, roll_up([reading]))
 
 
 def _qc_frame(rows: list[QcRow]) -> pl.DataFrame:
@@ -814,7 +816,9 @@ def _qc_frame(rows: list[QcRow]) -> pl.DataFrame:
                 "label": ROLLUP_LABEL if declared is None else declared.label,
                 "value": row.value,
                 "detail": row.detail or None,
-                "status": row.status.value,
+                # Null where no line stands behind the measurement. The reason is read from the
+                # value, which is where a reader looks next anyway.
+                "status": None if row.status is None else row.status.value,
                 "judged": row.coverage.judged,
                 "unjudged": row.coverage.unjudged,
                 "notEvaluated": row.coverage.not_evaluated,
@@ -847,9 +851,9 @@ def _qc_frame(rows: list[QcRow]) -> pl.DataFrame:
 def _add(rows: list[QcRow], level: str, entity: str, measurement: str, value, detail: str = "", panel_id: str = ""):
     """Append one measurement row, taking its status from the lines in force.
 
-    Every declared measurement goes through here. One with no line in force reads unjudged,
-    which is honest rather than a refusal: it was computed, no line stands behind it, so its
-    number is shown and nothing is claimed.
+    Every declared measurement goes through here. One with no line in force carries no
+    status, which is honest rather than a refusal: it was computed, no line stands behind it,
+    so its number is shown and nothing is claimed.
     """
     rows.append(
         _leaf(level, entity, measurement, value, detail, panel_id, status_for(measurement, value, DEFAULT_LINES))
@@ -1551,7 +1555,7 @@ def main() -> None:
         _, high_here = gate_cells(here, None, args.high_reference_line)
         _add(rows, "sample", sample, "highReferenceCells", float(high_here), f"cellsWithAComparator={len(here)}")
 
-        sample_coverage[sample] = roll_up([r.status for r in rows[first:]])
+        sample_coverage[sample] = roll_up([Reading(r.status, r.value) for r in rows[first:]])
 
     per_sample_tag_total = {
         (row["sampleId"], row["tag"]): row["total"]
