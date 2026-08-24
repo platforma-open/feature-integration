@@ -991,14 +991,20 @@ const gridOptions = {
         label="Score at which a cell reads bound (0–100)"
       >
         <template #tooltip>
-          The score at or above which one cell reads that identity as bound. This is a per-cell
-          reading. The clonotype's verdict is the majority of its cells.<br /><br />
-          <b>The score is not a measure of binding strength</b> and cannot stand in for affinity. It
-          is the probability that the identity's reading makes up more than 92.5% of that reading
-          and the cell's baseline reading together, so the same ratio scores higher with more counts
-          behind it.<br /><br />
-          This belongs to the declared-baseline rule alone. Both the 92.5% and the default of 75
-          come from the dominant tool, and neither this block nor anything published justifies them.
+          A cell reads this antigen as bound where its score reaches this number.<br /><br />
+          The score compares two counts in that cell: the antigen's reading, and the baseline
+          reading. It asks whether the antigen makes up more than 92.5% of the two together. The
+          score is how certain that answer is, from 0 to 100.<br /><br />
+          <b>Certainty, not strength.</b> Two counts against zero look perfect and score low,
+          because two counts prove little. Two hundred against two score high. Cell Ranger says of
+          this same score that it is not a measure of binding strength and cannot stand in for
+          affinity.<br /><br />
+          Raise this number to demand more evidence per cell. Lower it to accept thinner
+          readings.<br /><br />
+          A cell is one reading. The clonotype's verdict is the majority of its cells.<br /><br />
+          This setting belongs to the declared-baseline rule alone. The 92.5% and the default of 75
+          are Cell Ranger's code defaults. The 75 appears in none of its documentation, and its own
+          tutorial uses 90 beside a display filter of 25.
         </template>
       </PlNumberField>
       <PlNumberField
