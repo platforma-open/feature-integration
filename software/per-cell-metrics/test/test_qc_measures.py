@@ -674,7 +674,7 @@ def test_seen_in_is_zero_for_a_dead_tag():
 
 
 def test_seen_in_reports_the_panel_size_beside_it():
-    # "Most samples" is unreadable without the denominator.
+    # samplesInPanel is the denominator beside samplesSeenIn.
     counts = _counts(["T1", "T1"], [5, 5], ["S1", "S2"])
     states = _states(["T1"], ["bound"])
 
@@ -698,8 +698,8 @@ def test_a_reference_tag_reports_its_own_seen_in():
 
 
 def test_the_denominator_is_the_declared_roster_not_the_observed_samples():
-    # S3 is in the panel and contributed no rows at all -- a failed library. It must stay in the
-    # denominator, or a tag seen in the two surviving samples reads as seen everywhere.
+    # S3 is in the panel and contributed no rows. samplesInPanel counts it;
+    # samplesSeenIn does not.
     counts = _counts(["T1", "T1"], [5, 5], ["S1", "S2"])
     states = _states(["T1"], ["bound"])
 
