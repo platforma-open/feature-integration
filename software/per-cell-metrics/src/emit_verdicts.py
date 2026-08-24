@@ -1529,6 +1529,10 @@ def main() -> None:
     # Both directions of the panel-versus-reads check, re-keyed onto the panel: a per-tag failure
     # is a property of the declared tag set rather than of any one sample carrying it. The samples
     # reporting it travel in the row.
+    #
+    # `seen` is drawn from the counts, whose feature barcodes were already snapped onto the panel by
+    # refine-tags. So `seen` is a subset of the declared set here, and only the declared-never-seen
+    # direction can produce a row. Reporting an undeclared barcode needs a pre-correction source.
     seen = counts.select("sampleId", "tag").unique()
     unknown_panel = _panel_id(frozenset())
     mismatch_rows: dict[tuple[str, str, str], set[str]] = {}

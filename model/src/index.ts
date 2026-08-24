@@ -405,10 +405,29 @@ function suggestSampleColumn(ctx: BlockRenderCtx<BlockArgs, BlockData>): string 
   return best?.col;
 }
 
+// GraphMaker keeps its own chart configuration here, one per plot: a chart's saved state is about that
+// chart, so sharing one would make picking an axis on the score plot move the background plot too. Shared
+// between `init` and the v4 -> v5 migration so a migrated project opens on the same chart a new one does.
+const INITIAL_GRAPH_STATES = {
+  scoreDistributionGraphState: { title: "Spread of the run's scores", template: "line" },
+  referenceReadingGraphState: { title: "Reference reading across cells", template: "line" },
+  fittedBackgroundGraphState: { title: "Fitted background per tag", template: "dots" },
+} as const satisfies Pick<
+  BlockData,
+  "scoreDistributionGraphState" | "referenceReadingGraphState" | "fittedBackgroundGraphState"
+>;
+
+// v4 data shape: everything the current shape has except the three GraphMaker states, which arrived with
+// the distribution plots.
+type BlockDataV4 = Omit<
+  BlockData,
+  "scoreDistributionGraphState" | "referenceReadingGraphState" | "fittedBackgroundGraphState"
+>;
+
 // v3 data shape: the reading's parameters, with the three grid states the two removed result views owned.
 // v4 replaced them with the punchcard's own state. `punchcardIdentities` is dead on the right-hand side of
 // the Omit and harmless on the left.
-type BlockDataV3 = Omit<BlockData, "punchcardTableState" | "punchcardIdentities"> & {
+type BlockDataV3 = Omit<BlockDataV4, "punchcardTableState" | "punchcardIdentities"> & {
   verdictTableState: PlDataTableStateV2;
   antigenQcTableState: PlDataTableStateV2;
   panelMismatchTableState: PlDataTableStateV2;
@@ -501,13 +520,20 @@ const dataModel = new DataModelBuilder()
   // The Run quality page's two grid states are `runQualityTableState` / `runQualityMismatchTableState`,
   // NOT the two keys stripped here. Never reuse a stripped key: a saved column set and filter from a
   // removed view would reappear under a grid it was never saved against.
-  .migrate<BlockData>(
+  .migrate<BlockDataV4>(
     "v4",
     ({ verdictTableState: _v, antigenQcTableState: _q, panelMismatchTableState: _m, ...rest }) => ({
       ...rest,
       punchcardTableState: createPlDataTableStateV2(),
     }),
   )
+  // v4 -> v5: the three GraphMaker states arrive. `init` seeds a NEW project only, so a project created
+  // before these keys existed carries none of them, and GraphMaker renders nothing when its model is
+  // undefined. A migration is the only route that reaches a stored project.
+  .migrate<BlockData>("v5", (data) => ({
+    ...data,
+    ...INITIAL_GRAPH_STATES,
+  }))
   .init(() => ({
     runMode: "full" as const, // full run by default. "dry" = read-limited Preview
     // Default preset: the geometry the block shipped with, 10x 5' v2 BEAM (16 / 10 / 15).
@@ -524,15 +550,10 @@ const dataModel = new DataModelBuilder()
     tableState: createPlDataTableStateV2(),
     qcSummaryTableState: createPlDataTableStateV2(),
     punchcardTableState: createPlDataTableStateV2(),
-    // No migration adds these two, and none is needed: a field absent from an older project's stored data
-    // is filled from these defaults on load. Their names avoid the two keys the v3 -> v4 migration strips.
+    // These names avoid the two keys the v3 -> v4 migration strips. Both were added before any surviving
+    // project was created, so no migration carries them.
     runQualityTableState: createPlDataTableStateV2(),
-    // GraphMaker keeps its own chart configuration here. One per plot, because a chart's saved
-    // state is about that chart: sharing one would make picking an axis on the score plot move
-    // the background plot too.
-    scoreDistributionGraphState: { title: "Spread of the run's scores", template: "line" },
-    referenceReadingGraphState: { title: "Reference reading across cells", template: "line" },
-    fittedBackgroundGraphState: { title: "Fitted background per tag", template: "dots" },
+    ...INITIAL_GRAPH_STATES,
     runQualityMismatchTableState: createPlDataTableStateV2(),
   }));
 

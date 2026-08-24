@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { PredefinedGraphOption } from "@milaboratories/graph-maker";
 import { GraphMaker } from "@milaboratories/graph-maker";
+import type { PColumnSpec } from "@platforma-sdk/model";
 import {
   PlAgDataTableV2,
   PlAlert,
@@ -61,7 +62,8 @@ const mismatchAbsent = computed(() => {
 // `330-the-quality-readout` puts three distributions last, and two of them exist so a scientist can
 // place a number: the spread of the run's scores is where a cutoff goes when the scores separate,
 // and the fitted background is the only way to see whether a tag's counts separated at all. The
-// third, the reference reading across cells, informs the gate.
+// third, the reference reading across cells, informs the gate. Each is drawn on the rungs that
+// produce it, and says so on the rungs that do not.
 //
 // All three read one p-frame. The two decile sets share a `distribution` axis and are told apart by
 // a filter GraphMaker applies from the default options below.
@@ -81,6 +83,10 @@ const rungUnknown = computed(() => served.value === undefined);
 const noScores = computed(() => !rungUnknown.value && served.value !== "declared");
 const noBackgrounds = computed(() => !rungUnknown.value && served.value !== "distribution");
 
+// A population baseline is keyed (sample, identity), not by cell, so `reference_by_cell` refuses that
+// rung and no per-cell reading exists to spread. The other two rungs read a comparator in the cell.
+const noReferenceReadings = computed(() => !rungUnknown.value && served.value === "distribution");
+
 // One tab per plot. Three plots stacked put the one a reader wants below the fold, and the two that
 // cannot exist on a given run pushed it further. A tab also lets each plot own the full height a
 // chart needs. Local rather than stored: which tab is open is a glance, not a setting.
@@ -93,23 +99,42 @@ const activeDistribution = ref<"score" | "reference" | "background">("score");
 
 const DECILE_VALUE = "pl7.app/antigen/qcDecileValue";
 const DECILE_AXIS = "pl7.app/antigen/qcDecile";
+const DISTRIBUTION_AXIS = "pl7.app/antigen/qcDistribution";
+const BACKGROUND_MEAN = "pl7.app/antigen/fittedBackgroundMean";
+const SIGNAL_MEAN = "pl7.app/antigen/fittedSignalMean";
+const BACKGROUND_WEIGHT = "pl7.app/antigen/fittedBackgroundWeight";
+
+// GraphMaker resolves a source by name, value type, annotations and domain only, so `axesSpec` is
+// required by the type and unread. Building the source through a typed helper keeps `inputName`
+// checked against the chart type's component list: a name absent from that list indexes an undefined
+// component inside GraphMaker and throws.
+function col(name: string, valueType: "Double" | "Int"): PColumnSpec {
+  return { kind: "PColumn", name, valueType, axesSpec: [] };
+}
 
 // Both decile plots read the same column and differ only in which distribution they filter to, so
 // the options are built once and the caller names the slice.
+//
+// A discrete chart has no `x`: its categorical input is `primaryGrouping`, and the axis reaches the
+// filter only because `qcDecileValue` carries it. The filter value field is `selectedFilterValues`.
 function decileOptions(distribution: string): PredefinedGraphOption<"discrete">[] {
   return [
-    {
-      inputName: "y",
-      selectedSource: { kind: "PColumn", name: DECILE_VALUE, valueType: "Double" },
-    },
-    { inputName: "x", selectedSource: { name: DECILE_AXIS, type: "Int" } },
+    { inputName: "y", selectedSource: col(DECILE_VALUE, "Double") },
+    { inputName: "primaryGrouping", selectedSource: { name: DECILE_AXIS, type: "Int" } },
     {
       inputName: "filters",
-      selectedSource: { name: "pl7.app/antigen/qcDistribution", type: "String" },
-      selectedValues: [distribution],
+      selectedSource: { name: DISTRIBUTION_AXIS, type: "String" },
+      filterType: "equals",
+      selectedFilterValues: [distribution],
     },
-  ] as PredefinedGraphOption<"discrete">[];
+  ];
 }
+
+// The frame is the whole-run graph frame and carries every verdict, clonotype and feature column
+// beside the four these plots read. Narrowing the column list is what keeps the pickers usable.
+const decileColumns = (spec: PColumnSpec) => spec.name === DECILE_VALUE;
+const backgroundColumns = (spec: PColumnSpec) =>
+  spec.name === BACKGROUND_MEAN || spec.name === SIGNAL_MEAN || spec.name === BACKGROUND_WEIGHT;
 
 const scoreOptions = computed(() => decileOptions("score"));
 const referenceOptions = computed(() => decileOptions("referenceReading"));
@@ -117,27 +142,10 @@ const referenceOptions = computed(() => decileOptions("referenceReading"));
 // The two means side by side, which is the whole reading: a background alone says nothing about
 // whether the counts separated, and a tag that bound nothing shows as two means almost on top of
 // each other rather than as a refusal.
-const backgroundOptions = computed(
-  () =>
-    [
-      {
-        inputName: "x",
-        selectedSource: {
-          kind: "PColumn",
-          name: "pl7.app/antigen/fittedBackgroundMean",
-          valueType: "Double",
-        },
-      },
-      {
-        inputName: "y",
-        selectedSource: {
-          kind: "PColumn",
-          name: "pl7.app/antigen/fittedSignalMean",
-          valueType: "Double",
-        },
-      },
-    ] as PredefinedGraphOption<"scatterplot">[],
-);
+const backgroundOptions = computed<PredefinedGraphOption<"scatterplot">[]>(() => [
+  { inputName: "x", selectedSource: col(BACKGROUND_MEAN, "Double") },
+  { inputName: "y", selectedSource: col(SIGNAL_MEAN, "Double") },
+]);
 
 // Status is rendered as the plain string the workflow emitted, with the discrete filter its spec declares.
 // The vocabulary is now OK / warn / alert and nothing else, which IS a rank, so a status tag would fit the
@@ -182,7 +190,7 @@ const backgroundOptions = computed(
         v-else
         v-model="app.model.data.runQualityMismatchTableState"
         :settings="mismatchSettings"
-        no-rows-text="The panel and the reads agree: every barcode the panel declared was carried by reads, and every barcode the reads carried was declared in the panel. This table is empty because the check found nothing, which is the outcome you want."
+        no-rows-text="Every barcode the panel declared was carried by reads, which is the outcome you want. The opposite direction is not reported here: barcode correction snaps each feature onto the panel before counting, so a barcode the panel never declared cannot reach this check."
         show-export-button
       />
 
@@ -210,15 +218,26 @@ const backgroundOptions = computed(
             chart-type="discrete"
             :p-frame="app.model.outputs.runQualityDistributions"
             :default-options="scoreOptions"
+            :data-column-predicate="decileColumns"
           />
         </div>
 
         <div v-else-if="activeDistribution === 'reference'" :class="$style.plot">
+          <PlAlert v-if="rungUnknown" type="info">
+            This run has not reported which baseline served it yet.
+          </PlAlert>
+          <PlAlert v-else-if="noReferenceReadings" type="info">
+            This run was read against each tag's own distribution. That baseline belongs to a tag in
+            a sample rather than to a cell, so no cell carries a reference reading and there is
+            nothing to spread. This plot is drawn for a run read against a declared baseline tag.
+          </PlAlert>
           <GraphMaker
+            v-else
             v-model="app.model.data.referenceReadingGraphState"
             chart-type="discrete"
             :p-frame="app.model.outputs.runQualityDistributions"
             :default-options="referenceOptions"
+            :data-column-predicate="decileColumns"
           />
         </div>
 
@@ -237,6 +256,7 @@ const backgroundOptions = computed(
             chart-type="scatterplot"
             :p-frame="app.model.outputs.runQualityDistributions"
             :default-options="backgroundOptions"
+            :data-column-predicate="backgroundColumns"
           />
         </div>
       </template>
