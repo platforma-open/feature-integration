@@ -752,6 +752,26 @@ const gridOptions = {
            settings below, because it IS an input: choosing it re-runs the verdict stage, where everything in
            `VerdictSettings` is a cheap re-read. It is the last input a user picks before choosing how much of
            the data to run, which is why it sits directly above Run mode. -->
+      <PlDropdown
+        :model-value="app.model.data.sampleColumn"
+        :options="roleFreeColumnOptions"
+        label="Panel column naming each row's sample"
+        :disabled="tagMappingDisabled"
+        clearable
+        @update:model-value="setSampleColumn"
+      >
+        <template #tooltip>
+          <b>Set this when your panel file has more than one row per tag barcode</b> — normally
+          because it lists each barcode once per sample. Leave it blank when the panel file has
+          exactly one row per tag barcode.<br /><br />
+          Names the panel column holding each row's sample. Every sample in your dataset must appear
+          in it. Extra values are allowed.<br /><br />
+          The block then reads a separate panel for each sample. Each sample is asked only about the
+          identities its own rows declare. One barcode can also name a different antigen in a
+          different sample.<br /><br />
+          The block selects this when it detects a matching column.
+        </template>
+      </PlDropdown>
       <PlDropdownRef
         v-model="app.model.data.datasetRef"
         :options="app.model.outputs.datasetOptions"
@@ -768,7 +788,7 @@ const gridOptions = {
       <PlDropdownMulti
         :model-value="groupingSelection"
         :options="groupingOptions"
-        label="Panel columns that define an identity"
+        label="Panel columns that group tags into identities"
         :disabled="panelUnread"
         @update:model-value="setGrouping"
       >
@@ -890,34 +910,37 @@ const gridOptions = {
            glosses the word once, where the reader first meets it, and repeating it would read as part of the name
            and re-open the several-names-for-one-thing problem this form already closed. The shared word
            "Baseline" is the link. -->
-      <PlAccordionSection label="Baseline thresholds">
-        <PlNumberField
-          v-model="app.model.data.distributionMinCells"
-          v-if="chosenSource === 'distribution'"
-          :min-value="1"
-          :step="10"
-          label="Cells needed to fit a tag's own distribution"
-        >
-          <template #tooltip>
-            How many cells a sample needs before a tag's own distribution across those cells can
-            serve as the baseline. Below this, the block cannot fit the two components and every
-            reading in that sample is unreliable.<br /><br />
-            The default of 300 comes from the study this method comes from. Lowering it is a
-            departure from that method rather than a preference: below it the baseline is not
-            conservative, it is wrong.
-          </template>
-        </PlNumberField>
+      <PlNumberField
+        v-model="app.model.data.distributionMinCells"
+        v-if="chosenSource === 'distribution'"
+        :min-value="1"
+        :step="10"
+        label="Cells a sample needs for this baseline"
+      >
+        <template #tooltip>
+          How many cells a sample needs before a tag's own counts across those cells can serve as
+          the baseline. Below this the block cannot separate binders from background, so every
+          reading in that sample is unreliable.<br /><br />
+          The default of 300 comes from the study this method comes from. Lowering it is a departure
+          from that method rather than a preference: below it the baseline is not conservative, it
+          is wrong.
+        </template>
+      </PlNumberField>
+      <PlAccordionSection label="Sticky cells">
         <PlNumberField
           v-model="app.model.data.highReferenceLine"
           v-if="chosenSource !== 'distribution'"
           :min-value="1"
           :step="1"
-          label="High baseline reading"
+          label="Line where a baseline reading counts as high"
         >
           <template #tooltip>
-            The baseline count, in UMIs, at which a cell is in high background. This is a
-            measurement, not a filter. The block counts these cells whether or not the gate below is
-            on. You can therefore see the run's exposure even when no gate is set.
+            The baseline reading, in unique counts, at or above which a cell counts as
+            <b>sticky</b> — one that took up reagent indiscriminately, so its counts report on the
+            cell rather than on its receptor.<br /><br />
+            This is a measurement and not a filter. The block counts these cells whether or not the
+            gate below is set, so a run's exposure is visible even where nothing is set aside.
+            Setting a cell aside is the gate's job.
           </template>
         </PlNumberField>
         <PlNumberField
@@ -926,7 +949,7 @@ const gridOptions = {
           :min-value="1"
           :step="1"
           clearable
-          label="Admissibility gate (baseline UMIs)"
+          label="Admissibility gate (baseline unique counts)"
         >
           <template #tooltip>
             The gate is off when this field is empty. When you set it, the block sets aside a cell
@@ -939,7 +962,7 @@ const gridOptions = {
         </PlNumberField>
       </PlAccordionSection>
 
-      <PlSectionSeparator compact> Optional settings </PlSectionSeparator>
+      <PlSectionSeparator compact> The reading </PlSectionSeparator>
       <PlNumberField
         v-model="app.model.data.countFloor"
         :min-value="0"
@@ -960,7 +983,7 @@ const gridOptions = {
         :min-value="0"
         :max-value="100"
         :step="1"
-        label="Bound cutoff (0–100)"
+        label="Score at which a cell reads bound (0–100)"
       >
         <template #tooltip>
           The score at or above which one cell reads that identity as bound. This is a per-cell
@@ -986,31 +1009,20 @@ const gridOptions = {
           you can see when it does.
         </template>
       </PlNumberField>
-      <!-- One field per line. Side by side in a PlRow each got half the drawer's width, which truncated both
-           labels -- "Control feature marker (outp..." told the user nothing about what it does not change,
-           and that label carries the whole distinction from the baseline setting below. The sample column
-           comes first: it changes what the run computes, while the control marker only labels a feature in
-           the output. -->
-      <PlDropdown
-        :model-value="app.model.data.sampleColumn"
-        :options="roleFreeColumnOptions"
-        label="Panel column naming each row's sample"
-        :disabled="tagMappingDisabled"
+      <PlNumberField
+        v-model="app.model.data.minAgreement"
+        :min-value="0"
+        :max-value="1"
+        :step="0.05"
         clearable
-        @update:model-value="setSampleColumn"
+        label="Share of voting cells that must agree (0–1)"
       >
         <template #tooltip>
-          <b>Set this when your panel file has more than one row per tag barcode</b> — normally
-          because it lists each barcode once per sample. Leave it blank when the panel file has
-          exactly one row per tag barcode.<br /><br />
-          Names the panel column holding each row's sample. Every sample in your dataset must appear
-          in it. Extra values are allowed.<br /><br />
-          The block then reads a separate panel for each sample. Each sample is asked only about the
-          identities its own rows declare. One barcode can also name a different antigen in a
-          different sample.<br /><br />
-          The block selects this when it detects a matching column.
+          This setting is off when the field is empty. A narrow majority then stands, and reports
+          how narrow. Set it to leave a verdict unsettled where the answering cells agree less than
+          this share of the time.
         </template>
-      </PlDropdown>
+      </PlNumberField>
       <!-- The combine-mode column selector is not offered (MILAB-6496): with it unset, every antigen uses the
            default "sum" mode. The parameter itself is live -- combineColumn and minUmi still reach
            per_cell_metrics.py -- so a value carried in from an older project is still honoured, and the alert
@@ -1041,22 +1053,6 @@ const gridOptions = {
       <PlAlert v-if="app.model.outputs.unkeyedSamplePanel" type="warn">
         {{ app.model.outputs.unkeyedSamplePanel }}
       </PlAlert>
-      <PlAccordionSection label="Advanced reading settings">
-        <PlNumberField
-          v-model="app.model.data.minAgreement"
-          :min-value="0"
-          :max-value="1"
-          :step="0.05"
-          clearable
-          label="Minimum cell agreement (0–1)"
-        >
-          <template #tooltip>
-            This setting is off when the field is empty. A narrow majority then stands, and reports
-            how narrow. Set it to leave a verdict unsettled where the answering cells agree less
-            than this share of the time.
-          </template>
-        </PlNumberField>
-      </PlAccordionSection>
       <!-- Less-common params. -->
       <PlAccordionSection label="Compute resources">
         <!-- Hidden with the control it belongs to. This is the AND-combine per-barcode floor, and the
@@ -1068,11 +1064,11 @@ const gridOptions = {
           :min-value="1"
           :step="1"
           clearable
-          label="Min UMIs per barcode (AND combine)"
+          label="Minimum unique counts per tag barcode"
         >
           <template #tooltip>
             <b>For "all"-combine antigens only</b> — it applies when the run carries a combine-mode
-            column, which is not offered today. Minimum distinct UMIs a barcode needs to count as
+            column, which is not offered today. Minimum unique counts a barcode needs to count as
             "fired" (present) in a cell; below it, that barcode doesn't count toward the AND. Leave
             empty for the default (1).
           </template>
