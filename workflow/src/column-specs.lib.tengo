@@ -380,7 +380,8 @@ tagAxis := func(blockId) {
 		domain: {
 			"pl7.app/blockId": blockId,
 			"pl7.app/antigen/tagType": "antigen"
-		}
+		},
+		annotations: { "pl7.app/label": "Barcode" }
 	}
 }
 
@@ -414,7 +415,8 @@ panelAxis := func(blockId) {
 	return {
 		name: "pl7.app/antigen/panelId",
 		type: "String",
-		domain: { "pl7.app/blockId": blockId }
+		domain: { "pl7.app/blockId": blockId },
+		annotations: { "pl7.app/label": "Panel" }
 	}
 }
 
