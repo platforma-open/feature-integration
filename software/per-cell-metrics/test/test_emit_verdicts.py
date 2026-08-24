@@ -2657,3 +2657,43 @@ def test_the_minimum_never_reaches_the_comparator(wide_bed):
 
     # The switch is gone from the contract, not merely defaulted off.
     assert "minimumAppliesToBaseline" not in high_meta
+
+
+def test_a_tag_holding_no_cell_is_not_blamed_on_its_siblings(bed):
+    # Three tags on one identity. AAAA and BBBB agree in every cell; CCCC is declared and
+    # holds no row anywhere. Its siblings did reach a majority, so the row must not say they
+    # failed -- that sends a reader to re-prepare two working reagents instead of the missing
+    # one. The reason is the only thing separating the two absences: both carry no rate.
+    (bed / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type,Family\n"
+        "S1,AgA,AAAA,Target,Fam\n"
+        "S1,AgB,BBBB,Target,Fam\n"
+        "S1,AgC,CCCC,Target,Fam\n"
+        "S1,Ctrl,CTRL,Control,Reference\n"
+    )
+    (bed / "counts.csv").write_text(
+        "sampleId,cellId,tag,umiCount\n"
+        "S1,c1,AAAA,500\nS1,c1,BBBB,500\nS1,c1,CTRL,6\n"
+        "S1,c2,AAAA,600\nS1,c2,BBBB,600\nS1,c2,CTRL,6\n"
+    )
+    (bed / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS1,c2,K1\n")
+
+    _run(bed, *BASE, "--grouping", json.dumps({"by": "property", "column": "Family"}))
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    by_tag = {r["entity"]: r for r in qc.filter(pl.col("measurement") == "siblingDisagreement").iter_rows(named=True)}
+
+    assert by_tag["AAAA"]["value"] == "0.0"
+    assert by_tag["BBBB"]["value"] == "0.0"
+    assert by_tag["CCCC"]["value"] is None
+    assert by_tag["CCCC"]["detail"] == "this tag holds no cell beside a sibling"
+    assert by_tag["AAAA"]["detail"] is None
+
+
+def test_a_tag_that_is_the_only_one_on_its_identity_says_so(bed):
+    # The shipped bed groups per tag, so AAAA's identity is AAAA and carries nothing else.
+    # The reason has to name the missing sibling, not the siblings' failure to agree.
+    _run(bed, *BASE)
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    row = qc.filter((pl.col("measurement") == "siblingDisagreement") & (pl.col("entity") == "AAAA")).row(0, named=True)
+    assert row["value"] is None
+    assert row["detail"] == "this identity carries one tag, so it has no sibling"

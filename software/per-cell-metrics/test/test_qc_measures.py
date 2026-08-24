@@ -791,3 +791,12 @@ def test_the_rate_is_the_share_of_cells_that_contradict():
     )
     out = sibling_disagreement(states, {"IDENT": ["AAAA", "BBBB", "CCCC"]})
     assert out["AAAA"] == 0.5
+
+
+def test_a_tag_holding_no_row_has_no_rate():
+    # CCCC is on the identity and holds no cell. Its siblings agree everywhere, so the
+    # absent rate is about CCCC being missing rather than about them failing to agree.
+    states = _states(["AAAA", "BBBB"], ["bound", "bound"])
+    out = sibling_disagreement(states, {"IDENT": ["AAAA", "BBBB", "CCCC"]})
+    assert out["CCCC"] is None
+    assert out["AAAA"] == 0.0

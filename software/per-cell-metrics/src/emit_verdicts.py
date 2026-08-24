@@ -1760,6 +1760,11 @@ def main() -> None:
                 members.append(tag)
             identity_of_tag[tag] = identity
         sibling_rate = sibling_disagreement(panel_states, siblings_of_identity)
+        # A tag with no row in the panel's states held no cell here. `sibling_disagreement`
+        # returns the same absent rate for that as for siblings that never reached a majority,
+        # and the two are opposite findings: one is this reagent missing, the other is the
+        # siblings unable to judge it.
+        held_a_cell = set(panel_states["tag"].unique().to_list())
 
         # No line stands behind this either, so it reads unjudged beside its siblings. A blank
         # and a zero are opposite findings here, so a row with no rate says which case it is.
@@ -1767,11 +1772,12 @@ def main() -> None:
             rate = sibling_rate[tag]
             detail = ""
             if rate is None:
-                detail = (
-                    "this identity carries one tag, so it has no sibling"
-                    if len(siblings_of_identity[identity_of_tag[tag]]) < 2
-                    else "no cell gave this tag's siblings a majority"
-                )
+                if len(siblings_of_identity[identity_of_tag[tag]]) < 2:
+                    detail = "this identity carries one tag, so it has no sibling"
+                elif tag not in held_a_cell:
+                    detail = "this tag holds no cell beside a sibling"
+                else:
+                    detail = "no cell gave this tag's siblings a majority"
             _add(rows, "tag", tag, "siblingDisagreement", rate, detail, panel_id)
 
     # One row for the whole run, and the entity is the run: 320 puts the score spread at that

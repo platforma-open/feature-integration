@@ -597,8 +597,9 @@ def sibling_disagreement(
     strict majority does not judge that tag and is not counted. Two siblings need at least
     three tags on the identity, so a two-tag identity always has a majority of one.
 
-    None, never zero, where nothing judged the tag: an identity carrying one tag, or an
-    identity carrying several where no cell gave this tag's siblings a majority.
+    None, never zero, where nothing judged the tag. Three causes reach it and the caller
+    tells them apart: an identity carrying one tag, a tag holding no row in any cell, and a
+    tag whose siblings reached a majority in no cell it held.
 
     `states` is the tag-grain frame after the minimum, with `sampleId`, `cellId`, `tag` and
     `state`.
