@@ -247,29 +247,6 @@ function setBaselineSource(value: string | undefined) {
 
 // The identities the contending-groups editor picks from, live from the uploaded panel.
 const identityOptions = computed(() => app.model.outputs.identityOptions ?? []);
-// Grouped on the barcode column, an identity id IS a feature barcode. The panel metadata staging emits is
-// column-wise, carrying each column's distinct values with no pairing between a barcode and the name beside
-// it, so the identity names cannot be offered here. Said in the editor rather than left for the user to
-// discover from a list of 15-mers.
-const identitiesAreBarcodes = computed(() => app.model.data.grouping?.by !== "property");
-
-const contendingGroups = computed(() => app.model.data.contendingGroups ?? []);
-
-function addContendingGroup() {
-  app.model.data.contendingGroups = [...contendingGroups.value, []];
-}
-
-function setContendingGroup(index: number, members: string[]) {
-  app.model.data.contendingGroups = contendingGroups.value.map((group, i) =>
-    i === index ? members : group,
-  );
-}
-
-function removeContendingGroup(index: number) {
-  const remaining = contendingGroups.value.filter((_, i) => i !== index);
-  app.model.data.contendingGroups = remaining.length > 0 ? remaining : undefined;
-}
-
 // The panel-derived dropdowns have nothing to offer until the panel file is uploaded and staging has read
 // its columns. Disabled and dimmed, so their empty state reads as "waiting" rather than "nothing found".
 const panelUnread = computed(
@@ -846,6 +823,152 @@ const gridOptions = {
           </template>
         </PlNumberField>
       </template>
+      <!-- The baseline comes before the optional settings because it decides which of them apply: each
+           baseline brings its own rule, and a setting belonging to one rule is shown only where that rule
+           runs. A reader meeting Bound cutoff before choosing a baseline meets a field that appears and
+           disappears on a choice they have not made yet. -->
+      <PlSectionSeparator compact> Baseline (background) level </PlSectionSeparator>
+      <PlDropdown
+        :model-value="chosenSource"
+        :options="allSources"
+        label="What sets the baseline"
+        :disabled="panelUnread"
+        required
+        @update:model-value="setBaselineSource"
+      >
+        <template #tooltip>
+          You choose this. The block does not choose it for you: two runs answered against different
+          baselines produce numbers that do not compare, and a baseline nobody chose is a method
+          nobody knows they used.<br /><br />
+          <b>Declared baseline tag</b> — the tag your panel marks as the one nothing should bind.<br />
+          <b>The panel's own readings</b> — the median of each cell's own counts.<br />
+          <b>Each tag's own distribution</b> — that tag's counts across the sample's cells, split in
+          two.<br /><br />
+          Pick one and this form asks for what that rung needs, and for nothing else.<br /><br />
+          The last two are local to this run: what a count was read against was a population of this
+          run, so those magnitudes do not travel between runs.
+        </template>
+      </PlDropdown>
+      <!-- What the chosen rung still needs. Not an error: the rung is a legitimate choice and the fields that
+           satisfy it are directly below, so this names the gap rather than refusing it. -->
+      <PlAlert v-if="chosenNeeds" type="warn">{{ chosenNeeds }}</PlAlert>
+      <PlDropdown
+        v-if="chosenSource === 'declared'"
+        :model-value="app.model.data.roleColumn"
+        :options="panelPropertyOptions"
+        label="Panel column declaring each tag's role"
+        :disabled="panelUnread"
+        clearable
+        @update:model-value="setRoleColumn"
+      >
+        <template #tooltip>
+          Name the panel column that declares each tag's role. One value of that column marks a tag
+          as the baseline. The block then judges every other count in the same cell against that
+          tag.<br /><br />
+          Leave it blank if your panel declares no role.
+        </template>
+      </PlDropdown>
+      <!-- Required exactly while a role column is named, and not otherwise. The column alone marks no tag: it is
+           validated, recorded, and changes no number, so the pair is the setting and half of it is an unfinished
+           form. Blank column plus blank values stays legitimate -- that is the panel which declares no baseline,
+           which `292-no-declared-reference` serves. -->
+      <PlDropdown
+        v-if="chosenSource === 'declared'"
+        :model-value="app.model.data.referenceValues?.[0]"
+        :options="roleValueOptions"
+        label="Value that marks the baseline tag"
+        :disabled="panelUnread || !app.model.data.roleColumn"
+        :required="!!app.model.data.roleColumn"
+        clearable
+        @update:model-value="setReferenceValue($event)"
+      >
+        <template #tooltip>
+          Select which value of the role column marks the baseline tag. A tag is the baseline in
+          every sample, or in none. You cannot give some samples a different baseline.<br /><br />
+          Required once you name a role column. That column says where each tag's role is written;
+          this value is what actually marks one. Named alone, the column changes nothing.<br /><br />
+          The block reads counts against <b>one</b> baseline tag. A panel may carry several control
+          tags, but only one is nominated to supply the baseline. If the value you pick marks more
+          than one tag, the run stops and names the tags it found.
+        </template>
+      </PlDropdown>
+
+      <!-- Directly under the baseline section rather than with the other accordion at the foot of the form.
+           Grouping the accordions together sorted this form by how advanced a control is, which split the
+           baseline's own thresholds away from the baseline. Collapsed, this costs the reader one line and puts
+           every baseline control in one place. The heading does NOT repeat "(background)": that parenthetical
+           glosses the word once, where the reader first meets it, and repeating it would read as part of the name
+           and re-open the several-names-for-one-thing problem this form already closed. The shared word
+           "Baseline" is the link. -->
+      <PlAccordionSection label="Baseline thresholds">
+        <PlNumberField
+          v-model="app.model.data.distributionMinCells"
+          v-if="chosenSource === 'distribution'"
+          :min-value="1"
+          :step="10"
+          label="Cells needed to fit a tag's own distribution"
+        >
+          <template #tooltip>
+            How many cells a sample needs before a tag's own distribution across those cells can
+            serve as the baseline. Below this, the block cannot fit the two components and every
+            reading in that sample is unreliable.<br /><br />
+            The default of 300 comes from the study this method comes from. Lowering it is a
+            departure from that method rather than a preference: below it the baseline is not
+            conservative, it is wrong.
+          </template>
+        </PlNumberField>
+        <PlNumberField
+          v-model="app.model.data.distributionSeparation"
+          v-if="chosenSource === 'distribution'"
+          :min-value="0.01"
+          :max-value="1"
+          :step="0.05"
+          label="Maximum dip height (0–1)"
+        >
+          <template #tooltip>
+            The block sorts a tag's counts across the sample's cells into two groups. One group has
+            few counts and is the background. The other has many counts and is the binders. A dip
+            separates the two groups.<br /><br />
+            The dip must fall to this share of the smaller group, or lower.
+            <b>A lower value is stricter</b>, because it needs a deeper dip.<br /><br />
+            A tag whose dip is too shallow gets no baseline. Only the antigens that tag carries read
+            unreliable. The rest of the run is unaffected.<br /><br />
+            At 1 any dent passes. A tag that nothing bound then stands in as its own background.<br /><br />
+            No published work sets this line. The default of 0.5 is this block's own choice.
+          </template>
+        </PlNumberField>
+        <PlNumberField
+          v-model="app.model.data.highReferenceLine"
+          v-if="chosenSource !== 'distribution'"
+          :min-value="1"
+          :step="1"
+          label="High baseline reading"
+        >
+          <template #tooltip>
+            The baseline count, in UMIs, at which a cell is in high background. This is a
+            measurement, not a filter. The block counts these cells whether or not the gate below is
+            on. You can therefore see the run's exposure even when no gate is set.
+          </template>
+        </PlNumberField>
+        <PlNumberField
+          v-model="app.model.data.gateThreshold"
+          v-if="chosenSource !== 'distribution'"
+          :min-value="1"
+          :step="1"
+          clearable
+          label="Admissibility gate (baseline UMIs)"
+        >
+          <template #tooltip>
+            The gate is off when this field is empty. When you set it, the block sets aside a cell
+            whose baseline reading reaches this value. That cell reads unreliable at every identity
+            and gives no verdict anywhere.<br /><br />
+            Off is a deliberate default, and a contested one. Published practice uses a gate. The
+            dominant tool does not. Off matches the tool, so first-run numbers stay recognisable.
+            The cost is that a sticky cell remains in the set and returns a confident "not bound".
+          </template>
+        </PlNumberField>
+      </PlAccordionSection>
+
       <PlSectionSeparator compact> Optional settings </PlSectionSeparator>
       <PlNumberField
         v-model="app.model.data.countFloor"
@@ -948,184 +1071,6 @@ const gridOptions = {
       <PlAlert v-if="app.model.outputs.unkeyedSamplePanel" type="warn">
         {{ app.model.outputs.unkeyedSamplePanel }}
       </PlAlert>
-      <!-- The binding reading's own settings. The same component is mounted in the Explore readout page's
-           Settings drawer, so the rule that produced the card can be changed from the card -- which is where
-           a reader sees what the rule did, as a wall of red or a column of grey.
-
-           Safe to offer there because everything this component EDITS sits below the "binding reading" line
-           in BlockArgs: a change recovers every per-sample mitool body from cache and re-runs the verdict
-           stage alone. The three input fields it reads (tagFeatureCsvHandle, barcodeSeqColumn, sampleColumn)
-           are read-only here -- used to tell whether the panel has loaded and to keep a role or grouping
-           setting from naming a column the panel reader consumes as a key. They are edited on THIS page only,
-           and they do force the whole fan-out to re-run, so keep it that way: putting one of them in this
-           component would make a results-page drawer silently expensive. -->
-      <PlSectionSeparator compact> Baseline (background) level </PlSectionSeparator>
-      <PlDropdown
-        :model-value="chosenSource"
-        :options="allSources"
-        label="What sets the baseline"
-        :disabled="panelUnread"
-        required
-        @update:model-value="setBaselineSource"
-      >
-        <template #tooltip>
-          You choose this. The block does not choose it for you: two runs answered against different
-          baselines produce numbers that do not compare, and a baseline nobody chose is a method
-          nobody knows they used.<br /><br />
-          <b>Declared baseline tag</b> — the tag your panel marks as the one nothing should bind.<br />
-          <b>The panel's own readings</b> — the median of each cell's own counts.<br />
-          <b>Each tag's own distribution</b> — that tag's counts across the sample's cells, split in
-          two.<br /><br />
-          Pick one and this form asks for what that rung needs, and for nothing else.<br /><br />
-          The last two are local to this run: what a count was read against was a population of this
-          run, so those magnitudes do not travel between runs.
-        </template>
-      </PlDropdown>
-      <!-- What the chosen rung still needs. Not an error: the rung is a legitimate choice and the fields that
-           satisfy it are directly below, so this names the gap rather than refusing it. -->
-      <PlAlert v-if="chosenNeeds" type="warn">{{ chosenNeeds }}</PlAlert>
-      <PlDropdown
-        v-if="chosenSource === 'declared'"
-        :model-value="app.model.data.roleColumn"
-        :options="panelPropertyOptions"
-        label="Panel column declaring each tag's role"
-        :disabled="panelUnread"
-        clearable
-        @update:model-value="setRoleColumn"
-      >
-        <template #tooltip>
-          Name the panel column that declares each tag's role. One value of that column marks a tag
-          as the baseline. The block then judges every other count in the same cell against that
-          tag.<br /><br />
-          Leave it blank if your panel declares no role.
-        </template>
-      </PlDropdown>
-      <!-- Required exactly while a role column is named, and not otherwise. The column alone marks no tag: it is
-           validated, recorded, and changes no number, so the pair is the setting and half of it is an unfinished
-           form. Blank column plus blank values stays legitimate -- that is the panel which declares no baseline,
-           which `292-no-declared-reference` serves. -->
-      <PlDropdown
-        v-if="chosenSource === 'declared'"
-        :model-value="app.model.data.referenceValues?.[0]"
-        :options="roleValueOptions"
-        label="Value that marks the baseline tag"
-        :disabled="panelUnread || !app.model.data.roleColumn"
-        :required="!!app.model.data.roleColumn"
-        clearable
-        @update:model-value="setReferenceValue($event)"
-      >
-        <template #tooltip>
-          Select which value of the role column marks the baseline tag. A tag is the baseline in
-          every sample, or in none. You cannot give some samples a different baseline.<br /><br />
-          Required once you name a role column. That column says where each tag's role is written;
-          this value is what actually marks one. Named alone, the column changes nothing.<br /><br />
-          The block reads counts against <b>one</b> baseline tag. A panel may carry several control
-          tags, but only one is nominated to supply the baseline. If the value you pick marks more
-          than one tag, the run stops and names the tags it found.
-        </template>
-      </PlDropdown>
-
-      <!-- Directly under the baseline section rather than with the other accordion at the foot of the form.
-           Grouping the accordions together sorted this form by how advanced a control is, which split the
-           baseline's own thresholds away from the baseline. Collapsed, this costs the reader one line and puts
-           every baseline control in one place. The heading does NOT repeat "(background)": that parenthetical
-           glosses the word once, where the reader first meets it, and repeating it would read as part of the name
-           and re-open the several-names-for-one-thing problem this form already closed. The shared word
-           "Baseline" is the link. -->
-      <PlAccordionSection label="Baseline thresholds">
-        <PlNumberField
-          v-model="app.model.data.distributionMinCells"
-          v-if="chosenSource === 'distribution'"
-          :min-value="1"
-          :step="10"
-          label="Cells needed to fit a tag's own distribution"
-        >
-          <template #tooltip>
-            How many cells a sample needs before a tag's own distribution across those cells can
-            serve as the baseline. Below this, the block cannot fit the two components and every
-            reading in that sample is unreliable.<br /><br />
-            The default of 300 comes from the study this method comes from. Lowering it is a
-            departure from that method rather than a preference: below it the baseline is not
-            conservative, it is wrong.
-          </template>
-        </PlNumberField>
-        <PlNumberField
-          v-model="app.model.data.distributionSeparation"
-          v-if="chosenSource === 'distribution'"
-          :min-value="0.01"
-          :max-value="1"
-          :step="0.05"
-          label="Separation the two components must show"
-        >
-          <template #tooltip>
-            How deep the dip between the two fitted components must be, as a share of the smaller of
-            the two peaks around it. A tag whose counts do not separate this far gets no baseline,
-            and only the antigens that tag carries read unreliable.<br /><br />
-            No published work sets this line. The default of 0.5 is this block's choice, not a
-            standard. At 1 any dip counts, which would let a tag nothing bound stand in as its own
-            background.
-          </template>
-        </PlNumberField>
-        <PlNumberField
-          v-model="app.model.data.highReferenceLine"
-          v-if="chosenSource !== 'distribution'"
-          :min-value="1"
-          :step="1"
-          label="High baseline reading"
-        >
-          <template #tooltip>
-            The baseline count, in UMIs, at which a cell is in high background. This is a
-            measurement, not a filter. The block counts these cells whether or not the gate below is
-            on. You can therefore see the run's exposure even when no gate is set.
-          </template>
-        </PlNumberField>
-        <PlNumberField
-          v-model="app.model.data.gateThreshold"
-          v-if="chosenSource !== 'distribution'"
-          :min-value="1"
-          :step="1"
-          clearable
-          label="Admissibility gate (baseline UMIs)"
-        >
-          <template #tooltip>
-            The gate is off when this field is empty. When you set it, the block sets aside a cell
-            whose baseline reading reaches this value. That cell reads unreliable at every identity
-            and gives no verdict anywhere.<br /><br />
-            Off is a deliberate default, and a contested one. Published practice uses a gate. The
-            dominant tool does not. Off matches the tool, so first-run numbers stay recognisable.
-            The cost is that a sticky cell remains in the set and returns a confident "not bound".
-          </template>
-        </PlNumberField>
-      </PlAccordionSection>
-
-      <PlAccordionSection label="Contending groups">
-        <PlAlert type="info">
-          Identities declared to compete for one binding site. Where one of them reads bound for a
-          clonotype, the block marks the others that read "not bound" as competed. The verdict does
-          not change, and a downstream statement can test the mark.
-        </PlAlert>
-        <PlAlert v-if="identitiesAreBarcodes" type="warn">
-          You grouped on the barcode column, so each identity is one feature barcode. The block
-          reads the panel column by column before the run, and that reading carries no
-          barcode-to-name pairing. The block therefore cannot offer the identity names here. Group
-          on a panel column, the feature-name column for instance, to pick identities by name.
-        </PlAlert>
-        <div v-for="(group, index) in contendingGroups" :key="index">
-          <PlDropdownMulti
-            :model-value="group"
-            :options="identityOptions"
-            :label="`Group ${index + 1}`"
-            :disabled="panelUnread"
-            @update:model-value="setContendingGroup(index, $event)"
-          />
-          <PlBtnGhost @click.stop="removeContendingGroup(index)">Remove group</PlBtnGhost>
-        </div>
-        <PlBtnGhost :disabled="panelUnread" @click.stop="addContendingGroup()">
-          Add a contending group
-        </PlBtnGhost>
-      </PlAccordionSection>
-      -->
-
       <PlAccordionSection label="Advanced reading settings">
         <PlCheckbox v-if="chosenSource === 'declared'" v-model="minimumAppliesToBaseline">
           Apply the minimum count to the baseline tag
