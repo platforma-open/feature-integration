@@ -2747,11 +2747,13 @@ def test_the_reagent_table_names_every_absent_figure(bed):
 
 def test_a_barcode_reused_for_two_antigens_takes_a_row_under_each(tmp_path):
     # One row could not name both identities, and putting the two side by side is the comparison
-    # the table exists for.
+    # the table exists for: a barcode that worked where it carried one antigen and failed where it
+    # carried another. Each row's figures are scoped to the samples where the tag carried that
+    # identity, so the pair can differ.
     (tmp_path / "counts.csv").write_text(
         "sampleId,cellId,tag,umiCount\n"
         "S1,c1,AAAA,500\nS1,c1,CTRL,6\nS1,c2,AAAA,600\nS1,c2,CTRL,6\n"
-        "S2,c1,AAAA,500\nS2,c1,CTRL,6\nS2,c2,AAAA,600\nS2,c2,CTRL,6\n"
+        "S2,c1,AAAA,500\nS2,c1,CTRL,6\nS2,c2,CTRL,6\n"
     )
     (tmp_path / "panel.csv").write_text(
         "Samples,Name,Sequence,Type\n"
@@ -2764,5 +2766,13 @@ def test_a_barcode_reused_for_two_antigens_takes_a_row_under_each(tmp_path):
     reagents = pl.read_csv(tmp_path / "result_reagents.csv", infer_schema_length=0)
     rows = reagents.filter(pl.col("tag") == "AAAA")
     assert sorted(rows["identity"].to_list()) == ["AgA", "AgB"]
-    # Per-tag figures repeat across a tag's identities: the frame is not a summary.
-    assert len(set(rows["cellsWithCount"].to_list())) == 1
+
+    figures = {r["identity"]: r for r in rows.iter_rows(named=True)}
+    # Two cells of S1 hold the barcode, one cell of S2 does. The figures are per (tag, identity)
+    # and not per tag, so the two rows carry the reagent's two behaviours rather than one number
+    # repeated.
+    assert int(figures["AgA"]["cellsWithCount"]) == 2
+    assert int(figures["AgB"]["cellsWithCount"]) == 1
+    # The denominator is the roster for the identity, not the panel's.
+    assert int(figures["AgA"]["samplesInPanel"]) == 1
+    assert int(figures["AgB"]["samplesInPanel"]) == 1

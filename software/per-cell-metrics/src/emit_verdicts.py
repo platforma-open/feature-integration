@@ -1733,9 +1733,9 @@ def main() -> None:
         # defect 330-the-quality-readout names: a reagent putting two counts into every cell
         # would read the same as one that delivered nothing.
         panel_counts = counts.filter(pl.col("sampleId").is_in(panel_samples_here))
-        measures = per_antigen_measures(panel_counts, panel_states, panel_tags, panel_samples_here, reference_tags)
-        measure_of_tag = {row["tag"]: row for row in measures.iter_rows(named=True)}
-        for row in measures.iter_rows(named=True):
+        for row in per_antigen_measures(
+            panel_counts, panel_states, panel_tags, panel_samples_here, reference_tags
+        ).iter_rows(named=True):
             above = row["cellsAboveTheLine"]
             # None only for a reference tag, which is held out of the verdict read. Say so rather
             # than printing a zero: no cell was called bound because none was asked.
@@ -1771,6 +1771,9 @@ def main() -> None:
         # A barcode reused for a different antigen in different samples carries two identities and
         # takes a row under each. `identity_of_tag` keeps only the last and is not usable here.
         identities_of_tag: dict[str, list[str]] = {}
+        # The samples where a tag carried one identity. Two identities of one tag hold disjoint
+        # sample sets, because `grouping` gives each (tag, sample) exactly one identity.
+        samples_of_pair: dict[tuple[str, str], set[str]] = {}
         for (tag, sample), identity in grouping.items():
             if tag not in panel_tags or (sample not in set(panel_samples_here) and sample != ANY_SAMPLE):
                 continue
@@ -1781,6 +1784,10 @@ def main() -> None:
             carried = identities_of_tag.setdefault(tag, [])
             if identity not in carried:
                 carried.append(identity)
+            # ANY_SAMPLE declares the identity for every sample of the panel.
+            samples_of_pair.setdefault((tag, identity), set()).update(
+                panel_samples_here if sample == ANY_SAMPLE else [sample]
+            )
         sibling_rate = sibling_disagreement(panel_states, siblings_of_identity)
         # A tag with no row in the panel's states held no cell here. `sibling_disagreement`
         # returns the same absent rate for that as for siblings that never reached a majority,
@@ -1802,17 +1809,46 @@ def main() -> None:
                     detail = "no cell gave this tag's siblings a majority"
             _add(rows, "tag", tag, "siblingDisagreement", rate, detail, panel_id)
 
-        # One row per (tag, identity), carrying the figures already taken above. A tag absent from
-        # `grouping` here takes one row under its own barcode, which is what the barcode grouping
-        # names it.
+        # One row per (tag, identity), with every figure scoped to the samples where the tag
+        # carried that identity. A tag absent from `grouping` here takes one row under its own
+        # barcode over the whole panel, which is what the barcode grouping names it.
         reference_here = set(reference_tags)
+        pairs_of_subset: dict[frozenset[str], list[tuple[str, str]]] = {}
         for tag in sorted(panel_tags):
-            measure = measure_of_tag.get(tag, {})
-            above = measure.get("cellsAboveTheLine")
-            median = measure.get("medianCountPerCell")
-            sibling = sibling_rate.get(tag)
-            own = tag_rate.get(tag)
             for identity in sorted(identities_of_tag.get(tag, [tag])):
+                scope = samples_of_pair.get((tag, identity), set()) & set(panel_samples_here)
+                pairs_of_subset.setdefault(frozenset(scope or panel_samples_here), []).append((tag, identity))
+
+        for scope, pairs in sorted(pairs_of_subset.items(), key=lambda kv: sorted(kv[0])):
+            scope_samples = sorted(scope)
+            scope_tags = {tag for tag, _ in pairs}
+            scope_states = tag_states.filter(pl.col("sampleId").is_in(scope_samples)).rename({"identity": "tag"})
+            scope_measure = {
+                row["tag"]: row
+                for row in per_antigen_measures(
+                    counts.filter(pl.col("sampleId").is_in(scope_samples)),
+                    scope_states,
+                    scope_tags,
+                    scope_samples,
+                    reference_tags,
+                ).iter_rows(named=True)
+            }
+            # A tag's siblings are the other tags of the identity on the row, and both rates are
+            # taken over the row's samples only. Within one subset a tag appears under one identity,
+            # so the tag-keyed rates these return are unambiguous.
+            scope_siblings = {
+                identity: siblings_of_identity[identity] for _, identity in pairs if identity in siblings_of_identity
+            }
+            scope_sibling_rate = sibling_disagreement(scope_states, scope_siblings)
+            scope_tag_rate = _disagreement_rates(scope_samples)
+            scope_held_a_cell = set(scope_states["tag"].unique().to_list())
+
+            for tag, identity in sorted(pairs):
+                measure = scope_measure.get(tag, {})
+                above = measure.get("cellsAboveTheLine")
+                median = measure.get("medianCountPerCell")
+                sibling = scope_sibling_rate.get(tag)
+                own = scope_tag_rate.get(tag)
                 # Scoped to the row's own identity. `identity_of_tag` keeps one identity per tag and
                 # would give a reused barcode's two rows the same reason.
                 members = siblings_of_identity.get(identity, [])
@@ -1826,7 +1862,7 @@ def main() -> None:
                         absences.append("siblingDisagreement=this tag is held out of the verdict read")
                     elif len(members) < 2:
                         absences.append("siblingDisagreement=this identity carries one tag, so it has no sibling")
-                    elif tag not in held_a_cell:
+                    elif tag not in scope_held_a_cell:
                         absences.append("siblingDisagreement=this tag holds no cell beside a sibling")
                     else:
                         absences.append("siblingDisagreement=no cell gave this tag's siblings a majority")
