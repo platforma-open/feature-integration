@@ -266,4 +266,5 @@ export type BlockData = {
   referenceReadingGraphState: GraphMakerState;
   fittedBackgroundGraphState: GraphMakerState;
   runQualityMismatchTableState: PlDataTableStateV2; // panel-versus-reads mismatch grid state
+  reagentTableState: PlDataTableStateV2; // per (tag, identity) reagent grid state
 };

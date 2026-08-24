@@ -234,6 +234,12 @@ self.body(func(inputs) {
 	addTo(distributionFb, "qcBackgrounds", inputs.qcBackgrounds,
 		columnSpecs.qcBackgroundImportSpec(sampleAxis, tagAxis))
 
+	// One row per (panel, tag, identity). Its own frame, at its own grain: the measurement table is
+	// keyed (level, entity, measurement) and cannot hold a row per reagent.
+	reagentFb := pframes.pFrameBuilder()
+	addTo(reagentFb, "reagents", inputs.reagents,
+		columnSpecs.qcReagentImportSpec(panelAxis, tagAxis, identityAxis))
+
 	// The panel-versus-reads check is emitted as a p-column rather than left as a file. A mismatch report the
 	// user cannot see defeats its purpose.
 	mismatchFb := pframes.pFrameBuilder()
@@ -246,6 +252,7 @@ self.body(func(inputs) {
 		cellReference: cellRefFb.build(),
 		qcTable: qcFb.build(),
 		qcDistributions: distributionFb.build(),
+		reagentTable: reagentFb.build(),
 		panelMismatchTable: mismatchFb.build()
 	}
 })

@@ -417,10 +417,13 @@ const INITIAL_GRAPH_STATES = {
   "scoreDistributionGraphState" | "referenceReadingGraphState" | "fittedBackgroundGraphState"
 >;
 
-// v4 data shape: everything the current shape has except the three GraphMaker states, which arrived with
-// the distribution plots.
+// v5 data shape: everything the current shape has except the reagent grid's state, which arrived with
+// the reagent table.
+type BlockDataV5 = Omit<BlockData, "reagentTableState">;
+
+// v4 data shape: v5 without the three GraphMaker states, which arrived with the distribution plots.
 type BlockDataV4 = Omit<
-  BlockData,
+  BlockDataV5,
   "scoreDistributionGraphState" | "referenceReadingGraphState" | "fittedBackgroundGraphState"
 >;
 
@@ -530,9 +533,15 @@ const dataModel = new DataModelBuilder()
   // v4 -> v5: the three GraphMaker states arrive. `init` seeds a NEW project only, so a project created
   // before these keys existed carries none of them, and GraphMaker renders nothing when its model is
   // undefined. A migration is the only route that reaches a stored project.
-  .migrate<BlockData>("v5", (data) => ({
+  .migrate<BlockDataV5>("v5", (data) => ({
     ...data,
     ...INITIAL_GRAPH_STATES,
+  }))
+  // v5 -> v6: the reagent grid's state arrives. `init` seeds a NEW project only, and a
+  // `PlAgDataTableV2` bound to an undefined state renders nothing and reports no error.
+  .migrate<BlockData>("v6", (data) => ({
+    ...data,
+    reagentTableState: createPlDataTableStateV2(),
   }))
   .init(() => ({
     runMode: "full" as const, // full run by default. "dry" = read-limited Preview
@@ -555,6 +564,7 @@ const dataModel = new DataModelBuilder()
     runQualityTableState: createPlDataTableStateV2(),
     ...INITIAL_GRAPH_STATES,
     runQualityMismatchTableState: createPlDataTableStateV2(),
+    reagentTableState: createPlDataTableStateV2(),
   }));
 
 export const platforma = BlockModelV3.create(dataModel)
@@ -1705,6 +1715,20 @@ export const platforma = BlockModelV3.create(dataModel)
         ?.getPColumns();
       if (pCols === undefined) return undefined;
       return createPFrameForGraphs(ctx, pCols);
+    },
+    { retentive: true, withStatus: true },
+  )
+  // One row per (panel, tag, identity), carrying the figures the measurement table holds long-format.
+  // A tag carrying two identities takes a row under each. `allowPermanentAbsence` for the same reason
+  // the tables above need it.
+  .output(
+    "reagentTable",
+    (ctx) => {
+      const pCols = ctx.outputs
+        ?.resolve({ field: "antigenReagentTable", allowPermanentAbsence: true })
+        ?.getPColumns();
+      if (pCols === undefined) return undefined;
+      return createPlDataTableV2(ctx, pCols, ctx.data.reagentTableState);
     },
     { retentive: true, withStatus: true },
   )

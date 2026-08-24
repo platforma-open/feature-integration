@@ -1376,6 +1376,53 @@ qcImportSpec := func(levelAxisSpec, entityAxisSpec, measurementAxisSpec, panelAx
 	}
 }
 
+// One row per (panelId, tag, identity). A barcode reused for a different antigen takes a row under each
+// identity, so per-tag figures repeat across a tag's rows. No status column: every figure here is read
+// against the same figure on the tags beside it.
+qcReagentImportSpec := func(panelAxisSpec, tagAxisSpec, identityAxisSpec) {
+	col := func(colName, name, valueType, label, order, visible, description) {
+		return {
+			column: colName, id: colName,
+			spec: {
+				name: name,
+				valueType: valueType,
+				annotations: a(order, visible, {
+					"pl7.app/label": label,
+					"pl7.app/description": description
+				})
+			}
+		}
+	}
+	return {
+		axes: [
+			{ column: "panelId", spec: panelAxisSpec },
+			{ column: "tag", spec: tagAxisSpec },
+			{ column: "identity", spec: identityAxisSpec }
+		],
+		columns: [
+			col("samplesSeenIn", "pl7.app/antigen/reagentSamplesSeenIn", "Int", "Seen in", 79000, true,
+				"Samples of this panel carrying any count of the barcode. Zero means no read carried it."),
+			col("samplesInPanel", "pl7.app/antigen/reagentSamplesInPanel", "Int", "Samples in panel", 78500, false,
+				"The denominator for Seen in: the samples this panel declares."),
+			col("cellsWithCount", "pl7.app/antigen/reagentCellsWithCount", "Int", "Cells with any count", 78000, true,
+				"Cells holding any count of the barcode, taken before the minimum."),
+			col("cellsAboveTheLine", "pl7.app/antigen/reagentCellsAboveTheLine", "Double", "Cells called bound", 77000, true,
+				"Cells the verdict read called bound. Empty for a tag supplying the baseline; the reason column names that case."),
+			col("medianCountPerCell", "pl7.app/antigen/reagentMedianCount", "Double", "Median count per cell", 76000, true,
+				"Median count over the cells holding any count, taken before the minimum."),
+			col("siblingDisagreement", "pl7.app/antigen/reagentSiblingDisagreement", "Double", "Disagrees with siblings", 75000, true,
+				"Rate at which this tag disagrees with the other tags of its identity. Empty where no sibling comparison exists."),
+			col("selfDisagreement", "pl7.app/antigen/reagentSelfDisagreement", "Double", "Self-disagreement", 74500, true,
+				"Rate at which the cells of one set contradict each other on this tag."),
+			col("reason", "pl7.app/antigen/reagentReason", "String", "Why a figure is absent", 74400, true,
+				"Names each figure with no value and why. Empty when every figure has one.")
+		],
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}
+}
+
+
 export {
 	cellAxis: cellAxis,
 	featureAxis: featureAxis,
@@ -1414,6 +1461,7 @@ export {
 	qcDecileAxis: qcDecileAxis,
 	qcDecileImportSpec: qcDecileImportSpec,
 	qcBackgroundImportSpec: qcBackgroundImportSpec,
+	qcReagentImportSpec: qcReagentImportSpec,
 	guardNoLegacyFeatureAxis: guardNoLegacyFeatureAxis,
 	usesLegacyFeatureAxis: usesLegacyFeatureAxis
 }

@@ -2697,3 +2697,61 @@ def test_a_tag_that_is_the_only_one_on_its_identity_says_so(bed):
     row = qc.filter((pl.col("measurement") == "siblingDisagreement") & (pl.col("entity") == "AAAA")).row(0, named=True)
     assert row["value"] is None
     assert row["detail"] == "this identity carries one tag, so it has no sibling"
+
+
+REAGENT_COLUMNS = [
+    "panelId",
+    "tag",
+    "identity",
+    "samplesSeenIn",
+    "samplesInPanel",
+    "cellsWithCount",
+    "cellsAboveTheLine",
+    "medianCountPerCell",
+    "siblingDisagreement",
+    "selfDisagreement",
+    "reason",
+]
+
+
+def test_the_reagent_table_names_every_absent_figure(bed):
+    # 330-the-quality-readout fixes the columns and forbids a status. A blank and a zero are
+    # opposite findings, so a figure with no value says which case it is.
+    _run(bed, *BASE)
+    reagents = pl.read_csv(bed / "result_reagents.csv", infer_schema_length=0)
+    assert reagents.columns == REAGENT_COLUMNS
+    assert "status" not in reagents.columns
+
+    control = reagents.filter(pl.col("tag") == "CTRL").row(0, named=True)
+    assert control["cellsAboveTheLine"] is None
+    assert "cellsAboveTheLine=none asked, this tag supplies the baseline" in control["reason"]
+
+    target = reagents.filter(pl.col("tag") == "AAAA").row(0, named=True)
+    assert int(target["cellsWithCount"]) == 2
+    assert int(target["samplesSeenIn"]) == 1
+    # One tag under this identity, so no sibling comparison exists and the row says so.
+    assert target["siblingDisagreement"] is None
+    assert "siblingDisagreement=this identity carries one tag" in target["reason"]
+
+
+def test_a_barcode_reused_for_two_antigens_takes_a_row_under_each(tmp_path):
+    # One row could not name both identities, and putting the two side by side is the comparison
+    # the table exists for.
+    (tmp_path / "counts.csv").write_text(
+        "sampleId,cellId,tag,umiCount\n"
+        "S1,c1,AAAA,500\nS1,c1,CTRL,6\nS1,c2,AAAA,600\nS1,c2,CTRL,6\n"
+        "S2,c1,AAAA,500\nS2,c1,CTRL,6\nS2,c2,AAAA,600\nS2,c2,CTRL,6\n"
+    )
+    (tmp_path / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type\n"
+        "S1,AgA,AAAA,Target\nS1,Ctrl,CTRL,Control\n"
+        "S2,AgB,AAAA,Target\nS2,Ctrl,CTRL,Control\n"
+    )
+    (tmp_path / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS1,c2,K1\nS2,c1,K2\nS2,c2,K2\n")
+    _run(tmp_path, *BASE, "--grouping", json.dumps({"by": "property", "column": "Name"}))
+
+    reagents = pl.read_csv(tmp_path / "result_reagents.csv", infer_schema_length=0)
+    rows = reagents.filter(pl.col("tag") == "AAAA")
+    assert sorted(rows["identity"].to_list()) == ["AgA", "AgB"]
+    # Per-tag figures repeat across a tag's identities: the frame is not a summary.
+    assert len(set(rows["cellsWithCount"].to_list())) == 1

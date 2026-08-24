@@ -460,7 +460,8 @@ wf.body(func(args) {
 			panelMismatch: verdictRun.output("panelMismatch"),
 			qc: verdictRun.output("qc"),
 			qcDeciles: verdictRun.output("qcDeciles"),
-			qcBackgrounds: verdictRun.output("qcBackgrounds")
+			qcBackgrounds: verdictRun.output("qcBackgrounds"),
+			reagents: verdictRun.output("reagents")
 		})
 	}
 
@@ -540,6 +541,7 @@ wf.body(func(args) {
 		// The three distributions the readout draws. Outputs rather than exports, like the report above:
 		// they are what this block says about its own run, and nothing downstream reads them.
 		blockOutputs.antigenQcDistributions = pframes.exportFrame(verdictImport.output("qcDistributions"))
+		blockOutputs.antigenReagentTable = pframes.exportFrame(verdictImport.output("reagentTable"))
 		// The per-cell reference readings, kept inside the block. One row per cell: the reading itself, and
 		// whether a declared gate set the cell aside. They are part of what the run reports about itself. A
 		// reader checks here why a cell could or could not be compared, and here the block reports the cells

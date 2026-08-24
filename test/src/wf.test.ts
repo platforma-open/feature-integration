@@ -190,6 +190,7 @@ blockTest.skip(
         referenceReadingGraphState: { title: "Reference readings", template: "line" },
         fittedBackgroundGraphState: { title: "Backgrounds", template: "dots" },
         runQualityMismatchTableState: createPlDataTableStateV2(),
+        reagentTableState: createPlDataTableStateV2(),
       } satisfies BlockData,
     });
 

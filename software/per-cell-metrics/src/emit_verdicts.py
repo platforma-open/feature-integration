@@ -878,6 +878,23 @@ _BACKGROUND_SCHEMA = {
     "backgroundWeight": pl.Float64,
 }
 
+# One row per (panelId, tag, identity). Per-tag figures repeat across a tag's identities: the frame
+# is not a summary. `reason` names each figure that has no value and why, pipe-separated, and is
+# empty when every figure has one.
+_REAGENT_SCHEMA = {
+    "panelId": pl.String,
+    "tag": pl.String,
+    "identity": pl.String,
+    "samplesSeenIn": pl.Int64,
+    "samplesInPanel": pl.Int64,
+    "cellsWithCount": pl.Int64,
+    "cellsAboveTheLine": pl.Float64,
+    "medianCountPerCell": pl.Float64,
+    "siblingDisagreement": pl.Float64,
+    "selfDisagreement": pl.Float64,
+    "reason": pl.String,
+}
+
 
 def _decile_rows(distribution: str, deciles: pl.DataFrame) -> list[dict]:
     """One distribution's decile points as rows. A point with no value contributes none."""
@@ -1673,6 +1690,7 @@ def main() -> None:
         .iter_rows(named=True)
     }
 
+    reagent_rows: list[dict] = []
     for panel_id in sorted(tags_of_panel):
         panel_samples_here = samples_of_panel[panel_id]
         panel_tags = tags_of_panel[panel_id]
@@ -1715,9 +1733,9 @@ def main() -> None:
         # defect 330-the-quality-readout names: a reagent putting two counts into every cell
         # would read the same as one that delivered nothing.
         panel_counts = counts.filter(pl.col("sampleId").is_in(panel_samples_here))
-        for row in per_antigen_measures(
-            panel_counts, panel_states, panel_tags, panel_samples_here, reference_tags
-        ).iter_rows(named=True):
+        measures = per_antigen_measures(panel_counts, panel_states, panel_tags, panel_samples_here, reference_tags)
+        measure_of_tag = {row["tag"]: row for row in measures.iter_rows(named=True)}
+        for row in measures.iter_rows(named=True):
             above = row["cellsAboveTheLine"]
             # None only for a reference tag, which is held out of the verdict read. Say so rather
             # than printing a zero: no cell was called bound because none was asked.
@@ -1750,6 +1768,9 @@ def main() -> None:
         # an identity carries. Scoped to this panel's samples and declarations.
         siblings_of_identity: dict[str, list[str]] = {}
         identity_of_tag: dict[str, str] = {}
+        # A barcode reused for a different antigen in different samples carries two identities and
+        # takes a row under each. `identity_of_tag` keeps only the last and is not usable here.
+        identities_of_tag: dict[str, list[str]] = {}
         for (tag, sample), identity in grouping.items():
             if tag not in panel_tags or (sample not in set(panel_samples_here) and sample != ANY_SAMPLE):
                 continue
@@ -1757,6 +1778,9 @@ def main() -> None:
             if tag not in members:
                 members.append(tag)
             identity_of_tag[tag] = identity
+            carried = identities_of_tag.setdefault(tag, [])
+            if identity not in carried:
+                carried.append(identity)
         sibling_rate = sibling_disagreement(panel_states, siblings_of_identity)
         # A tag with no row in the panel's states held no cell here. `sibling_disagreement`
         # returns the same absent rate for that as for siblings that never reached a majority,
@@ -1777,6 +1801,50 @@ def main() -> None:
                 else:
                     detail = "no cell gave this tag's siblings a majority"
             _add(rows, "tag", tag, "siblingDisagreement", rate, detail, panel_id)
+
+        # One row per (tag, identity), carrying the figures already taken above. A tag absent from
+        # `grouping` here takes one row under its own barcode, which is what the barcode grouping
+        # names it.
+        reference_here = set(reference_tags)
+        for tag in sorted(panel_tags):
+            measure = measure_of_tag.get(tag, {})
+            above = measure.get("cellsAboveTheLine")
+            sibling = sibling_rate.get(tag)
+            own = tag_rate.get(tag)
+            absences = []
+            if above is None:
+                absences.append("cellsAboveTheLine=none asked, this tag supplies the baseline")
+            if sibling is None:
+                if tag in reference_here:
+                    absences.append("siblingDisagreement=this tag is held out of the verdict read")
+                elif len(siblings_of_identity.get(identity_of_tag.get(tag, ""), [])) < 2:
+                    absences.append("siblingDisagreement=this identity carries one tag, so it has no sibling")
+                elif tag not in held_a_cell:
+                    absences.append("siblingDisagreement=this tag holds no cell beside a sibling")
+                else:
+                    absences.append("siblingDisagreement=no cell gave this tag's siblings a majority")
+            if own is None:
+                absences.append("selfDisagreement=no cell set held this tag under an evaluable read")
+            for identity in sorted(identities_of_tag.get(tag, [tag])):
+                reagent_rows.append(
+                    {
+                        "panelId": panel_id,
+                        "tag": tag,
+                        "identity": identity,
+                        "samplesSeenIn": int(measure.get("samplesSeenIn") or 0),
+                        "samplesInPanel": len(set(panel_samples_here)),
+                        "cellsWithCount": int(measure.get("cellsWithCount") or 0),
+                        "cellsAboveTheLine": float(above) if above is not None else None,
+                        "medianCountPerCell": (
+                            float(measure["medianCountPerCell"])
+                            if measure.get("medianCountPerCell") is not None
+                            else None
+                        ),
+                        "siblingDisagreement": float(sibling) if sibling is not None else None,
+                        "selfDisagreement": float(own) if own is not None else None,
+                        "reason": "|".join(absences),
+                    }
+                )
 
     # One row for the whole run, and the entity is the run: 320 puts the score spread at that
     # grain because the cutoff is one number for the run, so a per-sample figure would answer a
@@ -1844,6 +1912,12 @@ def main() -> None:
         pl.DataFrame(background_rows, schema=_BACKGROUND_SCHEMA),
         f"{prefix}_qc_backgrounds.csv",
         ["sampleId", "tag"],
+    )
+
+    _write_sorted(
+        pl.DataFrame(reagent_rows, schema=_REAGENT_SCHEMA),
+        f"{prefix}_reagents.csv",
+        ["panelId", "identity", "tag"],
     )
 
     meta = {

@@ -31,6 +31,10 @@ const mismatchSettings = usePlDataTableSettingsV2({
   model: () => app.model.outputs.runQualityMismatchTable,
 });
 
+const reagentSettings = usePlDataTableSettingsV2({
+  model: () => app.model.outputs.reagentTable,
+});
+
 // A missing V(D)J dataset is a legitimate state rather than a half-filled form: the block runs, and the
 // verdict stage alone is skipped, so neither table below has a source. Read from data rather than from an
 // output, because the point is what the user has chosen, including before the next run. Same device, and the
@@ -53,6 +57,11 @@ const qcAbsent = computed(() => {
 
 const mismatchAbsent = computed(() => {
   const output = app.model.outputs.runQualityMismatchTable;
+  return output === undefined || (output.ok && output.value === undefined);
+});
+
+const reagentAbsent = computed(() => {
+  const output = app.model.outputs.reagentTable;
   return output === undefined || (output.ok && output.value === undefined);
 });
 
@@ -91,14 +100,15 @@ const noReferenceReadings = computed(() => !rungUnknown.value && served.value ==
 // grid needs. Local rather than stored: which tab is open is a glance, not a setting.
 const VIEW_TABS = [
   { label: "Measurements", value: "measurements" as const },
+  { label: "Reagents", value: "reagents" as const },
   { label: "Panel vs reads", value: "mismatch" as const },
   { label: "Scores", value: "score" as const },
   { label: "Reference readings", value: "reference" as const },
   { label: "Fitted background", value: "background" as const },
 ];
-const activeView = ref<"measurements" | "mismatch" | "score" | "reference" | "background">(
-  "measurements",
-);
+const activeView = ref<
+  "measurements" | "reagents" | "mismatch" | "score" | "reference" | "background"
+>("measurements");
 
 const DECILE_VALUE = "pl7.app/antigen/qcDecileValue";
 const DECILE_AXIS = "pl7.app/antigen/qcDecile";
@@ -183,6 +193,20 @@ const backgroundOptions = computed<PredefinedGraphOption<"scatterplot">[]>(() =>
           v-model="app.model.data.runQualityTableState"
           :settings="qcSettings"
           no-rows-text="The report imported with no measurements in it. Every declared measurement should keep a row — a deferred one carries no status and gives its reason in place of a value — so an empty report means the measurements were lost on the way here, not that the run was clean."
+          show-export-button
+        />
+      </template>
+
+      <template v-else-if="activeView === 'reagents'">
+        <PlAlert v-if="reagentAbsent" type="info">
+          No reagent table has arrived from this run yet. It is taken by the same verdict stage as
+          the measurements, so it arrives with them.
+        </PlAlert>
+        <PlAgDataTableV2
+          v-else
+          v-model="app.model.data.reagentTableState"
+          :settings="reagentSettings"
+          no-rows-text="The table imported with no reagents in it. Every declared barcode keeps a row under every identity it carries — a dead one reads zero under Seen in — so an empty table means the panel reached this stage with nothing declared, not that the reagents were clean."
           show-export-button
         />
       </template>
