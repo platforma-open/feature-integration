@@ -9,6 +9,18 @@ import type { ImportFileHandle, PlDataTableStateV2, PlRef } from "@platforma-sdk
  * choice is undefined here and `args()` refuses it -- rather than a fourth value meaning "answer every
  * position unreliable", which costs what a real run costs and looks like a result at a glance.
  */
+/**
+ * `"panel"` is RETIRED and no longer offered. `292-what-plays-the-baseline@8.2.1` names it "a fourth
+ * possibility ... named and not built", and the reason it gives is not panel size: the one tool that
+ * implements it decides at the CLONOTYPE, pooling a clone's cells into one vector before anything is
+ * tested, so no cell ever holds a state and there is nothing to vote on. Adopting it would carve a
+ * clonotype-level exception through the middle of the verdict model. `060-parameter-set@2.0.0` drops the
+ * 25-tag parameter with it.
+ *
+ * The member stays in the union so a project stored under it still parses. `args()` refuses such a run and
+ * names the replacement, rather than moving the choice itself -- a baseline nobody chose is a methodology
+ * nobody knows they used.
+ */
 export type ReferenceSource = "declared" | "panel" | "distribution";
 
 /**

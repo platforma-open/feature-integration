@@ -266,23 +266,6 @@ function removeContendingGroup(index: number) {
        "Baseline" is the link. -->
   <PlAccordionSection label="Baseline thresholds">
     <PlNumberField
-      v-model="app.model.data.panelReferenceMinMembers"
-      v-if="chosenSource === 'panel'"
-      :min-value="1"
-      :step="1"
-      label="Minimum panel size to serve as baseline"
-    >
-      <template #tooltip>
-        How many tags the panel needs before its own readings can serve as the baseline. Below this,
-        the block reports that this source cannot serve, and the run produces no verdicts.<br /><br />
-        The default of 25 comes from one preprint, whose own panels held 50 and 100 tags. Nothing
-        validates it lower. Lowering it is a departure from the method rather than a preference:
-        comparing a count against a handful of other antigens is not a background estimate.<br /><br />
-        An antibody kit caps at 15 tags, so this source is out of reach of one. Such a panel can use
-        each tag's own distribution instead.
-      </template>
-    </PlNumberField>
-    <PlNumberField
       v-model="app.model.data.distributionMinCells"
       v-if="chosenSource === 'distribution'"
       :min-value="1"

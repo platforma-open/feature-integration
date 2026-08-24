@@ -545,6 +545,16 @@ export const platforma = BlockModelV3.create(dataModel)
     // REQUIRED. The block used to run without one and emit counts, per-cell values and per-sample quality
     // with no verdicts at all. Verdicts are what the block is for, so that run was a stage sold as a
     // deliverable: nobody adds a binding-profiling block to obtain read statistics.
+    // The panel rung is retired, and a project stored under it is refused rather than moved. `args()` is
+    // where a settings-knowable refusal belongs: the scientist changes the configuration instead of waiting
+    // for a run to tell them.
+    if (data.referenceSource === "panel")
+      throw new Error(
+        "The baseline source \u201CThe panel's own readings\u201D is no longer available. It read each " +
+          "count against the median of the cell's other tags, which needs a decision at the clonotype " +
+          "rather than at the cell, and every other rule here reads a cell first. Choose a declared " +
+          "baseline tag, or each tag's own distribution, under \u201CWhat sets the baseline\u201D.",
+      );
     if (!data.datasetRef)
       throw new Error(
         "Select the single-cell V(D)J dataset the verdicts are about. Every verdict is about one " +
@@ -1676,17 +1686,15 @@ export const platforma = BlockModelV3.create(dataModel)
   .output("effectiveReferenceSource", (ctx): ReferenceSource | undefined =>
     resolveReferenceSource(ctx.data),
   )
-  // The comparator sources this panel can serve, with a line for each it cannot. Both facts are knowable
-  // before a run, from the panel metadata staging already emits: the panel's size is the count of distinct
-  // barcodes, and a declared comparator needs a role column and values of it that the column actually
-  // carries. Offering a source the run would silently degrade would record a choice the user never gets.
+  // Every baseline rung, each with what it still needs. Two rungs remain: a declared reference tag, and a
+  // tag's own distribution across the sample's cells. The panel's own readings are retired, and empty
+  // droplets need gene expression this block does not read.
+  //
+  // Whether the declared rung can serve is knowable before a run, from the panel metadata staging already
+  // emits: it needs a role column and values of it the column actually carries. The distribution rung's
+  // conditions are properties of the DATA, so they are stated in its description and reported by the run.
   .retentiveOutput("referenceSources", (ctx): ReferenceSourceChoices => {
     const meta = readCsvMeta(ctx);
-    const barcodeColumn = ctx.data.barcodeSeqColumn;
-    const panelSize = barcodeColumn
-      ? (meta?.valuesByColumn?.[barcodeColumn] ?? []).filter((v) => v.trim() !== "").length
-      : 0;
-    const minMembers = Math.round(ctx.data.panelReferenceMinMembers);
     const roleColumn = ctx.data.roleColumn;
     const roleValues = new Set(roleColumn ? (meta?.valuesByColumn?.[roleColumn] ?? []) : []);
     const declaredTags = (ctx.data.referenceValues ?? []).filter((v) => roleValues.has(v));
@@ -1707,19 +1715,6 @@ export const platforma = BlockModelV3.create(dataModel)
             ? undefined
             : "Name the panel column that declares each tag's role, then pick the value of it that " +
               "marks the baseline tag. Both fields are below.",
-      },
-      {
-        value: "panel",
-        label: "The panel's own readings",
-        description:
-          `The block judges each count against the rest of the panel (${panelSize} tags). This ` +
-          `holds even where your panel declares a baseline tag. Pick this source to ignore that ` +
-          `tag deliberately.`,
-        needs:
-          panelSize >= minMembers
-            ? undefined
-            : `Your panel declares ${panelSize} ${panelSize === 1 ? "tag" : "tags"}, and this ` +
-              `source needs at least ${minMembers}. Lower the minimum below, or pick another source.`,
       },
       // No `needs`. Whether this rung can serve turns on the sample's cell count and on whether each tag's
       // counts separate. This block has read neither, and the second is answered per tag rather than per
