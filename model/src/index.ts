@@ -686,8 +686,12 @@ export const platforma = BlockModelV3.create(dataModel)
     // holds enough cells whose counts separate is a property of the DATA. A run on that rung proceeds and
     // reports afterwards that no baseline could be established.
     //
-    // The gate below is about the ROLE COLUMN's VALUES rather than about which rung was chosen.
-    if (data.roleColumn && !data.referenceValues?.length)
+    // Scoped to the DECLARED rung, and that scope is load-bearing. A role column only names a baseline
+    // tag for the rung that reads one, so under any other rung it changes nothing and must not refuse a
+    // run. Unscoped, a project that once chose a role column and later moved to the tag-distribution
+    // rung kept the stale column, threw here, and greyed out Run -- while the Role column field is
+    // hidden under that rung, so the value doing it was invisible and unclearable.
+    if (data.referenceSource === "declared" && data.roleColumn && !data.referenceValues?.length)
       throw new Error(
         `The panel column "${data.roleColumn}" declares each tag's role, but no value of it is marked ` +
           `as the baseline, so the column changes nothing. Under "Baseline value", choose the value that ` +
@@ -768,12 +772,17 @@ export const platforma = BlockModelV3.create(dataModel)
       datasetRef: data.datasetRef,
       // Empty and absent are the same claim for both of these, so an empty selection projects as absent
       // rather than as "" / [] -- two spellings of one request would otherwise be two cache keys.
-      roleColumn: data.roleColumn || undefined,
+      //
+      // Sent only for the rung that reads one. A project that once chose a role column and later moved
+      // to another rung keeps the stale value in `data`, and projecting it would put it in the argument
+      // vector, where it changes the cache key and re-runs the reading for a setting nothing consults.
+      roleColumn: data.referenceSource === "declared" ? data.roleColumn || undefined : undefined,
       // Sorted and de-duplicated: the Python reads these as a set, so re-picking the same values in a
       // different order must not re-run the reading.
-      referenceValues: data.referenceValues?.length
-        ? [...new Set(data.referenceValues)].sort()
-        : undefined,
+      referenceValues:
+        data.referenceSource === "declared" && data.referenceValues?.length
+          ? [...new Set(data.referenceValues)].sort()
+          : undefined,
       // Always concrete, because the software has no default: --reference-source is required there, and
       // nothing below this line picks a rung. An unselected choice reaches the run as "none", which is a
       // rung rather than a refusal. `served_source` only ever drops a rung to none, never substitutes a

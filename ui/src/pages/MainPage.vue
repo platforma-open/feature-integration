@@ -65,6 +65,27 @@ watch(
 // run-level summary once it finishes. The model builds the lines from the per-sample QC. Shown in a wide
 // slide-over as one text area. Detailed per-sample statistics live on the QC page.
 const analysisLog = computed(() => app.model.outputs.analysisLog ?? []);
+
+// One line for the whole run, above the per-sample grid. The grid has carried live per-step progress
+// all along, but a reader watching a single sample had to read it out of a cell, and a run that had
+// not produced its roster yet showed nothing at all while the parser was already most of the way
+// through. `analysisLog` says only "Processing..." in that window.
+//
+// The percent is the MEAN over samples rather than the minimum. A minimum reports the slowest sample,
+// which is a different question and makes a run of twenty look stalled whenever one lags.
+const runProgress = computed(() => {
+  const rows = sampleResults.value ?? [];
+  if (rows.length === 0) return undefined;
+  const done = rows.filter((r) => r.progress.status === "done").length;
+  if (done === rows.length) return undefined;
+  const pct = (r: SampleResult) => r.progress.percent ?? 0;
+  const percent = Math.round(rows.reduce((sum, r) => sum + pct(r), 0) / rows.length);
+  // The label of whichever sample is furthest along: it names the step the run is actually in, where
+  // the slowest sample's label lags a step behind and reads as if nothing had started.
+  const leader = rows.reduce((a, b) => (pct(b) > pct(a) ? b : a));
+  const detail = [leader.progress.text, leader.progress.suffix].filter(Boolean).join(" ");
+  return { percent, detail, done, total: rows.length };
+});
 // First line of the Analysis-logs drawer, pointing the user at the richer per-sample logs behind a
 // double-click on each sample row. The run-level analysisLog below is only a summary heartbeat.
 const LOGS_HINT =
@@ -693,6 +714,16 @@ const gridOptions = {
          blocks/peptide-extraction, is always shown: the grid handles layout, its Progress cell, and the
          loading overlay for the pre-roster window. When the run finishes every row settles into its "Done"
          state, which results.ts sets from completedSamples. -->
+    <div v-if="runProgress" :class="$style.runProgress">
+      <div :class="$style.runProgressHead">
+        <span>{{ runProgress.detail }}</span>
+        <span>{{ runProgress.done }} of {{ runProgress.total }} samples done</span>
+      </div>
+      <div :class="$style.runProgressTrack">
+        <div :class="$style.runProgressFill" :style="{ width: runProgress.percent + '%' }" />
+      </div>
+    </div>
+
     <div :style="{ flex: 1 }">
       <AgGridVue
         :theme="AgGridTheme"
@@ -1101,6 +1132,35 @@ const gridOptions = {
 </template>
 
 <style module>
+/* The run-level progress bar. Deliberately plain: it reports, it is not a control. */
+.runProgress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0 12px;
+}
+
+.runProgressHead {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--txt-03, #6b7280);
+}
+
+.runProgressTrack {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-elevated-03, #e5e7eb);
+  overflow: hidden;
+}
+
+.runProgressFill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--border-color-focus, #49cc49);
+  transition: width 0.3s ease;
+}
+
 /* Two fields sharing a row split it evenly. Left to their natural width they sit left with a gap
    beside them, which reads as a field missing rather than as a pair. */
 .half {
