@@ -201,6 +201,17 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
   // exist yet". The bar detail comes from stepProgress below.
   const parseProgress = app.model.outputs.parseProgress;
   const earlyRosterIds = parseProgress ? parseProgress.data.map((p) => String(p.key[0])) : [];
+  // It also carries parse's live LINE, and that matters for the whole of parse rather than a moment of
+  // it: `stepLogs` is built by fb-refine-tagstat, so nothing lands in the per-step map below until parse
+  // is over and the next template runs. Read only for the roster, the bar spent every parse showing the
+  // bare step label while a percent and an ETA sat right here.
+  const parseLineBySample = new Map<string, string | undefined>();
+  if (parseProgress) {
+    for (const p of parseProgress.data) {
+      const v = p.value as { progressLine?: string; live: boolean } | undefined;
+      parseLineBySample.set(String(p.key[0]), v?.progressLine);
+    }
+  }
 
   // Per-[sampleId, step] live progress lines (parse / refine / tag-stat). Indexed by sampleId -> step ->
   // progressLine, so deriveProgress can pull the line for whichever step the sample is on.
@@ -226,7 +237,8 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
     }
   }
   const liveLinesFor = (sampleId: string): Record<string, string | undefined> => ({
-    "1-parse": lineBySampleStep.get(`${sampleId} 1-parse`),
+    // The per-step map wins once it fills, since it keeps streaming after the flat stream closes.
+    "1-parse": lineBySampleStep.get(`${sampleId} 1-parse`) ?? parseLineBySample.get(sampleId),
     "2-refine": lineBySampleStep.get(`${sampleId} 2-refine`),
     "3-tagstat": lineBySampleStep.get(`${sampleId} 3-tagstat`),
     "4-metrics": metricsLineBySample.get(sampleId),
