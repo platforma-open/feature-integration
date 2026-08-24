@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import type { PredefinedGraphOption } from "@milaboratories/graph-maker";
+import { GraphMaker } from "@milaboratories/graph-maker";
 import {
   PlAgDataTableV2,
   PlAlert,
@@ -53,6 +55,74 @@ const mismatchAbsent = computed(() => {
   return output === undefined || (output.ok && output.value === undefined);
 });
 
+// --- the distributions ---------------------------------------------------------------------------
+//
+// `330-the-quality-readout` puts three distributions last, and two of them exist so a scientist can
+// place a number: the spread of the run's scores is where a cutoff goes when the scores separate,
+// and the fitted background is the only way to see whether a tag's counts separated at all. The
+// third, the reference reading across cells, informs the gate.
+//
+// All three read one p-frame. The two decile sets share a `distribution` axis and are told apart by
+// a filter GraphMaker applies from the default options below.
+const distributionsAbsent = computed(() => app.model.outputs.runQualityDistributions === undefined);
+
+// A run served by a population baseline produces no score, so that plot has nothing to draw and the
+// section says so rather than showing an empty chart.
+// `referenceChoice` is the rung that actually SERVED, not the one requested: a request the panel
+// cannot honour degrades, and the plots follow what happened rather than what was asked for.
+const served = computed(() => app.model.outputs.verdictRunMeta?.referenceChoice);
+const noScores = computed(() => served.value !== "declared");
+// A run served by a declared baseline fits no background, symmetrically.
+const noBackgrounds = computed(() => served.value !== "distribution");
+
+const DECILE_VALUE = "pl7.app/antigen/qcDecileValue";
+const DECILE_AXIS = "pl7.app/antigen/qcDecile";
+
+// Both decile plots read the same column and differ only in which distribution they filter to, so
+// the options are built once and the caller names the slice.
+function decileOptions(distribution: string): PredefinedGraphOption<"discrete">[] {
+  return [
+    {
+      inputName: "y",
+      selectedSource: { kind: "PColumn", name: DECILE_VALUE, valueType: "Double" },
+    },
+    { inputName: "x", selectedSource: { name: DECILE_AXIS, type: "Int" } },
+    {
+      inputName: "filters",
+      selectedSource: { name: "pl7.app/antigen/qcDistribution", type: "String" },
+      selectedValues: [distribution],
+    },
+  ] as PredefinedGraphOption<"discrete">[];
+}
+
+const scoreOptions = computed(() => decileOptions("score"));
+const referenceOptions = computed(() => decileOptions("referenceReading"));
+
+// The two means side by side, which is the whole reading: a background alone says nothing about
+// whether the counts separated, and a tag that bound nothing shows as two means almost on top of
+// each other rather than as a refusal.
+const backgroundOptions = computed(
+  () =>
+    [
+      {
+        inputName: "x",
+        selectedSource: {
+          kind: "PColumn",
+          name: "pl7.app/antigen/fittedBackgroundMean",
+          valueType: "Double",
+        },
+      },
+      {
+        inputName: "y",
+        selectedSource: {
+          kind: "PColumn",
+          name: "pl7.app/antigen/fittedSignalMean",
+          valueType: "Double",
+        },
+      },
+    ] as PredefinedGraphOption<"scatterplot">[],
+);
+
 // Status is rendered as the plain string the workflow emitted, with the discrete filter its spec declares.
 // The vocabulary is now OK / warn / alert and nothing else, which IS a rank, so a status tag would fit the
 // three. It stays plain text because of the fourth case a tag cannot render: a measurement with no line
@@ -99,6 +169,57 @@ const mismatchAbsent = computed(() => {
         no-rows-text="The panel and the reads agree: every barcode the panel declared was carried by reads, and every barcode the reads carried was declared in the panel. This table is empty because the check found nothing, which is the outcome you want."
         show-export-button
       />
+
+      <PlSectionSeparator>Distributions</PlSectionSeparator>
+
+      <PlAlert v-if="distributionsAbsent" type="info">
+        No distributions have arrived from this run yet. They are taken by the same verdict stage as
+        the measurements above, so they arrive with them.
+      </PlAlert>
+      <template v-else>
+        <PlAlert v-if="noScores" type="info">
+          This run was read against a population baseline, which yields a probability rather than a
+          score, so there are no scores to spread. The plot appears on a run read against a declared
+          baseline tag.
+        </PlAlert>
+        <div v-else :class="$style.plot">
+          <GraphMaker
+            v-model="app.model.data.scoreDistributionGraphState"
+            chartType="discrete"
+            :p-frame="app.model.outputs.runQualityDistributions"
+            :default-options="scoreOptions"
+          />
+        </div>
+
+        <div :class="$style.plot">
+          <GraphMaker
+            v-model="app.model.data.referenceReadingGraphState"
+            chartType="discrete"
+            :p-frame="app.model.outputs.runQualityDistributions"
+            :default-options="referenceOptions"
+          />
+        </div>
+
+        <PlAlert v-if="noBackgrounds" type="info">
+          This run was read against a declared baseline tag, so no background was fitted. The plot
+          appears on a run read against each tag's own distribution.
+        </PlAlert>
+        <div v-else :class="$style.plot">
+          <GraphMaker
+            v-model="app.model.data.fittedBackgroundGraphState"
+            chartType="scatterplot"
+            :p-frame="app.model.outputs.runQualityDistributions"
+            :default-options="backgroundOptions"
+          />
+        </div>
+      </template>
     </template>
   </PlBlockPage>
 </template>
+
+<style module>
+/* GraphMaker fills its container, and a container with no height collapses to nothing. */
+.plot {
+  height: 480px;
+}
+</style>

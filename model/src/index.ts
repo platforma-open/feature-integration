@@ -7,6 +7,7 @@ import type {
 import {
   BlockModelV3,
   createPlDataTableStateV2,
+  createPFrameForGraphs,
   createPlDataTableV2,
   createPlDataTableV3,
   DataColumn,
@@ -526,6 +527,12 @@ const dataModel = new DataModelBuilder()
     // No migration adds these two, and none is needed: a field absent from an older project's stored data
     // is filled from these defaults on load. Their names avoid the two keys the v3 -> v4 migration strips.
     runQualityTableState: createPlDataTableStateV2(),
+    // GraphMaker keeps its own chart configuration here. One per plot, because a chart's saved
+    // state is about that chart: sharing one would make picking an axis on the score plot move
+    // the background plot too.
+    scoreDistributionGraphState: { title: "Spread of the run's scores", template: "line" },
+    referenceReadingGraphState: { title: "Reference reading across cells", template: "line" },
+    fittedBackgroundGraphState: { title: "Fitted background per tag", template: "dots" },
     runQualityMismatchTableState: createPlDataTableStateV2(),
   }));
 
@@ -1644,6 +1651,21 @@ export const platforma = BlockModelV3.create(dataModel)
     },
     { retentive: true, withStatus: true },
   )
+  // The three distributions `330-the-quality-readout` puts last in the readout, as ONE p-frame for
+  // GraphMaker rather than as rows in the measurement table. Two of them exist so a scientist can
+  // place the cutoff and the gate, and a decile encoded in a detail string is a number nobody can
+  // draw. `allowPermanentAbsence` for the same reason the tables above need it.
+  .output(
+    "runQualityDistributions",
+    (ctx) => {
+      const pCols = ctx.outputs
+        ?.resolve({ field: "antigenQcDistributions", allowPermanentAbsence: true })
+        ?.getPColumns();
+      if (pCols === undefined) return undefined;
+      return createPFrameForGraphs(ctx, pCols);
+    },
+    { retentive: true, withStatus: true },
+  )
   // The panel-versus-reads check: every barcode the panel declared that no read carried, and every barcode
   // the reads carried that the panel never declared. Both directions are in the one frame, told apart by the
   // direction column, which carries a discrete filter so either half is reachable on its own. A mismatch
@@ -1753,15 +1775,10 @@ export const platforma = BlockModelV3.create(dataModel)
             // columns, and the page saying so is the only place a user learns why. Hiding the tab would leave
             // the absence unexplained.
             { type: "link" as const, href: "/punchcard" as const, label: "Explore readout" },
-            // "Run quality" (`/antigen-qc`) is HIDDEN, not removed: the quality layer it renders is
-            // specified and not yet built, so the page shows measurements the spec has since re-cut. The
-            // route, the page component and the two grid states stay, and restoring the tab is this one
-            // line. Re-enable it with the quality readout.
-            //
-            // When it returns, keep the label "Run quality" rather than "QC" so it cannot be read as
-            // another view of the per-sample mitool stats above: that page is per sample, this one is per
-            // run. It is shown for every run, including one with no V(D)J dataset, for the same reason the
-            // readout is.
+            // "Run quality" rather than "QC": that page is per SAMPLE, this one is per run, and one
+            // label for both invites a reader to take them as two views of one set of numbers. Shown for
+            // every run, including one with no V(D)J dataset, for the same reason the readout is.
+            { type: "link" as const, href: "/antigen-qc" as const, label: "Run quality" },
           ]
         : []),
     ];

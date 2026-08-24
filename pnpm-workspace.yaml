@@ -8,6 +8,7 @@ packages:
 
 catalog:
   "@milaboratories/helpers": 1.14.5
+  "@milaboratories/graph-maker": 1.4.8
   "@milaboratories/ts-builder": 1.6.2
   "@milaboratories/ts-configs": 1.4.0
   typescript: ~5.9.3

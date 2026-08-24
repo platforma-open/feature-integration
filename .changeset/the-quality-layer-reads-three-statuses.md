@@ -33,3 +33,9 @@ The measurement carries no line, since a line here would be the block placing th
 So **Sticky cell threshold** is gone from the settings, along with its parameter and its `--high-reference-line` flag. With a gate declared, the cells counted high are the cells it set aside — one number, both jobs. With no gate declared, which is the default, there is no *high* to count and the measurement is the **spread of the reference readings** instead. That spread is what a scientist reads in order to place a gate, and until now a first run offered a count against a line nobody had chosen.
 
 A stored project carrying the old value keeps running; the field is simply no longer read.
+
+**Run quality is visible again, and it draws the three distributions.** The tab was hidden while the quality layer was being re-cut. It returns with the measurement table, the panel-versus-reads check, and a new Distributions section holding the three plots `330-the-quality-readout` asks for: the spread of the run's scores, the reference reading across cells, and the fitted background for each tag.
+
+The deciles and the fitted parameters go out as plottable frames rather than only as detail strings on a measurement row, because a number encoded in a string is one nobody can draw. Both decile sets are taken over the whole run: the cutoff is one number for the run and so is the gate, so each plot shows every cell its number will act on. The backgrounds are emitted at the fit's own `(sample, tag)` grain, since aggregating to the tag would hide a reagent that separated in one sample and not another.
+
+Each plot says so where it cannot exist: a run read against a population baseline has no scores to spread, and one read against a declared baseline tag fits no background.

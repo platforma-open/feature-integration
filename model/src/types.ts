@@ -1,3 +1,4 @@
+import type { GraphMakerState } from "@milaboratories/graph-maker";
 import type { ImportFileHandle, PlDataTableStateV2, PlRef } from "@platforma-sdk/model";
 
 /**
@@ -258,5 +259,11 @@ export type BlockData = {
   // fight that strip or resurrect a column set and filter saved against a frame nobody has looked at
   // since. A stored grid state means something only against the frame it was saved on.
   runQualityTableState: PlDataTableStateV2; // run-level quality measurements grid state
+  // GraphMaker's own chart configuration, one per plot. Opaque to this block: the widget owns the
+  // shape and reads it back. Separate rather than shared, because picking an axis on one chart must
+  // not move another.
+  scoreDistributionGraphState: GraphMakerState;
+  referenceReadingGraphState: GraphMakerState;
+  fittedBackgroundGraphState: GraphMakerState;
   runQualityMismatchTableState: PlDataTableStateV2; // panel-versus-reads mismatch grid state
 };

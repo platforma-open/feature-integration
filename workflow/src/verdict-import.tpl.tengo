@@ -219,6 +219,16 @@ self.body(func(inputs) {
 		columnSpecs.qcMeasurementAxis(blockId),
 		columnSpecs.panelAxis(blockId)))
 
+	// The three distributions 330 puts last in the readout, as plots rather than table rows. Two of
+	// them exist so a scientist can place the cutoff and the gate, and a number encoded in a detail
+	// string is one nobody can draw.
+	distributionFb := pframes.pFrameBuilder()
+	addTo(distributionFb, "qcDeciles", inputs.qcDeciles, columnSpecs.qcDecileImportSpec(
+		columnSpecs.qcDistributionAxis(blockId),
+		columnSpecs.qcDecileAxis(blockId)))
+	addTo(distributionFb, "qcBackgrounds", inputs.qcBackgrounds,
+		columnSpecs.qcBackgroundImportSpec(sampleAxis, tagAxis))
+
 	// The panel-versus-reads check is emitted as a p-column rather than left as a file. A mismatch report the
 	// user cannot see defeats its purpose.
 	mismatchFb := pframes.pFrameBuilder()
@@ -230,6 +240,7 @@ self.body(func(inputs) {
 		punchcard: punchFb.build(),
 		cellReference: cellRefFb.build(),
 		qcTable: qcFb.build(),
+		qcDistributions: distributionFb.build(),
 		panelMismatchTable: mismatchFb.build()
 	}
 })

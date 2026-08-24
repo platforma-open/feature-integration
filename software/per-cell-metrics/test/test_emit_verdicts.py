@@ -2405,6 +2405,57 @@ def test_no_observation_line_parameter_survives(bed):
     assert "highReferenceLine" not in json.loads((bed / "result_run_meta.json").read_text())
 
 
+def test_the_distributions_are_emitted_as_plottable_frames(bed):
+    # 330 puts three distributions last in the readout, and a scientist settles the cutoff and the
+    # gate by looking at them. A decile encoded inside a measurement's detail string is a number
+    # nobody can plot, so they also go out as frames.
+    _run(bed, *BASE)
+
+    deciles = pl.read_csv(bed / "result_qc_deciles.csv", infer_schema_length=0)
+    kinds = set(deciles["distribution"].to_list())
+    assert kinds == {"score", "referenceReading"}
+    for kind in kinds:
+        points = deciles.filter(pl.col("distribution") == kind)["decile"].to_list()
+        assert [int(p) for p in points] == list(range(0, 101, 10)), kind
+
+    # Header-only rather than absent where a run fitted no background: a consumer meeting a header
+    # knows the step ran and found nothing.
+    backgrounds = pl.read_csv(bed / "result_qc_backgrounds.csv", infer_schema_length=0)
+    assert backgrounds.columns == [
+        "sampleId",
+        "tag",
+        "backgroundMean",
+        "signalMean",
+        "backgroundWeight",
+    ]
+    assert backgrounds.height == 0, "a declared baseline fits no background"
+
+
+def test_the_fitted_backgrounds_are_emitted_at_the_fits_own_grain(tmp_path):
+    # One row per (sample, tag) the fit scored. Aggregating to the tag would hide a reagent that
+    # separated in one sample and not in another, which is the comparison a reader makes here.
+    _distribution_bed(tmp_path)
+    _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
+
+    backgrounds = pl.read_csv(tmp_path / "result_qc_backgrounds.csv")
+    # SEPS fits, FLAT does not, so exactly one pair contributes.
+    assert backgrounds.height == 1
+    row = backgrounds.row(0, named=True)
+    assert row["tag"] == "SEPS"
+    assert row["backgroundMean"] < row["signalMean"]
+    assert 0.0 < row["backgroundWeight"] < 1.0
+
+
+def test_a_population_baseline_emits_no_score_deciles(tmp_path):
+    # No score exists under that rung, so the frame carries the reference-reading rows and nothing
+    # claiming to be a score.
+    _distribution_bed(tmp_path)
+    _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
+
+    deciles = pl.read_csv(tmp_path / "result_qc_deciles.csv", infer_schema_length=0)
+    assert "score" not in set(deciles["distribution"].to_list())
+
+
 def test_the_run_carries_its_score_spread(bed):
     # 320 puts this at the run grain because the cutoff is one number for the run, and carries it
     # so a scientist can move that cutoff to where their own scores separate. A cutoff set with no

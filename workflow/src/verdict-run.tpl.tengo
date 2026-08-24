@@ -40,7 +40,9 @@ RESULT_TABLES := [
 	{ out: "panelLabels", file: "result_panel_labels.csv" },
 	{ out: "samplePanel", file: "result_sample_panel.csv" },
 	{ out: "panelMismatch", file: "result_panel_mismatch.csv" },
-	{ out: "qc", file: "result_qc.csv" }
+	{ out: "qc", file: "result_qc.csv" },
+	{ out: "qcDeciles", file: "result_qc_deciles.csv" },
+	{ out: "qcBackgrounds", file: "result_qc_backgrounds.csv" }
 ]
 
 self.awaitState("columns", "PColumnBundle")

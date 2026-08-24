@@ -186,6 +186,9 @@ blockTest.skip(
         qcSummaryTableState: createPlDataTableStateV2(),
         punchcardTableState: createPlDataTableStateV2(),
         runQualityTableState: createPlDataTableStateV2(),
+        scoreDistributionGraphState: { title: "Scores", template: "line" },
+        referenceReadingGraphState: { title: "Reference readings", template: "line" },
+        fittedBackgroundGraphState: { title: "Backgrounds", template: "dots" },
         runQualityMismatchTableState: createPlDataTableStateV2(),
       } satisfies BlockData,
     });

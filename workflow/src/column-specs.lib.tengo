@@ -1225,6 +1225,97 @@ panelMismatchImportSpec := func(panelAxisSpec, tagAxisSpec) {
 //
 // A row that belongs to no panel -- every sample-level and capture-level row -- leaves `panelId` empty,
 // which is honest: a per-sample measurement belongs to no single panel.
+// --- The distributions a scientist reads in order to settle a number -------------------------
+//
+// 330-the-quality-readout puts three distributions last, and two of them exist so a scientist can
+// place the cutoff and the gate. That makes them plots rather than table rows: a decile encoded in a
+// measurement's detail string is a number nobody can draw.
+//
+// Both decile sets are taken over the WHOLE run and share one frame, told apart by the
+// `distribution` axis. The cutoff is one number for the run and so is the gate, so each plot has to
+// show every cell the number will act on. Pooling the reference reading over samples is 330's own
+// instruction, not a simplification.
+qcDistributionAxis := func(blockId) {
+	return {
+		name: "pl7.app/antigen/qcDistribution",
+		type: "String",
+		domain: { "pl7.app/blockId": blockId },
+		annotations: {
+			"pl7.app/label": "Distribution",
+			"pl7.app/isDiscreteFilter": "true",
+			"pl7.app/discreteValues": string(json.encode(["score", "referenceReading"]))
+		}
+	}
+}
+
+qcDecileAxis := func(blockId) {
+	return {
+		name: "pl7.app/antigen/qcDecile",
+		type: "Int",
+		domain: { "pl7.app/blockId": blockId },
+		annotations: { "pl7.app/label": "Percentile" }
+	}
+}
+
+qcDecileImportSpec := func(distributionAxisSpec, decileAxisSpec) {
+	return {
+		axes: [
+			{ column: "distribution", spec: distributionAxisSpec },
+			{ column: "decile", spec: decileAxisSpec }
+		],
+		columns: [{
+			column: "value", id: "value",
+			spec: {
+				name: "pl7.app/antigen/qcDecileValue",
+				valueType: "Double",
+				annotations: a(90000, true, guardNoScore({
+					"pl7.app/label": "Value",
+					"pl7.app/description": "The score at this percentile of the run's scores, or the reference reading at this percentile of the run's readings. Which one a row is about is on the Distribution axis."
+				}))
+			}
+		}],
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}
+}
+
+// One row per (sample, tag) a population baseline fitted, at the fit's OWN grain. Aggregating to the
+// tag would hide a reagent that separated in one sample and not in another, which is the comparison
+// this plot exists for. The two means are read together: a background alone says nothing about
+// whether the counts separated.
+qcBackgroundImportSpec := func(sampleAxisSpec, tagAxisSpec) {
+	num := func(colName, name, label, order, description) {
+		return {
+			column: colName, id: colName,
+			spec: {
+				name: name,
+				valueType: "Double",
+				annotations: a(order, true, guardNoScore({
+					"pl7.app/label": label,
+					"pl7.app/min": "0",
+					"pl7.app/description": description
+				}))
+			}
+		}
+	}
+	return {
+		axes: [
+			{ column: "sampleId", spec: sampleAxisSpec },
+			{ column: "tag", spec: tagAxisSpec }
+		],
+		columns: [
+			num("backgroundMean", "pl7.app/antigen/fittedBackgroundMean", "Fitted background", 90000,
+				"Mean count of the background component fitted to this tag in this sample."),
+			num("signalMean", "pl7.app/antigen/fittedSignalMean", "Fitted signal", 89000,
+				"Mean count of the signal component. Read beside the background: two means close together are a tag whose counts did not separate."),
+			num("backgroundWeight", "pl7.app/antigen/fittedBackgroundWeight", "Background share", 88000,
+				"Share of the sample's cells the background component holds.")
+		],
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}
+}
+
 qcImportSpec := func(levelAxisSpec, entityAxisSpec, measurementAxisSpec, panelAxisSpec) {
 	col := func(colName, name, valueType, label, order, visible, annotations) {
 		return {
@@ -1317,6 +1408,10 @@ export {
 	samplePanelImportSpec: samplePanelImportSpec,
 	panelMismatchImportSpec: panelMismatchImportSpec,
 	qcImportSpec: qcImportSpec,
+	qcDistributionAxis: qcDistributionAxis,
+	qcDecileAxis: qcDecileAxis,
+	qcDecileImportSpec: qcDecileImportSpec,
+	qcBackgroundImportSpec: qcBackgroundImportSpec,
 	guardNoLegacyFeatureAxis: guardNoLegacyFeatureAxis,
 	usesLegacyFeatureAxis: usesLegacyFeatureAxis
 }

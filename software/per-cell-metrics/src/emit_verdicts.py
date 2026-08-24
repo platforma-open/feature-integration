@@ -868,6 +868,25 @@ def _add(rows: list[QcRow], level: str, entity: str, measurement: str, value, de
     )
 
 
+_DECILE_SCHEMA = {"distribution": pl.String, "decile": pl.Int64, "value": pl.Float64}
+_BACKGROUND_SCHEMA = {
+    "sampleId": pl.String,
+    "tag": pl.String,
+    "backgroundMean": pl.Float64,
+    "signalMean": pl.Float64,
+    "backgroundWeight": pl.Float64,
+}
+
+
+def _decile_rows(distribution: str, deciles: pl.DataFrame) -> list[dict]:
+    """One distribution's decile points as rows. A point with no value contributes none."""
+    return [
+        {"distribution": distribution, "decile": int(d), "value": float(v)}
+        for d, v in zip(deciles["decile"], deciles["value"], strict=True)
+        if v is not None
+    ]
+
+
 def _sticky_measure(readings: dict[tuple[str, str], int], gate: int | None) -> tuple[float | None, str]:
     """One sample's sticky exposure, in whichever form the gate allows.
 
@@ -1737,6 +1756,52 @@ def main() -> None:
         rows.append(QcRow("sample", sample, ROLLUP, None, "", "", coverage.status, coverage))
 
     _write_sorted(_qc_frame(rows), f"{prefix}_qc.csv", ["level", "entity", "panelId", "measurement"])
+
+    # The three distributions `330-the-quality-readout` puts last, as plottable frames rather than
+    # as detail strings on a measurement row. A reader settles the cutoff and the gate by looking at
+    # these, so they have to be drawable: a decile encoded inside a detail string is a number nobody
+    # can plot.
+    #
+    # Deciles of the score and of the reference reading share one frame, keyed by which distribution
+    # a row belongs to. Both are taken over the whole run: the cutoff is one number for the run, and
+    # so is the gate, so a plot must show every cell the number will act on. `330` says exactly that
+    # of the reference reading, and pooling over samples is deliberate rather than a simplification.
+    decile_rows: list[dict] = []
+    if reference.served is ReferenceChoice.DECLARED:
+        scored = states.filter(pl.col("unreliableReason").is_null())
+        if scored.height > 0:
+            values = specificity_score(
+                scored["umiCount"].to_numpy(),
+                np.nan_to_num(scored["referenceCount"].cast(pl.Float64).to_numpy(), nan=0.0),
+            )
+            decile_rows += _decile_rows("score", deciles_of(np.asarray(values, dtype=float)))
+    if reference.by_cell:
+        readings = np.asarray(list(reference.by_cell.values()), dtype=float)
+        decile_rows += _decile_rows("referenceReading", deciles_of(readings))
+    _write_sorted(
+        pl.DataFrame(decile_rows, schema=_DECILE_SCHEMA),
+        f"{prefix}_qc_deciles.csv",
+        ["distribution", "decile"],
+    )
+
+    # One row per (sample, tag) the fit scored, at the fit's own grain. Aggregating to the tag would
+    # hide a reagent that separated in one sample and not in another, which is the comparison a
+    # reader makes here.
+    background_rows = [
+        {
+            "sampleId": sample,
+            "tag": tag,
+            "backgroundMean": b.mean,
+            "signalMean": b.signal_mean,
+            "backgroundWeight": b.weight,
+        }
+        for (sample, tag), b in sorted((tag_fits.backgrounds if tag_fits is not None else {}).items())
+    ]
+    _write_sorted(
+        pl.DataFrame(background_rows, schema=_BACKGROUND_SCHEMA),
+        f"{prefix}_qc_backgrounds.csv",
+        ["sampleId", "tag"],
+    )
 
     meta = {
         "referenceChoice": reference.served.value,
