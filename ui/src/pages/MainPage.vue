@@ -215,6 +215,24 @@ const referenceSources = computed(() => app.model.outputs.referenceSources);
 // while it was hidden.
 const allSources = computed(() => referenceSources.value?.options ?? []);
 
+// The agreement limit as a PERCENTAGE, where the data holds a share from 0 to 1. A share reads as a
+// number a scientist has to translate, and this one has a floor most readers do not expect: agreement is
+// the share of voting cells holding the state the verdict took, so a majority can never fall below a
+// half. The useful range is 51 to 100, and "0-1" hid that.
+//
+// The data keeps the share. `--min-agreement` and every stored project keep their shape, so this is a
+// display conversion and not a migration. Rounded on the way in, because a percentage entered as an
+// integer must come back as the same integer.
+const agreementPercent = computed({
+  get: () => {
+    const share = app.model.data.minAgreement;
+    return typeof share === "number" ? Math.round(share * 100) : undefined;
+  },
+  set: (percent: number | undefined) => {
+    app.model.data.minAgreement = typeof percent === "number" ? percent / 100 : undefined;
+  },
+});
+
 // The chosen rung, from DATA. Each baseline brings its own rule, so a setting belonging to one rule is
 // shown only where that rule runs. Read from data and never from `effectiveReferenceSource`: the form
 // reveals fields against what the scientist picked, and that must not move on its own.
@@ -688,6 +706,7 @@ const gridOptions = {
         v-model="app.model.data.fbFastqRef"
         :options="app.model.outputs.fastqOptions"
         label="Tag-barcode FASTQ dataset"
+        required
         @update:model-value="onFastqRefChanged"
       >
         <template #tooltip>
@@ -697,9 +716,21 @@ const gridOptions = {
           baseline, and only when you also give a V(D)J dataset.
         </template>
       </PlDropdownRef>
+      <PlDropdownRef
+        v-model="app.model.data.datasetRef"
+        :options="app.model.outputs.datasetOptions"
+        label="Single-cell V(D)J dataset"
+        required
+      >
+        <template #tooltip>
+          The clonotypes each verdict is about. Every verdict is about one clonotype, so the block
+          produces none without it.
+        </template>
+      </PlDropdownRef>
       <!-- Read layout: preset dropdown plus pattern builder/string (mitool tag pattern). Replaces the former
            cell/UMI/feature length fields, whose values are now decided inside the editor. -->
       <PatternEditor />
+      <PlSectionSeparator compact> Panel Settings </PlSectionSeparator>
       <PlFileInput
         v-model="app.model.data.tagFeatureCsvHandle"
         label="Panel file"
@@ -772,17 +803,6 @@ const gridOptions = {
           The block selects this when it detects a matching column.
         </template>
       </PlDropdown>
-      <PlDropdownRef
-        v-model="app.model.data.datasetRef"
-        :options="app.model.outputs.datasetOptions"
-        label="Single-cell V(D)J dataset"
-        required
-      >
-        <template #tooltip>
-          The clonotypes each verdict is about. Every verdict is about one clonotype, so the block
-          produces none without it.
-        </template>
-      </PlDropdownRef>
       <!-- Identity is what a verdict is about, so the rule that mints identities belongs with the dataset
            that supplies the clonotypes rather than among the reading thresholds below. -->
       <PlDropdownMulti
@@ -837,7 +857,7 @@ const gridOptions = {
            baseline brings its own rule, and a setting belonging to one rule is shown only where that rule
            runs. A reader meeting Bound cutoff before choosing a baseline meets a field that appears and
            disappears on a choice they have not made yet. -->
-      <PlSectionSeparator compact> Baseline (background) level </PlSectionSeparator>
+      <PlSectionSeparator compact> Baseline (Background) Parameters </PlSectionSeparator>
       <PlDropdown
         :model-value="chosenSource"
         :options="allSources"
@@ -967,7 +987,7 @@ const gridOptions = {
         </template>
       </PlNumberField>
 
-      <PlSectionSeparator compact> The reading </PlSectionSeparator>
+      <PlSectionSeparator compact> Threshold Parameters </PlSectionSeparator>
       <PlNumberField
         v-model="app.model.data.countFloor"
         :min-value="0"
@@ -1021,17 +1041,20 @@ const gridOptions = {
         </template>
       </PlNumberField>
       <PlNumberField
-        v-model="app.model.data.minAgreement"
-        :min-value="0"
-        :max-value="1"
-        :step="0.05"
+        v-model="agreementPercent"
+        :min-value="51"
+        :max-value="100"
+        :step="1"
         clearable
-        label="Share of voting cells that must agree (0–1)"
+        label="Voting cells that must agree (%)"
       >
         <template #tooltip>
-          This setting is off when the field is empty. A narrow majority then stands, and reports
-          how narrow. Set it to leave a verdict unsettled where the answering cells agree less than
-          this share of the time.
+          <b>Off when the field is empty</b>, which is the default. A narrow majority then stands,
+          and the verdict reports how narrow it was.<br /><br />
+          Set it and a verdict reads unreliable where fewer than this share of the answering cells
+          hold the state the verdict took.<br /><br />
+          The range starts at 51%. Agreement is measured among the cells that answered, and the
+          verdict takes the majority, so agreement can never fall to half or below.
         </template>
       </PlNumberField>
       <!-- The combine-mode column selector is not offered (MILAB-6496): with it unset, every antigen uses the
