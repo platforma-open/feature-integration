@@ -1009,8 +1009,7 @@ const gridOptions = {
         :max-value="100"
         :step="1"
         clearable
-        placeholder="51"
-        label="Minimum agreement (%)"
+        label="Minimum agreement (>50%)"
       >
         <template #tooltip>
           <b>Empty means off</b>, which is the default. A narrow majority then stands, and the
