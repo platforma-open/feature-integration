@@ -662,15 +662,15 @@ export const platforma = BlockModelV3.create(dataModel)
     // for a run to tell them, and the message names the condition that failed.
     if (!data.referenceSource)
       throw new Error(
-        "Choose what the counts are read against, under “Baseline”. Every verdict is a reading " +
+        "Choose what the counts are read against, under “Baseline source”. Every verdict is a reading " +
           "against a baseline, so a run without one produces no answers at all. Which baselines this " +
           "panel can serve is listed with each option.",
       );
     if (data.referenceSource === "declared" && !data.roleColumn)
       throw new Error(
         "The declared-baseline option reads every count against one tag marked as the baseline, and no " +
-          "panel column is set to say which tag that is. Choose the column under “Column declaring " +
-          "each tag’s role”, or pick a different baseline.",
+          "panel column is set to say which tag that is. Choose the column under “Role column”, or pick " +
+          "a different baseline source.",
       );
     //
     // The panel-size condition is NOT checked here and cannot be: it needs the count of distinct barcodes,
@@ -686,8 +686,8 @@ export const platforma = BlockModelV3.create(dataModel)
     if (data.roleColumn && !data.referenceValues?.length)
       throw new Error(
         `The panel column "${data.roleColumn}" declares each tag's role, but no value of it is marked ` +
-          `as the baseline, so the column changes nothing. Under "Values that mark the baseline tag", ` +
-          `choose at least one value, or clear the role column to read against the panel's own readings.`,
+          `as the baseline, so the column changes nothing. Under "Baseline value", choose the value that ` +
+          `marks it, or change the baseline source.`,
       );
     // Every panel column the verdict settings name, each with the label the user sees. Two different things
     // can be wrong with one of these, so both checks below walk this same list. Check each grouping column

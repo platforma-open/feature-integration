@@ -872,18 +872,20 @@ const gridOptions = {
         :options="panelPropertyOptions"
         label="Role column"
         :disabled="panelUnread"
-        clearable
+        required
         @update:model-value="setRoleColumn"
       >
         <template #tooltip>
           Select the panel column that declares each tag's role. One value in it marks the baseline
-          tag. Leave it blank if your panel declares no role.
+          tag.<br /><br />
+          If your panel declares no role, change the baseline source instead.
         </template>
       </PlDropdown>
       <!-- Required exactly while a role column is named, and not otherwise. The column alone marks no tag: it is
            validated, recorded, and changes no number, so the pair is the setting and half of it is an unfinished
-           form. Blank column plus blank values stays legitimate -- that is the panel which declares no baseline,
-           which `292-no-declared-reference` serves. -->
+           form. The role column is itself required under this rung, so the pair is now effectively always
+           required here. A panel that declares no role reaches `292-no-declared-reference` by choosing a
+           different baseline source, not by leaving these blank. -->
       <PlDropdown
         v-if="chosenSource === 'declared'"
         :model-value="app.model.data.referenceValues?.[0]"
