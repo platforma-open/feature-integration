@@ -18,7 +18,6 @@ _full := {
 	// parameter never reached the exec.
 	panelReferenceMinMembers: 12,
 	distributionMinCells: 450,
-	distributionSeparation: 0.3,
 	countFloor: 7,
 	boundCutoff: 90,
 	minVotingCells: 3,
@@ -39,7 +38,7 @@ Test_every_flag_is_threaded := func() {
 		"--linker", "--qc-summary",
 		"--barcode-col", "--feature-col", "--sample-col", "--role-column", "--reference-values",
 		"--reference-source", "--panel-min-members", "--distribution-min-cells",
-		"--distribution-separation", "--floor", "--cutoff",
+		"--floor", "--cutoff",
 		"--min-voters", "--min-agreement", "--gate-threshold", "--high-reference-line",
 		"--grouping", "--contending", "--capture-map", "--output-prefix"
 	]
@@ -57,7 +56,6 @@ Test_every_flag_is_threaded := func() {
 		"--role-column": "Type",
 		"--panel-min-members": "12",
 		"--distribution-min-cells": "450",
-		"--distribution-separation": "0.3",
 		"--floor": "7",
 		"--cutoff": "90",
 		"--min-voters": "3",
@@ -124,7 +122,6 @@ Test_shaping_parameters_are_always_present := func() {
 	test.isEqual("25", va.valueOf(args, "--panel-min-members"), "the panel minimum is stated")
 	test.isEqual("100", va.valueOf(args, "--high-reference-line"), "the high-reference line is stated")
 	test.isEqual("300", va.valueOf(args, "--distribution-min-cells"), "the cell condition is stated")
-	test.isEqual("0.5", va.valueOf(args, "--distribution-separation"), "the separation condition is stated")
 }
 
 // argparse declares --floor, --min-voters, --panel-min-members, --high-reference-line and --gate-threshold

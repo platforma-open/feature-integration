@@ -90,11 +90,12 @@ export type BlockArgs = {
   referenceValues?: string[];
   referenceSource?: ReferenceSource;
   panelReferenceMinMembers: number; // members the panel needs before its own readings can serve
-  // The two conditions on reading a count against that tag's own distribution across the sample's cells.
-  // Both GATE rather than tune: below them the baseline the rung would produce is wrong rather than
-  // conservative, which is why neither has an "off".
+  // The one condition on reading a count against that tag's own distribution across the sample's cells.
+  // It GATES rather than tunes: below it the baseline the rung would produce is wrong rather than
+  // conservative, which is why it has no "off". There is no separation condition -- the rung's own atom
+  // refuses one, because no published test tells a real split from a dent and inventing one here would be
+  // this block deciding what the method leaves to the eye.
   distributionMinCells: number; // cells a sample needs before the rung may serve
-  distributionSeparation: number; // how deep the trough between the two components must be (0-1)
   countFloor: number; // counts below this are not evidence of binding
   boundCutoff: number; // specificity score (0-100) at or above which a cell binds
   minVotingCells: number; // a verdict may rest on one cell and say so
@@ -185,7 +186,6 @@ export type BlockData = {
   referenceSource?: ReferenceSource;
   panelReferenceMinMembers: number;
   distributionMinCells: number;
-  distributionSeparation: number;
   countFloor: number;
   boundCutoff: number;
   minVotingCells: number;

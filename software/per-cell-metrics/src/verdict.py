@@ -328,6 +328,13 @@ def gate_cells(
 BETA_X, BETA_A_OFFSET, BETA_B_OFFSET = 0.925, 1, 3
 BOUND_CUTOFF = 75.0
 
+# The population rung's own call, and not this block's to move. `what-plays-the-baseline`
+# fixes it: under a fitted distribution "a cell reads *bound* at 0.9 or above", where 0.9 is
+# the probability its count belongs to the signal component. `count-becomes-a-state` is
+# explicit that the score above does not apply here -- each baseline brings its own rule, and
+# a run selects one baseline, so exactly one rule calls the state.
+DISTRIBUTION_BOUND_PROBABILITY = 0.9
+
 
 class State(str, Enum):
     """The four states a verdict takes. There is no fifth.
@@ -443,6 +450,11 @@ class Admissibility(NamedTuple):
     reference: dict[tuple[str, str], int]
     gated: set[tuple[str, str]]
     by_identity: dict[tuple[str, str], int] | None = None
+    # The population rung's comparator is not a count. It is a probability per (sample, cell,
+    # identity) that the cell's reading belongs to the signal component, and the state is read
+    # from it directly. Set means it is the whole comparator, and `reference` and `by_identity`
+    # are both empty. A missing key means the fit established nothing for that position.
+    probabilities: dict[tuple[str, str, str], float] | None = None
 
 
 def _admissibility_reason(key: tuple[str, str], identity: str, admissibility: Admissibility) -> UnreliableReason | None:
@@ -462,9 +474,11 @@ def _admissibility_reason(key: tuple[str, str], identity: str, admissibility: Ad
     usable, so there is no thin-reference branch: the comparison runs, and every cell's
     reference reading is emitted so a reader can see what a verdict rested on.
     """
-    reference, gated, by_identity = admissibility
+    reference, gated, by_identity, probabilities = admissibility
     if key in gated:
         return UnreliableReason.GATED
+    if probabilities is not None:
+        return None if (key[0], key[1], identity) in probabilities else UnreliableReason.NO_COMPARATOR
     if by_identity is not None:
         return None if (key[0], identity) in by_identity else UnreliableReason.NO_COMPARATOR
     if key not in reference:
@@ -482,17 +496,24 @@ def cell_admissibility_reason(key: tuple[str, str], admissibility: Admissibility
     asked an unanswerable question -- calling the CELL uncomparable would misreport
     every identity, including the ones that fitted.
     """
-    _reference, gated, by_identity = admissibility
+    _reference, gated, by_identity, probabilities = admissibility
     if key in gated:
         return UnreliableReason.GATED
-    if by_identity is None and key not in admissibility.reference:
+    if by_identity is None and probabilities is None and key not in admissibility.reference:
         return UnreliableReason.NO_COMPARATOR
     return None
 
 
 def _comparator(key: tuple[str, str], identity: str, admissibility: Admissibility) -> int | None:
-    """The reading this comparison is made against, or None where none served."""
-    reference, _gated, by_identity = admissibility
+    """The reading this comparison is made against, or None where none served.
+
+    None under the population rung, always. That rung's comparator is a fitted distribution
+    rather than a reading, so there is no count to emit -- and a number here would read as a
+    comparator that served, which is the one thing null is for.
+    """
+    reference, _gated, by_identity, probabilities = admissibility
+    if probabilities is not None:
+        return None
     if by_identity is not None:
         return by_identity.get((key[0], identity))
     return reference.get(key)
@@ -524,6 +545,23 @@ def read_states(identities: pl.DataFrame, admissibility: Admissibility, cutoff: 
         pl.Series("referenceCount", refs, dtype=pl.Int64),
         pl.Series("unreliableReason", [r.value if r is not None else None for r in reasons], dtype=pl.String),
     )
+
+    # Each baseline brings its own rule, and the selected baseline decides which one runs. A
+    # fitted population hands back a probability per position, and the state is read from it
+    # at the rung's own line. The score below is the declared reagent's rule and does not
+    # apply here: substituting a fitted background into it would produce a number the method
+    # it came from never defines.
+    if admissibility.probabilities is not None:
+        called = [admissibility.probabilities.get((k[0], k[1], i)) for k, i in zip(keys, idents, strict=True)]
+        df = df.with_columns(pl.Series("_pBound", called, dtype=pl.Float64)).with_columns(
+            pl.when(pl.col("unreliableReason").is_not_null())
+            .then(pl.lit(State.UNRELIABLE.value))
+            .when(pl.col("_pBound") >= DISTRIBUTION_BOUND_PROBABILITY)
+            .then(pl.lit(State.BOUND.value))
+            .otherwise(pl.lit(State.NOT_BOUND.value))
+            .alias("state")
+        )
+        return df.select([*CELL_KEY, "identity", "umiCount", "referenceCount", "state", "unreliableReason"])
 
     scored = specificity_score(
         df["umiCount"].to_numpy(),

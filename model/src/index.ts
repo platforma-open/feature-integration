@@ -47,7 +47,6 @@ const DEFAULT_PANEL_REFERENCE_MIN_MEMBERS = 25;
 // deep one must be -- so it ships as a declared default a run can move and report moving. Mirrors
 // tag_distribution.py.
 const DEFAULT_DISTRIBUTION_MIN_CELLS = 300;
-const DEFAULT_DISTRIBUTION_SEPARATION = 0.5;
 const DEFAULT_HIGH_REFERENCE_LINE = 100;
 
 // The punchcard's frame is keyed on the clonotype set alone, and each identity is a COLUMN rather than
@@ -425,7 +424,6 @@ type BlockDataV2 = Omit<
   | "referenceSource"
   | "panelReferenceMinMembers"
   | "distributionMinCells"
-  | "distributionSeparation"
   | "countFloor"
   | "boundCutoff"
   | "minVotingCells"
@@ -486,7 +484,6 @@ const dataModel = new DataModelBuilder()
       minVotingCells: DEFAULT_MIN_VOTING_CELLS,
       panelReferenceMinMembers: DEFAULT_PANEL_REFERENCE_MIN_MEMBERS,
       distributionMinCells: DEFAULT_DISTRIBUTION_MIN_CELLS,
-      distributionSeparation: DEFAULT_DISTRIBUTION_SEPARATION,
       highReferenceLine: DEFAULT_HIGH_REFERENCE_LINE,
       verdictTableState: createPlDataTableStateV2(),
       antigenQcTableState: createPlDataTableStateV2(),
@@ -525,7 +522,6 @@ const dataModel = new DataModelBuilder()
     minVotingCells: DEFAULT_MIN_VOTING_CELLS,
     panelReferenceMinMembers: DEFAULT_PANEL_REFERENCE_MIN_MEMBERS,
     distributionMinCells: DEFAULT_DISTRIBUTION_MIN_CELLS,
-    distributionSeparation: DEFAULT_DISTRIBUTION_SEPARATION,
     highReferenceLine: DEFAULT_HIGH_REFERENCE_LINE,
     tableState: createPlDataTableStateV2(),
     qcSummaryTableState: createPlDataTableStateV2(),
@@ -781,7 +777,6 @@ export const platforma = BlockModelV3.create(dataModel)
       referenceSource: resolveReferenceSource(data),
       panelReferenceMinMembers: Math.round(data.panelReferenceMinMembers),
       distributionMinCells: Math.round(data.distributionMinCells),
-      distributionSeparation: data.distributionSeparation,
       countFloor: Math.round(data.countFloor),
       // A switch, so off means ABSENT rather than false -- the same rule the two thresholds below follow.
       // It keeps the args vector of every project that never touched it byte-identical.

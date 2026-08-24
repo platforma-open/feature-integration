@@ -75,10 +75,8 @@ from qc_measures import (
 )
 from tag_distribution import (
     DEFAULT_DISTRIBUTION_MIN_CELLS,
-    DEFAULT_SEPARATION_DEPTH,
-    TagBaseline,
-    fit_tag_baselines,
-    identity_baselines,
+    TagFits,
+    fit_tag_probabilities_by_pair,
 )
 from verdict import (
     BOUND_CUTOFF,
@@ -101,6 +99,30 @@ from verdict import (
 )
 
 CellKey = tuple[str, str]
+
+
+def _identity_probabilities(fits, grouping) -> dict[tuple[str, str, str], float]:
+    """Per (sample, cell, identity), the highest probability among the identity's own tags.
+
+    `tags-combine-by-the-highest` fixes the combination: an identity's reading in a cell is
+    the highest of its tags and never their sum, because tags differ in uptake and a sum
+    would need the baseline scaled to match. The same rule applies to a probability -- the
+    identity is bound in that cell where any one of its tags says so, which is also how
+    `what-plays-the-baseline` reads a population rung's identity.
+
+    A (tag, sample) pair that established nothing contributes nothing, so an identity all of
+    whose tags missed carries no key and reads *unreliable* rather than a low probability.
+    """
+    out: dict[tuple[str, str, str], float] = {}
+    for row in fits.probabilities.iter_rows(named=True):
+        identity = grouping.get((row["tag"], row["sampleId"])) or grouping.get((row["tag"], ANY_SAMPLE))
+        if identity is None:
+            continue
+        key = (row["sampleId"], row["cellId"], identity)
+        p = float(row["pBound"])
+        if p > out.get(key, -1.0):
+            out[key] = p
+    return out
 
 
 def _cell_keyed_reference(counts, reference_tags, source, analysed_cells, panel_size, args) -> Reference:
@@ -870,12 +892,6 @@ def main() -> None:
         default=DEFAULT_DISTRIBUTION_MIN_CELLS,
         help="cells a sample needs before a tag's own distribution may serve as its baseline",
     )
-    p.add_argument(
-        "--distribution-separation",
-        type=float,
-        default=DEFAULT_SEPARATION_DEPTH,
-        help="how deep the trough between the two fitted components must be, against the smaller peak",
-    )
     p.add_argument("--floor", type=int, default=DEFAULT_FLOOR, help="zero every non-comparator reading below this")
     p.add_argument(
         "--cutoff", type=float, default=BOUND_CUTOFF, help="specificity score at or above which a cell binds"
@@ -1066,7 +1082,7 @@ def main() -> None:
     # none is a configuration error rather than a run to guess at. argparse refuses it above,
     # so this never sees an empty value.
     source = ReferenceChoice[args.reference_source.upper()]
-    tag_fits: dict[tuple[str, str], TagBaseline] = {}
+    tag_fits: TagFits | None = None
     # Set only by the one rung whose conditions the settings cannot answer. The other two
     # refuse in `served_source` before any of this runs.
     no_baseline_reason: str | None = None
@@ -1078,29 +1094,29 @@ def main() -> None:
         # read nothing, and the cells a gate will later set aside. That second part is
         # `baseline-over-all-returned-cells`, which is also why the fit runs before
         # `gate_cells` below.
-        tag_fits = fit_tag_baselines(
-            counts, analysed_cells, panel, args.distribution_min_cells, args.distribution_separation
-        )
-        by_identity = identity_baselines(tag_fits, grouping, samples).baseline
-        # A run where no tag separated anywhere established no baseline. This is the one
-        # refusal that cannot be caught from the settings: whether a sample holds three hundred
-        # cells whose counts separate is a property of the data. So the run FINISHES, says so,
-        # and draws no punchcard -- rather than answering every position *unreliable*, which is
-        # honest and useless, or crashing after doing the work.
+        tag_fits = fit_tag_probabilities_by_pair(counts, analysed_cells, panel, args.distribution_min_cells)
+        probabilities = _identity_probabilities(tag_fits, grouping)
+        # A run where no tag fitted anywhere established no baseline. This is the one refusal
+        # that cannot be caught from the settings: whether a sample holds three hundred cells
+        # whose counts admit a two-component fit is a property of the data. So the run FINISHES,
+        # says so, and draws no punchcard -- rather than answering every position *unreliable*,
+        # which is honest and useless, or crashing after doing the work.
         reference = Reference({}, ReferenceChoice.DISTRIBUTION)
-        if not by_identity:
+        by_identity = None
+        if not probabilities:
             no_baseline_reason = (
                 "no baseline could be established: the tag-distribution rung was selected and no tag's "
-                f"counts separated in any sample, against the {args.distribution_min_cells} cells and the "
-                "separation this rung requires. Whether a sample can support this rung is a property of "
-                "the data rather than of the settings, so it could not be caught before the run. The "
-                "run's quality measurements are below; no verdicts were read."
+                f"counts admitted a two-component fit in any sample, against the "
+                f"{args.distribution_min_cells} cells this rung requires. Whether a sample can support "
+                "this rung is a property of the data rather than of the settings, so it could not be "
+                "caught before the run. The run's quality measurements are below; no verdicts were read."
             )
-            by_identity = None
-        tag_by_identity = identity_baselines(tag_fits, by_tag_grouping, samples).baseline or None
+            probabilities = None
+        tag_probabilities = _identity_probabilities(tag_fits, by_tag_grouping) or None
     else:
         by_identity = None
-        tag_by_identity = None
+        probabilities = None
+        tag_probabilities = None
         reference = _cell_keyed_reference(counts, reference_tags, source, analysed_cells, panel_size, args)
 
     gated, cells_high_reference = gate_cells(reference.by_cell, args.gate_threshold, args.high_reference_line)
@@ -1114,7 +1130,7 @@ def main() -> None:
     # Built once and handed to every consumer. Two bundles built from two reference dicts do
     # not raise. They disagree about which cells cannot be compared, and the silent-position
     # count comes out wrong or negative.
-    admissibility = Admissibility(reference.by_cell, gated, by_identity)
+    admissibility = Admissibility(reference.by_cell, gated, by_identity, probabilities)
 
     non_reference = floored.filter(~pl.col("tag").is_in(list(reference_tags))) if reference_tags else floored
     identities = combine_tags_to_identities(non_reference, grouping)
@@ -1130,7 +1146,9 @@ def main() -> None:
         # comparator is keyed by identity, the bundle built for the chosen grouping answers
         # about identities this read never mentions.
         tag_admissibility = (
-            Admissibility(reference.by_cell, gated, tag_by_identity) if by_identity is not None else admissibility
+            Admissibility(reference.by_cell, gated, None, tag_probabilities)
+            if (by_identity is not None or tag_probabilities is not None)
+            else admissibility
         )
         tag_states = read_states(
             combine_tags_to_identities(non_reference, by_tag_grouping), tag_admissibility, args.cutoff
@@ -1614,13 +1632,14 @@ def main() -> None:
         "highReferenceLine": args.high_reference_line,
         "panelMinMembers": args.panel_min_members,
         "distributionMinCells": args.distribution_min_cells,
-        "distributionSeparation": args.distribution_separation,
         # Per (sample, tag), and only where that rung was asked for: which tags could not be
         # fitted, and why. A tag missing here fitted. The reader needs both halves to tell a panel
         # that mostly worked from one that mostly did not.
-        "distributionUnfitted": {
-            f"{sample}/{tag}": fit.reason for (sample, tag), fit in sorted(tag_fits.items()) if fit.reason
-        },
+        "distributionUnfitted": (
+            {f"{sample}/{tag}": reason for (sample, tag), reason in sorted(tag_fits.reasons.items())}
+            if tag_fits is not None
+            else {}
+        ),
         "roleColumn": args.role_column,
         "referenceValues": sorted(reference_values),
         "referenceTags": sorted(reference_tags),

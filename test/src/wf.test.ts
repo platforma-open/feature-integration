@@ -173,13 +173,15 @@ blockTest.skip(
         countFloor: 4,
         boundCutoff: 75,
         minVotingCells: 1,
-        // Stated, because the block chooses no baseline for anyone. Left unset, this run is answered under
-        // the bottom rung and every verdict needing a baseline reads unreliable: a legitimate run that says
-        // nothing about the pipeline this test exercises.
-        referenceSource: "panel",
-        panelReferenceMinMembers: 8,
+        // Stated, because the block chooses no baseline for anyone and `args()` refuses a run without
+        // one. The tag-distribution rung is the one this bed can serve: the declared rung needs a role
+        // column marking a baseline tag, which this panel does not carry, and the panel's own readings
+        // are retired.
+        referenceSource: "distribution",
+        // Still required by the data shape though the rung it gated is retired. Recorded as debt in
+        // .meta/milab-6496-ui-first-logic-debt-20260824.md.
+        panelReferenceMinMembers: 25,
         distributionMinCells: 300,
-        distributionSeparation: 0.5,
         highReferenceLine: 100,
         tableState: createPlDataTableStateV2(),
         qcSummaryTableState: createPlDataTableStateV2(),

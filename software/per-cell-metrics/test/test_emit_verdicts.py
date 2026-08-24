@@ -2285,16 +2285,21 @@ def _distribution_bed(root, n_cells=400, binder_rate=300, seed=7):
     hand-written counts has no density. The seed is fixed, so the bed is the same bytes on every
     run.
 
-    `SEP` binds in a fifth of the cells. `FLAT` is background everywhere, which is a tag the
-    panel declared and nothing bound -- the shape that must come back with no comparator rather
-    than an invented one.
+    `SEPS` binds in a twentieth of the cells. `FLAT` reads the SAME count in every cell, which is
+    one population by construction and the shape that cannot be fitted at all.
+
+    A flat tag is deliberately not a background-shaped one. `what-plays-the-baseline` accepts that
+    a tag nothing bound still fits and still calls its upper tail bound -- the method assumes two
+    components exist and no published test replaces the eye -- so a background-shaped tag no longer
+    demonstrates an unfittable one. Identical counts do, and they are still a tag the reads carry,
+    which keeps this apart from a dead reagent.
     """
     import numpy as np
 
     rng = np.random.default_rng(seed)
     n_binders = n_cells // 20
     sep = np.concatenate([rng.poisson(2, n_cells - n_binders), rng.poisson(binder_rate, n_binders)])
-    flat = rng.poisson(2, n_cells)
+    flat = np.full(n_cells, 5)
 
     rows = ["sampleId,cellId,tag,umiCount"]
     for i in range(n_cells):
@@ -2320,7 +2325,7 @@ def test_the_tag_distribution_rung_serves_and_says_so(tmp_path):
     assert meta["distributionMinCells"] == 300
 
 
-def test_a_tag_that_did_not_separate_has_no_comparator_and_its_identity_alone_is_unreliable(tmp_path):
+def test_a_tag_that_could_not_be_fitted_leaves_its_identity_alone_unreliable(tmp_path):
     # The whole point of a comparator keyed by identity rather than by cell: one tag fails to
     # fit and only the identities built from it lose their verdicts. Under a cell-keyed
     # comparator this run would be all-or-nothing.
@@ -2346,9 +2351,10 @@ def test_a_tag_that_did_not_separate_has_no_comparator_and_its_identity_alone_is
     assert any(x.startswith("bound|") for x in punch["SEPS"].to_list() if x is not None)
 
 
-def test_the_comparator_is_the_same_for_every_cell_of_a_sample(tmp_path):
-    # It is fitted per (sample, tag), so it cannot vary cell to cell. A per-cell comparator
-    # appearing here would mean the cell-keyed path served instead.
+def test_the_fit_is_per_tag_and_not_per_cell(tmp_path):
+    # It is fitted per (sample, tag), so whether a position can be answered turns on the TAG. A
+    # cell-keyed comparator would make a cell either comparable or not, and no run could then
+    # produce one all-unreliable column beside one with none.
     _distribution_bed(tmp_path)
     _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
 

@@ -908,26 +908,6 @@ const gridOptions = {
           </template>
         </PlNumberField>
         <PlNumberField
-          v-model="app.model.data.distributionSeparation"
-          v-if="chosenSource === 'distribution'"
-          :min-value="0.01"
-          :max-value="1"
-          :step="0.05"
-          label="Maximum dip height (0–1)"
-        >
-          <template #tooltip>
-            The block sorts a tag's counts across the sample's cells into two groups. One group has
-            few counts and is the background. The other has many counts and is the binders. A dip
-            separates the two groups.<br /><br />
-            The dip must fall to this share of the smaller group, or lower.
-            <b>A lower value is stricter</b>, because it needs a deeper dip.<br /><br />
-            A tag whose dip is too shallow gets no baseline. Only the antigens that tag carries read
-            unreliable. The rest of the run is unaffected.<br /><br />
-            At 1 any dent passes. A tag that nothing bound then stands in as its own background.<br /><br />
-            No published work sets this line. The default of 0.5 is this block's own choice.
-          </template>
-        </PlNumberField>
-        <PlNumberField
           v-model="app.model.data.highReferenceLine"
           v-if="chosenSource !== 'distribution'"
           :min-value="1"
