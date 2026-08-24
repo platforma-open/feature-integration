@@ -485,8 +485,8 @@ def per_antigen_measures(
     counts: pl.DataFrame,
     states: pl.DataFrame,
     declared_tags: Collection[str],
+    panel_samples: Collection[str],
     reference_tags: Collection[str] = (),
-    panel_samples: Collection[str] | None = None,
 ) -> pl.DataFrame:
     """Per tag: cells with any count, cells called bound, and the median count per cell.
 
@@ -517,9 +517,9 @@ def per_antigen_measures(
     `samplesSeenIn` counts distinct samples carrying any count of the tag, and `samplesInPanel`
     is the denominator. A tag absent from every sample reads 0.
 
-    `panel_samples` is the panel's declared roster and supplies the seen-in denominator. Omitted,
-    the denominator falls back to the samples present in `counts`, which undercounts a sample that
-    contributed no rows.
+    `panel_samples` is the panel's declared roster and supplies the seen-in denominator. It is the
+    roster rather than the samples present in `counts`, which omits a sample that contributed no
+    rows.
 
     Reference tags keep a row and carry `cellsAboveTheLine` as None. They are held out of the
     verdict read, so no state exists for them -- and a blank and a zero are opposite findings
@@ -540,7 +540,7 @@ def per_antigen_measures(
             pl.col("sampleId").n_unique().alias("samplesSeenIn"),
         )
     )
-    samples_in_panel = len(set(panel_samples)) if panel_samples is not None else counts["sampleId"].n_unique()
+    samples_in_panel = len(set(panel_samples))
     bound = states.group_by("tag").agg((pl.col("state") == "bound").sum().alias("cellsAboveTheLine"))
 
     is_reference = pl.col("tag").is_in(references) if references else pl.lit(False)  # noqa: FBT003

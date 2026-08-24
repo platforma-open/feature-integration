@@ -246,7 +246,7 @@ def test_per_antigen_measures_separates_delivered_from_bound():
     counts = _counts(["T1"] * 3, [2, 2, 2])
     states = _states(["T1"] * 3, ["not bound"] * 3)
 
-    out = per_antigen_measures(counts, states, ["T1"]).row(0, named=True)
+    out = per_antigen_measures(counts, states, ["T1"], ["S1"]).row(0, named=True)
 
     assert out["cellsWithCount"] == 3
     assert out["cellsAboveTheLine"] == 0
@@ -261,7 +261,7 @@ def test_per_antigen_measures_medians_over_every_cell_holding_a_count():
     counts = _counts(["T1"] * 4, [2, 4, 40, 60])
     states = _states(["T1"] * 4, ["not bound", "not bound", "bound", "bound"])
 
-    out = per_antigen_measures(counts, states, ["T1"]).row(0, named=True)
+    out = per_antigen_measures(counts, states, ["T1"], ["S1"]).row(0, named=True)
 
     assert out["medianCountPerCell"] == 22.0
     assert out["medianCountPerCell"] != 50.0
@@ -275,7 +275,7 @@ def test_per_antigen_measures_keeps_a_row_for_a_tag_the_reads_never_show():
     counts = _counts(["T1", "T1"], [10, 20])
     states = _states(["T1", "T1"], ["bound", "bound"])
 
-    out = per_antigen_measures(counts, states, ["T1", "DEAD"])
+    out = per_antigen_measures(counts, states, ["T1", "DEAD"], ["S1"])
     dead = out.filter(pl.col("tag") == "DEAD").row(0, named=True)
 
     assert out.height == 2
@@ -292,7 +292,7 @@ def test_per_antigen_measures_gives_the_reference_tag_no_bound_count():
     counts = _counts(["T1", "T1", "REF", "REF"], [10, 20, 3, 5])
     states = _states(["T1", "T1"], ["bound", "bound"])
 
-    out = per_antigen_measures(counts, states, ["T1"], reference_tags=["REF"])
+    out = per_antigen_measures(counts, states, ["T1"], ["S1"], reference_tags=["REF"])
     ref = out.filter(pl.col("tag") == "REF").row(0, named=True)
 
     assert ref["cellsAboveTheLine"] is None
@@ -310,8 +310,8 @@ def test_per_antigen_measures_differs_between_tag_and_identity_grain():
     identity_counts = _counts(["ID1"] * 3, [20, 1, 15])
     identity_states = _states(["ID1"] * 3, ["bound", "not bound", "bound"])
 
-    by_tag = per_antigen_measures(tag_counts, tag_states, ["T1", "T2"])
-    by_identity = per_antigen_measures(identity_counts, identity_states, ["ID1"])
+    by_tag = per_antigen_measures(tag_counts, tag_states, ["T1", "T2"], ["S1"])
+    by_identity = per_antigen_measures(identity_counts, identity_states, ["ID1"], ["S1"])
 
     assert by_tag.height == 2
     assert by_identity.height == 1
@@ -655,7 +655,7 @@ def test_seen_in_counts_distinct_samples_not_cells():
     counts = _counts(["T1", "T1"], [5, 3], ["S1", "S1"])
     states = _states(["T1"], ["bound"])
 
-    row = per_antigen_measures(counts, states, ["T1"]).row(0, named=True)
+    row = per_antigen_measures(counts, states, ["T1"], ["S1"]).row(0, named=True)
 
     assert row["samplesSeenIn"] == 1
 
@@ -666,7 +666,7 @@ def test_seen_in_is_zero_for_a_dead_tag():
     counts = _counts(["T1"], [5])
     states = _states(["T1"], ["bound"])
 
-    out = per_antigen_measures(counts, states, ["T1", "DEAD"])
+    out = per_antigen_measures(counts, states, ["T1", "DEAD"], ["S1"])
     dead = out.filter(pl.col("tag") == "DEAD").row(0, named=True)
 
     assert dead["samplesSeenIn"] == 0
@@ -678,7 +678,7 @@ def test_seen_in_reports_the_panel_size_beside_it():
     counts = _counts(["T1", "T1"], [5, 5], ["S1", "S2"])
     states = _states(["T1"], ["bound"])
 
-    row = per_antigen_measures(counts, states, ["T1"]).row(0, named=True)
+    row = per_antigen_measures(counts, states, ["T1"], ["S1", "S2"]).row(0, named=True)
 
     assert row["samplesSeenIn"] == 2
     assert row["samplesInPanel"] == 2
@@ -690,7 +690,7 @@ def test_a_reference_tag_reports_its_own_seen_in():
     counts = _counts(["REF", "REF"], [9, 9], ["S1", "S2"])
     states = _states(["T1"], ["bound"])
 
-    out = per_antigen_measures(counts, states, ["T1"], reference_tags=["REF"])
+    out = per_antigen_measures(counts, states, ["T1"], ["S1", "S2"], reference_tags=["REF"])
     ref = out.filter(pl.col("tag") == "REF").row(0, named=True)
 
     assert ref["samplesSeenIn"] == 2
@@ -703,7 +703,7 @@ def test_the_denominator_is_the_declared_roster_not_the_observed_samples():
     counts = _counts(["T1", "T1"], [5, 5], ["S1", "S2"])
     states = _states(["T1"], ["bound"])
 
-    out = per_antigen_measures(counts, states, ["T1"], panel_samples=["S1", "S2", "S3"])
+    out = per_antigen_measures(counts, states, ["T1"], ["S1", "S2", "S3"])
     row = out.filter(pl.col("tag") == "T1").row(0, named=True)
 
     assert row["samplesSeenIn"] == 2
