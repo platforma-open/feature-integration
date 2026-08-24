@@ -845,7 +845,7 @@ const gridOptions = {
            baseline brings its own rule, and a setting belonging to one rule is shown only where that rule
            runs. A reader meeting Bound cutoff before choosing a baseline meets a field that appears and
            disappears on a choice they have not made yet. -->
-      <PlSectionSeparator compact> Baseline (Background) Parameters </PlSectionSeparator>
+      <PlSectionSeparator compact> Baseline Parameters </PlSectionSeparator>
       <PlDropdown
         :model-value="chosenSource"
         :options="allSources"
@@ -906,10 +906,7 @@ const gridOptions = {
       <!-- Directly under the baseline section rather than with the other accordion at the foot of the form.
            Grouping the accordions together sorted this form by how advanced a control is, which split the
            baseline's own thresholds away from the baseline. Collapsed, this costs the reader one line and puts
-           every baseline control in one place. The heading does NOT repeat "(background)": that parenthetical
-           glosses the word once, where the reader first meets it, and repeating it would read as part of the name
-           and re-open the several-names-for-one-thing problem this form already closed. The shared word
-           "Baseline" is the link. -->
+           every baseline control in one place. The shared word "Baseline" is what links them. -->
       <PlNumberField
         v-model="app.model.data.distributionMinCells"
         v-if="chosenSource === 'distribution'"
@@ -952,6 +949,7 @@ const gridOptions = {
            shown, and side by side a reader sets them as the one decision they are. -->
       <PlRow>
         <PlNumberField
+          :class="$style.half"
           v-model="app.model.data.countFloor"
           :min-value="0"
           :step="1"
@@ -965,6 +963,7 @@ const gridOptions = {
           </template>
         </PlNumberField>
         <PlNumberField
+          :class="$style.half"
           v-model="app.model.data.minVotingCells"
           :min-value="1"
           :step="1"
@@ -1100,3 +1099,12 @@ const gridOptions = {
     </PlSlideModal>
   </PlBlockPage>
 </template>
+
+<style module>
+/* Two fields sharing a row split it evenly. Left to their natural width they sit left with a gap
+   beside them, which reads as a field missing rather than as a pair. */
+.half {
+  flex: 1 1 0;
+  min-width: 0;
+}
+</style>
