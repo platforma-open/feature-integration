@@ -40,6 +40,7 @@ import hashlib
 import json
 import sys
 from collections import Counter
+from collections.abc import Collection
 from typing import NamedTuple
 
 import polars as pl
@@ -866,6 +867,28 @@ def _add(rows: list[QcRow], level: str, entity: str, measurement: str, value, de
     )
 
 
+def _fitted_background(tag_fits: TagFits | None, samples: Collection[str], tag: str) -> tuple[float | None, str]:
+    """One tag's fitted background across a panel's samples, as a value and its detail."""
+    if tag_fits is None:
+        return None, "no population baseline served this run, so nothing was fitted"
+    fitted = [tag_fits.backgrounds[(s, tag)] for s in sorted(samples) if (s, tag) in tag_fits.backgrounds]
+    missed = [s for s in sorted(samples) if (s, tag) in tag_fits.reasons]
+    if not fitted:
+        why = tag_fits.reasons.get((missed[0], tag), "") if missed else "this tag was not fitted in any sample"
+        return None, f"fitted in no sample of this panel: {why}"
+    means = [b.mean for b in fitted]
+    detail = "|".join(
+        [
+            f"samplesFitted={len(fitted)}",
+            f"samplesUnfitted={len(missed)}",
+            f"backgroundRange={min(means):.4g}..{max(means):.4g}",
+            f"medianSignalMean={_median([b.signal_mean for b in fitted]):.4g}",
+            f"medianBackgroundWeight={_median([b.weight for b in fitted]):.4g}",
+        ]
+    )
+    return _median(means), detail
+
+
 def _median(values: list[float]) -> float | None:
     return float(pl.Series(values).median()) if values else None
 
@@ -1593,6 +1616,24 @@ def main() -> None:
             _add(rows, "tag", tag, "declaredNeverSeen", here_total[tag], "", panel_id)
         for tag in sorted(observed_here - panel_tags):
             _add(rows, "tag", tag, "undeclaredBarcodes", here_total[tag], "", panel_id)
+
+        # The fitted background, one row per declared tag. Fits are per (sample, tag) and this
+        # table is keyed (tag, panel), so the value is the MEDIAN background mean over the
+        # panel's samples that fitted, and the detail carries how many did and the spread. A
+        # mean of means would let one sample's outlier move a tag's whole row.
+        #
+        # Under a declared baseline nothing is fitted, so every row carries no value and says
+        # why -- the same device `readsPerCell` uses when no cell list arrived. The row is there
+        # either way, or a reader cannot tell "not fitted" from "never measured".
+        for tag in sorted(panel_tags):
+            _add(
+                rows,
+                "tag",
+                tag,
+                "fittedBackground",
+                *_fitted_background(tag_fits, panel_samples_here, tag),
+                panel_id,
+            )
 
         panel_states = tag_states.filter(pl.col("sampleId").is_in(panel_samples_here)).rename({"identity": "tag"})
         # RAW counts, not `floored`. Cells-with-count and the median are what the reagent

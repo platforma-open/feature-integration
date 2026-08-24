@@ -2366,6 +2366,48 @@ def test_the_tag_distribution_rung_serves_and_says_so(tmp_path):
     assert meta["distributionMinCells"] == 300
 
 
+def test_the_fitted_background_reaches_the_measurement_set(tmp_path):
+    # The fit's parameters used to die inside the function that made them, so a scientist could
+    # not see whether a tag's counts separated -- which 330 wants read BEFORE the baseline is
+    # settled. SEPS separates and FLAT does not, so one row carries a number and the other
+    # carries why it has none. Both rows exist: absence and non-separation are different facts.
+    _distribution_bed(tmp_path)
+    _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
+
+    qc = pl.read_csv(tmp_path / "result_qc.csv", infer_schema_length=0)
+    rows = {r["entity"]: r for r in qc.filter(pl.col("measurement") == "fittedBackground").iter_rows(named=True)}
+    assert set(rows) == {"SEPS", "FLAT"}
+
+    seps = rows["SEPS"]
+    assert seps["value"] is not None
+    assert "samplesFitted=1" in seps["detail"]
+    assert "medianSignalMean=" in seps["detail"]
+    # The background sits below the signal it was separated from. Read together they are the
+    # finding: a background alone says nothing about whether the counts separated.
+    signal = float(seps["detail"].split("medianSignalMean=")[1].split("|")[0])
+    assert float(seps["value"]) < signal
+
+    flat = rows["FLAT"]
+    assert flat["value"] is None
+    assert "fitted in no sample" in flat["detail"]
+
+    # No line stands behind either, so neither carries a status.
+    assert seps["status"] is None
+    assert flat["status"] is None
+
+
+def test_a_declared_baseline_fits_no_background_and_the_rows_say_so(bed):
+    # Every declared measurement keeps its place. A reader must not have to tell "this run did
+    # not fit one" apart from "nothing here measures that" by the row being missing.
+    _run(bed, *BASE)
+
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    rows = qc.filter(pl.col("measurement") == "fittedBackground")
+    assert rows.height > 0, "a declared-baseline run still carries a row for every declared tag"
+    assert set(rows["value"].to_list()) == {None}
+    assert all("no population baseline served" in d for d in rows["detail"].to_list())
+
+
 def test_a_tag_that_could_not_be_fitted_leaves_its_identity_alone_unreliable(tmp_path):
     # The whole point of a comparator keyed by identity rather than by cell: one tag fails to
     # fit and only the identities built from it lose their verdicts. Under a cell-keyed

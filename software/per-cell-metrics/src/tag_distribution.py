@@ -47,6 +47,23 @@ CELL_KEY = ("sampleId", "cellId")
 DEFAULT_DISTRIBUTION_MIN_CELLS = 300
 
 
+class Background(NamedTuple):
+    """A fitted background, as a reader needs to see it.
+
+    The two means together are the finding. A background alone says nothing about whether the
+    counts separated, and `330-the-quality-readout` wants this precisely so a scientist can see
+    whether they did before choosing a baseline.
+
+    `weight` is the share of cells the background component holds. A tag that bound nothing is
+    split anyway -- the method assumes two components exist -- and shows itself here as two
+    means sitting almost on top of each other rather than as a refusal.
+    """
+
+    mean: float
+    signal_mean: float
+    weight: float
+
+
 class TagFit(NamedTuple):
     """One tag's per-cell probability of binding in one sample, or why there is none.
 
@@ -55,11 +72,16 @@ class TagFit(NamedTuple):
     its cells, which is not the same fact as every cell reading a low probability.
 
     Aligned to the counts the fit was given, one entry per cell in the sample.
+
+    `background` travels with the probabilities and is None on exactly the same condition. The
+    fit was taken either way, and discarding its parameters left the one number a reader needs
+    in order to judge the fit inside the function that made it.
     """
 
     probabilities: np.ndarray | None
     reason: str | None
     cells: int
+    background: Background | None = None
 
 
 # The prose a reader sees. Nothing branches on these strings.
@@ -267,7 +289,13 @@ def fit_tag_probabilities(
     probabilities = _signal_probability(counts, fit)
     if probabilities is None:
         return TagFit(None, NO_SEPARATION, n)
-    return TagFit(probabilities, None, n)
+    background_index = 1 - fit.signal
+    background = Background(
+        mean=float(fit.means[background_index]),
+        signal_mean=float(fit.means[fit.signal]),
+        weight=float(fit.weights[background_index]),
+    )
+    return TagFit(probabilities, None, n, background)
 
 
 class TagFits(NamedTuple):
@@ -282,6 +310,9 @@ class TagFits(NamedTuple):
 
     probabilities: pl.DataFrame
     reasons: dict[tuple[str, str], str]
+    # One entry per pair that fitted, on the same condition as a contribution to
+    # `probabilities`. A pair in `reasons` is absent here.
+    backgrounds: dict[tuple[str, str], Background] = {}
 
 
 _PROB_SCHEMA = {"sampleId": pl.String, "cellId": pl.String, "tag": pl.String, "pBound": pl.Float64}
@@ -332,6 +363,7 @@ def fit_tag_probabilities_by_pair(
     by_sample = {s: f.select("cellId") for (s,), f in universe.group_by("sampleId")}
     frames: list[pl.DataFrame] = []
     reasons: dict[tuple[str, str], str] = {}
+    backgrounds: dict[tuple[str, str], Background] = {}
     for sample, tag in _declared_pairs(panel, sorted(by_sample)):
         sample_cells = by_sample.get(sample)
         if sample_cells is None:
@@ -348,6 +380,8 @@ def fit_tag_probabilities_by_pair(
         if fit.probabilities is None:
             reasons[(sample, tag)] = fit.reason or NO_SEPARATION
             continue
+        if fit.background is not None:
+            backgrounds[(sample, tag)] = fit.background
         frames.append(
             dense.select("cellId")
             .with_columns(
@@ -359,7 +393,7 @@ def fit_tag_probabilities_by_pair(
         )
 
     probabilities = pl.concat(frames) if frames else pl.DataFrame(schema=_PROB_SCHEMA)
-    return TagFits(probabilities, reasons)
+    return TagFits(probabilities, reasons, backgrounds)
 
 
 _EMPTY = np.zeros(0, dtype=np.int64)

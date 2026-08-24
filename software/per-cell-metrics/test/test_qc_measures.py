@@ -36,6 +36,7 @@ EXPECTED_LEVEL_BY_ID = {
     "uniqueCountsPerCell": "sample",
     "highReferenceCells": "sample",
     "perAntigen": "tag",
+    "fittedBackground": "tag",
     "tagDisagreement": "tag",
 }
 

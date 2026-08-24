@@ -241,6 +241,20 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "Per tag: cells with any count and their median count, both before the minimum, "
         "and cells called bound after it.",
     ),
+    # Only a population baseline fits one, so under a declared baseline this carries no value
+    # and says so. `330-the-quality-readout` asks for it as a plot, and it is the only way to
+    # see whether a tag's counts separated at all -- which a scientist reads BEFORE settling the
+    # baseline, so it must not depend on any cutoff.
+    #
+    # No line. Nothing published says what a background of any size means: it is read against
+    # the signal mean beside it and against the other tags of the panel, which is a comparison
+    # rather than a boundary.
+    Measurement(
+        "fittedBackground",
+        "Fitted background, where a population baseline served",
+        "tag",
+        "The background component's mean count, its share of cells, and the signal mean beside it.",
+    ),
     # Self-disagreement at an IDENTITY is deliberately not measured. Keeping the tag-level
     # figure while dropping this one rests on which confound cancels: marginal binding
     # inflates disagreement everywhere, so comparing one tag against its siblings under the

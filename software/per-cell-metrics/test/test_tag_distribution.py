@@ -273,3 +273,54 @@ def test_a_tag_read_twice_in_one_cell_is_refused():
     doubled = pl.concat([counts, counts.head(1)])
     with pytest.raises(ValueError, match="duplicated readings"):
         fit_tag_probabilities_by_pair(doubled, cells, _panel([("AAAA", "S1")]))
+
+
+def test_a_fit_returns_the_background_it_fitted():
+    # The parameters used to die inside the function that made them, so the one number a reader
+    # needs in order to judge a fit never left it. Two clear populations: a low background and a
+    # high signal, overdispersed so the negative binomial is the right model.
+    rng = np.random.default_rng(11)
+    background = rng.negative_binomial(2, 2 / (2 + 3), size=900)
+    signal = rng.negative_binomial(6, 6 / (6 + 90), size=300)
+    counts = np.concatenate([background, signal])
+
+    fit = fit_tag_probabilities(counts, min_cells=100)
+
+    assert fit.probabilities is not None
+    assert fit.background is not None
+    # The background sits below the signal, which is what labelling the higher-median component
+    # signal means. Bounds rather than point values: the fit is stochastic.
+    assert fit.background.mean < fit.background.signal_mean
+    assert 0.0 < fit.background.weight < 1.0
+    # The background holds the larger share, since three quarters of the cells are background.
+    assert fit.background.weight > 0.5
+
+
+def test_a_fit_that_established_nothing_carries_no_background():
+    # `background` is None on exactly the condition `probabilities` is. A caller must branch on
+    # absence, and a background sitting beside a None probability would invite the other reading.
+    fit = fit_tag_probabilities(np.zeros(500, dtype=int), min_cells=100)
+    assert fit.probabilities is None
+    assert fit.background is None
+
+
+def test_backgrounds_are_collected_per_sample_and_tag():
+    # A pair in `reasons` contributes no background, and a pair that fitted contributes exactly
+    # one. The two dicts partition the declared pairs.
+    rng = np.random.default_rng(5)
+    rows = []
+    for sample in ("S1", "S2"):
+        for cell in range(400):
+            rows.append((sample, f"c{cell}", "T1", int(rng.negative_binomial(2, 2 / (2 + 4)))))
+    counts = pl.DataFrame(
+        rows, orient="row", schema={"sampleId": pl.String, "cellId": pl.String, "tag": pl.String, "umiCount": pl.Int64}
+    )
+    cells = [(s, f"c{c}") for s in ("S1", "S2") for c in range(400)]
+    panel = pl.DataFrame({"sample": ["S1", "S2"], "tag": ["T1", "T1"]})
+
+    fits = fit_tag_probabilities_by_pair(counts, cells, panel, min_cells=100)
+
+    for key in fits.backgrounds:
+        assert key not in fits.reasons
+    for key in fits.reasons:
+        assert key not in fits.backgrounds
