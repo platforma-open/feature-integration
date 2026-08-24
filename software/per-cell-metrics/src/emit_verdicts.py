@@ -43,6 +43,7 @@ from collections import Counter
 from collections.abc import Collection
 from typing import NamedTuple
 
+import numpy as np
 import polars as pl
 from combine import (
     DEFAULT_MIN_AGREEMENT,
@@ -70,6 +71,7 @@ from qc_measures import (
     Reading,
     Status,
     antigen_count_deciles,
+    deciles_of,
     per_antigen_measures,
     reads_per_cell,
     roll_up,
@@ -865,6 +867,33 @@ def _add(rows: list[QcRow], level: str, entity: str, measurement: str, value, de
     rows.append(
         _leaf(level, entity, measurement, value, detail, panel_id, status_for(measurement, value, DEFAULT_LINES))
     )
+
+
+def _score_spread(states: pl.DataFrame, served: ReferenceChoice) -> tuple[float | None, str]:
+    """The run's scores as deciles, or why there are none.
+
+    Only the declared rung scores. A population baseline yields a probability, which is not on
+    the same scale and cannot be pooled with a score, so under it this does not exist.
+
+    Cells carrying an `unreliableReason` are left out. A cell with no comparator or one a gate
+    set aside still has a number here -- the score is computed before the state is called -- but
+    it answers a comparison that never happened.
+    """
+    if served is not ReferenceChoice.DECLARED:
+        return None, f"the {served.value} baseline yields no score, so a run resting on it has no spread"
+    scored = states.filter(pl.col("unreliableReason").is_null())
+    if scored.height == 0:
+        return None, "no cell was scored"
+    values = specificity_score(
+        scored["umiCount"].to_numpy(),
+        np.nan_to_num(scored["referenceCount"].cast(pl.Float64).to_numpy(), nan=0.0),
+    )
+    deciles = deciles_of(np.asarray(values, dtype=float))
+    detail = "|".join(
+        f"{d}:{'' if v is None else round(v, 3)}" for d, v in zip(deciles["decile"], deciles["value"], strict=True)
+    )
+    middle = deciles.filter(pl.col("decile") == 50)["value"].to_list()
+    return (middle[0] if middle else None), detail
 
 
 def _fitted_background(tag_fits: TagFits | None, samples: Collection[str], tag: str) -> tuple[float | None, str]:
@@ -1665,6 +1694,17 @@ def main() -> None:
         # per panel is what makes the comparison the right one.
         for tag in sorted(panel_tags & set(tag_rate)):
             _add(rows, "tag", tag, "tagDisagreement", tag_rate[tag], "", panel_id)
+
+    # One row for the whole run, and the entity is the run: 320 puts the score spread at that
+    # grain because the cutoff is one number for the run, so a per-sample figure would answer a
+    # question nobody asked. Emitted outside the sample loop, which is also what keeps it out of
+    # every sample's rollup.
+    #
+    # The score is re-derived from the counts `read_states` returns rather than carried out of
+    # it. Same function and same inputs, so the two cannot drift, and `read_states` keeps its
+    # refusal to emit a binding level per cell.
+    score_value, score_detail = _score_spread(states, reference.served)
+    _add(rows, "run", "run", "scoreDistribution", score_value, score_detail)
 
     # Only the sample carries an aggregated status, over its OWN per-sample measurements. A
     # per-tag failure is usually a property of the reagent across the whole run, so feeding a dead

@@ -23,3 +23,7 @@ The per-sample quality frame gains a **Valid cell-barcode fraction** column.
 **The fitted background now leaves the function that fits it.** Under a population baseline the block fits a two-component mixture per tag and per sample, and kept only the failures. The background component's mean, its share of cells, and the signal mean beside it now reach the measurement set as one tag-level row: the median over the panel's samples that fitted, with the spread and the unfitted count in its detail. It is what a scientist reads to see whether a tag's counts separated at all, and it depends on no cutoff — which matters, because it is read in order to settle one.
 
 Under a declared baseline nothing is fitted, and every row says that rather than going missing.
+
+**The run's scores now have a spread.** The score is computed for every cell and identity, used for one comparison against the cutoff, and was then dropped. It reaches the measurement set as deciles: one figure for the whole run, because the cutoff is one number for the run. A scientist may move that cutoff to where their own run's scores separate, and that licence is unusable unless the scores are in front of them — until now it was set blind.
+
+The measurement carries no line, since a line here would be the block placing the cutoff instead. A population baseline yields a probability rather than a score, and under it the row says so rather than printing a number from the wrong rule. The measurement set gains a **run** grain, which is a grain of one.

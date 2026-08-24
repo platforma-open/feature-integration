@@ -90,7 +90,7 @@ class Coverage:
 class Measurement:
     id: str
     label: str
-    level: str  # "sample" | "tag" | "identity"
+    level: str  # "sample" | "tag" | "identity" | "run"
     counts: str  # what went into it
     implies: str | None = None  # what a bad value means, where a line exists
     line: str | None = None  # which defence route backs `implies`, if any
@@ -240,6 +240,19 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "tag",
         "Per tag: cells with any count and their median count, both before the minimum, "
         "and cells called bound after it.",
+    ),
+    # One figure for the run rather than per sample, because the cutoff is one number for the
+    # run. Only the declared rung produces a score at all: a population baseline yields a
+    # probability, so under it this measurement does not exist and says so.
+    #
+    # No line. `320-qc-measurement-set` carries it so a scientist can move the cutoff to where
+    # their own run's scores separate, and that licence is unusable unless the scores are in
+    # front of them. A line here would be the block placing the cutoff instead.
+    Measurement(
+        "scoreDistribution",
+        "Distribution of the run's scores",
+        "run",
+        "Deciles of the score over every cell and identity the declared rule scored.",
     ),
     # Only a population baseline fits one, so under a declared baseline this carries no value
     # and says so. `330-the-quality-readout` asks for it as a plot, and it is the only way to
@@ -558,6 +571,23 @@ def reads_per_cell(reads_matched: int, cells_in_list: int) -> float | None:
 DECILE_POINTS: tuple[int, ...] = tuple(range(0, 101, 10))
 
 
+def deciles_of(values: np.ndarray) -> pl.DataFrame:
+    """The eleven decile points of `values`, or eleven unanswered points where there are none.
+
+    Split out of `antigen_count_deciles` so a second spread reports the same shape. An empty
+    input still returns all eleven rows with a null value: no observations is eleven declared,
+    unanswered points, never an empty frame.
+    """
+    if values.size == 0:
+        return pl.DataFrame(
+            {"decile": list(DECILE_POINTS), "value": [None] * len(DECILE_POINTS)},
+            schema={"decile": pl.Int64, "value": pl.Float64},
+        )
+    return pl.DataFrame(
+        {"decile": list(DECILE_POINTS), "value": [float(np.quantile(values, p / 100)) for p in DECILE_POINTS]}
+    )
+
+
 def antigen_count_deciles(counts: pl.DataFrame) -> pl.DataFrame:
     """Deciles of the total antigen count per cell barcode.
 
@@ -572,11 +602,6 @@ def antigen_count_deciles(counts: pl.DataFrame) -> pl.DataFrame:
     deferred measurements follow.
     """
     if counts.height == 0:
-        return pl.DataFrame(
-            {"decile": list(DECILE_POINTS), "value": [None] * len(DECILE_POINTS)},
-            schema={"decile": pl.Int64, "value": pl.Float64},
-        )
-
+        return deciles_of(np.empty(0))
     totals = counts.group_by(["sampleId", "cellId"]).agg(pl.col("umiCount").sum().alias("total"))["total"].to_numpy()
-    values = [float(np.quantile(totals, p / 100)) for p in DECILE_POINTS]
-    return pl.DataFrame({"decile": list(DECILE_POINTS), "value": values})
+    return deciles_of(totals)

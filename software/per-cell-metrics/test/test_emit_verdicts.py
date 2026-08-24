@@ -2366,6 +2366,51 @@ def test_the_tag_distribution_rung_serves_and_says_so(tmp_path):
     assert meta["distributionMinCells"] == 300
 
 
+def test_the_run_carries_its_score_spread(bed):
+    # 320 puts this at the run grain because the cutoff is one number for the run, and carries it
+    # so a scientist can move that cutoff to where their own scores separate. A cutoff set with no
+    # sight of the scores is set blind, which is what shipped until now.
+    _run(bed, *BASE)
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+
+    rows = qc.filter(pl.col("measurement") == "scoreDistribution")
+    assert rows.height == 1, "one figure for the run, not one per sample"
+    row = rows.row(0, named=True)
+    assert row["level"] == "run"
+    assert row["value"] is not None
+    # Eleven decile points, 0 through 100 by 10.
+    points = [p.split(":")[0] for p in row["detail"].split("|")]
+    assert points == [str(p) for p in range(0, 101, 10)]
+    # A score is 0 to 100, and the deciles are ordered.
+    values = [float(p.split(":")[1]) for p in row["detail"].split("|")]
+    assert values == sorted(values)
+    assert 0.0 <= values[0] and values[-1] <= 100.0
+    # No line stands behind it: 320 carries it so a scientist places the cutoff, and a line here
+    # would be the block placing it instead.
+    assert row["status"] is None
+
+
+def test_the_run_score_spread_stays_out_of_every_sample_rollup(bed):
+    # It is emitted outside the sample loop, and a sample's rollup covers its OWN measurements.
+    # A run figure folded into a sample would say something about that sample it does not know.
+    _run(bed, *BASE)
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    assert qc.filter((pl.col("measurement") == "rollup") & (pl.col("level") == "run")).height == 0
+
+
+def test_a_population_baseline_has_no_score_to_spread(tmp_path):
+    # The declared rung scores; the distribution rung yields a probability, which is not on the
+    # same scale and cannot be pooled with one. The row is there and says so, rather than going
+    # missing or printing a number from the wrong rule.
+    _distribution_bed(tmp_path)
+    _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
+
+    qc = pl.read_csv(tmp_path / "result_qc.csv", infer_schema_length=0)
+    row = qc.filter(pl.col("measurement") == "scoreDistribution").row(0, named=True)
+    assert row["value"] is None
+    assert "yields no score" in row["detail"]
+
+
 def test_the_fitted_background_reaches_the_measurement_set(tmp_path):
     # The fit's parameters used to die inside the function that made them, so a scientist could
     # not see whether a tag's counts separated -- which 330 wants read BEFORE the baseline is

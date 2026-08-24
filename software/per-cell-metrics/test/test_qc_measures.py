@@ -37,6 +37,7 @@ EXPECTED_LEVEL_BY_ID = {
     "highReferenceCells": "sample",
     "perAntigen": "tag",
     "fittedBackground": "tag",
+    "scoreDistribution": "run",
     "tagDisagreement": "tag",
 }
 
@@ -102,7 +103,9 @@ def test_declared_levels_match_the_spec_as_a_multiset():
 
 
 def test_every_measurement_declares_a_known_level():
-    assert {m.level for m in MEASUREMENTS} <= {"sample", "tag"}
+    # `run` is a grain of one. 320 puts the score spread there because the cutoff is one number
+    # for the run, so a per-sample figure would answer a question nobody asked.
+    assert {m.level for m in MEASUREMENTS} <= {"sample", "tag", "identity", "run"}
 
 
 def test_every_measurement_says_what_it_counts():
