@@ -458,7 +458,9 @@ wf.body(func(args) {
 			panelLabels: verdictRun.output("panelLabels"),
 			samplePanel: verdictRun.output("samplePanel"),
 			panelMismatch: verdictRun.output("panelMismatch"),
-			qc: verdictRun.output("qc")
+			qc: verdictRun.output("qc"),
+			qcDeciles: verdictRun.output("qcDeciles"),
+			qcBackgrounds: verdictRun.output("qcBackgrounds")
 		})
 	}
 

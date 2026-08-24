@@ -74,6 +74,11 @@ self.body(func(inputs) {
 	// column reusing it while carrying barcode sequences would keep the axis identity and invert its value
 	// space, so downstream joins would return wrong rows rather than fail.
 	addTo := func(fb, name, file, spec) {
+		// An input the caller forgot to pass arrives here as undefined and fails eleven frames down in
+		// xsv.importFile as "frameInput must be provided", naming neither the frame nor this block. Adding
+		// an output in verdict-run without also passing it in main is the mistake that produces it, and
+		// the two files are far enough apart to make it easy.
+		ll.assert(!is_undefined(file), "verdict-import: no file was passed for %v; check that main.tpl.tengo forwards it from verdict-run", name)
 		columnSpecs.guardNoLegacyFeatureAxis(spec.axes)
 		imported := xsv.importFile(file, "csv", spec, { splitDataAndSpec: true })
 		maps.forEach(imported, func(key, column) {
