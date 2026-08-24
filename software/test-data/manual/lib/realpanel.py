@@ -1059,7 +1059,7 @@ def _write_truth(truth_dir, ab_rows, con_rows, read_rows, lib_rows, panels):
                 w.writerow([sample, panel.barcode[name], name, panel.role.get(name, "")])
 
 
-def write_run_report(run_dir, info, panel_csv, quality_profile, gate_hint=True):
+def write_run_report(run_dir, info, panel_csv, quality_profile, gate_hint=True, baseline_tag=None):
     """Write RUN.md inside the run: the settings this run expects, worked out from the panel that actually
     drove it. It lives in the run directory, which is gitignored, and not in the tracked README, because it
     names the panel's own samples and columns and the panel is the user's, not this repository's."""
@@ -1074,7 +1074,92 @@ def write_run_report(run_dir, info, panel_csv, quality_profile, gate_hint=True):
     offtarget_values = sorted({p.role[n] for p in panels.values() for n in p.offtargets})
     # Distinct TAGS across the whole panel, which is what the block's panel rung counts
     # (`emit_verdicts.py` reads `panel["tag"].n_unique()`), not rows and not per-sample members.
-    panel_tag_count = len({p.barcode[n] for p in panels.values() for n in p.names})
+    bstate = baseline_state(panels, baseline_tag)
+    # What the PANEL declares on its own. `--baseline-tag` narrows the simulation to one member, but the
+    # block's declared rung is reached by a column value, so a run read against a named tag needs the
+    # panel edited before the block can be pointed at it the same way.
+    declared = baseline_state(panels) if baseline_tag else bstate
+    panel_tag_count = bstate["panel_tags"]
+    n_baseline = len(bstate["seqs"])
+    served = bstate["served"]
+    marked = ", ".join(f"`{v}`" for v in offtarget_values)
+    # Rows 15, 16 and the comparator section all turn on the same three states, so they are settled here
+    # rather than as three ternaries that could drift apart.
+    served_label = "`The panel's own readings`" if served == "panel" else "`No baseline`"
+    if n_baseline == 1 and len(declared["seqs"]) > 1:
+        row15 = (marked + f" | **edit the panel first** — {marked} marks {len(declared['seqs'])} tags "
+                 f"here, and this run was read against `{baseline_tag}` alone |")
+        row16 = ("`Declared baseline tag` | valid only once one member carries the baseline value — "
+                 "see below |")
+    elif n_baseline == 1:
+        row15 = marked + " | marks exactly one baseline tag, which is what the block reads against |"
+        row16 = "`Declared baseline tag` | read every count against that one member |"
+    elif n_baseline > 1:
+        row15 = (marked + f" | **leave unset** — these mark {n_baseline} distinct baseline tags, and the "
+                 "block reads against one or none |")
+        row16 = served_label + " | the declared rung is refused on this panel — see below |"
+    else:
+        row15 = "*(nothing to pick)* | no value in that column marks a baseline — see below |"
+        row16 = served_label + " | nothing carries the baseline role — see below |"
+    row17 = (f"{PANEL_MIN_MEMBERS} | *default*. This panel holds {panel_tag_count} tags, so the panel's "
+             "own readings " + ("can serve |" if panel_tag_count >= PANEL_MIN_MEMBERS
+                                else "cannot serve |"))
+    if n_baseline == 1 and len(declared["seqs"]) > 1:
+        lead_para = (f"This run was read against `{baseline_tag}` alone, because {marked} marks "
+                     f"**{len(declared['seqs'])} distinct tags** and the block reads against one or "
+                     "none. The block reaches its declared rung through a column VALUE, not by naming a "
+                     "member, so it cannot be pointed at this panel the way this run was read — edit "
+                     f"`panel.csv` so only `{baseline_tag}` carries a baseline value, then set it below.")
+        declared_bullet = ("- **Declared baseline tag** — what this run simulates, but only after the "
+                           f"panel is edited: as shipped, {marked} marks {len(declared['seqs'])} tags "
+                           "and the block exits rather than combining them.")
+    elif n_baseline == 1:
+        lead_para = (f"This panel declares exactly one baseline tag ({marked}), so there IS a declared "
+                     "comparator to point at.")
+        declared_bullet = ("- **Declared baseline tag** — reads every count against the one member named "
+                           f"in **Values that mark the baseline tag** ({marked}). This is the reading "
+                           "this run is built for.")
+    elif n_baseline > 1:
+        lead_para = (f"This panel's role column marks {marked} on **{n_baseline} distinct tags**. The "
+                     "block reads against one baseline tag or none and refuses several outright — "
+                     "reading against several needs a panel column saying which antigens each one "
+                     "belongs to, which the panel format has no room for. So the declared rung is "
+                     "**refused on this panel**, not degraded, and the run is read on "
+                     f"{served_label} instead.")
+        declared_bullet = ("- **Declared baseline tag** — **refused here.** It reads every count against "
+                           f"ONE member, and {marked} marks {n_baseline}. Pointing the block at this "
+                           "panel with that value set exits with an error rather than producing a grid.")
+    else:
+        lead_para = ("The role column names what a member is TO THE QUESTION and carries no value "
+                     "meaning *negative control*, so there is no declared comparator to point at.")
+        declared_bullet = ("- **Declared baseline tag** — reads every count against the one member named "
+                           "in **Values that mark the baseline tag**. Nothing in this panel carries that "
+                           "role, so it cannot serve.")
+    # What the reader is left with, and the one lever that changes it. Stating the rung without stating
+    # the consequence is what let the old report read as though a run were configurable when it was not.
+    closing = []
+    if served == "none":
+        closing = [
+            "",
+            "**No rung serves this panel, so every reading comes back *unreliable*.** That is a fact "
+            "about the panel shape, not a defect in this run — the truth tables are still coherent and "
+            "the FASTQs still carry the planted signal.",
+            "",
+            "The one lever is `--baseline-tag <name-or-sequence>`, which names a single member as the "
+            "comparator the way the block's own dropdown would. The baseline is global BY TAG while this "
+            "panel is per sample, so a named tag only serves the samples that offer it; cells elsewhere "
+            "still have no comparator. Re-check without regenerating: "
+            "`generate.py --real-panel <csv> --validate-only --baseline-tag <tag>`.",
+        ]
+    elif bstate["samples_offering"] and len(bstate["samples_offering"]) < len(panels):
+        missing = sorted(set(panels) - set(bstate["samples_offering"]))
+        closing = [
+            "",
+            f"The baseline is global by tag and this panel is per sample: only "
+            f"{len(bstate['samples_offering'])} of {len(panels)} samples offer it. Cells in "
+            + ", ".join(f"`{s}`" for s in missing)
+            + " have no comparator and read *unreliable* whatever the dropdown says.",
+        ]
     lines = [
         "# Run settings",
         "",
@@ -1129,19 +1214,9 @@ def write_run_report(run_dir, info, panel_csv, quality_profile, gate_hint=True):
         "per-clonotype rollup |",
         f"| 14 | **Panel column naming the baseline tag** | `{cols['role']}` | values present: "
         f"{', '.join(role_values)} |",
-        ("| 15 | **Values that mark the baseline tag** | "
-         + (", ".join(f"`{v}`" for v in offtarget_values)
-            + " | the panel marks this as the negative control |"
-            if offtarget_values else
-            "*(nothing to pick)* | no value in that column marks a baseline — see below |")),
-        ("| 16 | **What sets the baseline** | "
-         + ("`Declared baseline tag`" if offtarget_values else "`No baseline`")
-         + " | " + ("read every count against that one member |"
-                    if offtarget_values else
-                    "nothing can serve as a comparator here |")),
-        f"| 17 | *Baseline thresholds* → **Minimum panel size to serve as baseline** | "
-        f"{PANEL_MIN_MEMBERS} | *default*. This panel holds {panel_tag_count} tags, which is why the "
-        "panel's own readings cannot serve |",
+        f"| 15 | **Values that mark the baseline tag** | {row15}",
+        f"| 16 | **What sets the baseline** | {row16}",
+        f"| 17 | *Baseline thresholds* → **Minimum panel size to serve as baseline** | {row17}",
         "| 18 | *Baseline thresholds* → **High baseline reading** | 100 | *default*. Counts how many "
         "cells read a high baseline; it sets nothing aside |",
         "| 19 | *Baseline thresholds* → **Admissibility gate (baseline UMIs)** | *(off)* | *default*. "
@@ -1156,19 +1231,11 @@ def write_run_report(run_dir, info, panel_csv, quality_profile, gate_hint=True):
         "",
         "### The comparator",
         "",
-        (f"This panel marks {', '.join(f'`{v}`' for v in offtarget_values)} as the baseline, so there IS "
-         "a declared comparator to point at."
-         if offtarget_values else
-         "The role column names what a member is TO THE QUESTION and carries no value meaning "
-         "*negative control*, so there is no declared comparator to point at."),
+        lead_para,
         "",
         "The **What sets the baseline** dropdown offers these, and they answer differently:",
         "",
-        ("- **Declared baseline tag** — reads every count against the one member named in **Values that "
-         "mark the baseline tag**"
-         + (f" ({', '.join(f'`{v}`' for v in offtarget_values)}). This is the reading this run is built "
-            "for." if offtarget_values else
-            ". Nothing in this panel carries that role, so it cannot serve.")),
+        declared_bullet,
         # The panel rung GATES on member count, so offering it where it cannot serve sends the reader to a
         # choice that silently degrades to no comparator at all.
         (f"- **The panel's own readings** — the cell's other readings serve as its background. Needs at "
@@ -1179,6 +1246,7 @@ def write_run_report(run_dir, info, panel_csv, quality_profile, gate_hint=True):
         "- **Each tag's own distribution** — fits one distribution per tag across the sample's cells; "
         "needs the cell count and separation set under **Baseline thresholds**.",
         "- **No baseline** — every reading comes back *unreliable*.",
+        *closing,
         "",
         "### Reading tiers planted",
         "",
@@ -1481,7 +1549,8 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
             # The two rungs degrade for different reasons and saying so matters: one is fixed by naming a
             # baseline in the panel, the other cannot be fixed by a panel this size at all.
             why = ("no tag carries the baseline role" if src == "declared"
-                   else f"panel holds fewer than {PANEL_MIN_MEMBERS} tags")
+                   else f"panel holds fewer than {PANEL_MIN_MEMBERS} tags "
+                        f"({len({p.barcode[n] for p in panels.values() for n in p.names})})")
             note = f"cannot serve ({why}) -> degrades to none"
         else:
             note = "serves" + ("  <- reported below" if src == chosen else "")
@@ -1607,6 +1676,43 @@ class BaselineRefused(Exception):
     baselines needs a panel column saying which antigens each one belongs to, and the panel format has no
     such column. Raised here so a bed whose panel cannot be read that way says so, rather than quietly
     reporting a grid the block would never produce."""
+
+
+def baseline_sequences(panels, baseline_tag=None):
+    """The distinct baseline TAGS the panel declares, as sequences.
+
+    Keyed on the sequence, not the antigen name: one sequence can carry different names in different
+    samples, and the block keys on the tag. `baseline_tag` names one member outright, mirroring the
+    block's dropdown."""
+    if baseline_tag:
+        return {p.barcode[n] for p in panels.values() for n in p.names
+                if n == baseline_tag or p.barcode[n] == baseline_tag}
+    return {p.barcode[n] for p in panels.values() for n in p.offtargets}
+
+
+def baseline_state(panels, baseline_tag=None, min_members=PANEL_MIN_MEMBERS):
+    """Which comparator rung this panel can be read on, and why.
+
+    Resolved once so the run report and the verdict simulation cannot disagree. The block counts distinct
+    baseline TAGS, not distinct role VALUES: one role value spread over five sequences is five baseline
+    tags, and `verdict.py` refuses more than one. Keying the report on role values instead told the reader
+    a panel had a declared comparator where the block would exit.
+
+    `served` is the best rung reachable after the reader changes the dropdown, which is what `validate`
+    reports on -- the declared rung refusing does not fall back on its own."""
+    seqs = baseline_sequences(panels, baseline_tag)
+    panel_tags = len({p.barcode[n] for p in panels.values() for n in p.names})
+    if len(seqs) == 1:
+        served = "declared"
+    elif panel_tags >= min_members:
+        served = "panel"
+    else:
+        served = "none"
+    offering = sorted(s for s, p in panels.items() if any(p.barcode[n] in seqs for n in p.names))
+    return {"seqs": seqs, "panel_tags": panel_tags, "refused": len(seqs) > 1,
+            "served": served, "samples_offering": offering}
+
+
 BETA_X, BETA_A_OFFSET, BETA_B_OFFSET = 0.925, 1, 3
 
 
@@ -1703,14 +1809,8 @@ def simulate_verdicts(run_dir, panels, floor=FLOOR, cutoff=CUTOFF, gate=None,
     # by being counted several times.
     panel_size = len({p.barcode[n] for p in panels.values() for n in p.names})
 
-    # Baseline tags are global: a tag is the comparator in every sample or in none. Named by SEQUENCE for
-    # the same reason the block keys on the tag rather than the antigen, since one sequence can carry
-    # different antigen names in different samples.
-    if baseline_tag:
-        baseline_seqs = {p.barcode[n] for p in panels.values() for n in p.names
-                         if n == baseline_tag or p.barcode[n] == baseline_tag}
-    else:
-        baseline_seqs = {p.barcode[n] for p in panels.values() for n in p.offtargets}
+    # Baseline tags are global: a tag is the comparator in every sample or in none.
+    baseline_seqs = baseline_sequences(panels, baseline_tag)
 
     served = source
     if source == "declared":

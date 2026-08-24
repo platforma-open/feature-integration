@@ -435,7 +435,8 @@ def main():
         # report still describes the run. Rewriting it from a partial build would only replace its read
         # count with a zero.
         if args.arm == "all":
-            realpanel.write_run_report(run_dir, info, args.real_panel, args.library_quality)
+            realpanel.write_run_report(run_dir, info, args.real_panel, args.library_quality,
+                                       baseline_tag=args.baseline_tag)
             print(f"  settings -> {os.path.join(run_dir, 'RUN.md')}")
         if not args.no_validate:
             sample_check = info["samples"][0] if info["samples"] else None
