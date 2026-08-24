@@ -5,7 +5,10 @@ import { ProgressPrefix } from "@platforma-open/milaboratories.feature-integrati
 import { deriveProgress } from "../../ui/src/progress";
 
 const S = "SAMPLE1";
-const line = (stage: string) => `${ProgressPrefix}${stage}`;
+// Every case below is a stream that is still open, which is what these tests are about. `closed` is the
+// other half: a finished step's last tick, which must not be replayed as a live reading.
+const line = (stage: string) => ({ line: `${ProgressPrefix}${stage}`, live: true });
+const closed = (stage: string) => ({ line: `${ProgressPrefix}${stage}`, live: false });
 
 describe("deriveProgress — label follows the live stream, not the report step", () => {
   it("does not flash 'Counting UMIs' while refine is still the furthest live step", () => {
@@ -36,6 +39,38 @@ describe("deriveProgress — label follows the live stream, not the report step"
       },
     );
     expect(cell.text).toContain("Counting UMIs");
+  });
+
+  it("does not replay a finished step's last tick as a live reading", () => {
+    // mitool prints progress on a timer and the process finishes between ticks, so a completed parse ends
+    // on whatever tick landed last -- 97.8% with a one-second ETA is a normal way for it to end. Shown as
+    // live it says the run is nearly through a step it already finished, and offers an ETA that never
+    // elapses. A closed stream sits at the TOP of its band instead.
+    const cell = deriveProgress(
+      S,
+      new Set(),
+      { [S]: "parsing" },
+      {
+        "1-parse": closed("Parsing sequences: 97.8%  ETA: 00:00:01"),
+      },
+    );
+    expect(cell.percent).toBe(25);
+    expect(cell.text).not.toContain("97.8");
+    expect(cell.suffix).toBe("");
+  });
+
+  it("still shows a live step's own percent", () => {
+    // The other side of the same rule: an open stream is a reading and its figures are current.
+    const cell = deriveProgress(
+      S,
+      new Set(),
+      { [S]: "parsing" },
+      {
+        "1-parse": line("Parsing sequences: 40.0%  ETA: 00:00:30"),
+      },
+    );
+    expect(cell.text).toContain("40.0");
+    expect(cell.percent).toBeLessThan(25);
   });
 
   it("keeps the bar monotonic — never below the reported step floor", () => {
