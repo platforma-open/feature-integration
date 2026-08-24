@@ -6,7 +6,6 @@ import {
   PlAgDataTableV2,
   PlAlert,
   PlBlockPage,
-  PlSectionSeparator,
   PlTabs,
   usePlDataTableSettingsV2,
 } from "@platforma-sdk/ui-vue";
@@ -87,15 +86,19 @@ const noBackgrounds = computed(() => !rungUnknown.value && served.value !== "dis
 // rung and no per-cell reading exists to spread. The other two rungs read a comparator in the cell.
 const noReferenceReadings = computed(() => !rungUnknown.value && served.value === "distribution");
 
-// One tab per plot. Three plots stacked put the one a reader wants below the fold, and the two that
-// cannot exist on a given run pushed it further. A tab also lets each plot own the full height a
-// chart needs. Local rather than stored: which tab is open is a glance, not a setting.
-const DISTRIBUTION_TABS = [
+// One tab per view. Five readings stacked put the one a reader wants below the fold, and the ones a
+// given run cannot draw pushed it further. A tab also lets each view own the full height a chart or a
+// grid needs. Local rather than stored: which tab is open is a glance, not a setting.
+const VIEW_TABS = [
+  { label: "Measurements", value: "measurements" as const },
+  { label: "Panel vs reads", value: "mismatch" as const },
   { label: "Scores", value: "score" as const },
   { label: "Reference readings", value: "reference" as const },
   { label: "Fitted background", value: "background" as const },
 ];
-const activeDistribution = ref<"score" | "reference" | "background">("score");
+const activeView = ref<"measurements" | "mismatch" | "score" | "reference" | "background">(
+  "measurements",
+);
 
 const DECILE_VALUE = "pl7.app/antigen/qcDecileValue";
 const DECILE_AXIS = "pl7.app/antigen/qcDecile";
@@ -166,100 +169,99 @@ const backgroundOptions = computed<PredefinedGraphOption<"scatterplot">[]>(() =>
     </PlAlert>
 
     <template v-else>
-      <PlAlert v-if="qcAbsent" type="info">
-        No quality measurements have arrived from this run yet. Every measurement the verdict stage
-        declares keeps a row once the report imports, including one nothing could compute — so this
-        is a run still in flight or a verdict stage that did not finish, not a run that was measured
-        and found clean.
-      </PlAlert>
-      <PlAgDataTableV2
-        v-else
-        v-model="app.model.data.runQualityTableState"
-        :settings="qcSettings"
-        no-rows-text="The report imported with no measurements in it. Every declared measurement should keep a row — a deferred one carries no status and gives its reason in place of a value — so an empty report means the measurements were lost on the way here, not that the run was clean."
-        show-export-button
-      />
+      <PlTabs v-model="activeView" :options="VIEW_TABS" />
 
-      <PlSectionSeparator>Panel versus reads</PlSectionSeparator>
-
-      <PlAlert v-if="mismatchAbsent" type="info">
-        The panel-versus-reads check has not reported from this run yet. It is taken by the same
-        verdict stage as the measurements above, so it arrives with them.
-      </PlAlert>
-      <PlAgDataTableV2
-        v-else
-        v-model="app.model.data.runQualityMismatchTableState"
-        :settings="mismatchSettings"
-        no-rows-text="Every barcode the panel declared was carried by reads, which is the outcome you want. The opposite direction is not reported here: barcode correction snaps each feature onto the panel before counting, so a barcode the panel never declared cannot reach this check."
-        show-export-button
-      />
-
-      <PlSectionSeparator>Distributions</PlSectionSeparator>
-
-      <PlAlert v-if="distributionsAbsent" type="info">
-        No distributions have arrived from this run yet. They are taken by the same verdict stage as
-        the measurements above, so they arrive with them.
-      </PlAlert>
-      <template v-else>
-        <PlTabs v-model="activeDistribution" :options="DISTRIBUTION_TABS" />
-
-        <div v-if="activeDistribution === 'score'" :class="$style.plot">
-          <PlAlert v-if="rungUnknown" type="info">
-            This run has not reported which baseline served it yet.
-          </PlAlert>
-          <PlAlert v-else-if="noScores" type="info">
-            This run was read against each tag's own distribution, which yields a probability rather
-            than a score, so there are no scores to spread. This plot is drawn for a run read
-            against a declared baseline tag.
-          </PlAlert>
-          <GraphMaker
-            v-else
-            v-model="app.model.data.scoreDistributionGraphState"
-            chart-type="discrete"
-            :p-frame="app.model.outputs.runQualityDistributions"
-            :default-options="scoreOptions"
-            :data-column-predicate="decileColumns"
-          />
-        </div>
-
-        <div v-else-if="activeDistribution === 'reference'" :class="$style.plot">
-          <PlAlert v-if="rungUnknown" type="info">
-            This run has not reported which baseline served it yet.
-          </PlAlert>
-          <PlAlert v-else-if="noReferenceReadings" type="info">
-            This run was read against each tag's own distribution. That baseline belongs to a tag in
-            a sample rather than to a cell, so no cell carries a reference reading and there is
-            nothing to spread. This plot is drawn for a run read against a declared baseline tag.
-          </PlAlert>
-          <GraphMaker
-            v-else
-            v-model="app.model.data.referenceReadingGraphState"
-            chart-type="discrete"
-            :p-frame="app.model.outputs.runQualityDistributions"
-            :default-options="referenceOptions"
-            :data-column-predicate="decileColumns"
-          />
-        </div>
-
-        <div v-else :class="$style.plot">
-          <PlAlert v-if="rungUnknown" type="info">
-            This run has not reported which baseline served it yet.
-          </PlAlert>
-          <PlAlert v-else-if="noBackgrounds" type="info">
-            This run was read against a declared baseline tag, so no background was fitted and there
-            is nothing to draw here. The other two plots are unaffected. This plot is drawn for a
-            run read against each tag's own distribution.
-          </PlAlert>
-          <GraphMaker
-            v-else
-            v-model="app.model.data.fittedBackgroundGraphState"
-            chart-type="scatterplot"
-            :p-frame="app.model.outputs.runQualityDistributions"
-            :default-options="backgroundOptions"
-            :data-column-predicate="backgroundColumns"
-          />
-        </div>
+      <template v-if="activeView === 'measurements'">
+        <PlAlert v-if="qcAbsent" type="info">
+          No quality measurements have arrived from this run yet. Every measurement the verdict
+          stage declares keeps a row once the report imports, including one nothing could compute —
+          so this is a run still in flight or a verdict stage that did not finish, not a run that
+          was measured and found clean.
+        </PlAlert>
+        <PlAgDataTableV2
+          v-else
+          v-model="app.model.data.runQualityTableState"
+          :settings="qcSettings"
+          no-rows-text="The report imported with no measurements in it. Every declared measurement should keep a row — a deferred one carries no status and gives its reason in place of a value — so an empty report means the measurements were lost on the way here, not that the run was clean."
+          show-export-button
+        />
       </template>
+
+      <template v-else-if="activeView === 'mismatch'">
+        <PlAlert v-if="mismatchAbsent" type="info">
+          The panel-versus-reads check has not reported from this run yet. It is taken by the same
+          verdict stage as the measurements, so it arrives with them.
+        </PlAlert>
+        <PlAgDataTableV2
+          v-else
+          v-model="app.model.data.runQualityMismatchTableState"
+          :settings="mismatchSettings"
+          no-rows-text="Every barcode the panel declared was carried by reads, which is the outcome you want. The opposite direction is not reported here: barcode correction snaps each feature onto the panel before counting, so a barcode the panel never declared cannot reach this check."
+          show-export-button
+        />
+      </template>
+
+      <PlAlert v-else-if="distributionsAbsent" type="info">
+        No distributions have arrived from this run yet. They are taken by the same verdict stage as
+        the measurements, so they arrive with them.
+      </PlAlert>
+
+      <div v-else-if="activeView === 'score'" :class="$style.plot">
+        <PlAlert v-if="rungUnknown" type="info">
+          This run has not reported which baseline served it yet.
+        </PlAlert>
+        <PlAlert v-else-if="noScores" type="info">
+          This run was read against each tag's own distribution, which yields a probability rather
+          than a score, so there are no scores to spread. This plot is drawn for a run read against
+          a declared baseline tag.
+        </PlAlert>
+        <GraphMaker
+          v-else
+          v-model="app.model.data.scoreDistributionGraphState"
+          chart-type="discrete"
+          :p-frame="app.model.outputs.runQualityDistributions"
+          :default-options="scoreOptions"
+          :data-column-predicate="decileColumns"
+        />
+      </div>
+
+      <div v-else-if="activeView === 'reference'" :class="$style.plot">
+        <PlAlert v-if="rungUnknown" type="info">
+          This run has not reported which baseline served it yet.
+        </PlAlert>
+        <PlAlert v-else-if="noReferenceReadings" type="info">
+          This run was read against each tag's own distribution. That baseline belongs to a tag in a
+          sample rather than to a cell, so no cell carries a reference reading and there is nothing
+          to spread. This plot is drawn for a run read against a declared baseline tag.
+        </PlAlert>
+        <GraphMaker
+          v-else
+          v-model="app.model.data.referenceReadingGraphState"
+          chart-type="discrete"
+          :p-frame="app.model.outputs.runQualityDistributions"
+          :default-options="referenceOptions"
+          :data-column-predicate="decileColumns"
+        />
+      </div>
+
+      <div v-else :class="$style.plot">
+        <PlAlert v-if="rungUnknown" type="info">
+          This run has not reported which baseline served it yet.
+        </PlAlert>
+        <PlAlert v-else-if="noBackgrounds" type="info">
+          This run was read against a declared baseline tag, so no background was fitted and there
+          is nothing to draw here. The other two plots are unaffected. This plot is drawn for a run
+          read against each tag's own distribution.
+        </PlAlert>
+        <GraphMaker
+          v-else
+          v-model="app.model.data.fittedBackgroundGraphState"
+          chart-type="scatterplot"
+          :p-frame="app.model.outputs.runQualityDistributions"
+          :default-options="backgroundOptions"
+          :data-column-predicate="backgroundColumns"
+        />
+      </div>
     </template>
   </PlBlockPage>
 </template>
