@@ -747,14 +747,27 @@ def test_a_tag_contradicting_its_siblings_reports_one():
     states = _states(["AAAA", "BBBB", "CCCC"], ["not bound", "bound", "bound"])
     out = sibling_disagreement(states, {"IDENT": ["AAAA", "BBBB", "CCCC"]})
     assert out["AAAA"] == 1.0
-    assert out["BBBB"] == 0.0
 
 
-def test_a_tie_among_siblings_is_not_a_disagreement():
-    # One sibling each way. No majority exists.
+def test_a_tag_whose_siblings_tie_is_not_judged_in_that_cell():
+    # One cell, three tags on the identity, and each tag is judged against the other two.
+    # AAAA's siblings both say bound and convict it. BBBB's siblings are AAAA (not bound)
+    # and CCCC (bound), and CCCC's are AAAA (not bound) and BBBB (bound) -- both tie, so
+    # the only cell there is judges neither. A tie is a two-sibling case and needs three
+    # tags: on a two-tag identity the single sibling is the majority.
+    states = _states(["AAAA", "BBBB", "CCCC"], ["not bound", "bound", "bound"])
+    out = sibling_disagreement(states, {"IDENT": ["AAAA", "BBBB", "CCCC"]})
+    assert out["AAAA"] == 1.0
+    assert out["BBBB"] is None
+    assert out["CCCC"] is None
+
+
+def test_a_lone_sibling_is_its_own_majority():
+    # Two tags, so neither has a tie available. Each is judged against the other.
     states = _states(["AAAA", "BBBB"], ["not bound", "bound"])
     out = sibling_disagreement(states, {"IDENT": ["AAAA", "BBBB"]})
-    assert out["AAAA"] == 0.0
+    assert out["AAAA"] == 1.0
+    assert out["BBBB"] == 1.0
 
 
 def test_disagreement_is_judged_within_one_cell():

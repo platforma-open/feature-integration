@@ -1770,7 +1770,7 @@ def main() -> None:
                 detail = (
                     "this identity carries one tag, so it has no sibling"
                     if len(siblings_of_identity[identity_of_tag[tag]]) < 2
-                    else "no cell holds this tag beside a sibling"
+                    else "no cell gave this tag's siblings a majority"
                 )
             _add(rows, "tag", tag, "siblingDisagreement", rate, detail, panel_id)
 

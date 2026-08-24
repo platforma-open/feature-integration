@@ -307,8 +307,8 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "siblingDisagreement",
         "Disagreement with the tags sharing its identity",
         "tag",
-        "Of the cells holding this tag beside a sibling, the share reading the opposite way from the "
-        "majority of the identity's tags in that cell. A cell splitting evenly convicts nobody.",
+        "Of the cells whose siblings reached a majority, the share reading the opposite way from it. The "
+        "tag casts no vote in the majority it is judged against, and tied siblings judge nothing.",
     ),
     # Whether a clonotype of known specificity came back correctly is deliberately NOT
     # measured. It would be the only end-to-end check of the pipeline, and nothing computes
@@ -581,19 +581,24 @@ def sibling_disagreement(
     states: pl.DataFrame,
     tags_by_identity: dict[str, list[str]],
 ) -> dict[str, float | None]:
-    """Per tag: the share of its cells that contradict the majority of its identity's tags.
+    """Per tag: the share of its judged cells contradicting the majority of its siblings.
 
-    Siblings are the other tags the same identity carries. The scientist declared those tags
+    Siblings are the OTHER tags the same identity carries. The scientist declared those tags
     to be one thing, so nothing biological separates them in one cell.
 
-    Judged within one cell, over the identity's tags holding an explicit row there. A tag
-    with no row in a cell does not vote: `states` is sparse and carries no silent cell.
+    The tag being judged is not one of its own siblings and casts no vote in the majority it
+    is compared against. Letting it vote would make the figure partly self-referential: a tag
+    could prop up the majority it is then found to agree with.
 
-    A majority is strict -- more than half the votes. A cell splitting evenly convicts
-    nobody, and still counts as a cell compared.
+    Judged within one cell, over the siblings holding an explicit row there. A tag with no
+    row in a cell does not vote: `states` is sparse and carries no silent cell.
 
-    None, never zero, where no comparison exists: an identity carrying one tag, or a tag no
-    cell holds beside a sibling.
+    A majority is strict -- more than half the sibling votes. A cell whose siblings reach no
+    strict majority does not judge that tag and is not counted. Two siblings need at least
+    three tags on the identity, so a two-tag identity always has a majority of one.
+
+    None, never zero, where nothing judged the tag: an identity carrying one tag, or an
+    identity carrying several where no cell gave this tag's siblings a majority.
 
     `states` is the tag-grain frame after the minimum, with `sampleId`, `cellId`, `tag` and
     `state`.
@@ -607,28 +612,23 @@ def sibling_disagreement(
             continue
 
         here = states.filter(pl.col("tag").is_in(members)).select("sampleId", "cellId", "tag", "state")
-        counted = here.group_by("sampleId", "cellId", "state").agg(pl.len().alias("n"))
-        totals = counted.group_by("sampleId", "cellId").agg(pl.col("n").sum().alias("total"))
-        # Filtered on the strict majority rather than on the largest count, so at most one
-        # state survives per cell and no row ordering decides which.
-        majority = (
-            counted.join(totals, on=["sampleId", "cellId"], how="inner")
-            .filter(pl.col("n") * 2 > pl.col("total"))
-            .select("sampleId", "cellId", pl.col("state").alias("majority"))
-        )
-        present = here.group_by("sampleId", "cellId").agg(pl.col("tag").n_unique().alias("tagsHere"))
-        compared = (
-            here.join(present, on=["sampleId", "cellId"], how="inner")
-            .filter(pl.col("tagsHere") > 1)
-            .join(majority, on=["sampleId", "cellId"], how="left")
-        )
         for tag in members:
-            mine = compared.filter(pl.col("tag") == tag)
-            if mine.height == 0:
+            mine = here.filter(pl.col("tag") == tag).select("sampleId", "cellId", "state")
+            counted = here.filter(pl.col("tag") != tag).group_by("sampleId", "cellId", "state").agg(pl.len().alias("n"))
+            totals = counted.group_by("sampleId", "cellId").agg(pl.col("n").sum().alias("total"))
+            # Filtered on the strict majority rather than on the largest count, so at most
+            # one state survives per cell and no row ordering decides which. A cell with no
+            # sibling row, or with its siblings tied, produces no row here and drops out.
+            majority = (
+                counted.join(totals, on=["sampleId", "cellId"], how="inner")
+                .filter(pl.col("n") * 2 > pl.col("total"))
+                .select("sampleId", "cellId", pl.col("state").alias("majority"))
+            )
+            judged = mine.join(majority, on=["sampleId", "cellId"], how="inner")
+            if judged.height == 0:
                 rates[tag] = None
                 continue
-            against = mine.filter(pl.col("majority").is_not_null() & (pl.col("state") != pl.col("majority")))
-            rates[tag] = against.height / mine.height
+            rates[tag] = judged.filter(pl.col("state") != pl.col("majority")).height / judged.height
     return rates
 
 
