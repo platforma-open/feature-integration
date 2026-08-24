@@ -36,7 +36,6 @@ PARAMETER_NAMES := [
 	"highReferenceLine",
 	"minAgreement",
 	"minVotingCells",
-	"minimumAppliesToBaseline",
 	"panelReferenceMinMembers",
 	"referenceSource",
 	"referenceValues",
@@ -128,9 +127,6 @@ build := func(params) {
 	// Present only when on. Off by default: the minimum removes what is not evidence of binding, and the
 	// comparator is not evidence of binding. Turning it on changes no verdict, because every rung reads its
 	// own source raw. It changes only what the run reports as removed and emptied.
-	if params.minimumAppliesToBaseline == true {
-		add("--minimum-applies-to-baseline", "true")
-	}
 
 	// Off by default, and off means absent rather than zero. A floor of 0 passes every majority instead of
 	// skipping the check, and the two are different claims about the reading.

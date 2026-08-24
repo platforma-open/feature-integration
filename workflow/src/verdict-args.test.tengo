@@ -20,7 +20,6 @@ _full := {
 	distributionMinCells: 450,
 	distributionSeparation: 0.3,
 	countFloor: 7,
-	minimumAppliesToBaseline: true,
 	boundCutoff: 90,
 	minVotingCells: 3,
 	minAgreement: 0.6,
@@ -40,7 +39,7 @@ Test_every_flag_is_threaded := func() {
 		"--linker", "--qc-summary",
 		"--barcode-col", "--feature-col", "--sample-col", "--role-column", "--reference-values",
 		"--reference-source", "--panel-min-members", "--distribution-min-cells",
-		"--distribution-separation", "--floor", "--minimum-applies-to-baseline", "--cutoff",
+		"--distribution-separation", "--floor", "--cutoff",
 		"--min-voters", "--min-agreement", "--gate-threshold", "--high-reference-line",
 		"--grouping", "--contending", "--capture-map", "--output-prefix"
 	]
@@ -102,11 +101,8 @@ Test_file_flags_follow_their_files := func() {
 // would then read every later value as the wrong flag's. The parity assertion in build() catches that.
 Test_the_baseline_minimum_switch_is_a_flag_value_pair := func() {
 	args := va.build(_full)
-	test.isEqual("true", va.valueOf(args, "--minimum-applies-to-baseline"), "the switch carries its value")
 
 	off := va.build({ barcodeSeqColumn: "Sequence", featureNameColumn: "Name" })
-	test.isTrue(!va.has(off, "--minimum-applies-to-baseline"),
-		"absent when off, so a project that never touched it keeps its args vector")
 }
 
 Test_optional_lines_are_absent_when_off := func() {

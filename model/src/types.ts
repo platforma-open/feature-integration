@@ -96,11 +96,6 @@ export type BlockArgs = {
   distributionMinCells: number; // cells a sample needs before the rung may serve
   distributionSeparation: number; // how deep the trough between the two components must be (0-1)
   countFloor: number; // counts below this are not evidence of binding
-  // Whether the minimum count also applies to the declared baseline tag. Off by default: the minimum
-  // removes what is not evidence OF BINDING, and the comparator is not evidence of binding. Turning it on
-  // changes no verdict, only what the run reports as removed and emptied. Every rung reads its own source
-  // raw, so the comparator is built from unfloored counts either way.
-  minimumAppliesToBaseline?: boolean;
   boundCutoff: number; // specificity score (0-100) at or above which a cell binds
   minVotingCells: number; // a verdict may rest on one cell and say so
   // Share (0-1) of answering cells the majority must reach. Off by default, and off means ABSENT rather
@@ -192,7 +187,6 @@ export type BlockData = {
   distributionMinCells: number;
   distributionSeparation: number;
   countFloor: number;
-  minimumAppliesToBaseline?: boolean;
   boundCutoff: number;
   minVotingCells: number;
   minAgreement?: number;

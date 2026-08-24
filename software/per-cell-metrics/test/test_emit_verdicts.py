@@ -2084,35 +2084,24 @@ def test_a_cell_carrying_only_its_comparator_has_not_read_nothing(bed):
     assert counts["cellsReadingNothing"].to_list() == [0]
 
 
-def test_subjecting_the_baseline_to_the_minimum_empties_that_cell(bed):
-    # The same run with the comparator subject to the minimum. Now c3 holds nothing anywhere and is the one
-    # cell of three that read nothing. This is the whole visible effect of the switch: it moves the accounting
-    # and not a verdict.
-    _run(bed, *BASE, "--floor", "7", "--minimum-applies-to-baseline", "true")
-    counts = pl.read_csv(bed / "result_set_counts.csv")
-    assert counts["cellsReadingNothing"].to_list() == [1]
-    assert counts["cellCount"].to_list() == [3], "an emptied cell stays in the clonotype's cell count"
-
-
 def test_cells_that_read_nothing_change_no_verdict(bed):
     # `support-travels-with-the-reading` forbids both shortcuts this number invites: dropping such cells from
     # the vote shrinks the denominator and turns a minority into a majority, and filtering them out of the
-    # cell list is the same effect by another route. Flipping the switch changes which cells are counted as
+    # cell list is the same effect by another route. Raising the minimum changes which cells are counted as
     # empty and must change nothing else in the run.
+    _run(bed, *BASE, "--floor", "1")
+    low = (bed / "result_verdicts.csv").read_bytes()
+    low_cells = (bed / "result_cell_counts.csv").read_bytes()
     _run(bed, *BASE, "--floor", "7")
-    exempt = (bed / "result_verdicts.csv").read_bytes()
-    exempt_cells = (bed / "result_cell_counts.csv").read_bytes()
-    _run(bed, *BASE, "--floor", "7", "--minimum-applies-to-baseline", "true")
-    assert (bed / "result_verdicts.csv").read_bytes() == exempt
-    assert (bed / "result_cell_counts.csv").read_bytes() == exempt_cells
-    assert pl.read_csv(bed / "result_set_counts.csv")["cellsReadingNothing"].to_list() == [1]
+    assert (bed / "result_verdicts.csv").read_bytes() == low
+    assert (bed / "result_cell_counts.csv").read_bytes() == low_cells
 
 
 def test_a_clonotype_never_reads_nothing_in_more_cells_than_it_has(bed):
     # The universe passed to the tally is the clonotype's own membership, so this cannot be violated by
     # construction -- which is exactly why it is worth pinning: a later refactor that reads the population off
     # the counts frame instead would break it silently.
-    _run(bed, *BASE, "--floor", "7", "--minimum-applies-to-baseline", "true")
+    _run(bed, *BASE, "--floor", "7")
     counts = pl.read_csv(bed / "result_set_counts.csv")
     for empty, total in zip(counts["cellsReadingNothing"].to_list(), counts["cellCount"].to_list()):
         assert 0 <= empty <= total
@@ -2414,39 +2403,33 @@ def test_the_gate_exposure_is_not_evaluated_where_no_cell_has_a_comparator(tmp_p
     assert meta["cellsSetAside"] == 0
 
 
-def test_the_baseline_minimum_switch_changes_the_accounting_and_not_one_verdict(wide_bed):
-    """The whole claim behind shipping this as a setting, checked end to end.
+def test_the_minimum_never_reaches_the_comparator(wide_bed):
+    """The exemption, checked end to end on a bed carrying a below-minimum comparator reading.
 
-    Each rung reads its own counts raw, so the comparator is built from the unfloored frame
-    whichever way the switch sits. What moves is the run's own accounting -- what it reports as
-    removed, and what it reports as emptied.
-
-    If a verdict ever moves here, the setting has stopped being an accounting choice and become
-    a scientific one, and it must not ship off-by-default as though it were free.
+    `minimum-count-before-any-reference` makes this a rule rather than a preference, so there is no
+    switch to compare against. Raising the minimum must remove antigen readings and leave every
+    comparator reading standing, because the minimum asks whether a count is evidence of binding and
+    a tag declared to be bound by nothing never is.
     """
-    assert _run(wide_bed, *_bed_args("panel_with_reference.csv"), "--output-prefix", "off").returncode == 0
     assert (
-        _run(
-            wide_bed,
-            *_bed_args("panel_with_reference.csv"),
-            "--minimum-applies-to-baseline",
-            "true",
-            "--output-prefix",
-            "on",
-        ).returncode
+        _run(wide_bed, *_bed_args("panel_with_reference.csv"), "--floor", "1", "--output-prefix", "low").returncode == 0
+    )
+    assert (
+        _run(wide_bed, *_bed_args("panel_with_reference.csv"), "--floor", "7", "--output-prefix", "high").returncode
         == 0
     )
 
-    for artifact in ("verdicts", "cell_counts", "cell_scalars"):
-        off = (wide_bed / f"off_{artifact}.csv").read_bytes()
-        on = (wide_bed / f"on_{artifact}.csv").read_bytes()
-        assert off == on, f"{artifact} moved, so the switch is not an accounting choice"
+    low = pl.read_csv(wide_bed / "low_cell_scalars.csv").sort(["sampleId", "cellId"])
+    high = pl.read_csv(wide_bed / "high_cell_scalars.csv").sort(["sampleId", "cellId"])
+    assert low["referenceCount"].to_list() == high["referenceCount"].to_list(), (
+        "a comparator reading moved when the minimum rose, so the exemption is not holding"
+    )
 
-    off_meta = json.loads((wide_bed / "off_run_meta.json").read_text())
-    on_meta = json.loads((wide_bed / "on_run_meta.json").read_text())
-    assert off_meta["minimumAppliesToBaseline"] is False
-    assert on_meta["minimumAppliesToBaseline"] is True
-    # The bed carries one below-minimum comparator reading, so switching it on must remove
-    # strictly more. Without this the test passes on a bed where the switch reaches nothing, and
-    # proves only that nothing happened.
-    assert on_meta["readingsFloored"] > off_meta["readingsFloored"]
+    # The guard: without it this passes on a bed where the minimum reaches nothing, and proves only
+    # that nothing happened.
+    low_meta = json.loads((wide_bed / "low_run_meta.json").read_text())
+    high_meta = json.loads((wide_bed / "high_run_meta.json").read_text())
+    assert high_meta["readingsFloored"] > low_meta["readingsFloored"]
+
+    # The switch is gone from the contract, not merely defaulted off.
+    assert "minimumAppliesToBaseline" not in high_meta

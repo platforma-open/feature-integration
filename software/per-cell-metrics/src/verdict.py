@@ -46,18 +46,17 @@ class Floored(NamedTuple):
     stats: dict[str, int]
 
 
-def apply_floor(
-    counts: pl.DataFrame, floor: int, reference_tags: set[str], apply_to_reference: bool = False
-) -> Floored:
+def apply_floor(counts: pl.DataFrame, floor: int, reference_tags: set[str]) -> Floored:
     """Zero every (cell, tag) count below `floor`, except the comparator's.
 
     A floored count reads *not bound*, never *unreliable*: a count that small is not
     distinguishable from none.
 
-    Reference tags are exempt by default, and `apply_to_reference` turns that off. The
-    minimum removes what is not evidence *of binding*, and the comparator is not. The
-    switch changes no verdict -- only the ACCOUNTING: readingsFloored, cellsEmptied,
-    and through those, which cells a clonotype counts as empty.
+    Reference tags are ALWAYS exempt, and there is no switch. `minimum-count-before-any-
+    reference` puts it as a rule rather than a preference: the minimum asks whether a count
+    is evidence of binding, a tag declared to be bound by nothing is never evidence of
+    binding, so the question does not arise for it. A cell's reference reading enters the
+    comparison as it came back, and a small one is the measurement rather than noise.
 
     `reference_tags` is global by design: a tag is a comparator in every sample or in
     none. The panel's (tag, sample) keying carries what a tag IS, not its role.
@@ -76,7 +75,7 @@ def apply_floor(
     # and the emptied population. The panel reader never emits one -- this is a note
     # for anyone feeding in an unvalidated frame.
     is_ref = pl.col("tag").is_in(list(reference_tags)) if reference_tags else pl.lit(False)
-    exempt = is_ref & pl.lit(not apply_to_reference)
+    exempt = is_ref
     below = (pl.col("umiCount") < floor) & ~exempt
 
     readings_floored = int(counts.select(below.sum()).item())

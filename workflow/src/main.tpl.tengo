@@ -409,7 +409,6 @@ wf.body(func(args) {
 		setParam("distributionMinCells", args.distributionMinCells)
 		setParam("distributionSeparation", args.distributionSeparation)
 		setParam("countFloor", args.countFloor)
-		setParam("minimumAppliesToBaseline", args.minimumAppliesToBaseline)
 		setParam("boundCutoff", args.boundCutoff)
 		setParam("minVotingCells", args.minVotingCells)
 		setParam("minAgreement", args.minAgreement)

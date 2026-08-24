@@ -891,38 +891,36 @@ def test_the_minimum_spares_the_baseline_tag_by_default():
     assert stats["readingsFloored"] == 1
 
 
-def test_the_minimum_reaches_the_baseline_tag_when_it_is_switched_on():
-    # The same counts under the setting. Both readings go, and the count of
-    # removed readings follows.
+def test_the_minimum_never_reaches_the_baseline_tag():
+    # `minimum-count-before-any-reference` puts this as a rule and not a preference: the
+    # minimum asks whether a count is evidence of binding, and a tag declared to be bound
+    # by nothing never is. There is no switch. A below-minimum comparator survives, and
+    # the count of removed readings counts the antigen tag alone.
     counts = _counts([("S1", "c1", "CTRL", 2), ("S1", "c1", "AAAA", 2)])
-    out, stats = apply_floor(counts, floor=4, reference_tags={"CTRL"}, apply_to_reference=True)
+    out, stats = apply_floor(counts, floor=4, reference_tags={"CTRL"})
     by_tag = dict(zip(out["tag"].to_list(), out["umiCount"].to_list(), strict=True))
-    assert by_tag == {"CTRL": 0, "AAAA": 0}
-    assert stats["readingsFloored"] == 2
+    assert by_tag == {"CTRL": 2, "AAAA": 0}
+    assert stats["readingsFloored"] == 1
 
 
-def test_the_emptied_population_follows_the_same_switch():
-    # A cell holding ONLY a below-minimum comparator. With the comparator exempt
-    # it never had evidence of binding, so the minimum emptied nothing. With the
-    # comparator subject to the minimum it did, so the cell was emptied.
+def test_a_cell_holding_only_an_exempt_comparator_is_not_emptied():
+    # A cell holding ONLY a below-minimum comparator. The comparator is exempt, so the cell
+    # never had evidence of binding removed and the minimum emptied nothing.
     #
-    # Scoping the population one way while flooring the other reports a cell as
-    # keeping evidence it no longer has, or losing evidence it never had.
+    # Scoping the emptied population one way while flooring the other would report a cell as
+    # losing evidence it never held.
     counts = _counts([("S1", "c1", "CTRL", 2)])
     assert apply_floor(counts, 4, {"CTRL"}).stats["cellsEmptied"] == 0
-    assert apply_floor(counts, 4, {"CTRL"}, apply_to_reference=True).stats["cellsEmptied"] == 1
 
 
-def test_the_switch_changes_no_comparator():
-    # The claim the setting rests on, pinned at the source. Every rung reads its
-    # own counts raw, so the comparator is built from the unfloored frame and the
-    # switch cannot reach it. If this ever fails, the setting has stopped being
-    # an accounting choice and become a scientific one.
+def test_the_minimum_changes_no_comparator():
+    # Pinned at the source. Every rung reads its own counts raw, so the comparator is built
+    # from the unfloored frame and the minimum cannot reach it. That is what makes the
+    # exemption a statement about the numerator alone.
     counts = _counts([("S1", "c1", "CTRL", 2), ("S1", "c1", "AAAA", 9)])
-    for switched_on in (False, True):
-        apply_floor(counts, 4, {"CTRL"}, apply_to_reference=switched_on)
-        ref, _ = reference_by_cell(counts, {"CTRL"}, ReferenceChoice.DECLARED)
-        assert ref[("S1", "c1")] == 2
+    apply_floor(counts, 4, {"CTRL"})
+    ref, _ = reference_by_cell(counts, {"CTRL"}, ReferenceChoice.DECLARED)
+    assert ref[("S1", "c1")] == 2
 
 
 def _counts(rows):
@@ -942,12 +940,12 @@ def test_a_cell_whose_comparator_survived_read_something():
     assert cells_reading_nothing(floored, {("S1", "c1")}) == set()
 
 
-def test_a_cell_with_nothing_left_anywhere_read_nothing():
-    # Same cell, same counts, the comparator now subject to the minimum. Only a cell with nothing
-    # anywhere read nothing -- so the switch moves this number, which is most of what it is for.
+def test_a_cell_keeping_only_its_comparator_did_not_read_nothing():
+    # The comparator is always exempt, so this cell keeps a reading. It did not read nothing, even
+    # though nothing it holds is evidence of binding. That is the accounting the exemption fixes.
     counts = _counts([("S1", "c1", "AAAA", 2), ("S1", "c1", "CTRL", 3)])
-    floored = apply_floor(counts, 4, {"CTRL"}, True).counts
-    assert cells_reading_nothing(floored, {("S1", "c1")}) == {("S1", "c1")}
+    floored = apply_floor(counts, 4, {"CTRL"}).counts
+    assert cells_reading_nothing(floored, {("S1", "c1")}) == set()
 
 
 def test_a_cell_with_no_row_at_all_read_nothing():
