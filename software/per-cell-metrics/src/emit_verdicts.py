@@ -1809,37 +1809,39 @@ def main() -> None:
         for tag in sorted(panel_tags):
             measure = measure_of_tag.get(tag, {})
             above = measure.get("cellsAboveTheLine")
+            median = measure.get("medianCountPerCell")
             sibling = sibling_rate.get(tag)
             own = tag_rate.get(tag)
-            absences = []
-            if above is None:
-                absences.append("cellsAboveTheLine=none asked, this tag supplies the baseline")
-            if sibling is None:
-                if tag in reference_here:
-                    absences.append("siblingDisagreement=this tag is held out of the verdict read")
-                elif len(siblings_of_identity.get(identity_of_tag.get(tag, ""), [])) < 2:
-                    absences.append("siblingDisagreement=this identity carries one tag, so it has no sibling")
-                elif tag not in held_a_cell:
-                    absences.append("siblingDisagreement=this tag holds no cell beside a sibling")
-                else:
-                    absences.append("siblingDisagreement=no cell gave this tag's siblings a majority")
-            if own is None:
-                absences.append("selfDisagreement=no cell set held this tag under an evaluable read")
             for identity in sorted(identities_of_tag.get(tag, [tag])):
+                # Scoped to the row's own identity. `identity_of_tag` keeps one identity per tag and
+                # would give a reused barcode's two rows the same reason.
+                members = siblings_of_identity.get(identity, [])
+                absences = []
+                if above is None:
+                    absences.append("cellsAboveTheLine=none asked, this tag supplies the baseline")
+                if median is None:
+                    absences.append("medianCountPerCell=no cell holds a count of this tag")
+                if sibling is None:
+                    if tag in reference_here:
+                        absences.append("siblingDisagreement=this tag is held out of the verdict read")
+                    elif len(members) < 2:
+                        absences.append("siblingDisagreement=this identity carries one tag, so it has no sibling")
+                    elif tag not in held_a_cell:
+                        absences.append("siblingDisagreement=this tag holds no cell beside a sibling")
+                    else:
+                        absences.append("siblingDisagreement=no cell gave this tag's siblings a majority")
+                if own is None:
+                    absences.append("selfDisagreement=no cell set held this tag under an evaluable read")
                 reagent_rows.append(
                     {
                         "panelId": panel_id,
                         "tag": tag,
                         "identity": identity,
                         "samplesSeenIn": int(measure.get("samplesSeenIn") or 0),
-                        "samplesInPanel": len(set(panel_samples_here)),
+                        "samplesInPanel": int(measure.get("samplesInPanel") or 0),
                         "cellsWithCount": int(measure.get("cellsWithCount") or 0),
                         "cellsAboveTheLine": float(above) if above is not None else None,
-                        "medianCountPerCell": (
-                            float(measure["medianCountPerCell"])
-                            if measure.get("medianCountPerCell") is not None
-                            else None
-                        ),
+                        "medianCountPerCell": float(median) if median is not None else None,
                         "siblingDisagreement": float(sibling) if sibling is not None else None,
                         "selfDisagreement": float(own) if own is not None else None,
                         "reason": "|".join(absences),

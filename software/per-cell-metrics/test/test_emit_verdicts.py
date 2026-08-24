@@ -2717,6 +2717,9 @@ REAGENT_COLUMNS = [
 def test_the_reagent_table_names_every_absent_figure(bed):
     # 330-the-quality-readout fixes the columns and forbids a status. A blank and a zero are
     # opposite findings, so a figure with no value says which case it is.
+    (bed / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type\nS1,AgA,AAAA,Target\nS1,AgD,DEAD,Target\nS1,Ctrl,CTRL,Control\n"
+    )
     _run(bed, *BASE)
     reagents = pl.read_csv(bed / "result_reagents.csv", infer_schema_length=0)
     assert reagents.columns == REAGENT_COLUMNS
@@ -2725,6 +2728,14 @@ def test_the_reagent_table_names_every_absent_figure(bed):
     control = reagents.filter(pl.col("tag") == "CTRL").row(0, named=True)
     assert control["cellsAboveTheLine"] is None
     assert "cellsAboveTheLine=none asked, this tag supplies the baseline" in control["reason"]
+
+    # A tag no read carried: zero under the counts, and the median names its own absence rather
+    # than leaving a blank beside them.
+    dead = reagents.filter(pl.col("tag") == "DEAD").row(0, named=True)
+    assert int(dead["cellsWithCount"]) == 0
+    assert int(dead["samplesSeenIn"]) == 0
+    assert dead["medianCountPerCell"] is None
+    assert "medianCountPerCell=no cell holds a count of this tag" in dead["reason"]
 
     target = reagents.filter(pl.col("tag") == "AAAA").row(0, named=True)
     assert int(target["cellsWithCount"]) == 2
