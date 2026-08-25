@@ -14,7 +14,12 @@ import json
 import sys
 
 import polars as pl
-from qc_measures import detect_aggregate_barcodes
+from qc_measures import (
+    AGGREGATE_BARCODE_IQR_MULTIPLIER,
+    AGGREGATE_BARCODE_MIN_THRESHOLD,
+    AGGREGATE_BARCODE_TOP_N,
+    detect_aggregate_barcodes,
+)
 
 FIELDNAMES = [
     "sampleId",
@@ -77,7 +82,14 @@ def _refine_kept_fraction(path: str | None, tag_name: str = "FEATURE") -> float 
 
 
 def _aggregate_barcode_metrics(
-    stat: pl.DataFrame, cell_col: str, umi_col: str, count_col: str, reads_total: int
+    stat: pl.DataFrame,
+    cell_col: str,
+    umi_col: str,
+    count_col: str,
+    reads_total: int,
+    multiplier: float = AGGREGATE_BARCODE_IQR_MULTIPLIER,
+    min_umi_threshold: float = AGGREGATE_BARCODE_MIN_THRESHOLD,
+    top_n: int = AGGREGATE_BARCODE_TOP_N,
 ) -> tuple[float | None, int, float | None]:
     """Fraction of reads_total sitting in barcodes `detect_aggregate_barcodes` flags.
 
@@ -97,7 +109,9 @@ def _aggregate_barcode_metrics(
         )
         .rename({cell_col: "barcode"})
     )
-    flagged, threshold = detect_aggregate_barcodes(per_barcode.select("barcode", "umiCount"))
+    flagged, threshold = detect_aggregate_barcodes(
+        per_barcode.select("barcode", "umiCount"), multiplier, min_umi_threshold, top_n
+    )
     flagged_reads = per_barcode.filter(pl.col("barcode").is_in(flagged))["readCount"].sum() if flagged else 0
     return flagged_reads / reads_total, len(flagged), threshold
 
@@ -112,6 +126,11 @@ def main() -> None:
     p.add_argument("--feature-col", default="FEATURE")
     p.add_argument("--umi-col", default="unique_UMI")
     p.add_argument("--count-col", default="count")
+    # The aggregate-barcode detection knobs. Defaults mirror qc_measures.py's own constants.
+    # Moving any of them changes which barcodes `detect_aggregate_barcodes` flags.
+    p.add_argument("--aggregate-iqr-multiplier", type=float, default=AGGREGATE_BARCODE_IQR_MULTIPLIER)
+    p.add_argument("--aggregate-min-umi-threshold", type=float, default=AGGREGATE_BARCODE_MIN_THRESHOLD)
+    p.add_argument("--aggregate-top-n", type=int, default=AGGREGATE_BARCODE_TOP_N)
     p.add_argument("--output", default="result_qc.csv")
     args = p.parse_args()
 
@@ -136,7 +155,14 @@ def main() -> None:
     # barcode the chemistry could have produced.
     cell_valid = _refine_kept_fraction(args.refine_report, args.cell_col)
     agg_fraction, agg_flagged, agg_threshold = _aggregate_barcode_metrics(
-        stat, args.cell_col, args.umi_col, args.count_col, total
+        stat,
+        args.cell_col,
+        args.umi_col,
+        args.count_col,
+        total,
+        args.aggregate_iqr_multiplier,
+        args.aggregate_min_umi_threshold,
+        args.aggregate_top_n,
     )
 
     row = {

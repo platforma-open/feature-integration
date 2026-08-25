@@ -3309,6 +3309,27 @@ def test_qc_frame_reads_the_lines_it_was_given_not_the_shipped_default():
     assert frame["status"] == "warn"
 
 
+def test_cli_flags_move_a_line_end_to_end(bed):
+    # 0.91 reads OK against the shipped 0.75 warn line, and alert against a raised 0.95 one.
+    # This is the CLI surface an operator actually reaches, not the Python function alone.
+    (bed / "qc.csv").write_text(
+        "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
+        "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction,"
+        "cellBarcodeValidFraction\n"
+        "S1,20000,18000,0.9,4,2,1200,300,0.82,0.91\n"
+    )
+    r = _run(
+        bed, *BASE, "--qc-summary", "qc.csv", "--cell-barcode-valid-warn", "0.95", "--cell-barcode-valid-error", "0.92"
+    )
+    assert r.returncode == 0, r.stderr
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+
+    row = qc.filter(pl.col("measurement") == "cellBarcodeValidFraction").row(0, named=True)
+    assert row["status"] == "alert"
+    assert row["lineWarn"] == "0.95"
+    assert row["lineAlert"] == "0.92"
+
+
 def test_qc_frame_rollup_row_carries_no_line_or_route():
     # The rollup measurement has no declaration at all, so all three fields are null there too.
     rows = [qc_rows.QcRow("sample", "S1", qc_rows.ROLLUP, None, "", "", None, qc_rows.roll_up([]))]

@@ -798,6 +798,7 @@ def detect_aggregate_barcodes(
     per_barcode: pl.DataFrame,
     multiplier: float = AGGREGATE_BARCODE_IQR_MULTIPLIER,
     min_umi_threshold: float = AGGREGATE_BARCODE_MIN_THRESHOLD,
+    top_n: int = AGGREGATE_BARCODE_TOP_N,
 ) -> tuple[frozenset[str], float | None]:
     """Barcodes whose antigen UMI count is an outlier, and the threshold that decided it.
 
@@ -807,9 +808,9 @@ def detect_aggregate_barcodes(
 
     `per_barcode` has one row per observed barcode, columns `barcode` and `umiCount` -- the
     whole whitelist-corrected barcode universe, not the cell list. q1 and q3 are taken over
-    the top 100 barcodes by count (or however many exist, below 100), and a flagged barcode
-    must be IN that top slice: one outside it is never flagged however large its count, which
-    is a property of the source and not a choice made here.
+    the top `top_n` barcodes by count (or however many exist, below `top_n`), and a flagged
+    barcode must be IN that top slice: one outside it is never flagged however large its
+    count, which is a property of the source and not a choice made here.
 
     Returns an empty set and the computed threshold where the threshold falls under
     `min_umi_threshold`, the source's own floor. Returns an empty set and `None` where
@@ -817,7 +818,7 @@ def detect_aggregate_barcodes(
     """
     if per_barcode.height == 0:
         return frozenset(), None
-    top = per_barcode.sort("umiCount", descending=True).head(AGGREGATE_BARCODE_TOP_N)
+    top = per_barcode.sort("umiCount", descending=True).head(top_n)
     counts = top["umiCount"].to_numpy().astype(float)
     q1 = float(np.quantile(counts, 0.25))
     q3 = float(np.quantile(counts, 0.75))
@@ -833,6 +834,7 @@ def aggregate_barcode_fraction(
     reads_total: int | None,
     multiplier: float = AGGREGATE_BARCODE_IQR_MULTIPLIER,
     min_umi_threshold: float = AGGREGATE_BARCODE_MIN_THRESHOLD,
+    top_n: int = AGGREGATE_BARCODE_TOP_N,
 ) -> tuple[float | None, str]:
     """Reads in barcodes `detect_aggregate_barcodes` flags, over `reads_total`.
 
@@ -851,13 +853,16 @@ def aggregate_barcode_fraction(
     if not reads_total:
         return None, "no total read count to divide by"
     flagged, threshold = detect_aggregate_barcodes(
-        per_barcode.select("barcode", "umiCount"), multiplier, min_umi_threshold
+        per_barcode.select("barcode", "umiCount"), multiplier, min_umi_threshold, top_n
     )
-    tested = min(per_barcode.height, AGGREGATE_BARCODE_TOP_N)
+    tested = min(per_barcode.height, top_n)
     if threshold is None:
         detail = "no antigen barcode observed in this sample"
     elif threshold < min_umi_threshold:
-        detail = f"barcodesTested={tested}|threshold={threshold:.1f} (below the 1000-UMI floor, no barcode flagged)"
+        detail = (
+            f"barcodesTested={tested}|threshold={threshold:.1f} "
+            f"(below the {min_umi_threshold:.0f}-UMI floor, no barcode flagged)"
+        )
     else:
         detail = f"barcodesTested={tested}|threshold={threshold:.1f}|barcodesFlagged={len(flagged)}"
     flagged_reads = per_barcode.filter(pl.col("barcode").is_in(flagged))["readCount"].sum() if flagged else 0

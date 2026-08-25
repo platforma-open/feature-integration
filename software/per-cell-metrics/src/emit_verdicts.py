@@ -36,6 +36,7 @@ content, and an unstable byte order costs every downstream node its dedup.
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import sys
 
@@ -86,6 +87,7 @@ from panel import (
 from qc_measures import (
     DEFAULT_LINES,
     Coverage,
+    Line,
     antigen_count_deciles,
     deciles_of,
     per_antigen_measures,
@@ -249,8 +251,33 @@ def main() -> None:
         default=None,
         help="gathered pre-refine tag-stat -t FEATURE table (sampleId, FEATURE, totalWeight)",
     )
+    # The four inherited lines (`315-where-the-lines-come-from`), each with a shipped default.
+    # Restated here rather than left to qc_measures.DEFAULT_LINES, so the value that scored a
+    # run is always on the command line. `error` is omitted for readsPerCell: the field
+    # published one boundary, so depth warns and never alerts.
+    default_lines = DEFAULT_LINES
+    p.add_argument("--cell-barcode-valid-warn", type=float, default=default_lines["cellBarcodeValidFraction"].warn)
+    p.add_argument("--cell-barcode-valid-error", type=float, default=default_lines["cellBarcodeValidFraction"].error)
+    p.add_argument("--reads-per-cell-warn", type=float, default=default_lines["readsPerCell"].warn)
+    p.add_argument("--aggregate-barcode-warn", type=float, default=default_lines["aggregateBarcodeFraction"].warn)
+    p.add_argument("--aggregate-barcode-error", type=float, default=default_lines["aggregateBarcodeFraction"].error)
+    p.add_argument("--undeclared-barcode-warn", type=float, default=default_lines["undeclaredBarcodeShare"].warn)
+    p.add_argument("--undeclared-barcode-error", type=float, default=default_lines["undeclaredBarcodeShare"].error)
+    p.add_argument("--usable-read-warn", type=float, default=default_lines["usableReadFraction"].warn)
+    p.add_argument("--usable-read-error", type=float, default=default_lines["usableReadFraction"].error)
     p.add_argument("--output-prefix", default="result")
     args = p.parse_args()
+
+    # Every line an operator may move, none invented: a measurement absent from this dict
+    # carries no status, whatever DEFAULT_LINES says elsewhere.
+    lines: dict[str, Line] = {
+        "cellBarcodeValidFraction": Line(warn=args.cell_barcode_valid_warn, error=args.cell_barcode_valid_error),
+        "readsPerCell": Line(warn=args.reads_per_cell_warn),
+        "aggregateBarcodeFraction": Line(warn=args.aggregate_barcode_warn, error=args.aggregate_barcode_error),
+        "undeclaredBarcodeShare": Line(warn=args.undeclared_barcode_warn, error=args.undeclared_barcode_error),
+        "usableReadFraction": Line(warn=args.usable_read_warn, error=args.usable_read_error),
+    }
+    add = functools.partial(_add, lines=lines)
 
     if args.cutoff <= ANALYTIC_CUTOFF_BOUND:
         raise SystemExit(
@@ -856,12 +883,12 @@ def main() -> None:
 
         reads_matched = _number(qc, "readsMatched")
         matched_detail = "" if reads_matched is None else f"readsMatched={int(reads_matched)}"
-        _add(rows, "sample", sample, "readsTotal", _number(qc, "readsTotal"), matched_detail, reason=NO_READ_QC)
+        add(rows, "sample", sample, "readsTotal", _number(qc, "readsTotal"), matched_detail, reason=NO_READ_QC)
         # `qc_report.py` computes this from the tag-stat TSV directly, the same required input
         # `readsTotal` reads from the parse report -- a missing figure means no read-QC row
         # reached this sample at all, same cause and reason as that row.
-        _add(rows, "sample", sample, "cellsDetected", _number(qc, "cellsDetected"), reason=NO_READ_QC)
-        _add(
+        add(rows, "sample", sample, "cellsDetected", _number(qc, "cellsDetected"), reason=NO_READ_QC)
+        add(
             rows,
             "sample",
             sample,
@@ -884,7 +911,7 @@ def main() -> None:
         # `usable_read_fraction` returns one string for both roles, and they are not the same role:
         # a detail rides alongside a number, a reason stands in place of one. Passing it as the
         # detail only when a number came back keeps QcRow's invariant.
-        _add(
+        add(
             rows,
             "sample",
             sample,
@@ -905,7 +932,7 @@ def main() -> None:
             # The share is the SAMPLE's, computed once and carried on every one of that sample's
             # rows. 310: the status is the barcode's and never the sample's, so it is written
             # here rather than added to `rows` / `sample_report_rows`.
-            undeclared_status = status_for("undeclaredBarcodeShare", undeclared_share, DEFAULT_LINES)
+            undeclared_status = status_for("undeclaredBarcodeShare", undeclared_share, lines)
             for undeclared_row in undeclared.iter_rows(named=True):
                 undeclared_barcode_rows.append(
                     {
@@ -916,7 +943,7 @@ def main() -> None:
                         "status": None if undeclared_status is None else undeclared_status.value,
                     }
                 )
-        _add(
+        add(
             rows,
             "sample",
             sample,
@@ -944,7 +971,7 @@ def main() -> None:
             if not listed_here
             else "no read count reached this sample, so depth has no numerator"
         )
-        _add(rows, "sample", sample, "readsPerCell", depth, detail, reason=depth_reason)
+        add(rows, "sample", sample, "readsPerCell", depth, detail, reason=depth_reason)
 
         deciles = antigen_count_deciles(sample_counts)
         sample_decile_rows += _sample_decile_rows(sample, deciles)
@@ -954,7 +981,7 @@ def main() -> None:
         middle = deciles.filter(pl.col("decile") == 50)["value"].to_list()
         # An empty input still returns all eleven decile points, each unanswered, so a value of
         # None here means this sample holds no counted reading at all.
-        _add(
+        add(
             rows,
             "sample",
             sample,
@@ -974,7 +1001,7 @@ def main() -> None:
         agg_detail = "" if agg_fraction is None else f"barcodesFlagged={int(agg_flagged or 0)}"
         if agg_threshold is not None:
             agg_detail += f"|threshold={agg_threshold:.1f}"
-        _add(
+        add(
             rows,
             "sample",
             sample,
@@ -985,7 +1012,7 @@ def main() -> None:
         )
 
         stats = floor_stats.get(sample, {"readingsFloored": 0, "cellsEmptied": 0})
-        _add(
+        add(
             rows,
             "sample",
             sample,
@@ -1000,7 +1027,7 @@ def main() -> None:
             .agg(pl.col("umiCount").sum().alias("total"))["total"]
             .to_list()
         )
-        _add(
+        add(
             rows,
             "sample",
             sample,
@@ -1027,7 +1054,7 @@ def main() -> None:
         # number, and it does so exactly when no cell of this sample carries a comparator.
         here = {key: value for key, value in reference.by_cell.items() if key[0] == sample}
         high_value, high_detail = _sticky_measure(here, args.gate_threshold)
-        _add(
+        add(
             rows,
             "sample",
             sample,
@@ -1075,9 +1102,9 @@ def main() -> None:
         # only the ones that produced nothing: reporting only the failures leaves a reader unable
         # to tell a clean panel from an unchecked one.
         for tag in sorted(panel_tags):
-            _add(rows, "tag", tag, "declaredNeverSeen", here_total[tag], "", panel_id)
+            add(rows, "tag", tag, "declaredNeverSeen", here_total[tag], "", panel_id)
         for tag in sorted(observed_here - panel_tags):
-            _add(rows, "tag", tag, "undeclaredBarcodes", here_total[tag], "", panel_id)
+            add(rows, "tag", tag, "undeclaredBarcodes", here_total[tag], "", panel_id)
 
         # The fitted background, one row per declared tag. Fits are per (sample, tag) and this
         # table is keyed (tag, panel), so the value is the MEDIAN background mean over the
@@ -1088,7 +1115,7 @@ def main() -> None:
         # why -- the same device `readsPerCell` uses when no cell list arrived. The row is there
         # either way, or a reader cannot tell "not fitted" from "never measured".
         for tag in sorted(panel_tags):
-            _add(
+            add(
                 rows,
                 "tag",
                 tag,
@@ -1116,7 +1143,7 @@ def main() -> None:
             )
             if above is None:
                 detail += "|cellsAboveTheLine=none asked, this tag supplies the baseline"
-            _add(
+            add(
                 rows,
                 "tag",
                 row["tag"],
@@ -1132,7 +1159,7 @@ def main() -> None:
         # looking. Applying a threshold would need a multiplier nobody published. Keeping the rows
         # per panel is what makes the comparison the right one.
         for tag in sorted(panel_tags & set(tag_rate)):
-            _add(rows, "tag", tag, "tagDisagreement", tag_rate[tag], "", panel_id)
+            add(rows, "tag", tag, "tagDisagreement", tag_rate[tag], "", panel_id)
 
         # The identity -> tags map comes from `grouping`, the one place that settles which tags
         # an identity carries. Scoped to this panel's samples and declarations.
@@ -1177,7 +1204,7 @@ def main() -> None:
                     detail = "this tag holds no cell beside a sibling"
                 else:
                     detail = "no cell gave this tag's siblings a majority"
-            _add(rows, "tag", tag, "siblingDisagreement", rate, detail, panel_id)
+            add(rows, "tag", tag, "siblingDisagreement", rate, detail, panel_id)
 
         # One row per (tag, identity), with every figure scoped to the samples where the tag
         # carried that identity. A tag absent from `grouping` here takes one row under its own
@@ -1273,7 +1300,7 @@ def main() -> None:
     # it. Same function and same inputs, so the two cannot drift, and `read_states` keeps its
     # refusal to emit a binding level per cell.
     score_value, score_detail = _score_spread(states, reference.served)
-    _add(rows, "run", "run", "scoreDistribution", score_value, score_detail)
+    add(rows, "run", "run", "scoreDistribution", score_value, score_detail)
 
     # Only the sample carries an aggregated status, over its OWN per-sample measurements. A
     # per-tag failure is usually a property of the reagent across the whole run, so feeding a dead
@@ -1284,7 +1311,7 @@ def main() -> None:
         coverage = sample_coverage[sample]
         rows.append(QcRow("sample", sample, ROLLUP, None, "", "", coverage.status, coverage))
 
-    _write_sorted(_qc_frame(rows), f"{prefix}_qc.csv", ["level", "entity", "panelId", "measurement"])
+    _write_sorted(_qc_frame(rows, lines), f"{prefix}_qc.csv", ["level", "entity", "panelId", "measurement"])
 
     # The same sample-level measurements as the frame above, keyed by sample. Read as content and
     # not as a table: the sample detail view holds one sample at a time and resolves it

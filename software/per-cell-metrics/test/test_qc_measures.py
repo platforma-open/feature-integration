@@ -450,6 +450,23 @@ def test_detect_aggregate_barcodes_works_under_a_hundred_barcodes():
     assert threshold == pytest.approx(1050.0)
 
 
+def test_detect_aggregate_barcodes_top_n_narrows_the_quantile_slice():
+    # top_n=10 admits only the ten barcodes at 5000 into the quantile calc: q1 == q3 == 5000, so
+    # the threshold sits at 5000 and all ten meet it. The 90 barcodes at 700 never enter the slice.
+    per_barcode = _per_barcode([5000] * 10 + [700] * 90)
+    flagged, threshold = detect_aggregate_barcodes(per_barcode.select("barcode", "umiCount"), top_n=10)
+    assert threshold == pytest.approx(5000.0)
+    assert len(flagged) == 10
+
+
+def test_aggregate_barcode_fraction_top_n_narrows_the_tested_slice():
+    per_barcode = _per_barcode(list(range(600, 600 + 150 * 10, 10)))
+    _, detail_default = aggregate_barcode_fraction(per_barcode, reads_total=1000)
+    _, detail_50 = aggregate_barcode_fraction(per_barcode, reads_total=1000, top_n=50)
+    assert "barcodesTested=100" in detail_default
+    assert "barcodesTested=50" in detail_50
+
+
 def test_aggregate_barcode_fraction_divides_flagged_reads_by_reads_total():
     normal = list(range(600, 600 + 20 * 10, 10))
     per_barcode = _per_barcode(

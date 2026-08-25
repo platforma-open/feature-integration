@@ -16,7 +16,7 @@ def _refine_report(steps):
     return {"inputRecords": 0, "outputRecords": 0, "steps": steps, "filterReport": None}
 
 
-def _run(tmp_path, tagstat, parse_report, refine_report=None):
+def _run(tmp_path, tagstat, parse_report, refine_report=None, extra=()):
     args = [
         sys.executable,
         str(SRC),
@@ -36,6 +36,7 @@ def _run(tmp_path, tagstat, parse_report, refine_report=None):
     ]
     if refine_report is not None:
         args += ["--refine-report", str(refine_report)]
+    args += list(extra)
     subprocess.run(args, check=True, cwd=tmp_path)
     with open(tmp_path / "result_qc.csv", newline="") as f:
         return next(csv.DictReader(f))
@@ -158,6 +159,21 @@ def test_aggregate_barcode_fraction_below_the_floor_is_zero(tmp_path):
     assert float(row["aggregateBarcodeFraction"]) == 0.0
     assert int(row["aggregateBarcodesFlagged"]) == 0
     assert float(row["aggregateBarcodeThreshold"]) == pytest.approx(44.0)
+
+
+def test_aggregate_barcode_knobs_are_cli_flags(tmp_path):
+    # Same bed as the below-the-floor case, but a lowered --aggregate-min-umi-threshold lets
+    # the 44 threshold clear the floor, so the 400-UMI barcode is now flagged.
+    umi = {"c0": 10, "c1": 12, "c2": 15, "c3": 20, "c4": 400}
+    reads = {c: v for c, v in umi.items()}
+    tagstat = tmp_path / "tagstat.tsv"
+    tagstat.write_text(_tagstat_lines(umi, reads))
+    parse_report = tmp_path / "parse.json"
+    parse_report.write_text(json.dumps({"parseReport": {"total": 1000, "matched": sum(reads.values())}}))
+
+    row = _run(tmp_path, tagstat, parse_report, extra=["--aggregate-min-umi-threshold", "10"])
+    assert float(row["aggregateBarcodeThreshold"]) == pytest.approx(44.0)
+    assert int(row["aggregateBarcodesFlagged"]) == 1
 
 
 def test_aggregate_barcode_fraction_survives_header_only_tagstat(tmp_path):
