@@ -1475,7 +1475,7 @@ qcReagentImportSpec := func(panelAxisSpec, tagAxisSpec, identityAxisSpec) {
 			col("samplesInPanel", "pl7.app/antigen/reagentSamplesInPanel", "Int", "Samples in panel", 78500, false,
 				"The denominator for Seen in: the samples this panel declares."),
 			col("samplesSeenInNames", "pl7.app/antigen/reagentSamplesSeenInNames", "String", "Seen in (samples)", 78900, true,
-				"The samplesInPanelNames samples carrying any count of the barcode, named. Empty means none did."),
+				"Samples of this panel carrying any count of the barcode, named. Empty means none did."),
 			col("samplesInPanelNames", "pl7.app/antigen/reagentSamplesInPanelNames", "String", "Declared in (samples)", 78700, true,
 				"The samples this panel declares the tag for, named. Reading it apart from Seen in (samples) tells a sample whose panel never declared the tag from one that declared it and saw nothing."),
 			col("cellsWithCount", "pl7.app/antigen/reagentCellsWithCount", "Int", "Cells with any count", 78000, true,
