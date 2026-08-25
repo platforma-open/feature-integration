@@ -537,9 +537,10 @@ wf.body(func(args) {
 		// The run's own report. Outputs rather than exports: these are read by this block's model and UI.
 		blockOutputs.antigenQcTable = pframes.exportFrame(verdictImport.output("qcTable"))
 		// The across-samples table: one row per sample, one column per sample-level measurement,
-		// carrying that sample's rolled-up status. Replaces the earlier mitool-only qcSummaryTable,
-		// which is unavailable before a V(D)J dataset is chosen -- same as every other antigen
-		// output here, since there is no clonotype set for the verdict stage to run against.
+		// carrying that sample's rolled-up status, replacing the earlier mitool-only qcSummaryTable
+		// (which ran unconditionally). This table is gated behind a chosen V(D)J dataset -- same as
+		// every other antigen output here, since the rolled-up status comes from the verdict stage
+		// and that stage has no clonotype set to run against until a dataset is picked.
 		blockOutputs.qcSummaryTable = pframes.exportFrame(verdictImport.output("qcSummaryTable"))
 		blockOutputs.antigenPanelMismatchTable = pframes.exportFrame(verdictImport.output("panelMismatchTable"))
 		// The three distributions the readout draws. Outputs rather than exports, like the report above:
