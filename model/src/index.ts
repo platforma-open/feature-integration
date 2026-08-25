@@ -1946,8 +1946,9 @@ export const platforma = BlockModelV3.create(dataModel)
         description:
           `The block splits each tag's counts across a sample's cells into two components and judges ` +
           `counts against the lower one. It needs at least ${Math.round(ctx.data.distributionMinCells)} ` +
-          `cells in the sample, and it needs that tag's counts to actually separate. A tag whose counts ` +
-          `do not separate gets no baseline, and only the antigens that tag carries read unreliable. ` +
+          `cells in the sample. Nothing checks that a tag's two components stand apart: the run shows ` +
+          `each fit on the Run quality page and leaves that reading to you. Where no two-component fit ` +
+          `can be computed the tag gets no baseline, and only the antigens it carries read unreliable. ` +
           `Pick this where your panel declares no baseline tag and is too small to stand in for one.`,
       },
     ];

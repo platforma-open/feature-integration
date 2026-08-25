@@ -1,8 +1,10 @@
 """Rung 3: a tag's own count distribution across a sample's cells, split in two.
 
-The ladder in `what-plays-the-baseline` puts this third: *"that tag's own distribution
+The ladder in `what-plays-the-baseline` puts this third: that tag's own distribution
 across the sample's cells, split into two components, where the sample holds at least
-300 cells and the counts actually separate."* It is the only rung with orthogonal
+300 cells. Separation is NOT a condition: that atom carries no automatic check that the
+counts separated, and states that none exists to carry. The run shows the fit and leaves
+the judgement to the reader. It is the only rung with orthogonal
 validation behind it and the only one validated at these panel sizes, and it serves a
 run with no declared comparator once the panel rung's member condition rules that out.
 
@@ -86,7 +88,11 @@ class TagFit(NamedTuple):
 
 # The prose a reader sees. Nothing branches on these strings.
 TOO_FEW_CELLS = "the sample holds too few cells for a distribution to be fitted"
-NO_SEPARATION = "this tag's counts do not separate into two populations"
+# Reached only where no two-component fit exists to report: nothing survives the trim, the EM
+# returns one component, or the probabilities are incomputable. It is a statement about the fit,
+# never a finding that this tag's counts failed to separate -- no check for that is built, and
+# `what-plays-the-baseline` states that none should be.
+NO_FIT = "no two-component fit could be computed for this tag"
 
 
 # The share of the highest counts dropped before the fit. `what-plays-the-baseline` fixes it:
@@ -281,14 +287,14 @@ def fit_tag_probabilities(
     ceiling = float(np.percentile(counts.astype(float), _UPPER_TRIM_PERCENTILE))
     fitted_on = counts[counts.astype(float) <= ceiling]
     if fitted_on.size == 0:
-        return TagFit(None, NO_SEPARATION, n)
+        return TagFit(None, NO_FIT, n)
 
     fit = _fit_two_component_nb(fitted_on)
     if fit is None:
-        return TagFit(None, NO_SEPARATION, n)
+        return TagFit(None, NO_FIT, n)
     probabilities = _signal_probability(counts, fit)
     if probabilities is None:
-        return TagFit(None, NO_SEPARATION, n)
+        return TagFit(None, NO_FIT, n)
     background_index = 1 - fit.signal
     background = Background(
         mean=float(fit.means[background_index]),
@@ -378,7 +384,7 @@ def fit_tag_probabilities_by_pair(
 
         fit = fit_tag_probabilities(dense["umiCount"].to_numpy(), min_cells)
         if fit.probabilities is None:
-            reasons[(sample, tag)] = fit.reason or NO_SEPARATION
+            reasons[(sample, tag)] = fit.reason or NO_FIT
             continue
         if fit.background is not None:
             backgrounds[(sample, tag)] = fit.background

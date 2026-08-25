@@ -25,7 +25,7 @@ import pytest
 from panel import ANY_SAMPLE
 from tag_distribution import (
     DEFAULT_DISTRIBUTION_MIN_CELLS,
-    NO_SEPARATION,
+    NO_FIT,
     TOO_FEW_CELLS,
     fit_tag_probabilities,
     fit_tag_probabilities_by_pair,
@@ -142,13 +142,13 @@ def test_a_tag_every_cell_read_identically_does_not_fit():
     # One value is one population by construction. That is the answer rather than an error.
     fit = fit_tag_probabilities(np.full(2000, 4, dtype=np.int64))
     assert fit.probabilities is None
-    assert fit.reason == NO_SEPARATION
+    assert fit.reason == NO_FIT
 
 
 def test_a_tag_no_cell_read_at_all_does_not_fit():
     fit = fit_tag_probabilities(np.zeros(2000, dtype=np.int64))
     assert fit.probabilities is None
-    assert fit.reason == NO_SEPARATION
+    assert fit.reason == NO_FIT
 
 
 def test_a_tag_nothing_bound_still_fits_and_calls_some_cells_bound():
@@ -223,7 +223,7 @@ def test_a_declared_tag_the_reads_never_showed_gets_no_fit():
     # Fitted over all zeros. One population, so no fit -- the honest answer, and the quality finding.
     counts, cells = _bed()
     fits = fit_tag_probabilities_by_pair(counts, cells, _panel([("AAAA", "S1"), ("DEAD", "S1")]))
-    assert fits.reasons == {("S1", "DEAD"): NO_SEPARATION}
+    assert fits.reasons == {("S1", "DEAD"): NO_FIT}
     assert set(fits.probabilities["tag"].unique().to_list()) == {"AAAA"}
 
 
