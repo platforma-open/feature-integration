@@ -459,8 +459,12 @@ const NOT_CARRIED = {
   margin: 0;
 }
 
+/* PlBlockPage's body is a flex column in a `minmax(0, 1fr)` grid row, so `flex: 1` takes the
+   height the tabs and alerts above leave. The floor holds room for a faceted grid, which needs
+   more than one panel's worth. */
 .plot {
-  height: 480px;
+  flex: 1;
+  min-height: 480px;
 }
 
 .qc-cell-list {
