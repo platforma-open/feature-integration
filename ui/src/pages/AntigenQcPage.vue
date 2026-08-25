@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import type { PredefinedGraphOption } from "@milaboratories/graph-maker";
 import { GraphMaker } from "@milaboratories/graph-maker";
-import type { CellListSource } from "@platforma-open/milaboratories.feature-integration.model";
+import type {
+  CellListSource,
+  QcMeasurementStatus,
+} from "@platforma-open/milaboratories.feature-integration.model";
 import type { PColumnSpec, PlDataTableSheet } from "@platforma-sdk/model";
 import { getAxisId, PFrameImpl, pTableValue } from "@platforma-sdk/model";
 import {
+  PlAgCellStatusTag,
   PlAgDataTableV2,
   PlAlert,
   PlBlockPage,
@@ -14,8 +18,53 @@ import {
 } from "@platforma-sdk/ui-vue";
 import { computed, ref } from "vue";
 import { useApp } from "../app";
+import QcEntityCell from "../components/QcEntityCell.vue";
+import { qcStatusTag } from "../results";
 
 const app = useApp();
+
+// PlAgDataTableV2 hands its `cellRendererSelector` to `defaultColDef`, so one selector sees every column
+// of the table and must return undefined for the ones it does not claim. `colDef.context` is the column
+// spec the table was built from, which is how a column is recognised by p-column name rather than by
+// header text or position.
+const UNDECLARED_STATUS = "pl7.app/antigen/undeclaredBarcodeStatus";
+const QC_ENTITY_AXIS = "pl7.app/antigen/qcEntity";
+
+type RendererParams = {
+  value?: unknown;
+  colDef?: { context?: { type?: string; id?: unknown; spec?: { name?: string } } };
+};
+
+function specName(params: RendererParams): string | undefined {
+  return params.colDef?.context?.spec?.name;
+}
+
+// The same three words the sample list uses for a status, in the same colours. `qcStatusTag` maps the
+// software's vocabulary onto the tag component's, and returns undefined where no line stands behind the
+// measurement -- which renders as an ordinary cell rather than a fourth colour.
+const QC_STATUS_VALUES: readonly QcMeasurementStatus[] = ["OK", "warn", "alert"];
+
+function asQcStatus(value: unknown): QcMeasurementStatus | null {
+  return QC_STATUS_VALUES.includes(value as QcMeasurementStatus)
+    ? (value as QcMeasurementStatus)
+    : null;
+}
+
+function undeclaredCellRenderer(params: RendererParams) {
+  if (specName(params) !== UNDECLARED_STATUS) return undefined;
+  const tag = qcStatusTag(asQcStatus(params.value));
+  return tag === undefined ? undefined : { component: PlAgCellStatusTag, params: { type: tag } };
+}
+
+function qcCellRenderer(params: RendererParams) {
+  if (params.colDef?.context?.type !== "axis") return undefined;
+  const axis = params.colDef?.context?.id as { name?: string } | undefined;
+  if (axis?.name !== QC_ENTITY_AXIS) return undefined;
+  return {
+    component: QcEntityCell,
+    params: { value: String(params.value ?? ""), labels: app.model.outputs.sampleLabels ?? {} },
+  };
+}
 
 // Two readings of the same run, on one page because a reader checking whether a run can be trusted asks both
 // questions at once: did the measurements pass, and did the panel we declared match the barcodes the
@@ -309,6 +358,7 @@ const NOT_CARRIED = {
           v-else
           v-model="app.model.data.runQualityTableState"
           :settings="qcSettings"
+          :cell-renderer-selector="qcCellRenderer"
           no-rows-text="The report imported with no measurements in it. Every declared measurement should keep a row — a deferred one carries no status and gives its reason in place of a value — so an empty report means the measurements were lost on the way here, not that the run was clean."
           show-export-button
         />
@@ -362,6 +412,7 @@ const NOT_CARRIED = {
           v-else
           v-model="app.model.data.undeclaredBarcodesTableState"
           :settings="undeclaredSettings"
+          :cell-renderer-selector="undeclaredCellRenderer"
           no-rows-text="No row here for any sample: every barcode the pre-refine pass saw was on some sample's panel. That is the outcome to want, not a check that failed to run."
           show-export-button
         />
