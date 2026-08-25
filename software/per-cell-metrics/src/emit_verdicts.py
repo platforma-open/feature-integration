@@ -250,19 +250,13 @@ def _read_counts(path: str) -> pl.DataFrame:
 def undeclared_feature_counts(raw_counts: pl.DataFrame, declared: Collection[str]) -> tuple[pl.DataFrame, float | None]:
     """Undeclared FEATURE barcodes in a pre-refine tag-stat table, and their read share.
 
-    `raw_counts` is mitool's `tag-stat -t FEATURE` (no `-u`) run on the PARSED reads,
-    before refine-tags snaps FEATURE onto the panel whitelist: columns `FEATURE` and
-    `totalWeight`, one row per distinct observed sequence. `declared` is one sample's
-    panel tag set. A sequence present here and absent from `declared` has not been
-    corrected onto the panel by anything yet, so it is undeclared by construction --
-    unlike a post-refine counts frame, where every FEATURE value is already a panel
-    member and this anti-join would always come back empty.
+    `raw_counts`: mitool `tag-stat -t FEATURE` (no `-u`) output, columns `FEATURE` and
+    `totalWeight`, one row per distinct observed sequence. `declared`: one sample's panel
+    tag set.
 
     Returns the undeclared rows, renamed to `tag` and sorted by it, and the share of
-    every row's `totalWeight` they carry. The share is `None` over zero total weight,
-    a share over no reads being no number rather than zero. Finding no undeclared row
-    is the ordinary run, not an error: the returned frame is then empty and the share
-    is `0.0`.
+    every row's `totalWeight` they carry. Share is `None` over zero total weight. With
+    no undeclared row the frame is empty and the share is `0.0`.
     """
     ordered = raw_counts.rename({"FEATURE": "tag"}).select("tag", "totalWeight").sort("tag")
     undeclared = ordered.filter(~pl.col("tag").is_in(set(declared)))

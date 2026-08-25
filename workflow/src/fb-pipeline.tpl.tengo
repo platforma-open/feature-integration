@@ -233,8 +233,10 @@ self.body(func(inputs) {
 		parseReport: parseReport,
 		refineReport: refineReport,
 		tagstatTsv: tagstatTsv,
-		// Same persistence rationale as the four above: no model or UI consumer yet, and its own
-		// getFile resolution must stay stable across a re-render.
+		// rawFeatureCounts' own exec calls neither saveStdoutStream() nor printErrStreamToStdout(), so the
+		// CIDConflictError mechanism above does not apply to it, and it is not in main.tpl.tengo's
+		// content-hash persist loop. Currently unpersisted and unconsumed; whoever wires it into a
+		// consumer decides then whether that consumer's resolution needs the same treatment.
 		rawFeatureCounts: rawFeatureCounts
 	}
 })

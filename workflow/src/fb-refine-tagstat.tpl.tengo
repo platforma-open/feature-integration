@@ -90,6 +90,13 @@ self.body(func(inputs) {
 	// dropped it). No -u: the streaming TagStatsAggregator, one entry per distinct
 	// observed FEATURE value, rather than -u's on-disk hierarchical sort. Output columns:
 	// FEATURE, count, totalWeight.
+	//
+	// Measured on a generated 4.26M-read run with a 6-tag panel: 94 distinct FEATURE barcodes
+	// observed pre-refine, peak RSS ~489 MB for this step at -Xmx4g. The aggregator holds one
+	// entry per distinct observed barcode, so its memory scales with sequencing-error diversity
+	// rather than with panel size. Generated reads carry a simpler error model than a
+	// sequencer's, so this count is a lower bound on what real data produces; the formula is
+	// unvalidated against a real run or a large panel.
 	rawFeatureBaseGB := 4
 	formula := exec.formula
 	rawFeatureMemFormula := formula.gib(rawFeatureBaseGB).

@@ -450,11 +450,14 @@ def test_zero_total_weight_reports_no_share_rather_than_zero():
     assert share is None
 
 
-def test_undeclared_feature_counts_is_reported_per_sample_declared_set():
-    raw = _raw_feature_counts([("AAAA", 10), ("BBBB", 5)])
-    undeclared, share = undeclared_feature_counts(raw, {"AAAA", "BBBB", "CCCC"})
-    assert undeclared.height == 0
-    assert share == 0.0
+def test_the_declared_set_is_read_per_sample_not_pooled_across_samples():
+    raw = _raw_feature_counts([("AAAA", 10), ("BBBB", 5), ("CCCC", 3)])
+    undeclared_s1, share_s1 = undeclared_feature_counts(raw, {"AAAA"})
+    undeclared_s2, share_s2 = undeclared_feature_counts(raw, {"AAAA", "BBBB", "CCCC"})
+    assert set(undeclared_s1["tag"].to_list()) == {"BBBB", "CCCC"}
+    assert undeclared_s2.height == 0
+    assert share_s1 == pytest.approx((5 + 3) / (10 + 5 + 3))
+    assert share_s2 == 0.0
 
 
 def test_undeclared_barcode_is_reported_and_does_not_stop_the_reading(bed):
