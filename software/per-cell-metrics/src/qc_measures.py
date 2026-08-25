@@ -120,8 +120,12 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # panel never declared, which is the field's quantity exactly, and the line transfers with
     # it: warn above 0.50 undeclared is warn below 0.50 assigned, error at 1.0 is error at 0.0.
     #
-    # The usable row needs matched reads that also carry a cell-associated barcode and a valid
-    # UMI. Nothing here computes that, and it stays unimplemented rather than borrowing this.
+    # The usable row needs reads that carry both a cell-associated barcode and a valid UMI,
+    # independent of which panel entry (if any) they were assigned to. The refine-tags report
+    # carries top-level inputRecords/outputRecords across the whole chain, plus a per-step
+    # inputCount/outputCount for CELL, FEATURE and UMI -- all of it real, none of it missing.
+    # It is declared below as `usableReadFraction`, deferred rather than computed: see that
+    # row's own comment for why the data on hand does not settle it.
     #
     # `rolls_up=False` per `310`: the field publishes this line on a sample's share, but the
     # finding belongs to a reagent, and a reagent belongs to the run rather than to any one
@@ -137,6 +141,30 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "A low share means most reads carry barcodes the panel never declared.",
         "inherited",
         rolls_up=False,
+    ),
+    # Declared per this module's own rule (see the module docstring) rather than left off the
+    # set: a measurement this module cannot compute is declared anyway, with the reason, so a
+    # reader never mistakes absence for "checked and found fine".
+    #
+    # `315`'s first inherited line (warn below 0.20, error at 0) is published for reads
+    # carrying both a cell-associated barcode and a valid UMI, independent of panel
+    # assignment. mitool's `TagCorrector` (tools/mitool, `refinement/TagCorrector.kt`) runs
+    # the refine-tags steps in sequence -- CELL, then FEATURE against the panel, then UMI --
+    # and each step's `inputCount` is the previous step's surviving `outputCount`. The FEATURE
+    # step sits between CELL and UMI in that chain, so neither the whole-chain
+    # inputRecords/outputRecords nor any product of per-step ratios isolates CELL-and-UMI
+    # validity from the FEATURE step's own loss, without assuming the two are independent.
+    Measurement(
+        "usableReadFraction",
+        "Fraction of antigen reads usable",
+        "sample",
+        "Reads matched that also carry a cell-associated barcode and a valid UMI, over reads matched.",
+        deferred_reason=(
+            "refine-tags chains CELL, FEATURE and UMI correction sequentially, so no "
+            "combination of the report's per-step or whole-chain counts isolates "
+            "cell-barcode-and-UMI validity from panel assignment without assuming the "
+            "two are independent"
+        ),
     ),
     # The fourth inherited line, and the one `315` says the third status level exists for: the
     # only one whose thresholds step the same way twice rather than putting error at total
@@ -175,6 +203,11 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "sample",
         "Deciles of the total antigen count per cell barcode.",
     ),
+    # Aggregate-barcode (droplet-clumping) detection is neither run nor imported anywhere in
+    # this block: refine-tags (`workflow/src/fb-refine.tpl.tengo`) corrects and
+    # whitelist-filters barcodes but does not flag clumped ones, no other step in this
+    # workflow computes it, and no atom in the spec (searched for "aggregate") names a source
+    # that carries it into a run.
     Measurement(
         "aggregateBarcodeFraction",
         "Fraction of reads in aggregate barcodes",
@@ -334,9 +367,9 @@ LINE_ROUTES: frozenset[str] = frozenset({"inherited", "categorical", "recommende
 # them. No line is invented -- where none of the three routes applies the measurement carries
 # no status rather than being given a number with nothing behind it.
 #
-# Three of `315`'s five lines are in force. The two missing ones are missing because their
-# measurement is: the aggregate-barcode fraction is deferred, and nothing computes the usable
-# fraction, which needs a cell-associated barcode and a valid UMI that this block never sees.
+# Three of `315`'s four inherited lines are in force. The fourth, the usable-read fraction,
+# is deferred alongside the aggregate-barcode fraction -- see each measurement's own comment
+# above for why nothing computes it yet.
 DEFAULT_LINES: dict[str, Line] = {
     # `error` at total failure, which is where three of the four inherited lines put it: a
     # catastrophe rather than a degree. `warn` is 0.5 rather than the field's 0.20 because the

@@ -26,6 +26,7 @@ from qc_measures import (
 # changes the multiset below.
 EXPECTED_LEVEL_BY_ID = {
     "readsTotal": "sample",
+    "usableReadFraction": "sample",
     "panelAssignedFraction": "sample",
     "cellBarcodeValidFraction": "sample",
     "readsPerCell": "sample",
@@ -43,7 +44,7 @@ EXPECTED_LEVEL_BY_ID = {
     "siblingDisagreement": "tag",
 }
 
-DEFERRED_IDS = {"aggregateBarcodeFraction"}
+DEFERRED_IDS = {"aggregateBarcodeFraction", "usableReadFraction"}
 
 
 def test_every_declared_id_is_expected_and_every_expected_id_is_declared():
@@ -219,6 +220,21 @@ def test_deferred_measurement_produces_a_row_with_its_reason_and_no_status():
         # tells a reader nothing computed this one.
         assert row["status"] is None
         assert row["reason"]
+
+
+def test_usable_read_fraction_is_declared_but_deferred():
+    # `315` inherits this line (warn below 0.20, error at 0) for reads carrying both a
+    # cell-associated barcode and a valid UMI, independent of panel assignment. mitool's
+    # refine-tags report chains CELL, FEATURE and UMI correction sequentially -- each step's
+    # input is the previous step's surviving output -- so no combination of the report's
+    # per-step or whole-chain counts isolates CELL-and-UMI validity from the FEATURE
+    # (panel-assignment) step sitting between them, without assuming the two are independent.
+    by_id = {m.id: m for m in MEASUREMENTS}
+    m = by_id["usableReadFraction"]
+    assert m.line is None
+    assert m.id not in DEFAULT_LINES
+    assert m.id not in _COMPARISON
+    assert status_for("usableReadFraction", 0.83, DEFAULT_LINES) is None
 
 
 def test_a_computed_measurement_carries_no_status():
