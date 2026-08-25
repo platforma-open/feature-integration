@@ -325,7 +325,10 @@ qcSummaryColumnsSpec := func(sampleAxisSpec) {
 			numCol("totalUniqueUmis", "totalUniqueUmis", "Total distinct UMIs", 85000, undefined),
 			numCol("medianUmisPerCell", "medianUmisPerCell", "Median UMIs / cell", 84000, ".1f"),
 			numCol("panelAssignedFraction", "panelAssignedFraction", "Panel-assigned fraction", 83000, ".2p", "Fraction of feature-barcode reads kept after correcting their barcode against the panel; reads too far from any panel entry are dropped. Its complement is the share landing in barcodes the panel never declared, which is where this measurement's line comes from. A low value flags a panel or read-geometry mismatch."),
-			numCol("cellBarcodeValidFraction", "cellBarcodeValidFraction", "Valid cell-barcode fraction", 82000, ".2p", "Fraction of reads whose cell barcode corrects onto the whitelist this chemistry produces. A low value points at the wrong whitelist or the wrong read geometry rather than at the panel.")
+			numCol("cellBarcodeValidFraction", "cellBarcodeValidFraction", "Valid cell-barcode fraction", 82000, ".2p", "Fraction of reads whose cell barcode corrects onto the whitelist this chemistry produces. A low value points at the wrong whitelist or the wrong read geometry rather than at the panel."),
+			numCol("aggregateBarcodeFraction", "aggregateBarcodeFraction", "Aggregate-barcode read fraction", 81000, ".2p", "Reads in barcodes flagged as aggregates, over reads matched."),
+			numCol("aggregateBarcodesFlagged", "aggregateBarcodesFlagged", "Aggregate barcodes flagged", 80000, undefined),
+			numCol("aggregateBarcodeThreshold", "aggregateBarcodeThreshold", "Aggregate-barcode UMI threshold", 79000, ".1f")
 		],
 		storageFormat: "Parquet",
 		partitionKeyLength: 0

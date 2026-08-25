@@ -857,6 +857,8 @@ def main() -> None:
     NO_READ_QC = "no read QC summary row reached this sample"
     NO_REFINE_STEP = "no refine-tags report was produced, or it supplied no %s step with input reads"
     NO_READS_TO_DIVIDE = "this sample's read QC reports no reads, so the share has no denominator"
+    NO_AGGREGATE_FIGURE = "this sample's read QC reports nonzero reads but no aggregate-barcode figure"
+    NO_READ_COUNT = "this sample's read QC row carries no read count, so the share has no denominator"
 
     # The pre-refine pass Task 5 added: one FEATURE tag-stat row per sequence the reads carried,
     # before refine-tags snaps each one onto the panel. Without this file the table below stays
@@ -994,13 +996,25 @@ def main() -> None:
         # figure on two distinct conditions: no read-QC row for this sample at all, and a row
         # whose readsTotal is zero, which leaves the fraction no denominator. The second is
         # reachable through the empty-input path in parse_gate.py, where readsTotal is present
-        # and zero rather than absent.
+        # and zero rather than absent. A row present with nonzero readsTotal but no figure is a
+        # third, distinct condition: qc_report.py computed a number but it did not reach this row.
         agg_fraction = _number(qc, "aggregateBarcodeFraction")
         agg_flagged = _number(qc, "aggregateBarcodesFlagged")
         agg_threshold = _number(qc, "aggregateBarcodeThreshold")
         agg_detail = "" if agg_fraction is None else f"barcodesFlagged={int(agg_flagged or 0)}"
         if agg_threshold is not None:
             agg_detail += f"|threshold={agg_threshold:.1f}"
+        # `reads_total` is None where the row carries no readsTotal at all, which is neither of the two
+        # cases below: it reports no read count rather than a count of zero.
+        agg_reason = (
+            NO_READ_QC
+            if not qc
+            else NO_READS_TO_DIVIDE
+            if reads_total == 0
+            else NO_AGGREGATE_FIGURE
+            if reads_total is not None
+            else NO_READ_COUNT
+        )
         add(
             rows,
             "sample",
@@ -1008,7 +1022,7 @@ def main() -> None:
             "aggregateBarcodeFraction",
             agg_fraction,
             agg_detail,
-            reason=NO_READ_QC if not qc else NO_READS_TO_DIVIDE,
+            reason=agg_reason,
         )
 
         stats = floor_stats.get(sample, {"readingsFloored": 0, "cellsEmptied": 0})

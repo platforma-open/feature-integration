@@ -3415,15 +3415,25 @@ def test_the_wide_summary_status_is_the_sample_rollup_and_is_not_recomputed(bed)
         )
 
 
+def test_a_missing_read_qc_row_names_the_row_not_the_denominator(bed):
+    # No --qc-summary at all: no row reached this sample. Naming the denominator here would
+    # be false -- there is no row to read a denominator from.
+    r = _run(bed, *BASE)
+    assert r.returncode == 0, r.stderr
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    row = qc.filter(pl.col("measurement") == "aggregateBarcodeFraction").row(0, named=True)
+    assert row["value"] in ("", None)
+    assert "reached this sample" in row["reason"]
+
+
 def test_a_present_read_qc_row_with_no_reads_names_the_denominator_not_the_row(bed):
-    # Two conditions blank aggregateBarcodeFraction: no read-QC row at all, and a row whose
-    # readsTotal is zero. The second is reachable through parse_gate.py's empty-input path,
-    # where readsTotal is present and zero. Naming the row as missing would be false -- the
-    # row is here, and readsTotal on it reads 0.
+    # A row present with readsTotal zero, reachable through parse_gate.py's empty-input path.
+    # Naming the row as missing would be false -- the row is here, and readsTotal on it reads 0.
     (bed / "qc.csv").write_text(
         "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
-        "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction\n"
-        "S1,0,0,0.0,0,0,0,0,\n"
+        "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction,"
+        "aggregateBarcodeFraction,aggregateBarcodesFlagged,aggregateBarcodeThreshold\n"
+        "S1,0,0,0.0,0,0,0,0,,,,\n"
     )
     r = _run(bed, *BASE, "--qc-summary", "qc.csv")
     assert r.returncode == 0, r.stderr
@@ -3431,6 +3441,44 @@ def test_a_present_read_qc_row_with_no_reads_names_the_denominator_not_the_row(b
     row = qc.filter(pl.col("measurement") == "aggregateBarcodeFraction").row(0, named=True)
     assert row["value"] in ("", None)
     assert "no denominator" in row["reason"]
+    assert "reached this sample" not in row["reason"]
+
+
+def test_a_present_read_qc_row_with_reads_but_no_figure_names_neither_the_row_nor_the_denominator(bed):
+    # A row present with nonzero readsTotal, but the aggregate-barcode columns absent -- the
+    # carrier defect this measurement guards against: a real figure computed upstream that did
+    # not survive into the combined QC summary. Neither NO_READ_QC nor NO_READS_TO_DIVIDE is
+    # true of this row, so a third reason is required.
+    (bed / "qc.csv").write_text(
+        "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
+        "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction\n"
+        "S1,20000,18000,0.9,3,2,1200,300,0.82\n"
+    )
+    r = _run(bed, *BASE, "--qc-summary", "qc.csv")
+    assert r.returncode == 0, r.stderr
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    row = qc.filter(pl.col("measurement") == "aggregateBarcodeFraction").row(0, named=True)
+    assert row["value"] in ("", None)
+    assert "no denominator" not in row["reason"]
+    assert "reached this sample" not in row["reason"]
+
+
+def test_a_read_qc_row_with_no_read_count_names_the_missing_count(bed):
+    # A row present, the aggregate columns absent, and readsTotal blank. "reports nonzero reads" is
+    # false of this row and "reports no reads" states a count of zero it does not carry, so the
+    # fourth case names the absent count itself.
+    (bed / "qc.csv").write_text(
+        "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
+        "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction\n"
+        "S1,,18000,0.9,3,2,1200,300,0.82\n"
+    )
+    r = _run(bed, *BASE, "--qc-summary", "qc.csv")
+    assert r.returncode == 0, r.stderr
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    row = qc.filter(pl.col("measurement") == "aggregateBarcodeFraction").row(0, named=True)
+    assert row["value"] in ("", None)
+    assert "carries no read count" in row["reason"]
+    assert "nonzero reads" not in row["reason"]
     assert "reached this sample" not in row["reason"]
 
 
