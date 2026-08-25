@@ -3,7 +3,9 @@
 // One invocation per sample group, since the FASTQ column is aggregated over lane and readIndex. Runs the
 // mitool chain -- parse -> refine-tags -> tag-stat -u -- for per-(cell, feature-barcode) distinct-UMI counts,
 // then hands that table plus the user's tag->feature CSV to the per-cell-metrics Python software, which
-// collapses to the (cell x feature) outputs.
+// collapses to the (cell x feature) outputs. Also runs tag-stat -t FEATURE (no -u) on the pre-refine
+// parsedMic, surfaced as rawFeatureCounts: refine-tags snaps FEATURE onto the panel whitelist, so this is
+// the only point in the chain where an undeclared barcode is still visible.
 //
 // Every exec runs inside a render.create sub-template, so this body returns only render outputs. fb-parse,
 // fb-refine and fb-tagstat produce the mitool files, and fb-downstream runs the QC and per-cell-metrics
@@ -30,7 +32,7 @@ fbParseTpl := assets.importTemplate(":fb-parse")
 fbRefineTagstatTpl := assets.importTemplate(":fb-refine-tagstat")
 fbDownstreamTpl := assets.importTemplate(":fb-downstream")
 
-self.defineOutputs("abundance", "fractions", "perCellSummary", "qc", "qcJson", "stepReports", "stepLogs", "parseLogStream", "metricsLogStream", "parsedMic", "parseReport", "refineReport", "tagstatTsv")
+self.defineOutputs("abundance", "fractions", "perCellSummary", "qc", "qcJson", "stepReports", "stepLogs", "parseLogStream", "metricsLogStream", "parsedMic", "parseReport", "refineReport", "tagstatTsv", "rawFeatureCounts")
 
 self.body(func(inputs) {
 	inputData := inputs[pConstants.VALUE_FIELD_NAME]
@@ -183,6 +185,9 @@ self.body(func(inputs) {
 	refineReport := refineTagstatRun.output("refineReport")
 	stepReports := refineTagstatRun.output("stepReports")
 	stepLogs := refineTagstatRun.output("stepLogs")
+	// tag-stat -t FEATURE on the pre-refine parsedMic, before refine-tags snaps FEATURE onto the panel
+	// whitelist. Carries any sequence the panel does not declare, which a post-refine counts frame cannot.
+	rawFeatureCounts := refineTagstatRun.output("rawFeatureCounts")
 
 	// Step 4: QC report and per-cell metrics (fb-downstream boundary). These consume the drifting mitool
 	// files -- tagstat.tsv plus the parse and refine reports -- so they run inside a render boundary and
@@ -227,6 +232,9 @@ self.body(func(inputs) {
 		parsedMic: parsedMic,
 		parseReport: parseReport,
 		refineReport: refineReport,
-		tagstatTsv: tagstatTsv
+		tagstatTsv: tagstatTsv,
+		// Same persistence rationale as the four above: no model or UI consumer yet, and its own
+		// getFile resolution must stay stable across a re-render.
+		rawFeatureCounts: rawFeatureCounts
 	}
 })

@@ -7,7 +7,7 @@ from pathlib import Path
 import emit_verdicts
 import polars as pl
 import pytest
-from emit_verdicts import _build_grouping, _identity_properties, _linker_frame
+from emit_verdicts import _build_grouping, _identity_properties, _linker_frame, undeclared_feature_counts
 from panel import ANY_SAMPLE, consistent_properties, property_columns
 from qc_measures import MEASUREMENTS, Measurement
 from verdict import DEFAULT_PANEL_MIN_MEMBERS, ReferenceChoice
@@ -423,6 +423,38 @@ def test_barcode_outside_the_cell_list_is_labelled_not_dropped(bed):
     c = pl.read_csv(bed / "result_cell_counts.csv", infer_schema_length=0)
     assert "zzz" in c["cellId"].to_list()
     assert c.filter(pl.col("cellId") == "zzz").row(0, named=True)["inCellList"] == "false"
+
+
+def _raw_feature_counts(rows):
+    return pl.DataFrame(rows, orient="row", schema={"FEATURE": pl.String, "totalWeight": pl.Int64})
+
+
+def test_undeclared_feature_counts_are_exactly_those_outside_the_declared_set():
+    raw = _raw_feature_counts([("AAAA", 10), ("BBBB", 5), ("CCCC", 3)])
+    undeclared, share = undeclared_feature_counts(raw, {"AAAA"})
+    assert set(undeclared["tag"].to_list()) == {"BBBB", "CCCC"}
+    assert share == pytest.approx((5 + 3) / (10 + 5 + 3))
+
+
+def test_no_undeclared_barcode_is_the_ordinary_empty_case():
+    raw = _raw_feature_counts([("AAAA", 10), ("BBBB", 5)])
+    undeclared, share = undeclared_feature_counts(raw, {"AAAA", "BBBB"})
+    assert undeclared.height == 0
+    assert share == 0.0
+
+
+def test_zero_total_weight_reports_no_share_rather_than_zero():
+    raw = _raw_feature_counts([])
+    undeclared, share = undeclared_feature_counts(raw, {"AAAA"})
+    assert undeclared.height == 0
+    assert share is None
+
+
+def test_undeclared_feature_counts_is_reported_per_sample_declared_set():
+    raw = _raw_feature_counts([("AAAA", 10), ("BBBB", 5)])
+    undeclared, share = undeclared_feature_counts(raw, {"AAAA", "BBBB", "CCCC"})
+    assert undeclared.height == 0
+    assert share == 0.0
 
 
 def test_undeclared_barcode_is_reported_and_does_not_stop_the_reading(bed):

@@ -13,10 +13,15 @@
 // their PRESENCE to derive which step a sample has reached (see the model's sampleStep), and a report
 // appears once its step finishes. A no-match sample still gets all three -- parse's real report plus the
 // gate's empty refine report and header-only tag-stat -- so it advances to Done like any other sample.
+//
+// Also runs a raw FEATURE tag-stat on the pre-refine parsedMic (rawFeatureCounts), gated the same way: on
+// no-match it returns the gate's header-only tagstat_empty.tsv, which already carries the FEATURE and
+// totalWeight columns this output needs.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 assets := import("@platforma-sdk/workflow-tengo:assets")
 render := import("@platforma-sdk/workflow-tengo:render")
+exec := import("@platforma-sdk/workflow-tengo:exec")
 pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
 file := import("@platforma-sdk/workflow-tengo:file")
 
@@ -25,7 +30,11 @@ json := import("json")
 fbRefineTpl := assets.importTemplate(":fb-refine")
 fbTagstatTpl := assets.importTemplate(":fb-tagstat")
 
-self.defineOutputs("tagstatTsv", "refineReport", "stepReports", "stepLogs")
+// For the raw (pre-refine) FEATURE tag-stat below. refine-tags and tag-stat -u run inside
+// fb-refine and fb-tagstat; this step is deterministic and unstreamed, so it runs directly here.
+mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
+
+self.defineOutputs("tagstatTsv", "refineReport", "stepReports", "stepLogs", "rawFeatureCounts")
 
 self.body(func(inputs) {
 	shouldContinue := json.decode(string(inputs.decision.getData())).shouldContinue
@@ -50,7 +59,11 @@ self.body(func(inputs) {
 			tagstatTsv: inputs.emptyTagstat,
 			refineReport: inputs.emptyRefineReport,
 			stepReports: stepReports.build(),
-			stepLogs: stepLogs.build()
+			stepLogs: stepLogs.build(),
+			// emptyTagstat is header-only (CELL FEATURE count totalWeight unique_UMI): no data
+			// rows, so its extra columns are harmless, and it carries the FEATURE and
+			// totalWeight columns a reader of rawFeatureCounts needs.
+			rawFeatureCounts: inputs.emptyTagstat
 		}
 	}
 
@@ -72,6 +85,26 @@ self.body(func(inputs) {
 		mitoolCPUs: inputs.mitoolCPUs
 	})
 
+	// Raw FEATURE tag-stat on the PRE-refine parsedMic, so a sequence the panel never
+	// declared still shows up (refine-tags has not yet snapped it onto the panel or
+	// dropped it). No -u: the streaming TagStatsAggregator, one entry per distinct
+	// observed FEATURE value, rather than -u's on-disk hierarchical sort. Output columns:
+	// FEATURE, count, totalWeight.
+	rawFeatureBaseGB := 4
+	formula := exec.formula
+	rawFeatureMemFormula := formula.gib(rawFeatureBaseGB).
+		plus(formula.size("mic").times(1)).
+		between(formula.gib(rawFeatureBaseGB), formula.gib(64)).
+		staticFallback(formula.gib(rawFeatureBaseGB))
+	rawFeatureCount := exec.builder().
+		software(mitoolSw).
+		resources({ onCPU: { cpu: 1, ram: rawFeatureMemFormula } }).
+		arg("tag-stat").
+		arg("-t").arg(tags.feature).
+		addFile("parsed.mic", inputs.parsedMic, { tag: "mic" }).
+		arg("parsed.mic").arg("raw_feature_counts.tsv").saveFile("raw_feature_counts.tsv").
+		run()
+
 	stepReports := pcolumn.resourceMapBuilder(1)
 	stepReports.add(["1-parse"], file.exportFile(inputs.parseReport))
 	stepReports.add(["2-refine"], file.exportFile(refineRun.output("refineReport")))
@@ -89,6 +122,7 @@ self.body(func(inputs) {
 		tagstatTsv: tagStatRun.output("tagstatTsv"),
 		refineReport: refineRun.output("refineReport"),
 		stepReports: stepReports.build(),
-		stepLogs: stepLogs.build()
+		stepLogs: stepLogs.build(),
+		rawFeatureCounts: rawFeatureCount.getFile("raw_feature_counts.tsv")
 	}
 })
