@@ -212,7 +212,8 @@ self.body(func(inputs) {
 		columnSpecs.panelLabelsImportSpec(panelAxis))
 
 	// sample -> panel, so per-tag QC keyed (panel, tag) can be read back to the samples it covers. Where one
-	// panel covers every sample, this column is constant and drops out of view.
+	// panel covers every sample this column is constant, and still renders on every row: the SDK suppresses
+	// no column for being constant.
 	addTo(exportFb, "samplePanel", inputs.samplePanel,
 		columnSpecs.samplePanelImportSpec(sampleAxis))
 

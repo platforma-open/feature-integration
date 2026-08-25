@@ -1,26 +1,25 @@
 // Per-sample QC summary assembly (feature-integration).
 //
 // processColumn emits the per-sample QC CSV (fb-pipeline `qc` output) as a [sampleId] -> file resource map
-// (column-specs.lib.tengo qcFileMapOutput). A per-sample QC row is a scalar, with 0 within-sample axes,
-// which an xsv import cannot emit directly: it needs at least one within-file axis. So this template
-// concatenates the one-row CSVs into one table and imports it ONCE keyed [sampleId], injecting the REAL
-// sampleId per row from the map key over the constant "sample" the Python writes.
+// (column-specs.lib.tengo qcFileMapOutput). This template concatenates the one-row CSVs into one file,
+// injecting the REAL sampleId per row from the map key over the constant "sample" the Python writes.
+// Its single output is that file. The verdict stage reads it through --qc-summary.
 //
-// Mirrors blocks/mixcr-clonotyping/workflow/src/export-report.tpl.tengo: iterate a per-sample file map,
-// pTabler-concat with an injected sampleId literal, then one xsv.importFile with a sampleId axis. Rendered
-// as a separate template because the resource map must be awaited before its per-sample keys can be
-// iterated, which main's body cannot do inline.
+// It emits no p-frame. The across-samples table is built by verdict-import from result_qc_summary.csv,
+// which carries the measurement set and the rolled-up status this template cannot produce.
+//
+// Rendered as a separate template because the resource map must be awaited before its per-sample keys can
+// be iterated, which main's body cannot do inline.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 ll := import("@platforma-sdk/workflow-tengo:ll")
 maps := import("@platforma-sdk/workflow-tengo:maps")
-xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
 pt := import("@platforma-sdk/workflow-tengo:pt")
 columnSpecs := import(":column-specs")
 
 json := import("json")
 
-self.defineOutputs("qcSummaryTable", "qcSummaryCsv")
+self.defineOutputs("qcSummaryCsv")
 
 self.body(func(inputs) {
 	qcData := inputs.qcData // ResourceMap: [sampleId] -> per-sample QC CSV file
@@ -30,6 +29,9 @@ self.body(func(inputs) {
 
 	// Metric column names to carry through from each per-sample CSV. The CSV's own sampleId column is
 	// deliberately NOT selected: the real sampleId is injected from the resource-map key below.
+	// qcSummaryColumnsSpec is read for its column NAMES only. The across-samples p-frame is built by
+	// verdict-import from result_qc_summary.csv, which carries the measurement set and the rolled-up
+	// status this template cannot produce.
 	metricCols := []
 	for col in columnsSpec.columns {
 		metricCols = append(metricCols, col.column)
@@ -58,11 +60,8 @@ self.body(func(inputs) {
 	wfResult := wf.run()
 	csvFile := wfResult.getFile("qc-summary.csv")
 
-	qcSummaryTable := xsv.importFile(csvFile, "csv", columnsSpec, { cpu: 1, mem: "2GiB" })
-
 	return {
-		qcSummaryTable: qcSummaryTable,
-		// The same combined table as a FILE. The verdict stage reads its read counts through --qc-summary.
+		// The combined table as a FILE. The verdict stage reads its read counts through --qc-summary.
 		// Returned here rather than concatenated a second time because the two must agree: the per-sample
 		// sampleId is injected from the resource-map key, so a second gather could key the rows differently,
 		// and the verdict stage would then match no sample and evaluate nothing.

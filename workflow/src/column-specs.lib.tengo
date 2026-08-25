@@ -410,7 +410,8 @@ identityAxis := func(blockId, groupingId) {
 
 // panelAxis: one distinct declared tag set. No panel file names its panel, so the id is a hash of the
 // sorted tag list (emit_verdicts.py `_panel_id`), stable across re-runs of the same declaration. Where one
-// panel covers every sample the axis takes a single value and drops out of view.
+// panel covers every sample the axis takes a single value, and the column still renders, holding that one
+// value on every row: the SDK suppresses no axis for being constant.
 panelAxis := func(blockId) {
 	return {
 		name: "pl7.app/antigen/panelId",
