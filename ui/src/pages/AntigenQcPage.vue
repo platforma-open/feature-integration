@@ -27,13 +27,13 @@ const app = useApp();
 // run. The two pages are named apart for that reason, since "QC" alone would read as two views of one set of
 // numbers.
 //
-// The measurements grid stacks run, sample and tag rows behind one `entity` column that means a
-// different thing per row, so `qcLevel` splits it into one sheet per level. Sheet options are read
-// live off the frame's own `pl7.app/antigen/qcLevel` axis (`QC_LEVEL_AXIS_NAME` below), never off a
-// listed set of level names, so a level added to the measurement set later gets a sheet with no UI
-// change. A level with zero rows in this frame gets no sheet: the verdict stage keeps a row for
-// every measurement it declares, deferred ones included, so an applicable level always has rows and
-// a level with none was not applicable to this run.
+// The measurements grid holds run, sample and tag rows behind one `entity` column whose meaning
+// changes with the level, so `qcLevel` splits it into one sheet per level. Sheet options are the
+// axis's own values in this frame, never a listed set of level names.
+//
+// A level with no rows here gets no sheet. `_qc_frame` builds from the rows its call sites added,
+// not from `MEASUREMENTS`: the run level's one measurement is added unconditionally, and the
+// tag-level rows come from the panel's tags, so every level of a run with a panel has rows.
 const QC_LEVEL_AXIS_NAME = "pl7.app/antigen/qcLevel";
 
 const qcLevelPframeHandle = computed(() => {
@@ -65,7 +65,9 @@ const qcLevelSheetsFetch = useWatchFetch(qcLevelPframeHandle, async (handle) => 
       seen.set(value, value);
     }
   }
-  const values = [...seen.values()];
+  // Sorted: `listColumns` fixes no order, and an unsorted first element makes the sheet the page
+  // opens on vary run to run.
+  const values = [...seen.values()].sort((a, b) => String(a).localeCompare(String(b)));
 
   const sheet: PlDataTableSheet = {
     axis,
