@@ -260,15 +260,14 @@ def reference_by_cell(
 
     if served is ReferenceChoice.DECLARED:
         if len(reference_tags) > 1:
-            # DEFERRED, not an oversight. A panel may carry several comparators, each
-            # serving the group its declaration scopes it to. This block has no
-            # group-by half -- a tag is a comparator for the whole panel or none -- so
-            # it cannot say WHICH antigens a second comparator belongs to. Never
-            # combine them: references are never combined, and the field agrees (an
-            # antibody run rejects a second control, a T-cell run requires one per
-            # allele). Refused rather than degraded to no comparator, because a
-            # scientist can fix this panel in a minute and a silent drop to
-            # *unreliable* everywhere would not tell them how.
+            # Scope of this version: no reference tag or one, never several.
+            #
+            # `280-baseline-scope` forbids combining references ACROSS scope groups, and
+            # requires replicates WITHIN one group to combine by taking the highest. Where
+            # no declared property separates them the whole panel is one group, so two
+            # undifferentiated references are replicates. This block has no scope
+            # construct, so it cannot tell the two cases apart, and it refuses rather than
+            # picking one.
             named = ", ".join(sorted(reference_tags))
             raise SystemExit(
                 f"the panel declares {len(reference_tags)} baseline tags ({named}), and this version of "
