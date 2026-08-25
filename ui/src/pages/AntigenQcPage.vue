@@ -2,13 +2,15 @@
 import type { PredefinedGraphOption } from "@milaboratories/graph-maker";
 import { GraphMaker } from "@milaboratories/graph-maker";
 import type { CellListSource } from "@platforma-open/milaboratories.feature-integration.model";
-import type { PColumnSpec } from "@platforma-sdk/model";
+import type { PColumnSpec, PlDataTableSheet } from "@platforma-sdk/model";
+import { getAxisId, PFrameImpl, pTableValue } from "@platforma-sdk/model";
 import {
   PlAgDataTableV2,
   PlAlert,
   PlBlockPage,
   PlTabs,
   usePlDataTableSettingsV2,
+  useWatchFetch,
 } from "@platforma-sdk/ui-vue";
 import { computed, ref } from "vue";
 import { useApp } from "../app";
@@ -24,8 +26,58 @@ const app = useApp();
 // below is keyed (level, panel, entity, measurement): the measurements the verdict stage takes over the whole
 // run. The two pages are named apart for that reason, since "QC" alone would read as two views of one set of
 // numbers.
+//
+// The measurements grid stacks run, sample and tag rows behind one `entity` column that means a
+// different thing per row, so `qcLevel` splits it into one sheet per level. Sheet options are read
+// live off the frame's own `pl7.app/antigen/qcLevel` axis (`QC_LEVEL_AXIS_NAME` below), never off a
+// listed set of level names, so a level added to the measurement set later gets a sheet with no UI
+// change. A level with zero rows in this frame gets no sheet: the verdict stage keeps a row for
+// every measurement it declares, deferred ones included, so an applicable level always has rows and
+// a level with none was not applicable to this run.
+const QC_LEVEL_AXIS_NAME = "pl7.app/antigen/qcLevel";
+
+const qcLevelPframeHandle = computed(() => {
+  const output = app.model.outputs.runQualityTable;
+  return output?.ok ? output.value?.fullPframeHandle : undefined;
+});
+
+const qcLevelSheetsFetch = useWatchFetch(qcLevelPframeHandle, async (handle) => {
+  if (handle === undefined) return undefined;
+  const pFrame = new PFrameImpl(handle);
+  const columns = await pFrame.listColumns();
+  const levelColumns = columns.filter((c) =>
+    c.spec.axesSpec.some((a) => a.name === QC_LEVEL_AXIS_NAME),
+  );
+  if (levelColumns.length === 0) return undefined;
+
+  const axis = levelColumns[0].spec.axesSpec.find((a) => a.name === QC_LEVEL_AXIS_NAME)!;
+  const axisId = getAxisId(axis);
+  const seen = new Map<string | number, string | number>();
+  for (const column of levelColumns) {
+    const response = await pFrame.getUniqueValues({
+      columnId: column.columnId,
+      axis: axisId,
+      filters: [],
+      limit: 1000,
+    });
+    for (let i = 0; i < response.values.data.length; i++) {
+      const value = pTableValue(response.values, i) as string | number;
+      seen.set(value, value);
+    }
+  }
+  const values = [...seen.values()];
+
+  const sheet: PlDataTableSheet = {
+    axis,
+    options: values.map((v) => ({ value: v, label: String(v) })),
+    defaultValue: values[0],
+  };
+  return [sheet];
+});
+
 const qcSettings = usePlDataTableSettingsV2({
   model: () => app.model.outputs.runQualityTable,
+  sheets: () => qcLevelSheetsFetch.value,
 });
 
 const mismatchSettings = usePlDataTableSettingsV2({
