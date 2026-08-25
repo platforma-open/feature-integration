@@ -50,10 +50,33 @@ const DEFAULT_PANEL_REFERENCE_MIN_MEMBERS = 25;
 const DEFAULT_DISTRIBUTION_MIN_CELLS = 300;
 
 // The four inherited lines and the three aggregate-barcode knobs (see BlockArgs) are projected straight
-// through in args() below, undefined included, rather than seeded with a mirrored TS constant here:
-// verdict-args.lib.tengo and qc_report.py's own argparse are the one place each shipped default is
-// stated. The UI's tooltips name the same numbers as prose, the same way the tooltip on countFloor below
-// says "The default of 4 is declared" without importing a constant to say it.
+// through in args() below, undefined included. An undefined line reaches the CLI as the shipped default
+// substituted by verdict-args.lib.tengo's `_num`; an undefined knob reaches qc_report.py's argparse
+// default. Those two remain the values a run is scored against.
+//
+// The two maps below are read by the settings fields ONLY, to display the number already in force where
+// the stored value is undefined. They are never seeded into `data` and never projected into args, so a
+// field showing 0.75 and a field holding 0.75 produce the same command line and the same args hash.
+//
+// Each value MUST equal its counterpart in verdict-args.lib.tengo (the lines) and qc_measures.py (the
+// knobs). `test/src/qcDefaults.test.ts` asserts both sets against those files.
+export const QC_LINE_DEFAULTS = {
+  cellBarcodeValidWarn: 0.75,
+  cellBarcodeValidError: 0.5,
+  readsPerCellWarn: 5000,
+  aggregateBarcodeWarn: 0.05,
+  aggregateBarcodeError: 1.0,
+  undeclaredBarcodeWarn: 0.5,
+  undeclaredBarcodeError: 1.0,
+  usableReadWarn: 0.2,
+  usableReadError: 0.0,
+} as const;
+
+export const AGGREGATE_DETECTION_DEFAULTS = {
+  aggregateBarcodeIqrMultiplier: 3.0,
+  aggregateBarcodeMinUmiThreshold: 1000.0,
+  aggregateBarcodeTopN: 100,
+} as const;
 
 // The punchcard's frame is keyed on the clonotype set alone, and each identity is a COLUMN rather than
 // an axis value: that is what a punchcard needs, and a (set, identity) frame cannot give it to a table.

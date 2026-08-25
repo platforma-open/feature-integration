@@ -30,7 +30,11 @@ import type {
   GroupingRule,
   ReferenceSource,
 } from "@platforma-open/milaboratories.feature-integration.model";
-import { groupingColumns } from "@platforma-open/milaboratories.feature-integration.model";
+import {
+  AGGREGATE_DETECTION_DEFAULTS,
+  groupingColumns,
+  QC_LINE_DEFAULTS,
+} from "@platforma-open/milaboratories.feature-integration.model";
 import type { ImportFileHandle } from "@platforma-sdk/model";
 import { parseTagCsvMeta } from "../csvMeta";
 import { readLocalCsvMeta, useRemoteCsvBytes } from "../csvSource";
@@ -50,6 +54,37 @@ import {
 } from "../results";
 
 const app = useApp();
+
+// A quality line and an aggregate-detection knob are both stored undefined until someone types one, and
+// the workflow then substitutes the shipped default. The fields below bind through `setting` so an
+// untouched one shows that substituted number instead of an empty box. Clearing a field writes undefined
+// back and the display returns to the default.
+//
+// The value shown is never written to `data` on its own, so opening Settings stales nothing.
+const SETTING_DEFAULTS = { ...QC_LINE_DEFAULTS, ...AGGREGATE_DETECTION_DEFAULTS };
+type SettingKey = keyof typeof SETTING_DEFAULTS;
+
+function setting(key: SettingKey) {
+  return computed<number | undefined>({
+    get: () => app.model.data[key] ?? SETTING_DEFAULTS[key],
+    set: (value) => {
+      app.model.data[key] = value;
+    },
+  });
+}
+
+const cellBarcodeValidWarn = setting("cellBarcodeValidWarn");
+const cellBarcodeValidError = setting("cellBarcodeValidError");
+const readsPerCellWarn = setting("readsPerCellWarn");
+const aggregateBarcodeWarn = setting("aggregateBarcodeWarn");
+const aggregateBarcodeError = setting("aggregateBarcodeError");
+const undeclaredBarcodeWarn = setting("undeclaredBarcodeWarn");
+const undeclaredBarcodeError = setting("undeclaredBarcodeError");
+const usableReadWarn = setting("usableReadWarn");
+const usableReadError = setting("usableReadError");
+const aggregateBarcodeIqrMultiplier = setting("aggregateBarcodeIqrMultiplier");
+const aggregateBarcodeMinUmiThreshold = setting("aggregateBarcodeMinUmiThreshold");
+const aggregateBarcodeTopN = setting("aggregateBarcodeTopN");
 // Auto-open Settings for a fresh block, with no FASTQ chosen yet. Stays closed once configured.
 const settingsOpen = ref(app.model.data.fbFastqRef === undefined);
 // Close the Settings drawer once a run starts. Watching an output and writing a local ref is not a hairpin,
@@ -1127,7 +1162,7 @@ const gridOptions = {
         <PlRow>
           <PlNumberField
             :class="$style.half"
-            v-model="app.model.data.cellBarcodeValidWarn"
+            v-model="cellBarcodeValidWarn"
             :min-value="0"
             :max-value="1"
             :step="0.01"
@@ -1143,7 +1178,7 @@ const gridOptions = {
           </PlNumberField>
           <PlNumberField
             :class="$style.half"
-            v-model="app.model.data.cellBarcodeValidError"
+            v-model="cellBarcodeValidError"
             :min-value="0"
             :max-value="1"
             :step="0.01"
@@ -1158,7 +1193,7 @@ const gridOptions = {
           </PlNumberField>
         </PlRow>
         <PlNumberField
-          v-model="app.model.data.readsPerCellWarn"
+          v-model="readsPerCellWarn"
           :min-value="0"
           :step="100"
           clearable
@@ -1174,7 +1209,7 @@ const gridOptions = {
         <PlRow>
           <PlNumberField
             :class="$style.half"
-            v-model="app.model.data.aggregateBarcodeWarn"
+            v-model="aggregateBarcodeWarn"
             :min-value="0"
             :max-value="1"
             :step="0.01"
@@ -1192,7 +1227,7 @@ const gridOptions = {
           </PlNumberField>
           <PlNumberField
             :class="$style.half"
-            v-model="app.model.data.aggregateBarcodeError"
+            v-model="aggregateBarcodeError"
             :min-value="0"
             :max-value="1"
             :step="0.01"
@@ -1209,7 +1244,7 @@ const gridOptions = {
         <PlRow>
           <PlNumberField
             :class="$style.half"
-            v-model="app.model.data.undeclaredBarcodeWarn"
+            v-model="undeclaredBarcodeWarn"
             :min-value="0"
             :max-value="1"
             :step="0.01"
@@ -1225,7 +1260,7 @@ const gridOptions = {
           </PlNumberField>
           <PlNumberField
             :class="$style.half"
-            v-model="app.model.data.undeclaredBarcodeError"
+            v-model="undeclaredBarcodeError"
             :min-value="0"
             :max-value="1"
             :step="0.01"
@@ -1242,7 +1277,7 @@ const gridOptions = {
         <PlRow>
           <PlNumberField
             :class="$style.half"
-            v-model="app.model.data.usableReadWarn"
+            v-model="usableReadWarn"
             :min-value="0"
             :max-value="1"
             :step="0.01"
@@ -1258,7 +1293,7 @@ const gridOptions = {
           </PlNumberField>
           <PlNumberField
             :class="$style.half"
-            v-model="app.model.data.usableReadError"
+            v-model="usableReadError"
             :min-value="0"
             :max-value="1"
             :step="0.01"
@@ -1287,7 +1322,7 @@ const gridOptions = {
         <PlRow>
           <PlNumberField
             :class="$style.half"
-            v-model="app.model.data.aggregateBarcodeIqrMultiplier"
+            v-model="aggregateBarcodeIqrMultiplier"
             :min-value="0"
             :step="0.5"
             clearable
@@ -1302,7 +1337,7 @@ const gridOptions = {
           </PlNumberField>
           <PlNumberField
             :class="$style.half"
-            v-model="app.model.data.aggregateBarcodeMinUmiThreshold"
+            v-model="aggregateBarcodeMinUmiThreshold"
             :min-value="0"
             :step="100"
             clearable
@@ -1316,7 +1351,7 @@ const gridOptions = {
           </PlNumberField>
         </PlRow>
         <PlNumberField
-          v-model="app.model.data.aggregateBarcodeTopN"
+          v-model="aggregateBarcodeTopN"
           :min-value="1"
           :step="10"
           clearable
