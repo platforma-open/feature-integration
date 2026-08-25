@@ -29,6 +29,7 @@ from qc_measures import (
 # changes the multiset below.
 EXPECTED_LEVEL_BY_ID = {
     "readsTotal": "sample",
+    "cellsDetected": "sample",
     "usableReadFraction": "sample",
     "panelAssignedFraction": "sample",
     "cellBarcodeValidFraction": "sample",
@@ -523,19 +524,28 @@ def test_every_declared_route_is_one_of_the_three():
     assert {m.line for m in MEASUREMENTS if m.line} <= LINE_ROUTES
 
 
-def test_a_measurement_with_a_route_has_a_line_and_a_comparison_and_nothing_else_does():
-    # Every surviving route puts an absolute number on the measurement, so the
-    # route set and the line set are the same set. A comparison is not a line and
-    # so declares no route at all.
+def test_a_numeric_route_has_a_line_and_a_comparison_and_nothing_else_does():
+    # The two threshold routes -- inherited, recommended-and-observed -- put an absolute
+    # number on the measurement, so their id set is exactly DEFAULT_LINES' and _COMPARISON's.
+    # The categorical route publishes no threshold at all, so its member is absent from both;
+    # see test_the_categorical_route_now_has_one_member below.
     #
-    # `undeclaredBarcodeShare` is the one exception: it backs the undeclared-barcode table's
-    # own row (310), not a declared sample/tag measurement, so it carries a line with no
-    # `Measurement` behind it.
-    routed = {m.id for m in MEASUREMENTS if m.line}
-    assert set(DEFAULT_LINES) - {"undeclaredBarcodeShare"} == routed
-    assert set(_COMPARISON) - {"undeclaredBarcodeShare"} == routed
+    # `undeclaredBarcodeShare` is the one entry in those tables with no `Measurement` behind
+    # it: it backs the undeclared-barcode table's own row (310), not a declared measurement.
+    numeric_routed = {m.id for m in MEASUREMENTS if m.line in {"inherited", "recommended-and-observed"}}
+    assert set(DEFAULT_LINES) - {"undeclaredBarcodeShare"} == numeric_routed
+    assert set(_COMPARISON) - {"undeclaredBarcodeShare"} == numeric_routed
     assert "undeclaredBarcodeShare" in DEFAULT_LINES
     assert "undeclaredBarcodeShare" in _COMPARISON
+
+
+def test_the_categorical_route_now_has_one_member():
+    categorical_routed = {m.id for m in MEASUREMENTS if m.line == "categorical"}
+    assert categorical_routed == {"cellsDetected"}
+    # Both directions again, this time for the categorical route: a fact carries no numeric
+    # threshold, so it must appear in neither table.
+    assert categorical_routed.isdisjoint(DEFAULT_LINES)
+    assert categorical_routed.isdisjoint(_COMPARISON)
 
 
 def test_the_undeclared_barcode_line_is_read_direct_not_as_a_complement():
@@ -679,12 +689,29 @@ def test_a_tag_the_reads_never_show_carries_no_status():
     assert "declaredNeverSeen" not in DEFAULT_LINES
 
 
-def test_the_categorical_route_is_kept_with_no_member():
-    # One of the three places a line can come from, and the only one nothing
-    # currently uses. Kept as a route rather than deleted, so the next
-    # measurement standing on a fact rather than a quantity has somewhere to go.
+def test_cells_detected_is_the_categorical_route():
+    # `cellsDetected` is the categorical route's first member: the alerting condition is a
+    # fact (no cells at all) rather than a quantity with a published threshold.
+    by_id = {m.id: m for m in MEASUREMENTS}
+    m = by_id["cellsDetected"]
+    assert m.line == "categorical"
     assert "categorical" in LINE_ROUTES
-    assert not [m.id for m in MEASUREMENTS if m.line == "categorical"]
+
+
+def test_cells_detected_alerts_at_zero_and_reads_ok_above_it():
+    assert status_for("cellsDetected", 0, DEFAULT_LINES) is Status.ALERT
+    assert status_for("cellsDetected", 1, DEFAULT_LINES) is Status.OK
+    assert status_for("cellsDetected", 50_000, DEFAULT_LINES) is Status.OK
+
+
+def test_cells_detected_claims_nothing_about_yield():
+    # The judgement stays narrow: zero cells means nothing downstream can be computed. Above
+    # zero, nothing here says the yield was good -- that number is not published anywhere.
+    by_id = {m.id: m for m in MEASUREMENTS}
+    m = by_id["cellsDetected"]
+    assert "yield" not in (m.implies or "").lower()
+    assert "cellsDetected" not in DEFAULT_LINES
+    assert "cellsDetected" not in _COMPARISON
 
 
 def test_no_defensible_line_means_unjudged():

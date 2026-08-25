@@ -175,6 +175,23 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "which points at the wrong whitelist or the wrong read geometry.",
         "inherited",
     ),
+    # The categorical route's first member. The alerting condition is a fact -- no cell
+    # barcode observed at all -- rather than a quantity with a published threshold, so `315`'s
+    # second line route applies rather than its first or third. Computed in `qc_report.py` as
+    # the count of distinct cell barcodes the tag-stat table carries, before any cell-calling
+    # step -- the observed-barcode count `readsPerCell` below deliberately does not divide by.
+    #
+    # `implies` names only the zero case: nothing downstream can be computed for a sample with
+    # no cells. Above zero nothing is claimed, because how many cells a sample should yield
+    # depends on the experiment and no number for that is published.
+    Measurement(
+        "cellsDetected",
+        "Cell barcodes detected",
+        "sample",
+        "Distinct cell barcodes in the tag-stat table, before any cell-calling step.",
+        "Zero cells means nothing downstream can be computed for this sample.",
+        "categorical",
+    ),
     # Saturation is deliberately NOT measured. The vendor's own report carries it, and
     # nothing hangs on it: a scientist cannot act on it for the run already collected, and
     # whether the run was deep enough is answered by reads per cell below. A number nobody
@@ -365,11 +382,16 @@ MEASUREMENTS: tuple[Measurement, ...] = (
 # where the comparison is free for a reader to make. The cost is real and accepted: a
 # barcoded reagent binding something other than the receptor no longer announces itself.
 #
-# The categorical route has no member. A declared tag the reads never show was its one
-# example until the verdict took the job: that condition now removes the tag's cells from
-# what could answer, so the answer carries the finding. The route stays because it is one
-# of the three places a line can come from, not because something uses it.
+# The categorical route now has one member: `cellsDetected`, declared above. A declared tag
+# the reads never show was its earlier example until the verdict took the job: that condition
+# now removes the tag's cells from what could answer, so the answer carries the finding.
 LINE_ROUTES: frozenset[str] = frozenset({"inherited", "categorical", "recommended-and-observed"})
+
+# The categorical route's member ids. Derived from `Measurement.line`, never a second
+# declaration of which measurement stands on this route. A categorical fact carries no
+# numeric threshold, so its id is deliberately absent from `DEFAULT_LINES` and `_COMPARISON`
+# below -- `status_for` answers it before either table is consulted.
+_CATEGORICAL: frozenset[str] = frozenset(m.id for m in MEASUREMENTS if m.line == "categorical")
 
 # Every line is a parameter with a shipped default, and the operator may override any of
 # them. No line is invented -- where none of the three routes applies the measurement carries
@@ -473,9 +495,16 @@ def status_for(measurement: str, value: float | None, lines: dict[str, Line]) ->
     A deferred measurement carries none whatever it is handed: nothing computes it, so a
     value reaching here is a caller's mistake and must not be laundered into a judgement
     about the run.
+
+    The categorical route is read before `lines`: its fact is not a threshold, so neither
+    `DEFAULT_LINES` nor `_COMPARISON` carries an entry for it. Zero alerts; any other finite
+    value -- the count is never negative -- reads OK and claims nothing about how many cells
+    the sample should have yielded, a number nobody has published.
     """
     if measurement in _DEFERRED or not is_computed(value):
         return None
+    if measurement in _CATEGORICAL:
+        return Status.ALERT if value == 0 else Status.OK
     if measurement not in lines:
         return None
     line = lines[measurement]

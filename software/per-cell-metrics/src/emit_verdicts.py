@@ -1126,14 +1126,13 @@ def _number(row: dict, column: str) -> float | None:
 # `sample_report_rows` makes, so the wide pivot below reads off one declared set.
 _SAMPLE_MEASUREMENTS: tuple[Measurement, ...] = tuple(m for m in MEASUREMENTS if m.level == "sample")
 
-# Read-QC figures with no declared measurement behind them. `readsTotal`, `panelAssignedFraction`
-# and `cellBarcodeValidFraction` are declared measurements already carrying these same mitool
-# figures (see `_add` calls above), so they are excluded here and read from the pivot instead --
-# one column per figure, not two agreeing ones under two names.
+# Read-QC figures with no declared measurement behind them. `readsTotal`, `panelAssignedFraction`,
+# `cellBarcodeValidFraction` and `cellsDetected` are declared measurements already carrying these
+# same mitool figures (see `_add` calls above), so they are excluded here and read from the pivot
+# instead -- one column per figure, not two agreeing ones under two names.
 _MITOOL_ONLY_COLUMNS: tuple[str, ...] = (
     "readsMatched",
     "matchedFraction",
-    "cellsDetected",
     "featuresDetected",
     "totalUniqueUmis",
     "medianUmisPerCell",
@@ -1836,6 +1835,10 @@ def main() -> None:
         reads_matched = _number(qc, "readsMatched")
         matched_detail = "" if reads_matched is None else f"readsMatched={int(reads_matched)}"
         _add(rows, "sample", sample, "readsTotal", _number(qc, "readsTotal"), matched_detail, reason=NO_READ_QC)
+        # `qc_report.py` computes this from the tag-stat TSV directly, the same required input
+        # `readsTotal` reads from the parse report -- a missing figure means no read-QC row
+        # reached this sample at all, same cause and reason as that row.
+        _add(rows, "sample", sample, "cellsDetected", _number(qc, "cellsDetected"), reason=NO_READ_QC)
         _add(
             rows,
             "sample",

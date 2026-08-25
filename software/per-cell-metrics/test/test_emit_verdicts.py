@@ -313,6 +313,50 @@ def test_a_panel_too_small_to_serve_still_falls_to_no_comparator(bed):
     assert "declares no baseline tag" in r.stderr
 
 
+def test_zero_cells_detected_alerts(bed):
+    # 315's categorical route: the alerting condition is a fact -- no cell barcode observed at
+    # all -- not a quantity with a published threshold.
+    (bed / "qc.csv").write_text(
+        "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
+        "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction\n"
+        "S1,20000,18000,0.9,0,2,1200,300,0.82\n"
+    )
+    r = _run(bed, *BASE, "--qc-summary", "qc.csv")
+    assert r.returncode == 0, r.stderr
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    row = qc.filter(pl.col("measurement") == "cellsDetected").row(0, named=True)
+    assert row["value"] == "0.0"
+    assert row["status"] == "alert"
+
+
+def test_a_positive_cell_count_reads_ok_and_claims_nothing_about_yield(bed):
+    # Above zero, nothing here says the yield was good -- how many cells a sample should
+    # yield depends on the experiment, and no number for that is published.
+    (bed / "qc.csv").write_text(
+        "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
+        "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction\n"
+        "S1,20000,18000,0.9,1,2,1200,300,0.82\n"
+    )
+    r = _run(bed, *BASE, "--qc-summary", "qc.csv")
+    assert r.returncode == 0, r.stderr
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    row = qc.filter(pl.col("measurement") == "cellsDetected").row(0, named=True)
+    assert row["value"] == "1.0"
+    assert row["status"] == "OK"
+
+    (bed / "qc.csv").write_text(
+        "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
+        "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction\n"
+        "S1,20000,18000,0.9,50000,2,1200,300,0.82\n"
+    )
+    r = _run(bed, *BASE, "--qc-summary", "qc.csv")
+    assert r.returncode == 0, r.stderr
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    row = qc.filter(pl.col("measurement") == "cellsDetected").row(0, named=True)
+    assert row["value"] == "50000.0"
+    assert row["status"] == "OK"
+
+
 def test_no_cell_list_leaves_membership_unknown_and_depth_unevaluated(bed):
     # Which barcodes held a cell is an input. Nothing in the antigen readings separates a
     # cell from an empty droplet, so with neither list input the observed barcodes must NOT
