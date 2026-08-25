@@ -3102,17 +3102,76 @@ def test_the_sample_report_carries_the_rollup_the_qc_frame_carries(bed):
     assert report["judged"] + report["unjudged"] + report["notEvaluated"] == len(counted)
 
 
-def test_a_declared_measurement_with_no_call_site_reaches_the_report_unsupplied(bed):
-    # `usableReadFraction` is declared and computable (`qc_measures.usable_read_fraction`), but
-    # this run wires no call site for it yet, so it takes `UNSUPPLIED_REASON` -- the same fallback
-    # `test_a_declared_sample_measurement_nothing_computes_still_takes_a_row` exercises with a
-    # measurement that has no call site by construction.
+def test_usable_read_fraction_reads_blank_where_the_counts_file_carries_no_total_weight(bed):
+    # `usableReadFraction` now has a call site (`qc_measures.usable_read_fraction`, wired from
+    # `counts.csv`'s `totalWeight` column). `bed`'s counts.csv predates that column, so the row
+    # reads a stated blank rather than a value -- never `UNSUPPLIED_REASON`, since a call site
+    # ran and found the column absent, which is a different fact from nothing having run.
     _run(bed, *BASE)
     row = {m["id"]: m for m in _sample_report(bed)["measurements"]}["usableReadFraction"]
 
     assert row["value"] is None
     assert row["status"] is None
-    assert row["reason"] == emit_verdicts.UNSUPPLIED_REASON
+    assert row["reason"] == "the counts file carries no totalWeight column"
+
+
+def test_usable_read_fraction_computes_a_real_value_end_to_end(tmp_path):
+    # c1 and c2 are in the cell list; c3 is not. Only c1 and c2's totalWeight counts toward the
+    # numerator, over readsTotal from --qc-summary.
+    (tmp_path / "counts.csv").write_text(
+        "sampleId,cellId,tag,umiCount,totalWeight\n"
+        "S1,c1,AAAA,500,80\n"
+        "S1,c1,CTRL,6,3\n"
+        "S1,c2,AAAA,600,90\n"
+        "S1,c2,CTRL,6,3\n"
+        "S1,c3,CTRL,6,3\n"
+    )
+    (tmp_path / "panel.csv").write_text("Samples,Name,Sequence,Type\nS1,AgA,AAAA,Target\nS1,Ctrl,CTRL,Control\n")
+    (tmp_path / "cells.csv").write_text("sampleId,cellId\nS1,c1\nS1,c2\n")
+    (tmp_path / "qc.csv").write_text("sampleId,readsTotal\nS1,1000\n")
+    no_linker = [a for a in BASE if a not in ("--linker", "linker.csv")]
+
+    _run(tmp_path, *no_linker, "--cells", "cells.csv", "--qc-summary", "qc.csv")
+    row = {m["id"]: m for m in _sample_report(tmp_path)["measurements"]}["usableReadFraction"]
+
+    assert row["value"] == pytest.approx((80 + 3 + 90 + 3) / 1000)
+    assert row["detail"] == "cellsInList=2"
+
+
+def test_usable_read_fraction_with_no_cell_list_reads_a_stated_blank(tmp_path):
+    # totalWeight and readsTotal both arrive; only the cell list is missing, so the reason is
+    # `usable_read_fraction`'s own -- the called-cell condition, and nothing else.
+    (tmp_path / "counts.csv").write_text(
+        "sampleId,cellId,tag,umiCount,totalWeight\nS1,c1,AAAA,500,80\nS1,c1,CTRL,6,3\n"
+    )
+    (tmp_path / "panel.csv").write_text("Samples,Name,Sequence,Type\nS1,AgA,AAAA,Target\nS1,Ctrl,CTRL,Control\n")
+    (tmp_path / "qc.csv").write_text("sampleId,readsTotal\nS1,1000\n")
+    no_linker = [a for a in BASE if a not in ("--linker", "linker.csv")]
+
+    _run(tmp_path, *no_linker, "--qc-summary", "qc.csv")
+    row = {m["id"]: m for m in _sample_report(tmp_path)["measurements"]}["usableReadFraction"]
+
+    assert row["value"] is None
+    assert row["status"] is None
+    assert row["reason"] == "no cell list supplied, so the called-cell condition cannot be evaluated"
+
+
+def test_usable_read_fraction_with_an_empty_cell_list_reads_zero(tmp_path):
+    # A present cells.csv with a header and no rows is a checked, empty list -- distinct from
+    # no list at all, so the outcome is the real finding 0.0 rather than a blank.
+    (tmp_path / "counts.csv").write_text(
+        "sampleId,cellId,tag,umiCount,totalWeight\nS1,c1,AAAA,500,80\nS1,c1,CTRL,6,3\n"
+    )
+    (tmp_path / "panel.csv").write_text("Samples,Name,Sequence,Type\nS1,AgA,AAAA,Target\nS1,Ctrl,CTRL,Control\n")
+    (tmp_path / "cells.csv").write_text("sampleId,cellId\n")
+    (tmp_path / "qc.csv").write_text("sampleId,readsTotal\nS1,1000\n")
+    no_linker = [a for a in BASE if a not in ("--linker", "linker.csv")]
+
+    _run(tmp_path, *no_linker, "--cells", "cells.csv", "--qc-summary", "qc.csv")
+    row = {m["id"]: m for m in _sample_report(tmp_path)["measurements"]}["usableReadFraction"]
+
+    assert row["value"] == 0.0
+    assert row["detail"] == "cellsInList=0"
 
 
 def test_a_declared_sample_measurement_nothing_computes_still_takes_a_row(monkeypatch):

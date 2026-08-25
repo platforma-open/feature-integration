@@ -3,7 +3,10 @@
 // emit_verdicts.py reads every sample at once: a panel is a property of the declared tag set rather than of
 // one sample, the panel-versus-reads check runs in both directions across the run, and the QC rollup spans
 // samples. So the per-sample [sampleId] -> tag-stat file map the fan-out produces is concatenated here into
-// one (sampleId, cellId, tag, umiCount) CSV.
+// one (sampleId, cellId, tag, umiCount, totalWeight) CSV. `totalWeight` is the post-refine tag-stat's
+// read-weight column, carried through for `usable_read_fraction` (`qc_measures.py`): every row here already
+// passed refine-tags' FEATURE correction, so restricting `cellId` to the cell list is the only condition
+// `usable_read_fraction` still has to apply.
 //
 // The real sampleId is injected from the resource-map key, exactly as qc-summary.tpl.tengo does. The
 // per-sample execs are handed a constant sample id, so the tables cannot say which sample they came from.
@@ -53,7 +56,8 @@ self.body(func(inputs) {
 			pt.lit(sampleId).alias("sampleId"),
 			pt.col(tags.cell).alias("cellId"),
 			pt.col(tags.feature).alias("tag"),
-			pt.col("unique_" + tags.umi).alias("umiCount")
+			pt.col("unique_" + tags.umi).alias("umiCount"),
+			pt.col("totalWeight")
 		]...))
 	}
 

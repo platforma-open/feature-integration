@@ -79,6 +79,7 @@ from qc_measures import (
     roll_up,
     sibling_disagreement,
     status_for,
+    usable_read_fraction,
 )
 from tag_distribution import (
     DEFAULT_DISTRIBUTION_MIN_CELLS,
@@ -235,6 +236,12 @@ def _read_counts(path: str) -> pl.DataFrame:
     `_read_columns` reads every column as a string and fills nulls with "", so a blank cell
     and a decimal both survive to the cast. A bare `.cast` dies there as a raw polars
     traceback naming neither the file nor the column, the one thing a reader needs.
+
+    `totalWeight` -- the post-refine tag-stat's read-weight column, gathered by
+    gather-counts.tpl.tengo alongside the distinct-UMI count -- is read when the file carries
+    it and left off the returned frame otherwise. Its absence means the run predates this
+    column, not a bad file: `usable_read_fraction`'s caller checks for the column rather than
+    crashing on it.
     """
     counts = _read_columns(path, ("sampleId", "cellId", "tag", "umiCount"), "counts file")
     umi = counts["umiCount"].cast(pl.Int64, strict=False)
@@ -245,7 +252,20 @@ def _read_counts(path: str) -> pl.DataFrame:
             f"counts file {path!r} has {len(offenders)} umiCount value(s) that are not whole numbers: "
             f"{shown}. A UMI count is a count of observations; a blank or a decimal is not one."
         )
-    return counts.with_columns(umi.alias("umiCount"))
+    counts = counts.with_columns(umi.alias("umiCount"))
+    header = pl.read_csv(path, infer_schema_length=0, n_rows=0).columns
+    if "totalWeight" in header:
+        weight_raw = _read_columns(path, ("totalWeight",), "counts file")["totalWeight"]
+        weight = weight_raw.cast(pl.Int64, strict=False)
+        weight_offenders = [raw for raw, cast in zip(weight_raw, weight, strict=True) if cast is None]
+        if weight_offenders:
+            shown = ", ".join(repr(v) for v in weight_offenders[:5])
+            raise SystemExit(
+                f"counts file {path!r} has {len(weight_offenders)} totalWeight value(s) that are not "
+                f"whole numbers: {shown}"
+            )
+        counts = counts.with_columns(weight.alias("totalWeight"))
+    return counts
 
 
 def undeclared_feature_counts(raw_counts: pl.DataFrame, declared: Collection[str]) -> tuple[pl.DataFrame, float | None]:
@@ -1182,7 +1202,9 @@ def sample_summary_rows(
 # than in the code a reader follows top to bottom.
 def main() -> None:
     p = argparse.ArgumentParser(description="Read antigen counts into a four-state binding verdict per set.")
-    p.add_argument("counts_csv", help="sparse per-(sampleId, cellId, tag) UMI counts")
+    p.add_argument(
+        "counts_csv", help="sparse per-(sampleId, cellId, tag) UMI counts, with an optional totalWeight column"
+    )
     p.add_argument("panel_csv", help="the panel file: which tags each sample was stained with")
     p.add_argument("--linker", default=None, help="cell -> clonotype set CSV (sampleId, cellId, setId)")
     p.add_argument("--cells", default=None, help="the cell list (sampleId, cellId); overrides the linker's cells")
@@ -1826,6 +1848,11 @@ def main() -> None:
     raw_feature_counts = _read_raw_feature_counts(args.raw_feature_counts) if args.raw_feature_counts else None
     undeclared_barcode_rows: list[dict] = []
 
+    # `totalWeight` reaches `counts` only from a gather step built after this column existed
+    # (see `_read_counts`). Checked once, not per sample: its presence is a property of the
+    # file, not of any one sample's rows within it.
+    has_total_weight = "totalWeight" in counts.columns
+
     rows: list[QcRow] = []
     sample_coverage: dict[str, Coverage] = {}
     sample_report: dict[str, dict] = {}
@@ -1850,6 +1877,19 @@ def main() -> None:
             _number(qc, "panelAssignedFraction"),
             reason=NO_READ_QC if not qc else NO_REFINE_STEP % "FEATURE",
         )
+
+        # `usable_read_fraction` takes the cell IDs alone: `sample_counts` is already scoped to
+        # this sample, so the sampleId half of each `listed_here` key would only be checked
+        # against itself.
+        cell_ids_here = [key[1] for key in listed_here] if listed_here is not None else None
+        reads_total = _number(qc, "readsTotal")
+        if has_total_weight:
+            usable_value, usable_detail = usable_read_fraction(
+                sample_counts, "cellId", cell_ids_here, int(reads_total) if reads_total is not None else None
+            )
+        else:
+            usable_value, usable_detail = None, "the counts file carries no totalWeight column"
+        _add(rows, "sample", sample, "usableReadFraction", usable_value, usable_detail, reason=usable_detail)
 
         # 330's undeclared-barcode table: keyed by sequence, never by (panel, tag), because an
         # undeclared barcode has no row in the panel to sit beside. Read on the PRE-refine pass,
