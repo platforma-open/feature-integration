@@ -280,8 +280,6 @@ export type QcRow = {
   cellBarcodeValidFraction: number | ""; // same blank rule; the refine report's CELL step
 };
 
-// Panel-assigned fraction below this flags a sample in the analysis log (panel / read-geometry issue).
-const PANEL_ASSIGNED_FLOOR = 0.5;
 
 // CsvMeta -- the panel's headers, each header's distinct values, and its row count -- lives in types.ts
 // beside the data field that carries it. It feeds the barcode/feature column dropdowns, the
@@ -1367,7 +1365,7 @@ export const platforma = BlockModelV3.create(dataModel)
   // JSON (qcJson), which settles incrementally as each sample's qc step finishes:
   //   - while the run is in progress: a live count of samples finished so far ("Processing... N ...")
   //   - when every sample is done: a run-level summary (aggregate reads / panel-assigned / cells, plus any
-  //     samples flagged for a panel-assigned fraction below PANEL_ASSIGNED_FLOOR, by name)
+  //     samples flagged for detecting no cell barcodes, by name)
   // One area regardless of sample count. Detailed per-sample stats live on the QC page (qcSummaryTable).
   .output("analysisLog", (ctx): string[] | undefined => {
     if (ctx.outputs === undefined) return undefined;
@@ -1407,13 +1405,11 @@ export const platforma = BlockModelV3.create(dataModel)
     const assigned = rows
       .map((r) => num(r.panelAssignedFraction))
       .filter((x): x is number => x !== undefined);
-    const flagged = entries.filter((e) => {
-      const a = num((e.value as QcRow).panelAssignedFraction);
-      return (
-        (a !== undefined && a < PANEL_ASSIGNED_FLOOR) ||
-        ((e.value as QcRow).cellsDetected ?? 0) === 0
-      );
-    });
+    // Zero cells detected is a fact about the sample: nothing downstream can be computed for it. The
+    // panel-assigned fraction is NOT a second condition here. Its complement is the share of reads in
+    // barcodes the panel never declares, and `310-qc-status-and-rollup` fixes that status on the barcode:
+    // it does not become a sample's. That status is on the undeclared-barcode rows under Run quality.
+    const flagged = entries.filter((e) => ((e.value as QcRow).cellsDetected ?? 0) === 0);
 
     const medMatched = median(matched);
     const medAssigned = median(assigned);
@@ -1434,7 +1430,7 @@ export const platforma = BlockModelV3.create(dataModel)
     if (flagged.length > 0) {
       const names = flagged.map((e) => labels?.[String(e.key[0])] ?? String(e.key[0]));
       lines.push(
-        `${flagged.length} sample${flagged.length === 1 ? "" : "s"} flagged — panel-assigned fraction below ${pct(PANEL_ASSIGNED_FLOOR)} (or zero cells): ${names.join(", ")}.`,
+        `${flagged.length} sample${flagged.length === 1 ? "" : "s"} flagged — no cell barcodes detected: ${names.join(", ")}.`,
       );
       lines.push("  See the QC page for per-sample detail.");
     } else {
