@@ -27,11 +27,9 @@ from verdict import (
 )
 
 CellKey = tuple[str, str]
-# The pivoted per-identity summary costs one column per identity, so it is emitted only
-# for a panel small enough that a wide frame is still a table a reader can open. Declared
-# rather than derived, since nothing published says where a table stops being readable,
-# and deliberately well under the thousand-plus identities a pMHC panel carries.
-IDENTITY_SUMMARY_MAX_IDENTITIES = 100
+# One column per identity, so this bounds the pivot's WIDTH and not its length. A pMHC panel
+# carries more than a thousand identities and is out of this version's scope.
+IDENTITY_SUMMARY_MAX_IDENTITIES = 10_000
 # What joins several grouping columns into one identity key. A scientist may group on more
 # than one column, and the identity is the distinct combination of their values, so one
 # string has to carry them all. A panel value containing this separator would let two
@@ -412,13 +410,13 @@ def _pivot_identity_summary(verdicts: pl.DataFrame, universe: set[str]) -> tuple
     return states, punch.select(ordered), True
 
 
-# A run whose cell count passes this gets no per-cell punchcard. The frame below is the
-# DENSE per-cell-per-identity grid the rest of this module goes out of its way never to
-# build -- 11-20x the sparse input on a realistic panel. The readout needs the grid, so it is
-# built here, and bounded here, because "needs it" is not "at any size". Above the line the
-# export is skipped and the page says so, which is a readout a reader can act on. A run that
-# dies importing a Parquet file is not.
-CELL_PUNCH_MAX_CELLS = 200_000
+# A run whose cell count passes this gets no per-cell punchcard. The frame below is the DENSE
+# per-cell-per-identity grid the rest of this module never builds -- 11-20x the sparse input on
+# a realistic panel. This bounds the row count; IDENTITY_SUMMARY_MAX_IDENTITIES bounds the width.
+#
+# Above the line the export is skipped and `cellPunchEmitted` in the run record carries that.
+# No page reads that flag yet, so the skip is currently silent to a reader.
+CELL_PUNCH_MAX_CELLS = 2_000_000
 
 
 def _pivot_cell_punch(
