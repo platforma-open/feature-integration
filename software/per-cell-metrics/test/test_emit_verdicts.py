@@ -2581,6 +2581,62 @@ def test_the_distributions_are_emitted_as_plottable_frames(bed):
     assert backgrounds.height == 0, "a declared baseline fits no background"
 
 
+@pytest.fixture
+def sample_decile_bed(tmp_path):
+    # Three samples: S1 and S2 each hold cells with an antigen count, at different scales so their
+    # decile series cannot coincide by accident. S3 is declared in the panel but carries no counted
+    # reading at all -- the "no antigen counts" case.
+    (tmp_path / "counts.csv").write_text(
+        "sampleId,cellId,tag,umiCount\n"
+        "S1,c1,AAAA,500\nS1,c1,CTRL,6\nS1,c2,AAAA,900\nS1,c2,CTRL,6\n"
+        "S2,c1,AAAA,50\nS2,c1,CTRL,6\nS2,c2,AAAA,80\nS2,c2,CTRL,6\n"
+    )
+    (tmp_path / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type\n"
+        "S1,AgA,AAAA,Target\nS1,Ctrl,CTRL,Control\n"
+        "S2,AgA,AAAA,Target\nS2,Ctrl,CTRL,Control\n"
+        "S3,Ctrl,CTRL,Control\n"
+    )
+    (tmp_path / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS1,c2,K1\nS2,c1,K2\nS2,c2,K2\n")
+    return tmp_path
+
+
+def test_sample_deciles_reach_a_frame_keyed_by_sample(sample_decile_bed):
+    # The distribution's deciles must reach a p-frame keyed by sample, not only a decile string
+    # buried in the measurement's detail field.
+    _run(sample_decile_bed, *BASE)
+    deciles = pl.read_csv(sample_decile_bed / "result_qc_sample_deciles.csv", infer_schema_length=0)
+    assert set(deciles.columns) == {"sampleId", "decile", "value"}
+    assert set(deciles.filter(pl.col("sampleId") == "S1")["decile"].to_list()) == set(str(p) for p in range(0, 101, 10))
+
+
+def test_two_samples_carry_different_decile_series(sample_decile_bed):
+    # S1's cells hold 500-900 antigen counts, S2's hold 50-80. Their decile series must differ --
+    # a plot showing this sample alone is the point.
+    _run(sample_decile_bed, *BASE)
+    deciles = pl.read_csv(sample_decile_bed / "result_qc_sample_deciles.csv")
+    s1 = deciles.filter(pl.col("sampleId") == "S1").sort("decile")["value"].to_list()
+    s2 = deciles.filter(pl.col("sampleId") == "S2").sort("decile")["value"].to_list()
+    assert s1 != s2
+    assert max(s1) > max(s2)
+
+
+def test_a_sample_with_no_antigen_counts_yields_no_decile_rows(sample_decile_bed):
+    # S3 is declared in the panel but no read ever carried a count for it. A flat run of zeros
+    # would read as a real, narrow distribution; the right answer is no rows for S3 at all, with
+    # the sample's own measurement carrying the reason instead.
+    _run(sample_decile_bed, *BASE)
+    deciles = pl.read_csv(sample_decile_bed / "result_qc_sample_deciles.csv", infer_schema_length=0)
+    assert deciles.filter(pl.col("sampleId") == "S3").height == 0
+
+    qc = pl.read_csv(sample_decile_bed / "result_qc.csv", infer_schema_length=0)
+    row = qc.filter((pl.col("entity") == "S3") & (pl.col("measurement") == "antigenCountDistribution")).row(
+        0, named=True
+    )
+    assert row["value"] is None or row["value"] == ""
+    assert row["reason"]
+
+
 def test_the_fitted_backgrounds_are_emitted_at_the_fits_own_grain(tmp_path):
     # One row per (sample, tag) the fit scored. Aggregating to the tag would hide a reagent that
     # separated in one sample and not in another, which is the comparison a reader makes here.

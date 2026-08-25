@@ -1012,6 +1012,11 @@ def sample_report_rows(sample: str, rows: list[QcRow]) -> tuple[list[dict], Cove
 
 
 _DECILE_SCHEMA = {"distribution": pl.String, "decile": pl.Int64, "value": pl.Float64}
+# Deciles of the total antigen count per cell barcode, kept PER SAMPLE rather than pooled into
+# `_DECILE_SCHEMA`: `330-the-quality-readout` reads this shape as one sample's own plot, and
+# pooling it would answer a different question. A separate schema mints a separate p-column
+# rather than adding a sample axis to the existing one.
+_SAMPLE_DECILE_SCHEMA = {"sampleId": pl.String, "decile": pl.Int64, "value": pl.Float64}
 _BACKGROUND_SCHEMA = {
     "sampleId": pl.String,
     "tag": pl.String,
@@ -1059,6 +1064,19 @@ def _decile_rows(distribution: str, deciles: pl.DataFrame) -> list[dict]:
     """One distribution's decile points as rows. A point with no value contributes none."""
     return [
         {"distribution": distribution, "decile": int(d), "value": float(v)}
+        for d, v in zip(deciles["decile"], deciles["value"], strict=True)
+        if v is not None
+    ]
+
+
+def _sample_decile_rows(sample: str, deciles: pl.DataFrame) -> list[dict]:
+    """One sample's antigen-count decile points as rows. A point with no value contributes none.
+
+    A sample with no counted reading gets all-null points from `antigen_count_deciles`, so this
+    returns no rows for it -- a sample absent from the frame, not a flat line at zero.
+    """
+    return [
+        {"sampleId": sample, "decile": int(d), "value": float(v)}
         for d, v in zip(deciles["decile"], deciles["value"], strict=True)
         if v is not None
     ]
@@ -1847,6 +1865,7 @@ def main() -> None:
     # having checked and found none.
     raw_feature_counts = _read_raw_feature_counts(args.raw_feature_counts) if args.raw_feature_counts else None
     undeclared_barcode_rows: list[dict] = []
+    sample_decile_rows: list[dict] = []
 
     # `totalWeight` reaches `counts` only from a gather step built after this column existed
     # (see `_read_counts`). Checked once, not per sample: its presence is a property of the
@@ -1944,6 +1963,7 @@ def main() -> None:
         _add(rows, "sample", sample, "readsPerCell", depth, detail, reason=depth_reason)
 
         deciles = antigen_count_deciles(sample_counts)
+        sample_decile_rows += _sample_decile_rows(sample, deciles)
         decile_detail = "|".join(
             f"{d}:{'' if v is None else round(v, 3)}" for d, v in zip(deciles["decile"], deciles["value"], strict=True)
         )
@@ -2319,6 +2339,15 @@ def main() -> None:
         pl.DataFrame(decile_rows, schema=_DECILE_SCHEMA),
         f"{prefix}_qc_deciles.csv",
         ["distribution", "decile"],
+    )
+
+    # The same shape, kept PER SAMPLE: 330 asks for the antigen-count distribution as one sample's
+    # own plot, not pooled with any other sample's. A separate frame and a separate column, since
+    # adding a sample axis to `_DECILE_SCHEMA` above would change that column's identity.
+    _write_sorted(
+        pl.DataFrame(sample_decile_rows, schema=_SAMPLE_DECILE_SCHEMA),
+        f"{prefix}_qc_sample_deciles.csv",
+        ["sampleId", "decile"],
     )
 
     # One row per (sample, tag) the fit scored, at the fit's own grain. Aggregating to the tag would

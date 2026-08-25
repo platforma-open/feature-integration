@@ -1351,6 +1351,33 @@ qcDecileImportSpec := func(distributionAxisSpec, decileAxisSpec) {
 	}
 }
 
+// The same shape as qcDecileImportSpec, kept PER SAMPLE: 330 reads the antigen-count distribution as
+// one sample's own plot, never pooled across samples the way the score and the reference reading are.
+// A separate column (`qcSampleDecileValue`), because adding a sample axis to `qcDecileValue` would
+// change that column's identity rather than add to it -- score and referenceReading stay exactly as
+// they were.
+qcSampleDecileImportSpec := func(sampleAxisSpec, decileAxisSpec) {
+	return {
+		axes: [
+			{ column: "sampleId", spec: sampleAxisSpec },
+			{ column: "decile", spec: decileAxisSpec }
+		],
+		columns: [{
+			column: "value", id: "value",
+			spec: {
+				name: "pl7.app/antigen/qcSampleDecileValue",
+				valueType: "Double",
+				annotations: a(90000, true, guardNoScore({
+					"pl7.app/label": "Value",
+					"pl7.app/description": "The total antigen count per cell barcode at this percentile, for this sample alone."
+				}))
+			}
+		}],
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}
+}
+
 // One row per (sample, tag) a population baseline fitted, at the fit's OWN grain. Aggregating to the
 // tag would hide a reagent that separated in one sample and not in another, which is the comparison
 // this plot exists for. The two means are read together: a background alone says nothing about
@@ -1608,6 +1635,7 @@ export {
 	qcDistributionAxis: qcDistributionAxis,
 	qcDecileAxis: qcDecileAxis,
 	qcDecileImportSpec: qcDecileImportSpec,
+	qcSampleDecileImportSpec: qcSampleDecileImportSpec,
 	qcBackgroundImportSpec: qcBackgroundImportSpec,
 	qcReagentImportSpec: qcReagentImportSpec,
 	qcSampleSummaryImportSpec: qcSampleSummaryImportSpec,

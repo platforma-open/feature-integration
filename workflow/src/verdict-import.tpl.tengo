@@ -231,12 +231,17 @@ self.body(func(inputs) {
 	qcSummaryFb := pframes.pFrameBuilder()
 	addTo(qcSummaryFb, "qcSummary", inputs.qcSummary, columnSpecs.qcSampleSummaryImportSpec(sampleAxis))
 
-	// The three distributions 330 puts last in the readout, as plots rather than table rows. Two of
-	// them exist so a scientist can place the cutoff and the gate, and a number encoded in a detail
-	// string is one nobody can draw.
+	// The distributions 330 puts last in the readout, as plots rather than table rows. A number
+	// encoded in a detail string is one nobody can draw.
 	distributionFb := pframes.pFrameBuilder()
 	addTo(distributionFb, "qcDeciles", inputs.qcDeciles, columnSpecs.qcDecileImportSpec(
 		columnSpecs.qcDistributionAxis(blockId),
+		columnSpecs.qcDecileAxis(blockId)))
+	// The antigen-count distribution's own deciles, kept per sample beside the two pooled decile
+	// sets above. Its own column: adding a sample axis to `qcDecileValue` would re-identify that
+	// column rather than mint a new one.
+	addTo(distributionFb, "qcSampleDeciles", inputs.qcSampleDeciles, columnSpecs.qcSampleDecileImportSpec(
+		sampleAxis,
 		columnSpecs.qcDecileAxis(blockId)))
 	addTo(distributionFb, "qcBackgrounds", inputs.qcBackgrounds,
 		columnSpecs.qcBackgroundImportSpec(sampleAxis, tagAxis))

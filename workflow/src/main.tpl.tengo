@@ -472,6 +472,7 @@ wf.body(func(args) {
 			qc: verdictRun.output("qc"),
 			qcSummary: verdictRun.output("qcSummary"),
 			qcDeciles: verdictRun.output("qcDeciles"),
+			qcSampleDeciles: verdictRun.output("qcSampleDeciles"),
 			qcBackgrounds: verdictRun.output("qcBackgrounds"),
 			reagents: verdictRun.output("reagents")
 		})
@@ -559,7 +560,7 @@ wf.body(func(args) {
 		// carrying the one status this run's quality surface publishes outside the measurement
 		// list -- the share of a sample's reads landing in undeclared barcodes. Usually empty.
 		blockOutputs.antigenUndeclaredBarcodesTable = pframes.exportFrame(verdictImport.output("undeclaredBarcodesTable"))
-		// The three distributions the readout draws. Outputs rather than exports, like the report above:
+		// The distributions the readout draws. Outputs rather than exports, like the report above:
 		// they are what this block says about its own run, and nothing downstream reads them.
 		blockOutputs.antigenQcDistributions = pframes.exportFrame(verdictImport.output("qcDistributions"))
 		blockOutputs.antigenReagentTable = pframes.exportFrame(verdictImport.output("reagentTable"))
