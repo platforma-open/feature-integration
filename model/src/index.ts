@@ -137,7 +137,19 @@ export type VerdictRunMeta = {
    * did not happen.
    */
   cellsSetAsideBySet?: Record<string, number>;
+  /**
+   * Which cell list every figure was computed against.
+   *
+   * Two runs whose lists came from different sources do not share a denominator, so a fraction of cells
+   * carries no meaning without it. Optional because a run record written before this field existed does
+   * not carry it. The three values are `emit_verdicts.py`'s own, not prose: renaming one there without
+   * renaming it here leaves this undefined rather than failing.
+   */
+  cellListSource?: CellListSource;
 };
+
+/** Where the run's cell list came from. Mirrors `emit_verdicts.py`'s `cell_list_source`. */
+export type CellListSource = "cell list" | "clonotype linker" | "none";
 
 // A measurement's status. Three words and no fourth: a measurement carries one only where a line stands
 // behind it, and null covers both cases where none does. Which of the two happened is read from the value --

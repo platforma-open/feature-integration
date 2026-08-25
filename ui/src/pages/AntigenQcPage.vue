@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { PredefinedGraphOption } from "@milaboratories/graph-maker";
 import { GraphMaker } from "@milaboratories/graph-maker";
+import type { CellListSource } from "@platforma-open/milaboratories.feature-integration.model";
 import type { PColumnSpec } from "@platforma-sdk/model";
 import {
   PlAgDataTableV2,
@@ -92,6 +93,19 @@ const distributionsAbsent = computed(() => app.model.outputs.runQualityDistribut
 // both that there were no scores and that there was no background, which cannot both be true of one
 // run, since a run is served by exactly one rung.
 const served = computed(() => app.model.outputs.verdictRunMeta?.referenceChoice);
+
+// Which cell list every fraction of cells was computed against. Two runs whose lists came from
+// different sources do not share a denominator. "none" means no list arrived, which is not the same
+// as an empty one: the measurements needing a list read *not evaluated* rather than zero.
+const CELL_LIST_WORDING: Record<CellListSource, string> = {
+  "cell list": "Cell figures are counted against the supplied cell list.",
+  "clonotype linker": "Cell figures are counted against the cells the clonotype linker returned.",
+  none: "No cell list reached this run, so every figure needing one reads as not evaluated.",
+};
+const cellListSource = computed(() => {
+  const source = app.model.outputs.verdictRunMeta?.cellListSource;
+  return source === undefined ? undefined : CELL_LIST_WORDING[source];
+});
 const rungUnknown = computed(() => served.value === undefined);
 
 // Only the declared rung produces a score: the others yield a probability, which is not on the same
@@ -189,6 +203,10 @@ const backgroundOptions = computed<PredefinedGraphOption<"scatterplot">[]>(() =>
     </PlAlert>
 
     <template v-else>
+      <!-- 320 requires every figure to say which cell list it was computed against. One list serves the
+           whole run, so it is stated once here rather than repeated on each measurement. -->
+      <div v-if="cellListSource" class="qc-cell-list">{{ cellListSource }}</div>
+
       <PlTabs v-model="activeView" :options="VIEW_TABS" />
 
       <template v-if="activeView === 'measurements'">
@@ -318,5 +336,11 @@ const backgroundOptions = computed<PredefinedGraphOption<"scatterplot">[]>(() =>
 /* GraphMaker fills its container, and a container with no height collapses to nothing. */
 .plot {
   height: 480px;
+}
+
+.qc-cell-list {
+  padding: 4px 0 12px;
+  font-size: 13px;
+  color: var(--color-txt-03);
 }
 </style>

@@ -365,6 +365,19 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # it because nothing declares it: no surface asks a scientist which clonotype they
     # already know the answer for. What they do instead is find that clonotype in the
     # readout and read its row, which the readout already supports.
+    #
+    # Doublets, read from cells positive on several antigens, are deliberately NOT measured.
+    # The field does not read multi-antigen positivity as a doublet estimate, and one vendor
+    # states outright that it should not be.
+    #
+    # A false-discovery rate is deliberately NOT measured. None exists for this assay: the
+    # bulk-readout relative has had one for a decade, the per-cell form has none, so no
+    # calibrated statement is available about how many positives in a run are spurious.
+    #
+    # The share of counts landing in droplets that held no cell is deliberately NOT measured.
+    # It cannot be computed against a cell list derived from recovered receptors, because
+    # cells whose receptor did not assemble are classified as empty and inflate the very
+    # quantity being measured.
 )
 
 # The three places a line can come from, and nowhere else. `Measurement.line` names one
