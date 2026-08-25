@@ -141,6 +141,20 @@ export type VerdictRunMeta = {
   identityCount: number;
   setCount: number;
   cellsAnalysed: number;
+  /**
+   * The two export gates, and the identity gate's own limit. `emit_verdicts.py` writes all three; the
+   * workflow reads the two flags to decide whether to build each frame.
+   *
+   * Optional because a run record written before these fields existed does not carry them. A page that
+   * has the number states it and a page that does not says only that a limit exists, so an older record
+   * degrades to the wording it had rather than printing "undefined".
+   *
+   * `cellPunchEmitted` has no matching limit here: the cell gate's threshold is not in the run record.
+   */
+  identitySummaryEmitted?: boolean;
+  identitySummaryLimit?: number;
+  cellPunchEmitted?: boolean;
+  cellPunchCells?: number;
   /** Tags the grouping column said nothing about. Each stands as its own identity, under a bare barcode. */
   tagsWithoutGroupingValue: string[];
   /**
@@ -279,7 +293,6 @@ export type QcRow = {
   panelAssignedFraction: number | ""; // "" when no refine report (qc_report leaves it blank)
   cellBarcodeValidFraction: number | ""; // same blank rule; the refine report's CELL step
 };
-
 
 // CsvMeta -- the panel's headers, each header's distinct values, and its row count -- lives in types.ts
 // beside the data field that carries it. It feeds the barcode/feature column dropdowns, the
