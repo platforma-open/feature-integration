@@ -1,0 +1,238 @@
+// The emit-verdicts command line, built in one place and unit-tested.
+//
+// Every flag this CLI takes has a default, so an unthreaded parameter is silent in both directions: the
+// render succeeds, the exec succeeds, and the reading is answered under a value the user never chose.
+// `--qc-summary` is the sharpest case -- without it the run has no read count at all, so `readsTotal`,
+// `panelAssignedFraction` and `readsPerCell` render as declared-but-unchecked rather than failing, and
+// `readsPerCell` is the only sequencing-depth alert the block ships. Building the whole argument list here,
+// staged input filenames included, is what makes the threading assertable without a backend.
+//
+// The staged filenames are exported beside the flags that name them. verdict-run.tpl.tengo stages each file
+// under the same constant it is referenced by, so a rename cannot leave a flag pointing at a file the exec
+// never received.
+
+ll := import("@platforma-sdk/workflow-tengo:ll")
+canonical := import("@platforma-sdk/workflow-tengo:canonical")
+
+FILE_COUNTS := "counts.csv"
+FILE_PANEL := "panel.csv"
+FILE_LINKER := "linker.csv"
+FILE_QC_SUMMARY := "qc_summary.csv"
+FILE_RAW_FEATURE_COUNTS := "raw_feature_counts.csv"
+OUTPUT_PREFIX := "result"
+
+// The block arguments this module reads. Exported so fanout-inputs.test.tengo can assert that none of them
+// has leaked into the per-sample mitool fan-out, which is what keeps the fan-out cached when only the
+// reading's parameters change. Extend this list whenever a parameter is added below.
+PARAMETER_NAMES := [
+	"aggregateBarcodeError",
+	"aggregateBarcodeWarn",
+	"boundCutoff",
+	"captureMap",
+	"cellBarcodeValidError",
+	"cellBarcodeValidWarn",
+	"contendingGroups",
+	"countFloor",
+	"datasetRef",
+	"distributionMinCells",
+	"gateThreshold",
+	"grouping",
+	"minAgreement",
+	"minVotingCells",
+	"panelReferenceMinMembers",
+	"readsPerCellWarn",
+	"referenceSource",
+	"referenceValues",
+	"roleColumn",
+	"undeclaredBarcodeError",
+	"undeclaredBarcodeWarn",
+	"usableReadError",
+	"usableReadWarn"
+]
+
+// Defaults mirroring the CLI's own (verdict.py DEFAULT_FLOOR, BOUND_CUTOFF, combine.py DEFAULT_MIN_VOTERS,
+// DEFAULT_PANEL_MIN_MEMBERS). Restated rather than left to
+// argparse, so the value that produced a run is always on the command line, where the run record and a
+// re-run both see it. A parameter carried only as a CLI default drifts the moment one side changes.
+DEFAULT_COUNT_FLOOR := 4
+DEFAULT_BOUND_CUTOFF := 75
+DEFAULT_MIN_VOTING_CELLS := 1
+DEFAULT_PANEL_MIN_MEMBERS := 25
+DEFAULT_DISTRIBUTION_MIN_CELLS := 300
+
+// The four inherited lines (qc_measures.py DEFAULT_LINES), restated here for the same reason as the
+// defaults above: the value that scored a run belongs on its own command line.
+DEFAULT_CELL_BARCODE_VALID_WARN := 0.75
+DEFAULT_CELL_BARCODE_VALID_ERROR := 0.50
+DEFAULT_READS_PER_CELL_WARN := 5000
+DEFAULT_AGGREGATE_BARCODE_WARN := 0.05
+DEFAULT_AGGREGATE_BARCODE_ERROR := 1.0
+DEFAULT_UNDECLARED_BARCODE_WARN := 0.5
+DEFAULT_UNDECLARED_BARCODE_ERROR := 1.0
+DEFAULT_USABLE_READ_WARN := 0.20
+DEFAULT_USABLE_READ_ERROR := 0.0
+
+_num := func(value, fallback) {
+	return is_undefined(value) ? fallback : value
+}
+
+// An integer flag. int() first, because a model that sends 4.0 would otherwise reach argparse as "4.0",
+// which `type=int` rejects: a whole-run failure from a value that was correct.
+_intArg := func(value) {
+	return string(int(value))
+}
+
+// build: the full argument vector, positionals first.
+//
+// `params` is the block's args map plus `hasLinker` and `hasQcSummary`, which say whether the caller staged
+// those two files. A flag naming a file the exec did not receive is a hard failure, so each is emitted only
+// with its file.
+build := func(params) {
+	args := [FILE_COUNTS, FILE_PANEL]
+
+	add := func(flag, value) {
+		args = append(args, flag)
+		args = append(args, value)
+	}
+
+	if !is_undefined(params.hasLinker) && params.hasLinker {
+		add("--linker", FILE_LINKER)
+	}
+	if !is_undefined(params.hasQcSummary) && params.hasQcSummary {
+		add("--qc-summary", FILE_QC_SUMMARY)
+	}
+	if !is_undefined(params.hasRawFeatureCounts) && params.hasRawFeatureCounts {
+		add("--raw-feature-counts", FILE_RAW_FEATURE_COUNTS)
+	}
+
+	// The panel-file column roles. Passed even when empty: an empty --sample-col declares one panel for every
+	// sample, and an empty --role-column declares no comparator designation. Both are readings rather than
+	// omissions.
+	add("--barcode-col", params.barcodeSeqColumn)
+	add("--feature-col", params.featureNameColumn)
+	add("--sample-col", is_undefined(params.sampleColumn) ? "" : params.sampleColumn)
+	add("--role-column", is_undefined(params.roleColumn) ? "" : params.roleColumn)
+
+	// Comma-separated, because that is what the CLI splits on. The args lambda has already de-duplicated and
+	// sorted the list, so the string is canonical and two equivalent selections produce one cache key.
+	referenceValues := ""
+	if !is_undefined(params.referenceValues) {
+		for i, value in params.referenceValues {
+			referenceValues = i == 0 ? value : referenceValues + "," + value
+		}
+	}
+	add("--reference-values", referenceValues)
+
+	// Which baseline was asked for, and the only one the run can be answered under: a rung that cannot serve
+	// refuses rather than falling to another, so nothing substitutes for this. What the run established is
+	// read back from the run record, which also says where no baseline could be.
+	if !is_undefined(params.referenceSource) && params.referenceSource != "" {
+		add("--reference-source", params.referenceSource)
+	}
+
+	add("--panel-min-members", _intArg(_num(params.panelReferenceMinMembers, DEFAULT_PANEL_MIN_MEMBERS)))
+	// Both conditions on the tag-distribution rung. Passed on every run, not only where that rung was asked
+	// for, so the run record states the numbers the reading would have used and two runs answered by
+	// different rungs still compare their configurations.
+	add("--distribution-min-cells", _intArg(_num(params.distributionMinCells, DEFAULT_DISTRIBUTION_MIN_CELLS)))
+	add("--floor", _intArg(_num(params.countFloor, DEFAULT_COUNT_FLOOR)))
+	add("--cutoff", string(_num(params.boundCutoff, DEFAULT_BOUND_CUTOFF)))
+	add("--min-voters", _intArg(_num(params.minVotingCells, DEFAULT_MIN_VOTING_CELLS)))
+
+	// A switch, and it carries its value rather than standing alone. The vector is flag/value pairs: `valueOf`
+	// reads the next element, and the parity assertion at the end catches a dropped value. A bare flag would
+	// make every later value read as the wrong one's.
+	//
+	// Present only when on. Off by default: the minimum removes what is not evidence of binding, and the
+	// comparator is not evidence of binding. Turning it on changes no verdict, because every rung reads its
+	// own source raw. It changes only what the run reports as removed and emptied.
+
+	// Off by default, and off means absent rather than zero. A floor of 0 passes every majority instead of
+	// skipping the check, and the two are different claims about the reading.
+	if !is_undefined(params.minAgreement) {
+		add("--min-agreement", string(params.minAgreement))
+	}
+	// The admissibility gate. Absent and zero both mean off, and zero would set aside every cell.
+	if !is_undefined(params.gateThreshold) && params.gateThreshold > 0 {
+		add("--gate-threshold", _intArg(params.gateThreshold))
+	}
+
+	// The three JSON-valued flags are encoded key-sorted, never with the plain encoder. Tengo maps have no
+	// iteration order, so the plain encoder can emit one rule as two different strings on two renders. That
+	// changes the exec's argument list, and with it the cache key, for a run identical in every way that
+	// matters.
+	//
+	// A rule over declared properties, not a tag map. Absent means one identity per tag, the CLI's own
+	// default, so the flag is omitted rather than carrying a hand-built {"by":"tag"}.
+	if !is_undefined(params.grouping) {
+		add("--grouping", canonical.encode(params.grouping))
+	}
+	// Groups of identities declared to contend for one binding site. The args lambda drops any group of fewer
+	// than two members and sorts the rest, so an empty list here means nothing contends.
+	if !is_undefined(params.contendingGroups) && len(params.contendingGroups) > 0 {
+		add("--contending", canonical.encode(params.contendingGroups))
+	}
+	// No capture assignment reaches the block yet, so this is normally absent and every capture rolls up as
+	// no status and no value. Threaded already, so supplying the map is a model change alone.
+	if !is_undefined(params.captureMap) {
+		add("--capture-map", canonical.encode(params.captureMap))
+	}
+	// The panel file names samples the way the scientist does. Everything else here is keyed by sampleId.
+	// Without this map the two namespaces never meet, nothing is offered to any sample that exists, and every
+	// verdict comes back *never asked* -- a correct answer to a question nobody asked, which is why it raises
+	// nothing. Passed only where the block has a sample column to key the panel by.
+	if !is_undefined(params.sampleLabels) {
+		add("--sample-labels", canonical.encode(params.sampleLabels))
+	}
+
+	// The four inherited lines. Passed on every run, not only where an operator moved one, so the run
+	// record states the number a status was read against.
+	add("--cell-barcode-valid-warn", string(_num(params.cellBarcodeValidWarn, DEFAULT_CELL_BARCODE_VALID_WARN)))
+	add("--cell-barcode-valid-error", string(_num(params.cellBarcodeValidError, DEFAULT_CELL_BARCODE_VALID_ERROR)))
+	add("--reads-per-cell-warn", string(_num(params.readsPerCellWarn, DEFAULT_READS_PER_CELL_WARN)))
+	add("--aggregate-barcode-warn", string(_num(params.aggregateBarcodeWarn, DEFAULT_AGGREGATE_BARCODE_WARN)))
+	add("--aggregate-barcode-error", string(_num(params.aggregateBarcodeError, DEFAULT_AGGREGATE_BARCODE_ERROR)))
+	add("--undeclared-barcode-warn", string(_num(params.undeclaredBarcodeWarn, DEFAULT_UNDECLARED_BARCODE_WARN)))
+	add("--undeclared-barcode-error", string(_num(params.undeclaredBarcodeError, DEFAULT_UNDECLARED_BARCODE_ERROR)))
+	add("--usable-read-warn", string(_num(params.usableReadWarn, DEFAULT_USABLE_READ_WARN)))
+	add("--usable-read-error", string(_num(params.usableReadError, DEFAULT_USABLE_READ_ERROR)))
+
+	add("--output-prefix", OUTPUT_PREFIX)
+
+	ll.assert(len(args) % 2 == 0, "verdict-args: every flag must carry a value")
+	return args
+}
+
+// has: whether the built vector contains a flag. Used by the threading test.
+has := func(args, flag) {
+	for a in args {
+		if a == flag {
+			return true
+		}
+	}
+	return false
+}
+
+// valueOf: the value following a flag, or undefined. Used by the threading test to check that a flag
+// carries what the caller asked for rather than only appearing.
+valueOf := func(args, flag) {
+	for i, a in args {
+		if a == flag && i + 1 < len(args) {
+			return args[i + 1]
+		}
+	}
+	return undefined
+}
+
+export {
+	FILE_COUNTS: FILE_COUNTS,
+	FILE_PANEL: FILE_PANEL,
+	FILE_LINKER: FILE_LINKER,
+	FILE_QC_SUMMARY: FILE_QC_SUMMARY,
+	FILE_RAW_FEATURE_COUNTS: FILE_RAW_FEATURE_COUNTS,
+	OUTPUT_PREFIX: OUTPUT_PREFIX,
+	PARAMETER_NAMES: PARAMETER_NAMES,
+	build: build,
+	has: has,
+	valueOf: valueOf
+}

@@ -1,6 +1,6 @@
 """BEAM-exact fixture: a small multiomic run whose SHAPE matches real-world BEAM antibody-barcode
-libraries, so the full Feature Barcode Profiling -> VDJ Multiomic Integration -> Lead Selection chain can
-be exercised FAST on a local backend instead of multi-GB reference FASTQs.
+libraries, so the full Feature Barcode Profiling -> VDJ Multiomic Integration -> Lead Selection chain
+can be exercised FAST on a local backend instead of multi-GB reference FASTQs.
 
 Two things distinguish this from the generic `realistic`/`multisample` presets, both modelled on
 production BEAM libraries:
@@ -8,17 +8,18 @@ production BEAM libraries:
   1. R2 read geometry has a 10 bp OFFSET before the feature barcode:
          R1 = CELL(16) + UMI(10)
          R2 = OFFSET(10) + FEATURE(15) + tail        (real pattern: ^N{10}(FEATURE:N{15})(R2:*))
-     The generic generators put the feature at R2 position 0; the real BEAM libraries carry a 10 bp
-     lead-in, which is why the block runs with the `generic-fb-umi` preset, not `tenx-beam`.
+     The generic generators put the feature at R2 position 0. The real BEAM libraries carry a 10 bp
+     lead-in, which is why the block runs with the `generic-fb-umi` preset and not `tenx-beam`.
 
   2. A genuinely SAMPLE-AWARE panel CSV (Sample,Sequence,Protein): each sample has its own antigen
      panel, and a couple of barcode SEQUENCES are REUSED across samples mapped to DIFFERENT proteins.
-     That mirrors real multi-sample BEAM panels: the same 15-mer means one antigen in one sample's panel
-     and a different one in another's. Without the Sample column the tag CSV then has one barcode on two rows with
-     different proteins, which trips Feature Barcode Profiling's duplicate-barcode guard; WITH the Sample
-     column the workflow filters the CSV per sample and each barcode is unique again.
+     That mirrors real multi-sample BEAM panels, where the same 15-mer means one antigen in one
+     sample's panel and a different one in another's. Without the Sample column the tag CSV then has
+     one barcode on two rows with different proteins, which trips Feature Barcode Profiling's
+     duplicate-barcode guard. WITH the Sample column the workflow filters the CSV per sample and each
+     barcode is unique again.
 
-Colocated with a coherent AIRR single-cell VDJ arm (reusing lib.vdj) so clonotypes bind their sample's
+Colocated with a coherent AIRR single-cell VDJ arm, reusing lib.vdj, so clonotypes bind their sample's
 antigens and the convergence [sampleId, cellId] join lines up. Deterministic, standard-library only.
 """
 
@@ -106,12 +107,12 @@ def build(
     """Generate the BEAM-exact run under run_dir: antigen FASTQs (offset-10 R2), a sample-aware tag CSV,
     the coherent AIRR VDJ arm, and truth tables.
 
-    The tag CSV also carries the real customer panel's Type/Species columns: the control -> Decoy; the
-    first `offtarget_count` antigens of each sample's panel -> Off-Target; the rest -> Target; species
-    alternate Human/Cyno.
+    The tag CSV also carries the Type/Species columns a real panel declares. The control becomes Decoy.
+    The first `offtarget_count` antigens of each sample's panel become Off-Target, and the rest become
+    Target. Species alternate Human/Cyno.
 
     With `multibarcode=True` the first non-control antigen of each sample gets a 2nd barcode under
-    combine="all" (AND) and the second a 2nd barcode under combine="sum"; the tag CSV gains a `combine`
+    combine="all" (AND) and the second a 2nd barcode under combine="sum". The tag CSV gains a `combine`
     column and emits one row per member barcode. The extra barcodes are drawn ONLY in this branch, so a
     default beam run is byte-identical to before."""
     rng = new_rng(BEAM_SEED)
@@ -206,7 +207,7 @@ def build(
                             reads.append([f"{sample}_read{read_no}", cell + umi, r2, 1])
                 else:
                     # Multi-barcode antigen (only in a --multibarcode run): combine="all" fires EVERY
-                    # member at ~k (AND); combine="sum" splits k across the members. Same UMI/dup shape.
+                    # member at ~k (AND). Combine="sum" splits k across the members. Same UMI/dup shape.
                     if combine.get(feat, "sum") == "all":
                         shares = [k] * len(member_bcs)
                     else:
@@ -234,7 +235,7 @@ def build(
     tags_csv = os.path.join(run_dir, "tags.csv")
     with open(tags_csv, "w", newline="") as f:
         w = csv.writer(f)
-        # Type/Species mirror the real customer panel; Class is intentionally omitted here (beam-exact
+        # Type/Species mirror a real panel; Class is intentionally omitted here (beam-exact
         # antigens are all synthetic -> uniform class), so the full-run tags.csv is the Class exemplar.
         # --multibarcode inserts a `combine` column after Protein (one row per member barcode).
         if multibarcode:
@@ -251,7 +252,7 @@ def build(
         w.writerow(["sample", "cellId", "planted_consensus"])
         w.writerows(consensus_rows)
 
-    # vdj.build needs a `feature`-column CSV for load_clear_antigens; write a plain flat view for it.
+    # vdj.build needs a `feature`-column CSV for load_clear_antigens. Write a plain flat view for it.
     vdj_tags = os.path.join(run_dir, "_vdj_tags.csv")
     with open(vdj_tags, "w", newline="") as f:
         w = csv.writer(f)

@@ -1,8 +1,9 @@
 """Behavioral tests for parse_gate.py (Feature Integration software).
 
 The gate reads mitool's parse report and decides whether the per-sample mitool chain should continue
-(>=1 read matched) or be skipped (0 matched → mitool wrote no parsed.mic), and synthesizes the empty
-fallbacks the no-match branch feeds downstream. Stdlib only; run via the CLI like the other slow tests.
+(>=1 read matched) or be skipped (0 matched, so mitool wrote no parsed.mic). It also synthesizes the
+empty fallbacks the no-match branch feeds downstream. Stdlib only, and run via the CLI like the other
+slow tests.
 """
 
 import json

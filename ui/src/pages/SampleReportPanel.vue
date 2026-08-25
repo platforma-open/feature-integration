@@ -1,49 +1,42 @@
 <script setup lang="ts">
 import type { SimpleOption } from "@platforma-sdk/ui-vue";
-import { PlBtnGroup, PlLogView } from "@platforma-sdk/ui-vue";
+import { PlBtnGroup } from "@platforma-sdk/ui-vue";
 import { computed, ref } from "vue";
-import { useApp } from "../app";
+import { sampleResults } from "../results";
+import SampleReportPanelLogs from "./SampleReportPanelLogs.vue";
+import SampleReportPanelQc from "./SampleReportPanelQc.vue";
+import SampleReportPanelVisualReport from "./SampleReportPanelVisualReport.vue";
 
-// Per-sample report: the live per-step logs across the whole pipeline (parse / refine / tag-stat +
-// the Python per-cell-metrics step). Opened from the Main grid on row double-click. Mirrors
-// blocks/peptide-extraction's SampleReportPanel (Logs tab).
+// Per-sample report, opened from the Main grid on row double-click. Mirrors blocks/mixcr-clonotyping's
+// SampleReportPanel: this file is the host that picks what the reader is looking at, and each view lives in
+// its own child component.
 const sampleId = defineModel<string | undefined>();
 
-const app = useApp();
-
-// Log step selector. Refine / tag-stat only run when reads matched the pattern, so a no-match sample
-// carries only its 1-parse log (fb-refine-tagstat emits a variable key set); those steps then show
-// "No log available". Order matches the pipeline. 4-metrics (the Python per-cell-metrics step) comes
-// from a separate [sampleId]-keyed model output (metricsLog) — see logHandle.
-type StepId = "1-parse" | "2-refine" | "3-tagstat" | "4-metrics";
-const stepOptions: SimpleOption<StepId>[] = [
-  { value: "1-parse", text: "Parse" },
-  { value: "2-refine", text: "Refine tags" },
-  { value: "3-tagstat", text: "Count UMIs" },
-  { value: "4-metrics", text: "Per-cell metrics" },
-];
-const currentStep = ref<StepId>("1-parse");
-
-const logHandle = computed(() => {
+// The panel reads the same per-sample view model the grid renders, rather than going back to the raw model
+// outputs. That is what keeps the panel's numbers and the grid's Quality and Read recovery columns from being
+// two independent derivations of one QC row.
+const sampleData = computed(() => {
   if (sampleId.value === undefined) return undefined;
-  // The Python metrics step is surfaced flat (metricsLog, keyed [sampleId]); the three mitool steps
-  // live in the [sampleId, step] stepLogs map.
-  if (currentStep.value === "4-metrics") {
-    return app.model.outputs.metricsLog?.data.find((p) => String(p.key[0]) === sampleId.value)
-      ?.value;
-  }
-  const logs = app.model.outputs.stepLogs;
-  if (!logs) return undefined;
-  return logs.data.find(
-    (p) => String(p.key[0]) === sampleId.value && p.key[1] === currentStep.value,
-  )?.value;
+  return sampleResults.value?.find((result) => result.sampleId === sampleId.value);
 });
+
+// Visual Report is the default tab, as in mixcr-clonotyping. Opening a finished sample should land on what
+// happened to its reads, not on a log the reader has no reason to open once the sample is green.
+type TabId = "visualReport" | "qc" | "logs";
+const currentTab = ref<TabId>("visualReport");
+const tabOptions: SimpleOption<TabId>[] = [
+  { value: "visualReport", text: "Visual Report" },
+  { value: "qc", text: "Quality Checks" },
+  { value: "logs", text: "Log" },
+];
 </script>
 
+<!-- One v-if / v-else-if chain over the tabs, and nothing else gating it. Each tab owns its own
+     not-yet-available state: the two report tabs need QC that only settles when the sample finishes, while
+     the Log tab needs nothing but the sample id, so a running sample must still reach it. -->
 <template>
-  <PlBtnGroup v-model="currentStep" :options="stepOptions" />
-  <PlLogView v-if="logHandle" :log-handle="logHandle" />
-  <div v-else style="padding: 24px; color: var(--color-txt-03); font-size: 14px">
-    No log available for this step yet.
-  </div>
+  <PlBtnGroup v-model="currentTab" :options="tabOptions" />
+  <SampleReportPanelVisualReport v-if="currentTab === 'visualReport'" :sample-data="sampleData" />
+  <SampleReportPanelQc v-else-if="currentTab === 'qc'" :sample-data="sampleData" />
+  <SampleReportPanelLogs v-else-if="currentTab === 'logs'" :sample-id="sampleId" />
 </template>

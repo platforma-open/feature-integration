@@ -1,9 +1,9 @@
 import type { Preset } from "../types";
 
 // User-configurable single-cell feature-barcode kit. Covers non-BEAM-Core reagents on the same 5'
-// chemistry — e.g. TotalSeq-C / next-gen antigen barcoding, whose 15 nt barcode sits behind a 10 nt
-// lead on Read 2 (set the Read 2 offset to 10). "Feature barcode", not "amplicon": these are single-cell
-// tag reads, not targeted-insert amplicons.
+// chemistry, such as TotalSeq-C and next-gen antigen barcoding, whose 15 nt barcode sits behind a 10 nt
+// lead on Read 2. Set the Read 2 offset to 10 for those. "Feature barcode", not "amplicon": these are
+// single-cell tag reads, not targeted-insert amplicons.
 const preset: Preset = {
   id: "generic-fb-umi",
   vendor: "",

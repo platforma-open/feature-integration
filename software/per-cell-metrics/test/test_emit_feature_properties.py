@@ -57,7 +57,7 @@ def test_no_extra_columns_yields_empty_meta(tmp_path):
 
 
 def test_many_barcodes_one_feature_deduped(tmp_path):
-    # A feature reached by several barcodes appears once; its (consistent) property is carried through.
+    # A feature reached by several barcodes appears once. Its (consistent) property is carried through.
     meta, rows = _run(tmp_path, "tag,feature,species\nAAAA,AGX,human\nTTTT,AGX,human\nCCCC,BGX,cyno\n")
     assert meta["columns"] == ["species"]
     assert rows[1:] == [["AGX", "human"], ["BGX", "cyno"]]
@@ -76,7 +76,7 @@ def test_sample_column_excluded(tmp_path):
 
 
 def test_custom_role_column_names(tmp_path):
-    # Roles are configurable: whichever columns the user maps are excluded; the rest pass through.
+    # Roles are configurable: whichever columns the user maps are excluded. The rest pass through.
     meta, _ = _run(
         tmp_path,
         "barcode,antigen,pool\nAAAA,AgX,p1\nCCCC,AgY,p2\n",
@@ -102,6 +102,60 @@ def test_missing_role_column_errors(tmp_path):
         [sys.executable, str(SRC), str(csv_path), "--csv-feature-col", "nope", "--output-prefix", str(tmp_path / "r")]
     )
     assert r.returncode != 0
+
+
+def _control_rows(tmp_path):
+    with open(tmp_path / "r_negative_control.csv", newline="") as fh:
+        return list(csv.reader(fh))
+
+
+def test_control_feature_marker_emitted(tmp_path):
+    # --control-feature marks that feature "true" in the dedicated negative-control marker CSV, so the
+    # workflow surfaces it on the feature axis for VDJ Multiomic Integration to exclude from its metrics.
+    _run(tmp_path, "tag,feature\nAAAA,AGX\nGGGG,CTRL\n", "--control-feature", "CTRL")
+    assert _control_rows(tmp_path) == [["feature", "value"], ["CTRL", "true"]]
+
+
+def test_no_control_feature_marker_header_only(tmp_path):
+    # No control designated -> marker CSV is header-only (no feature marked as the control).
+    _run(tmp_path, "tag,feature\nAAAA,AGX\nGGGG,BGX\n")
+    assert _control_rows(tmp_path) == [["feature", "value"]]
+
+
+def test_several_controls_are_all_marked(tmp_path):
+    # A panel may carry several controls: being a control is a property of the tag, where supplying the
+    # baseline is a job given to exactly one of them. This file marks controls and nominates nothing, so
+    # every one given is marked. Repeated flags, in the order given.
+    _run(
+        tmp_path,
+        "tag,feature\nAAAA,AGX\nGGGG,CTRL1\nCCCC,CTRL2\n",
+        "--control-feature",
+        "CTRL2",
+        "--control-feature",
+        "CTRL1",
+    )
+    assert _control_rows(tmp_path) == [["feature", "value"], ["CTRL2", "true"], ["CTRL1", "true"]]
+
+
+def test_a_control_name_may_contain_a_comma(tmp_path):
+    # Repeated flags rather than one comma-joined value, so a feature name carrying a comma survives. A
+    # comma-joined encoding would split this name into two features that do not exist.
+    _run(tmp_path, 'tag,feature\nAAAA,AGX\nGGGG,"CTRL, batch 2"\n', "--control-feature", "CTRL, batch 2")
+    assert _control_rows(tmp_path) == [["feature", "value"], ["CTRL, batch 2", "true"]]
+
+
+def test_a_repeated_control_is_marked_once(tmp_path):
+    # The marker is a set. A duplicate would emit two rows for one feature, and the import would then carry
+    # the same feature twice on an axis that keys on it.
+    _run(
+        tmp_path,
+        "tag,feature\nAAAA,AGX\nGGGG,CTRL\n",
+        "--control-feature",
+        "CTRL",
+        "--control-feature",
+        "CTRL",
+    )
+    assert _control_rows(tmp_path) == [["feature", "value"], ["CTRL", "true"]]
 
 
 def _rows(text):

@@ -1,0 +1,53 @@
+// Run-wide pre-refine FEATURE counts, gathered from the per-sample raw tag-stat tables.
+//
+// emit_verdicts.py reads the undeclared-barcode share per sample against that sample's own
+// declared tag set, so every sample's pre-refine counts have to reach it in one file with
+// sampleId attached. The per-sample execs are handed a constant sample id, so the tables
+// cannot say which sample they came from -- injected here from the resource-map key, the same
+// way gather-counts.tpl.tengo does for the distinct-UMI counts.
+//
+// Rendered as a separate template because the resource map must be awaited before its
+// per-sample keys can be iterated, which main's body cannot do.
+//
+// The keys are taken through maps.getKeys, which returns them sorted, for the same reason
+// gather-counts.tpl.tengo takes them that way: a bare `for k, v in` over a map has no defined
+// order in Tengo, so the concatenated file's resource handle would vary run to run and every
+// node downstream of it would silently lose deduplication.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+
+json := import("json")
+
+self.defineOutputs("rawCountsFile")
+
+self.body(func(inputs) {
+	rawFeatureData := inputs.rawFeatureData // ResourceMap: [sampleId] -> per-sample raw FEATURE tag-stat TSV
+
+	inputsMap := rawFeatureData.inputs()
+	ll.assert(len(inputsMap) > 0, "no per-sample raw feature-count tables to gather")
+
+	// Small relative to the distinct-UMI gather: one entry per distinct observed barcode rather
+	// than per (cell, barcode), so the same 16 GiB floor is generous here rather than tight.
+	wf := pt.workflow().cpu(2).mem("16GiB")
+
+	dfs := []
+	for key in maps.getKeys(inputsMap) {
+		sampleId := json.decode(key)[0]
+		df := wf.frame(inputsMap[key], { xsvType: "tsv", inferSchema: false })
+		dfs = append(dfs, df.select([
+			pt.lit(sampleId).alias("sampleId"),
+			pt.col("FEATURE"),
+			pt.col("totalWeight")
+		]...))
+	}
+
+	combined := len(dfs) > 1 ? pt.concat(dfs) : dfs[0]
+	combined.save("raw_feature_counts.csv", { xsvType: "csv" })
+
+	return {
+		rawCountsFile: wf.run().getFile("raw_feature_counts.csv")
+	}
+})

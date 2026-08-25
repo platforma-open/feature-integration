@@ -1,7 +1,7 @@
 """Shared fixtures for the Feature Integration software tests.
 
-A conftest.py at the software root is auto-applied to every test below it (fixtures are consumed by
-name, never via ``import conftest``). The committed test bed lives at
+A conftest.py at the software root is auto-applied to every test below it, and fixtures are consumed by
+name rather than via ``import conftest``. The committed test bed lives at
 software/test-data/fixtures/per-cell-metrics/: a small mitool tag-stat TSV plus a tag->feature CSV.
 """
 

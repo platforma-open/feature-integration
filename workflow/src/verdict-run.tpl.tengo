@@ -1,0 +1,147 @@
+// The verdict exec, and nothing else.
+//
+// Split from the import (verdict-import.tpl.tengo) because the software decides which comparator SERVED the
+// run, not the request: reference_by_cell degrades a declared choice to none where the panel carries no
+// reference tag, and a panel choice to none below the minimum membership. That choice belongs in the emitted
+// columns' domain, so the specs have to be built from the run record, and reading a value an exec has not
+// yet produced needs a template boundary.
+//
+// Ephemeral rather than pure because it resolves a PColumnBundle, whose data this template awaits. That wait
+// happens HERE and not in main's prepare: prepare's bundle is awaited in full, spec and data, before the
+// body runs, so a linker there would hold the entire per-sample mitool fan-out behind the whole clonotyping
+// chain -- two chains that run concurrently, serialized, with nothing surfacing it until a real dataset.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+exec := import("@platforma-sdk/workflow-tengo:exec")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+pframes := import("@platforma-sdk/workflow-tengo:pframes")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+va := import(":verdict-args")
+verdictLinker := import(":verdict-linker")
+
+verdictsSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:emit-verdicts")
+
+// Every table emit_verdicts.py writes, paired with the output field it is returned on. One list, used as
+// the saveFile set and as the returned keys, so a table cannot be saved and then quietly dropped, or named
+// one thing here and another in the import.
+RESULT_TABLES := [
+	{ out: "verdicts", file: "result_verdicts.csv" },
+	{ out: "setCounts", file: "result_set_counts.csv" },
+	{ out: "identitySummary", file: "result_identity_summary.csv" },
+	{ out: "identityPunch", file: "result_identity_punch.csv" },
+	{ out: "cellPunch", file: "result_cell_punch.csv" },
+	{ out: "cellCounts", file: "result_cell_counts.csv" },
+	{ out: "cellScalars", file: "result_cell_scalars.csv" },
+	{ out: "offered", file: "result_offered.csv" },
+	{ out: "tagIdentity", file: "result_tag_identity.csv" },
+	{ out: "identityLabels", file: "result_identity_labels.csv" },
+	{ out: "identityProperties", file: "result_identity_properties.csv" },
+	{ out: "panelLabels", file: "result_panel_labels.csv" },
+	{ out: "samplePanel", file: "result_sample_panel.csv" },
+	{ out: "panelMismatch", file: "result_panel_mismatch.csv" },
+	{ out: "undeclaredBarcodes", file: "result_undeclared_barcodes.csv" },
+	{ out: "qc", file: "result_qc.csv" },
+	{ out: "qcSummary", file: "result_qc_summary.csv" },
+	{ out: "qcDeciles", file: "result_qc_deciles.csv" },
+	{ out: "qcSampleDeciles", file: "result_qc_sample_deciles.csv" },
+	{ out: "qcBackgrounds", file: "result_qc_backgrounds.csv" },
+	{ out: "reagents", file: "result_reagents.csv" }
+]
+
+self.awaitState("columns", "PColumnBundle")
+
+self.body(func(inputs) {
+	columns := inputs.columns
+
+	// The anchor is the single-cell V(D)J dataset, with axes [sampleId, scClonotypeKey]. Its clonotype axis
+	// identifies the linker belonging to the receptor the user chose.
+	anchorSpec := columns.getSpec(inputs.datasetRef)
+	ll.assert(len(anchorSpec.axesSpec) == 2,
+		"Antigen binding: the selected dataset is keyed on %d axes, not the expected [sampleId, scClonotypeKey].",
+		len(anchorSpec.axesSpec))
+
+	linkerCol := verdictLinker.pick(columns.getColumns("linker"), anchorSpec.axesSpec[1])
+	linkerAxes := linkerCol.spec.axesSpec
+
+	mismatch := verdictLinker.sampleAxisMismatch(linkerCol.spec, inputs.sampleAxisSpec)
+	if mismatch != "" {
+		ll.panic("%v", mismatch)
+	}
+
+	// The linker as flat rows: (sampleId, cellId, setId). Headers are bound to axes by NAME and never by
+	// position, so a linker whose axes were declared in another order still exports correctly. The software
+	// ignores the value column: the axis tuple is the whole content.
+	linkerCsv := pframes.csvFileBuilder()
+	linkerCsv.add({ spec: verdictLinker.plainSpec(linkerCol.spec), data: linkerCol.data }, { header: "linker" })
+	linkerCsv.setAxisHeader(linkerAxes[0].name, "sampleId")
+	linkerCsv.setAxisHeader(linkerAxes[1].name, "cellId")
+	linkerCsv.setAxisHeader(linkerAxes[2].name, "setId")
+	linkerCsv.cpu(1)
+	// Flat, and it scales with the total cell count of the run: every cell of every sample appears once. The
+	// csv builder's `mem` takes a plain amount rather than one of the sizing formulas the exec below uses, so
+	// this cannot track its input. Raised to the exec's own 16 GiB floor rather than left at 8. Not observed
+	// failing, and stated so a future OOM here is recognised rather than re-diagnosed.
+	linkerCsv.mem("16GiB")
+	linkerCsvFile := linkerCsv.build()
+
+	// The reading holds one entry per analysed cell and one per (cell, tag) count, so it scales with the
+	// gathered counts table rather than with any one sample. The same sizing shape the per-cell metrics step
+	// uses, on the same floor.
+	formula := exec.formula
+	memFormula := formula.gib(16).
+		plus(formula.size("counts").times(8)).
+		between(formula.gib(16), formula.gib(256)).
+		staticFallback(formula.gib(16))
+
+	params := maps.merge(inputs.params, {
+		hasLinker: true,
+		hasQcSummary: !is_undefined(inputs.qcSummaryFile),
+		hasRawFeatureCounts: !is_undefined(inputs.rawFeatureCountsFile)
+	})
+
+	b := exec.builder().
+		software(verdictsSw).
+		resources({ onCPU: { cpu: 4, ram: memFormula } }).
+		// polars sizes its thread pool to every host core by default. Cap it to the granted CPU.
+		envWithVar("POLARS_MAX_THREADS", "{system.cpu}").
+		addFile(va.FILE_COUNTS, inputs.countsFile, { tag: "counts" }).
+		addFile(va.FILE_PANEL, inputs.panelFile).
+		addFile(va.FILE_LINKER, linkerCsvFile)
+
+	// The per-sample read QC. Without it readsTotal, panelAssignedFraction and readsPerCell have no source and
+	// carry no status and no value, silently, because that is a legitimate state rather than an error.
+	// readsPerCell is the only sequencing-depth alert the block ships.
+	if params.hasQcSummary {
+		b = b.addFile(va.FILE_QC_SUMMARY, inputs.qcSummaryFile)
+	}
+	// The pre-refine pass: without it the undeclared-barcode table stays the ordinary empty
+	// case rather than raising, because a run wired without this file has not checked for an
+	// undeclared barcode, which is a different fact from having checked and found none.
+	if params.hasRawFeatureCounts {
+		b = b.addFile(va.FILE_RAW_FEATURE_COUNTS, inputs.rawFeatureCountsFile)
+	}
+
+	for a in va.build(params) {
+		b = b.arg(a)
+	}
+	for table in RESULT_TABLES {
+		b = b.saveFile(table.file)
+	}
+	run := b.saveFileContent("result_run_meta.json").saveFileContent("result_qc_by_sample.json").run()
+
+	// The run record and the per-sample quality report travel as content because the model reads each as a
+	// VALUE. The tables travel as files because the import template hands them to xsv.importFile. An exec
+	// result object is not serializable as a template output, so each table is returned on its own field.
+	result := {
+		runMeta: run.getFileContent("result_run_meta.json"),
+		// The sample-level measurements keyed by sample, for the sample detail view's Quality Checks tab.
+		// That view holds one sample at a time and resolves it synchronously. result_qc.csv carries the
+		// same measurements for every other reader.
+		qcBySample: run.getFileContent("result_qc_by_sample.json")
+	}
+	for table in RESULT_TABLES {
+		result[table.out] = run.getFile(table.file)
+	}
+	return result
+})

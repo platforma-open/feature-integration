@@ -1,0 +1,281 @@
+// The verdict import: every table emit_verdicts.py wrote, turned into p-columns.
+//
+// Separate from the exec (verdict-run.tpl.tengo) because the run record has to be read as a VALUE before
+// any of these specs can be built. The software resolves `referenceChoice` and `cellListSource`: a declared
+// comparator degrades to none where the panel carries no reference tag, and a panel comparator degrades
+// below the minimum membership. Both sit in the emitted columns' DOMAIN, because a verdict read against a
+// declared reference is not the same reading as one read against the panel's own signal. As an annotation
+// the choice would be excluded from column identity, and two incomparable runs would emit columns of
+// identical identity and be unioned in a pool holding both. Specs built inside the exec's own template
+// would record the choice that was REQUESTED.
+//
+// Ephemeral: it awaits the bundle, for the clonotype axis taken verbatim from the linker, and the run
+// record. It receives the bundle UNRESOLVED from main.tpl.tengo, because a resolved bundle is a map with
+// methods, which cannot be serialized as a template input.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
+pframes := import("@platforma-sdk/workflow-tengo:pframes")
+pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+columnSpecs := import(":column-specs")
+verdictLinker := import(":verdict-linker")
+
+json := import("json")
+
+// Returns five frames: antigenVerdicts (exported), and punchcard, cellReference, qcTable and
+// panelMismatchTable (this block's own). cellReference holds one row per cell, carrying the reference
+// reading and the gate outcome, and deliberately not the per-cell per-tag counts. defineOutputs is
+// deliberately absent: an ephemeral template takes its output names from what the body returns and never
+// checks a declared list, so declaring one would be inert.
+self.awaitState("columns", "PColumnBundle")
+self.awaitState("runMeta", "ResourceReady")
+
+self.body(func(inputs) {
+	blockId := inputs.blockId
+	sampleAxis := inputs.sampleAxisSpec
+
+	// What actually served, read from the run record rather than from the block's arguments.
+	served := json.decode(string(inputs.runMeta.getData()))
+
+	// The clonotype axis is taken VERBATIM from the linker and never rebuilt. An axis assembled here would be
+	// a lookalike carrying a different identity, and would join to nothing.
+	columns := inputs.columns
+	anchorSpec := columns.getSpec(inputs.datasetRef)
+	linkerCol := verdictLinker.pick(columns.getColumns("linker"), anchorSpec.axesSpec[1])
+	setAxis := linkerCol.spec.axesSpec[2]
+
+	cellAxis := columnSpecs.cellAxis(sampleAxis.name)
+	identityAxis := columnSpecs.identityAxis(blockId, served.groupingId)
+	tagAxis := columnSpecs.tagAxis(blockId)
+	panelAxis := columnSpecs.panelAxis(blockId)
+
+	// Seeded from the FASTQ dataset spec, because these columns' subject is the antigen readout that dataset
+	// produced. Seeding from the linker would label them after the clonotyping run instead. The clonotyping
+	// root is already recorded where it belongs: pl7.app/vdj/scClonotypeKey carries its clonotyping run id in
+	// its own domain. makeTrace is variadic, and the linker is deliberately not one of its steps.
+	trace := pSpec.makeTrace(inputs.traceSeedSpec, {
+		type: "milaboratories.feature-integration",
+		id: blockId,
+		importance: 30,
+		label: "Feature Barcode Profiling"
+	})
+
+	// One import per table. Keys are prefixed with the table name because two tables can carry the same column
+	// id -- both label tables call their column "label" in the CSV -- and one p-frame key must mean one column.
+	//
+	// The importer's result map is walked with maps.forEach, whose key order is sorted. A bare `for k, v in`
+	// has no defined order in Tengo, which would make the built frame's resource handle vary run to run and
+	// silently cost every downstream node its deduplication.
+	//
+	// Every antigen table this block imports goes through here, which makes it the one place that can check
+	// them all. The check is that none keys on the legacy feature axis, which is keyed by feature NAME: a new
+	// column reusing it while carrying barcode sequences would keep the axis identity and invert its value
+	// space, so downstream joins would return wrong rows rather than fail.
+	addTo := func(fb, name, file, spec) {
+		// An input the caller forgot to pass arrives here as undefined and fails eleven frames down in
+		// xsv.importFile as "frameInput must be provided", naming neither the frame nor this block. Adding
+		// an output in verdict-run without also passing it in main is the mistake that produces it, and
+		// the two files are far enough apart to make it easy.
+		ll.assert(!is_undefined(file), "verdict-import: no file was passed for %v; check that main.tpl.tengo forwards it from verdict-run", name)
+		columnSpecs.guardNoLegacyFeatureAxis(spec.axes)
+		imported := xsv.importFile(file, "csv", spec, { splitDataAndSpec: true })
+		maps.forEach(imported, func(key, column) {
+			fb.add(name + "/" + key, trace.inject(column.spec), column.data)
+		})
+	}
+
+	// --- exported: everything a downstream block joins to -------------------------------------------
+	exportFb := pframes.pFrameBuilder()
+
+	addTo(exportFb, "verdicts", inputs.verdicts,
+		columnSpecs.verdictsImportSpec(setAxis, identityAxis, served))
+	addTo(exportFb, "setCounts", inputs.setCounts,
+		columnSpecs.setCountsImportSpec(setAxis, served))
+
+	// The pivoted per-identity summary is the only per-antigen state lead selection can see: a column carrying
+	// an axis the clonotype anchor does not have is dropped there with no error, so nothing keyed
+	// (set, identity) reaches it. The pivot costs one column per identity, so the software gates it on an
+	// identity count and records the limit and whether it emitted. Where it did not, the CSV carries only the
+	// key column, and an empty identity list yields no columns rather than a failed import.
+	summaryIdentities := []
+	if !is_undefined(served.identitySummaryEmitted) && served.identitySummaryEmitted {
+		ll.assert(!is_undefined(served.identities),
+			"the run record reports an emitted identity summary but names no identities")
+		summaryIdentities = served.identities
+	}
+	if len(summaryIdentities) > 0 {
+		addTo(exportFb, "identitySummary", inputs.identitySummary,
+			columnSpecs.identitySummaryImportSpec(setAxis, summaryIdentities, served.groupingId, served))
+	}
+
+	// --- the punchcard's own frame, as an OUTPUT --------------------------------------------------------
+	//
+	// The punchcard is the view `block-set` calls this block's own: every clonotype against every identity,
+	// each position in one of the four states. It needs the pivoted shape, because a table cannot pivot a
+	// (set, identity) frame into columns, and it needs it as an output rather than an export, because a
+	// block's own exports are not in its own result pool.
+	//
+	// Its cell carries the state, the two support counts, the agreement among them and, where the verdict did
+	// not settle, which of the seven ways it failed to, as one five-field value. No glyph on that page states
+	// a verdict without what it rests on. Gated on the same identity count as the summary above, so either
+	// both pivots are present or neither is, and the page says which rather than rendering an empty grid.
+	punchFb := pframes.pFrameBuilder()
+	if len(summaryIdentities) > 0 {
+		addTo(punchFb, "identityPunch", inputs.identityPunch,
+			columnSpecs.identityPunchImportSpec(setAxis, summaryIdentities, served.groupingId, served))
+	}
+
+	// The clonotype's own cell count, beside its name. Imported into THIS frame and not only into the export,
+	// because a block's own exports are not in its own result pool and the copy in the exported setCounts
+	// family is unreadable by this grid. Ungated by the identity count: a card with no identity columns still
+	// says how many cells each clonotype has.
+	addTo(punchFb, "setCellCount", inputs.setCounts,
+		columnSpecs.setCellCountImportSpec(setAxis, served))
+
+	// The per-cell material stays INSIDE the block: an output, never an export. Reading the same experiment
+	// under another grouping is another execution of this block rather than a re-derivation a reader performs,
+	// and labelling and lead selection read verdicts, never cells.
+	//
+	// This frame carries one row per cell: the reference reading, and whether a declared gate set the cell
+	// aside. Those keep their place among the run's own measurements, because a reader checks here why a cell
+	// could or could not be compared, and because the block must report the cells carrying a high reference
+	// reading whether or not a gate was declared.
+	//
+	// The per-cell per-TAG counts are deliberately NOT imported, so they are never built as columns. They are
+	// the largest table the run produces -- a cell x tag grain, 11-20x the rows of the sparse reads they came
+	// from -- and nothing reads them at either side of the boundary: not this block's model, not its UI, not
+	// another template here, no downstream block. Importing them would build the run's biggest p-frame for no
+	// reader on every verdict run.
+	//
+	// The states themselves are not unwanted. emit_verdicts writes result_cell_counts.csv and
+	// verdict-run.tpl.tengo collects it, so they are computed and exist within the run. What stops here is
+	// turning them into p-columns. cellTagCountsImportSpec stays in column-specs.lib.tengo as the spec to
+	// reuse if a consumer at that grain appears, because rebuilding it would risk a lookalike tag axis that
+	// joins to nothing.
+	cellRefFb := pframes.pFrameBuilder()
+	addTo(cellRefFb, "cellScalars", inputs.cellScalars,
+		columnSpecs.cellScalarsImportSpec(sampleAxis, cellAxis, served))
+
+	// The per-cell punchcard, into the SAME frame: one row per cell, one column per identity, that cell's own
+	// reading. This is the by-cell face of the expansion, and the one place the block shows WHY a clonotype's
+	// verdict came out as it did rather than only what it came out as. It is also why the paragraph above
+	// argues from the absence of a consumer rather than from the grain: this frame carries a
+	// per-cell-per-identity grid, and only the cell x tag table has no reader.
+	//
+	// Gated the same way as the identity pivots, and additionally on a cell count in the software, which is
+	// the gate that matters here: the rows are cells rather than clonotypes, so the same panel width costs an
+	// order of magnitude more. The run record says whether it emitted, and the page reads that rather than
+	// inferring it from an absent frame.
+	cellPunchIdentities := []
+	if !is_undefined(served.cellPunchEmitted) && served.cellPunchEmitted {
+		ll.assert(!is_undefined(served.identities),
+			"the run record reports an emitted per-cell punchcard but names no identities")
+		cellPunchIdentities = served.identities
+	}
+	if len(cellPunchIdentities) > 0 {
+		addTo(cellRefFb, "cellPunch", inputs.cellPunch,
+			columnSpecs.cellPunchImportSpec(sampleAxis, cellAxis, cellPunchIdentities, served.groupingId, served))
+	}
+
+	// Which identities each sample was actually stained with. Without it, "never asked" is a claim a reader
+	// cannot check.
+	addTo(exportFb, "offered", inputs.offered,
+		columnSpecs.offeredImportSpec(sampleAxis, identityAxis))
+
+	// The tag -> identity linker. It lets a reader put a tag's count beside its verdict, and neither layer
+	// needs to know about the other. It carries no sample axis, because neither side of the join has one. See
+	// tagIdentityLinkerImportSpec.
+	addTo(exportFb, "tagIdentity", inputs.tagIdentity,
+		columnSpecs.tagIdentityLinkerImportSpec(tagAxis, identityAxis))
+
+	// The label columns. A label is satisfied only by a column NAMED pl7.app/label with exactly one axis. The
+	// readable names are imported as columns rather than read as values, which is why they cannot be used
+	// while these specs are built.
+	addTo(exportFb, "identityLabels", inputs.identityLabels,
+		columnSpecs.identityLabelsImportSpec(identityAxis))
+
+	// The declarations that hold of each identity, keyed the way its verdicts are. `panel-file-authority`
+	// requires them to travel with the reading, and a downstream reader has no other route to them: the
+	// per-feature property columns key on the feature NAME axis, which no verdict-stage column carries.
+	//
+	// The column names are panel data, so they come from the run record. A panel declaring nothing beyond the
+	// barcode and the name emits none, leaving the CSV key-only, which imports as nothing. Skipped rather
+	// than built empty.
+	if !is_undefined(served.identityProperties) && len(served.identityProperties) > 0 {
+		addTo(exportFb, "identityProperties", inputs.identityProperties,
+			columnSpecs.identityPropertyImportSpec(
+				identityAxis, served.identityProperties, served.identityPropertyValues))
+	}
+	addTo(exportFb, "panelLabels", inputs.panelLabels,
+		columnSpecs.panelLabelsImportSpec(panelAxis))
+
+	// sample -> panel, so per-tag QC keyed (panel, tag) can be read back to the samples it covers. Where one
+	// panel covers every sample this column is constant, and still renders on every row: the SDK suppresses
+	// no column for being constant.
+	addTo(exportFb, "samplePanel", inputs.samplePanel,
+		columnSpecs.samplePanelImportSpec(sampleAxis))
+
+	// --- block-local: the run's own report ----------------------------------------------------------
+	qcFb := pframes.pFrameBuilder()
+	addTo(qcFb, "qc", inputs.qc, columnSpecs.qcImportSpec(
+		columnSpecs.qcLevelAxis(blockId),
+		columnSpecs.qcEntityAxis(blockId),
+		columnSpecs.qcMeasurementAxis(blockId),
+		columnSpecs.panelAxis(blockId)))
+
+	// 330-the-quality-readout's across-samples table: one row per sample, one column per
+	// sample-level measurement, plus the sample's own rolled-up status. Its own frame, because
+	// its columns are per-measurement rather than per (level, entity, measurement) like qcFb above.
+	qcSummaryFb := pframes.pFrameBuilder()
+	addTo(qcSummaryFb, "qcSummary", inputs.qcSummary, columnSpecs.qcSampleSummaryImportSpec(sampleAxis))
+
+	// The distributions 330 puts last in the readout, as plots rather than table rows. A number
+	// encoded in a detail string is one nobody can draw.
+	distributionFb := pframes.pFrameBuilder()
+	addTo(distributionFb, "qcDeciles", inputs.qcDeciles, columnSpecs.qcDecileImportSpec(
+		columnSpecs.qcDistributionAxis(blockId),
+		columnSpecs.qcDecileAxis(blockId)))
+	// The antigen-count distribution's own deciles, kept per sample beside the two pooled decile
+	// sets above. Its own column: adding a sample axis to `qcDecileValue` would re-identify that
+	// column rather than mint a new one.
+	addTo(distributionFb, "qcSampleDeciles", inputs.qcSampleDeciles, columnSpecs.qcSampleDecileImportSpec(
+		sampleAxis,
+		columnSpecs.qcDecileAxis(blockId)))
+	addTo(distributionFb, "qcBackgrounds", inputs.qcBackgrounds,
+		columnSpecs.qcBackgroundImportSpec(sampleAxis, tagAxis))
+
+	// One row per (panel, tag, identity). Its own frame, at its own grain: the measurement table is
+	// keyed (level, entity, measurement) and cannot hold a row per reagent.
+	reagentFb := pframes.pFrameBuilder()
+	addTo(reagentFb, "reagents", inputs.reagents,
+		columnSpecs.qcReagentImportSpec(panelAxis, tagAxis, identityAxis))
+
+	// The panel-versus-reads check is emitted as a p-column rather than left as a file. A mismatch report the
+	// user cannot see defeats its purpose.
+	mismatchFb := pframes.pFrameBuilder()
+	addTo(mismatchFb, "panelMismatch", inputs.panelMismatch,
+		columnSpecs.panelMismatchImportSpec(panelAxis, tagAxis))
+
+	// 330's own table: barcodes the reads carried that no panel declares, keyed by sequence. Its own
+	// frame, because it keys on (sampleId, tag) rather than any axis the tables above use, and because
+	// panelMismatch's "undeclared-in-panel" direction is structurally unreachable there -- refine-tags
+	// has already snapped every barcode onto the panel before that check's counts are built, which is
+	// exactly why this table reads the pre-refine pass instead.
+	undeclaredFb := pframes.pFrameBuilder()
+	addTo(undeclaredFb, "undeclaredBarcodes", inputs.undeclaredBarcodes,
+		columnSpecs.undeclaredBarcodeImportSpec(sampleAxis, tagAxis))
+
+	return {
+		antigenVerdicts: exportFb.build(),
+		punchcard: punchFb.build(),
+		cellReference: cellRefFb.build(),
+		qcTable: qcFb.build(),
+		qcSummaryTable: qcSummaryFb.build(),
+		qcDistributions: distributionFb.build(),
+		reagentTable: reagentFb.build(),
+		panelMismatchTable: mismatchFb.build(),
+		undeclaredBarcodesTable: undeclaredFb.build()
+	}
+})

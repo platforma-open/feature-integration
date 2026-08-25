@@ -1,7 +1,7 @@
-"""The antigen/feature panel — the feature-barcode whitelist the Feature Integration block snaps
-reads to. The first (up to) 4 barcodes are the REAL 10x BEAM-Ab panel from the public "2k transgenic
-HEL mouse splenocytes" dataset; the rest are synthesized as distinct 15-mers (Hamming >= 3 from each
-other and the anchors) so the panel scales to any size while keeping authentic anchors.
+"""The antigen/feature panel -- the feature-barcode whitelist the Feature Integration block snaps reads
+to. The first (up to) 4 barcodes are the REAL 10x BEAM-Ab panel from the public "2k transgenic HEL
+mouse splenocytes" dataset. The rest are synthesized as distinct 15-mers, Hamming >= 3 from each other
+and the anchors, so the panel scales to any size while keeping authentic anchors.
 
 https://www.10xgenomics.com/datasets/2k-transgenic-hel-mouse-splenocytes-beam-ab-2-standard
 """
@@ -21,9 +21,9 @@ REAL_ANTIGENS = [
 ]
 CONTROL_BC = "CTATCTACCGGCTCG"
 
-# Per-antigen "Class" vocabulary, matching the real customer panel's Class column. The real anchors
-# carry a biologically meaningful class; synthetic antigens default to "synthetic"; the negative
-# control is "control".
+# Per-antigen "Class" vocabulary, matching the Class column a real panel carries. The real anchors carry
+# a biologically meaningful class. Synthetic antigens default to "synthetic", and the negative control
+# is "control".
 ANCHOR_CLASS = {
     "SARS-TRI-S_WT": "viral",
     "Anti-Hen_Egg_Lysozyme": "enzyme",
@@ -35,13 +35,13 @@ SPECIES_CYCLE = ("Human", "Cyno")
 
 
 def classify_antigens(names, offtarget_count):
-    """Classify an ORDERED list of non-control antigen names into the real customer panel's per-antigen
-    Type / Species / Class. The first `offtarget_count` -> Off-Target; the rest -> Target; species
-    alternate Human/Cyno; class from ANCHOR_CLASS (real anchors) else "synthetic".
+    """Classify an ORDERED list of non-control antigen names into the per-antigen Type / Species / Class
+    a real panel declares. The first `offtarget_count` become Off-Target and the rest become Target.
+    Species alternate Human/Cyno. Class comes from ANCHOR_CLASS for the real anchors, else "synthetic".
 
-    Single source of the classification + offtarget-count validation rule, shared by `build_panel` and
-    the beam-exact path so the two never drift. The negative control is NOT included — callers add it
-    (Decoy / "" / control). Raises SystemExit if `offtarget_count` is out of range.
+    Single source of the classification and the offtarget-count validation rule, shared by `build_panel`
+    and the beam-exact path so the two never drift. The negative control is NOT included -- callers add
+    it (Decoy / "" / control). Raises SystemExit if `offtarget_count` is out of range.
 
     Returns (types, species, classes), each a dict keyed by antigen name."""
     if not 0 <= offtarget_count <= len(names):
@@ -61,7 +61,7 @@ class Panel:
     negative control. Replaces the old module-level ANTIGEN_NAMES / FEATURES globals so a generator
     run is fully described by its arguments.
 
-    Carries the real customer panel's per-antigen metadata — `types` (Target/Off-Target/Decoy),
+    Carries the per-antigen metadata a real panel declares — `types` (Target/Off-Target/Decoy),
     `species` (Human/Cyno/""), `classes` (viral/enzyme/synthetic/control) — each a dict keyed by
     feature name and INCLUDING the control. They default to sensible values so `Panel(names, feats)`
     stays valid for any legacy construction.
@@ -93,12 +93,12 @@ class Panel:
 
 
 def _double_space_name(name):
-    """Return `name` with a stray INTERNAL double space, reproducing the real customer panel's
-    `Human OT1  Biotin`. Replaces the first separator ("_" / "-" / " ") with two spaces; if the name has
-    none, injects "  " near the middle. Injected at the panel SOURCE (so the name is used consistently
-    across tags.csv, feature_reference.csv, the truth tables and the VDJ/GEX name joins) — a messy
-    *label*, not broken data: nothing in generation is left mismatched, and the block's
-    whitespace-normalization collapses it back."""
+    """Return `name` with a stray INTERNAL double space, reproducing a quirk real panels carry in antigen
+    names. Replaces the first separator ("_" / "-" / " ") with two spaces. If the name has none, injects
+    "  " near the middle. Injected at the panel SOURCE, so the name is used consistently across
+    tags.csv, feature_reference.csv, the truth tables and the VDJ/GEX name joins. A messy *label*, not
+    broken data: nothing in generation is left mismatched, and the block's whitespace-normalization
+    collapses it back."""
     for sep in ("_", "-", " "):
         i = name.find(sep)
         if i != -1:
@@ -108,24 +108,25 @@ def _double_space_name(name):
 
 
 def build_panel(panel_size, seed=common.ANTIGEN_SEED, offtarget_count=0, multibarcode=False, messy=False):
-    """Build a Panel of `panel_size` antigens + 1 control. The first min(panel_size, 4) antigens are
-    the real 10x anchors; the rest are synthetic 15-mers (Hamming >= 3 from each other and the anchors
-    + control). Uses an independent RNG so the panel is identical regardless of sample/cell scale.
+    """Build a Panel of `panel_size` antigens plus 1 control. The first min(panel_size, 4) antigens are
+    the real 10x anchors. The rest are synthetic 15-mers, Hamming >= 3 from each other and the anchors
+    and control. Uses an independent RNG so the panel is identical regardless of sample or cell scale.
 
-    Per-antigen Type/Species/Class match the real customer panel shape: the control -> Decoy/control;
-    the first `offtarget_count` antigens -> Off-Target; the rest -> Target; species alternate
-    Human/Cyno; class from ANCHOR_CLASS (real anchors) else "synthetic".
+    Per-antigen Type/Species/Class match the shape a real panel carries. The control becomes
+    Decoy/control. The first `offtarget_count` antigens become Off-Target and the rest become Target.
+    Species alternate Human/Cyno, and class comes from ANCHOR_CLASS for the real anchors, else
+    "synthetic".
 
-    With `multibarcode=True` the first antigen gets a SECOND barcode read out under combine="all"
-    (AND — both members must fire) and the second antigen a second barcode under combine="sum" (the
-    per-barcode UMIs add up); every other antigen stays single-barcode "sum". This is the shared-path
-    analogue of the libraseq fixture, so the FI multi-barcode combine logic is exercisable inside a
-    full multiomic run. The extra barcodes come from the panel RNG and are ONLY drawn in this branch,
-    so a default (single-barcode) panel is byte-identical to before.
+    With `multibarcode=True` the first antigen gets a SECOND barcode read out under combine="all", where
+    both members must fire, and the second antigen a second barcode under combine="sum", where the
+    per-barcode UMIs add up. Every other antigen stays single-barcode "sum". This is the shared-path
+    analogue of the libraseq fixture, so the FI multi-barcode combine logic is exercisable inside a full
+    multiomic run. The extra barcodes come from the panel RNG and are ONLY drawn in this branch, so a
+    default single-barcode panel is byte-identical to before.
 
-    With `messy=True` (from --messy-metadata) the first antigen NAME gets a stray double space, so the
-    emitted metadata reproduces the customer panel's whitespace inconsistency for the normalization
-    tasks. Off by default (byte-identical)."""
+    With `messy=True`, from --messy-metadata, the first antigen NAME gets a stray double space, so the
+    emitted metadata reproduces the whitespace inconsistency real panels carry for the normalization
+    tasks. Off by default, and byte-identical."""
     if panel_size < 1:
         raise SystemExit("panel size must be >= 1")
     prng = new_rng(seed + 7)

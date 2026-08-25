@@ -13,7 +13,8 @@ Two antigen-only beds whose point is the tag->feature PANEL CSV, not the reads:
   multisample  Two samples with DIFFERENT binding profiles (sample1 Spike-heavy, sample2 RSV/HA-heavy),
                exercising the per-sample axis the next block aggregates on.
 
-10x 5' v2 geometry: R1 = CELL(16) + UMI(10); R2 = FEATURE(15) + remainder. Deterministic, stdlib only.
+10x 5' v2 geometry: R1 = CELL(16) + UMI(10), and R2 = FEATURE(15) + remainder. Deterministic, stdlib
+only.
 """
 
 import csv

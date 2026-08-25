@@ -3,6 +3,6 @@
 // surface should expose.
 //
 // In the future this file will host JS functions the MCP runtime
-// can execute. The `.d.ts` declarations stay visible to the agent;
-// the JS bodies execute in the MCP code-execution context (the
-// agent sees the types but not the implementation).
+// can execute. The `.d.ts` declarations stay visible to the agent.
+// The JS bodies execute in the MCP code-execution context, so the
+// agent sees the types but not the implementation.

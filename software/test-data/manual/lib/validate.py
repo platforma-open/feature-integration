@@ -1,16 +1,16 @@
-"""Offline viability suite for a full multiomics run (antigen + VDJ + GEX arms, colocated under one
-run dir).
+"""Offline viability suite for a full multiomics run (antigen + VDJ + GEX arms, colocated under one run
+dir).
 
-Proves the synthetic data will actually flow through the pipeline BEFORE any backend run — the #1
-failure is the convergence inner-join producing empty output because cell barcodes don't line up across
+Proves the synthetic data will actually flow through the pipeline BEFORE any backend run. The number one
+failure is the convergence inner-join producing empty output because cell barcodes do not line up across
 arms. Runs three things:
 
   1. Per-arm schema/geometry checks (antigen FASTQ, VDJ AIRR-sc TSV, panel, GEX matrix).
   2. Barcode alignment across arms (the load-bearing test).
-  3. JOIN SIMULATION — emulate vdj-multiomic-integration end to end, offline: derive per-(cell,antigen)
+  3. JOIN SIMULATION -- emulate vdj-multiomic-integration end to end, offline: derive per-(cell, antigen)
      distinct-UMI from the antigen FASTQ, build the cell->clonotype linker from the VDJ pairing,
      inner-join on cellId, group by clonotype, take the dominant antigen, and assert every
-     clear-antigen clonotype's dominant == the planted antigen (and output non-empty).
+     clear-antigen clonotype's dominant == the planted antigen, and that output is non-empty.
 """
 
 import csv
@@ -89,7 +89,7 @@ def _derive_antigen_umis(antigen_dir, donor, panel):
 
 
 def _load_vdj(vdj_dir, donor):
-    """Parse the AIRR-sc TSV; return per-cell clone key + schema stats."""
+    """Parse the AIRR-sc TSV. Returns the per-cell clone key plus schema stats."""
     path = vdj_dir / f"{donor}.tsv"
     required = {"cell_id", "junction", "v_call", "j_call", "duplicate_count"}
     per_cell = defaultdict(lambda: {"IGH": [], "IGK": []})
@@ -130,7 +130,8 @@ def _load_vdj(vdj_dir, donor):
 
 
 def _load_gex(gex_dir, donor):
-    """Parse the genes-in-rows count CSV; return cell set, per-cell plasma-marker mean, validity."""
+    """Parse the genes-in-rows count CSV. Returns the cell set, the per-cell plasma-marker mean, and
+    validity."""
     with open(gex_dir / f"{donor}.csv", newline="") as fh:
         rows = list(csv.reader(fh))
     header = rows[0]

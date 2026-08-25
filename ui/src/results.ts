@@ -1,9 +1,13 @@
-import type { QcRow } from "@platforma-open/milaboratories.feature-integration.model";
+import type {
+  QcMeasurementStatus,
+  QcRow,
+  SampleQcReport,
+} from "@platforma-open/milaboratories.feature-integration.model";
 import type { Color } from "@platforma-sdk/ui-vue";
 import { Gradient } from "@platforma-sdk/ui-vue";
 import { computed } from "vue";
 import { useApp } from "./app";
-import { deriveProgress, type ProgressCell } from "./progress";
+import { deriveProgress, type ProgressCell, type StepStream } from "./progress";
 
 export type { ProgressCell } from "./progress";
 
@@ -11,14 +15,30 @@ export type SampleResult = {
   sampleId: string;
   label: string;
   progress: ProgressCell;
-  // Populated once the sample's QC has settled (i.e. it has finished) — drive the Quality + Read
+  // Populated once the sample's QC has settled, meaning the sample finished, to drive the Quality and Read
   // recovery columns. Absent while the sample is still running.
   quality?: QcStatus;
   recovery?: RecoveryBar;
+  // The sample's own quality report: every sample-level measurement the software declares, with its status,
+  // its value and, where it has none, the reason in its place. The Quality tag above is this report's rollup,
+  // so the tag and the report cannot disagree about one sample.
+  qcReport?: SampleQcReport;
 };
 
-// QC status tag shown in the Quality column (worst-case per sample). Rendered by PlAgCellStatusTag.
+// QC status tag shown in the Quality column and beside each measurement. Rendered by PlAgCellStatusTag and
+// PlStatusTag, whose vocabulary is upper-case; the software's is not. A measurement with no line behind it
+// carries no status at all, and there is no fourth word for that.
 export type QcStatus = "OK" | "WARN" | "ALERT";
+
+const STATUS_TAG: Record<QcMeasurementStatus, QcStatus> = {
+  OK: "OK",
+  warn: "WARN",
+  alert: "ALERT",
+};
+
+export function qcStatusTag(status: QcMeasurementStatus | null): QcStatus | undefined {
+  return status === null ? undefined : STATUS_TAG[status];
+}
 
 // Stacked-bar settings consumed by PlAgChartStackedBarCell for the Read recovery column.
 export type RecoveryBar = {
@@ -26,21 +46,11 @@ export type RecoveryBar = {
   data: { label: string; value: number; color: Color; description: string }[];
 };
 
-// Quality status from the per-sample QC metrics (proposed cutoffs; tune here). Mirrors the analysisLog
-// flags: zero cells detected or a very low panel-assigned fraction → ALERT; a low panel-assigned or
-// pattern-match fraction → WARN; otherwise OK. panelAssignedFraction is "" when no refine report ran.
-function qualityStatus(qc: QcRow): QcStatus {
-  const paf = typeof qc.panelAssignedFraction === "number" ? qc.panelAssignedFraction : undefined;
-  if (qc.cellsDetected === 0 || (paf !== undefined && paf < 0.25)) return "ALERT";
-  if ((paf !== undefined && paf < 0.5) || qc.matchedFraction < 0.8) return "WARN";
-  return "OK";
-}
-
-// Read-recovery funnel: split each sample's reads into usable (matched the pattern AND kept after the
-// feature-barcode panel correction) / off-panel (matched but dropped) / no pattern match. Values are
-// read counts summing to readsTotal; PlAgChartStackedBarCell renders them proportionally. When no
-// refine report is available (panelAssignedFraction === "") the off-panel split is unknown, so only
-// usable (= matched) and no-match are shown.
+// Read-recovery funnel, splitting each sample's reads three ways: usable, meaning matched the pattern AND
+// kept after the feature-barcode panel correction; off-panel, meaning matched but dropped; and no pattern
+// match. The values are read counts summing to readsTotal, and PlAgChartStackedBarCell renders them
+// proportionally. Where no refine report is available (panelAssignedFraction === "") the off-panel split is
+// unknown, so only usable, which is then matched, and no-match are shown.
 const RECOVERY_COLORS = {
   usable: Gradient("viridis").getNthOf(2, 5),
   offPanel: Gradient("magma").getNthOf(4, 9),
@@ -104,31 +114,60 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
   const labels = app.model.outputs.sampleLabels ?? {};
   const completed = new Set(app.model.outputs.completedSamples ?? []);
   const qcBySample = app.model.outputs.sampleQc ?? {};
+  // Written by the verdict step, so it settles later than the per-sample read QC above and only for a run
+  // with a V(D)J dataset. A sample without one keeps its progress and its recovery bar and shows no tag.
+  const reportBySample = app.model.outputs.sampleQcReport ?? {};
   const sampleStep = app.model.outputs.sampleStep;
 
-  // Early roster signal: the flat parseLogStream registers per sample the moment parse starts — before
-  // any step report settles — so a sample appears in the grid immediately. (The bar detail comes from
-  // stepProgress below; this is just "does this sample exist yet".)
+  // Early roster signal. The flat parseLogStream registers per sample the moment parse starts, before any
+  // step report settles, so a sample appears in the grid immediately. This answers only "does this sample
+  // exist yet". The bar detail comes from stepProgress below.
   const parseProgress = app.model.outputs.parseProgress;
   const earlyRosterIds = parseProgress ? parseProgress.data.map((p) => String(p.key[0])) : [];
+  // It also carries parse's live LINE, and that matters for the whole of parse rather than a moment of
+  // it: `stepLogs` is built by fb-refine-tagstat, so nothing lands in the per-step map below until parse
+  // is over and the next template runs. Read only for the roster, the bar spent every parse showing the
+  // bare step label while a percent and an ETA sat right here.
+  const parseStreamBySample = new Map<string, StepStream>();
+  if (parseProgress) {
+    for (const p of parseProgress.data) {
+      const v = p.value as { progressLine?: string; live: boolean } | undefined;
+      parseStreamBySample.set(String(p.key[0]), { line: v?.progressLine, live: v?.live });
+    }
+  }
 
-  // Per-[sampleId, step] live progress lines (parse / refine / tag-stat). Index by sampleId → step →
-  // progressLine so deriveProgress can pull the line for whichever step the sample is currently on.
+  // Per-[sampleId, step] live progress lines (parse / refine / tag-stat). Indexed by sampleId -> step ->
+  // progressLine, so deriveProgress can pull the line for whichever step the sample is on.
   const stepProgress = app.model.outputs.stepProgress;
-  const lineBySampleStep = new Map<string, string | undefined>();
+  const streamBySampleStep = new Map<string, StepStream>();
   if (stepProgress) {
     for (const p of stepProgress.data) {
       const v = p.value as { progressLine?: string; live: boolean } | undefined;
-      lineBySampleStep.set(`${String(p.key[0])} ${String(p.key[1])}`, v?.progressLine);
+      streamBySampleStep.set(`${String(p.key[0])} ${String(p.key[1])}`, {
+        line: v?.progressLine,
+        live: v?.live,
+      });
     }
   }
-  // All streaming steps' live lines for a sample, so deriveProgress can pick the furthest one actually
-  // streaming (rather than the report-derived step, which advances a beat early and flashed the next
-  // step's label during the gap).
-  const liveLinesFor = (sampleId: string): Record<string, string | undefined> => ({
-    "1-parse": lineBySampleStep.get(`${sampleId} 1-parse`),
-    "2-refine": lineBySampleStep.get(`${sampleId} 2-refine`),
-    "3-tagstat": lineBySampleStep.get(`${sampleId} 3-tagstat`),
+  // Every streaming step's live line for a sample, so deriveProgress can pick the furthest one actually
+  // streaming. The report-derived step advances a beat early and flashes the next step's label in the gap.
+  // The Python step streams on its own output rather than into the per-step map, because it runs in a
+  // different template. Keyed by sample alone, so it is indexed here and joined under the step name the
+  // bar knows it by.
+  const metricsProgress = app.model.outputs.metricsProgress;
+  const metricsStreamBySample = new Map<string, StepStream>();
+  if (metricsProgress) {
+    for (const p of metricsProgress.data) {
+      const v = p.value as { progressLine?: string; live: boolean } | undefined;
+      metricsStreamBySample.set(String(p.key[0]), { line: v?.progressLine, live: v?.live });
+    }
+  }
+  const liveLinesFor = (sampleId: string): Record<string, StepStream | undefined> => ({
+    // The per-step map wins once it fills, since it keeps streaming after the flat stream closes.
+    "1-parse": streamBySampleStep.get(`${sampleId} 1-parse`) ?? parseStreamBySample.get(sampleId),
+    "2-refine": streamBySampleStep.get(`${sampleId} 2-refine`),
+    "3-tagstat": streamBySampleStep.get(`${sampleId} 3-tagstat`),
+    "4-metrics": metricsStreamBySample.get(sampleId),
   });
 
   // Roster: dataset labels ∪ completed ∪ QC'd ∪ any sample with a step signal ∪ early parse signal.
@@ -139,7 +178,7 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
     ...Object.keys(sampleStep ?? {}),
     ...earlyRosterIds,
   ]);
-  // Roster not enumerated yet → keep the grid's loading overlay rather than flashing an empty table.
+  // Roster not enumerated yet, so keep the grid's loading overlay rather than flashing an empty table.
   if (sampleIds.size === 0) return undefined;
 
   return [...sampleIds]
@@ -147,7 +186,13 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
       const label = labels[sampleId] ?? sampleId;
       // Per-sample QC settles when the sample finishes, so Quality + Read recovery fill in at completion.
       const qc = qcBySample[sampleId];
-      const qcFields = qc ? { quality: qualityStatus(qc), recovery: recoveryBar(qc) } : {};
+      const qcReport = reportBySample[sampleId];
+      const qcFields = {
+        ...(qc ? { recovery: recoveryBar(qc) } : {}),
+        // The tag IS the report's rollup. Nothing here recomputes it, so the grid and the sample's own
+        // report state one status rather than two that can drift.
+        ...(qcReport ? { quality: qcStatusTag(qcReport.status), qcReport } : {}),
+      };
       const progressCell = deriveProgress(sampleId, completed, sampleStep, liveLinesFor(sampleId));
       return { sampleId, label, progress: progressCell, ...qcFields };
     })

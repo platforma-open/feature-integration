@@ -2,7 +2,7 @@
 """Single entry point for the manual BEAM-Ab test-data generators.
 
 Builds a full, colocated multiomic run (antigen + VDJ + GEX arms) into one folder, or an antigen-only
-behavioural scenario. Standard-library only, deterministic (seeded).
+behavioural scenario. Standard-library only, deterministic and seeded.
 
   # A full multiomic run (all three arms + shared panel/metadata + truth), then validate it offline:
   python3 generate.py realistic            # 24 donors x 2000 cells x 15-antigen panel + control
@@ -19,7 +19,7 @@ behavioural scenario. Standard-library only, deterministic (seeded).
 
 Output layout (everything under runs/ is gitignored):
 
-  runs/<preset>/                a full multiomic run — one folder, no jumping between arms
+  runs/<preset>/                a full multiomic run -- one folder, no jumping between arms
     antigen/  donorNN_R{1,2}.fastq.gz
     vdj/      donorNN.tsv
     gex/      donorNN.csv
@@ -35,7 +35,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from lib import annotations, antigen, beam_exact, gex, panelswap, validate, vdj  # noqa: E402
+from lib import annotations, antigen, beam_exact, gex, panelswap, realpanel, validate, vdj  # noqa: E402
 from lib import panel as panel_mod  # noqa: E402
 from lib.antigen import AntigenConfig  # noqa: E402
 
@@ -50,7 +50,7 @@ PRESETS = {
     "whitelist737k": dict(samples=24, cells=2000, panel_size=15, barcode_source="whitelist737k"),
 }
 
-# Antigen-only scenarios. errors/offpanel/multilane/control run through antigen.build; the rest have
+# Antigen-only scenarios. errors/offpanel/multilane/control run through antigen.build. The rest have
 # their own generators. Default scenario scale = small (tiny), overridable with --samples/etc.
 ANTIGEN_SCENARIOS = ["errors", "offpanel", "multilane", "control"]
 SPECIAL_SCENARIOS = ["degraded", "panel-swap", "multisample", "libraseq"]
@@ -215,8 +215,8 @@ def main():
     ap.add_argument(
         "--heavy-only",
         action="store_true",
-        help="emit a HEAVY-CHAIN-ONLY (IGH, no IGK) VDJ arm — the customer's VHH single-domain "
-        "antibody — so the heavy-only end-to-end path is reproducible; applies to the vdj and all "
+        help="emit a HEAVY-CHAIN-ONLY (IGH, no IGK) VDJ arm — the shape a VHH single-domain antibody "
+        "library produces — so the heavy-only end-to-end path is reproducible; applies to the vdj and all "
         "arms. Each cell keeps its shared bare-16nt cell_id. Off by default (paired IGH+IGK)",
     )
     ap.add_argument(
@@ -230,16 +230,221 @@ def main():
     ap.add_argument(
         "--messy-metadata",
         action="store_true",
-        help="inject the real customer panel's inconsistent casing/whitespace into the EMITTED panel "
+        help="inject the inconsistent casing/whitespace real panels carry into the EMITTED panel "
         "metadata: the Type column carries a mixed-case off-target set (both 'Off-Target' and "
-        "'Off-target') and one antigen name gains a stray double space. Reproduces the B043 problem so a "
+        "'Off-target') and one antigen name gains a stray double space. Reproduces that problem so a "
         "mixed-case panel is available to exercise the block's case-sensitive off-target matching — the "
         "user must select each casing present (whitespace is trimmed, casing is not folded). Messy LABELS "
         "only — the barcode joins and truth tables stay coherent. Applies to the full-run panel; off by "
         "default (byte-identical to prior runs)",
     )
+    ap.add_argument(
+        "--real-panel",
+        metavar="CSV",
+        help="build a cohort-scale run against a REAL, externally-supplied wide panel CSV "
+        "(sample / name / barcode / role columns) instead of a synthesized panel. The panel's own "
+        "samples, antigen names and feature barcodes drive the run; every cell is planted at one of "
+        "eight named reading tiers (strong -> noise) so good, medium and bad readings are all present "
+        "in stated proportions. Writes into runs/real-panel/ by default. The panel file is COPIED into "
+        "the run, and everything under runs/ is gitignored — a confidential panel can drive a run "
+        "without any of it entering the repository",
+    )
+    ap.add_argument("--panel-sample-col", default=None, help="real-panel: the sample column (default: Samples)")
+    ap.add_argument("--panel-name-col", default=None, help="real-panel: the antigen-name column (default: Name)")
+    ap.add_argument("--panel-seq-col", default=None, help="real-panel: the barcode-sequence column (default: Sequence)")
+    ap.add_argument("--panel-role-col", default=None, help="real-panel: the role column (default: Type)")
+    ap.add_argument(
+        "--target-roles",
+        default=",".join(realpanel.DEFAULT_TARGET_ROLES),
+        help="real-panel: comma-separated role prefixes meaning on-target (default: target)",
+    )
+    ap.add_argument(
+        "--offtarget-roles",
+        default=",".join(realpanel.DEFAULT_OFFTARGET_ROLES),
+        help="real-panel: comma-separated role prefixes meaning off-target (default: off-target,offtarget,off target)",
+    )
+    ap.add_argument(
+        "--offset",
+        type=int,
+        default=10,
+        help="real-panel: bp of lead-in before the feature barcode in R2. 10 = the real BEAM geometry "
+        "(default); 0 = feature at position 0",
+    )
+    ap.add_argument(
+        "--library-quality",
+        default="mixed",
+        choices=list(realpanel.QUALITY_PROFILES),
+        help="real-panel: how per-sample LIBRARY quality is dealt out — uniform (all clean), mixed "
+        "(clean/good/fair/poor, default) or spread (forces an OK/WARN/ALERT span)",
+    )
+    ap.add_argument(
+        "--clonal-profile",
+        default=None,
+        choices=["immunized", "lead"],
+        help="real-panel: VDJ clone-size distribution — immunized (default: the shape an immunized, "
+        "antigen-sorted repertoire has — an expanded head holding most of the CELLS plus a singleton "
+        "tail) or lead (one clone holding 60%% of an antigen's cells, the small-fixture shape)",
+    )
+    ap.add_argument(
+        "--clonal-mean-size",
+        type=float,
+        default=None,
+        help="real-panel: mean cells per clone in the EXPANDED compartment (default 25). Lower it for a "
+        "more diverse, less expanded repertoire; raise it for a few very large lead clones",
+    )
+    ap.add_argument(
+        "--clonal-singleton-cell-frac",
+        type=float,
+        default=None,
+        help="real-panel: share of a group's CELLS left as one-cell clonotypes (default 0.10). These stay "
+        "a large share of clonotypes and a small share of cells, which is the real shape; raise it toward "
+        "an unsorted/naive repertoire, lower it for a heavily sorted one",
+    )
+    ap.add_argument(
+        "--regime",
+        default="deep",
+        choices=list(realpanel.REGIMES),
+        help="real-panel: which MEASURED calibration to generate against. `deep` (default) is the "
+        "public 10x BEAM shape — ~33 reads per UMI, ~200 antigen UMIs per called cell, near-mono "
+        "dominance; it reproduces every run made before 2026-08-21 byte for byte. `shallow` is the "
+        "shape real in-vivo BEAM libraries measure — 2.7-5.8 reads per UMI, a median of 7 UMIs "
+        "across barcodes clearing the floor, dominance ~0.44, the raw barcode universe instead of "
+        "called cells, and unfiltered antigen aggregates. Every flag below overrides the regime it "
+        "came from",
+    )
+    ap.add_argument(
+        "--ambient-barcode-ratio",
+        type=float,
+        default=None,
+        help="real-panel: size the raw BARCODE UNIVERSE at this multiple of the real cell count "
+        "(shallow default 100). The block applies no cell calling and the live configuration sets no "
+        "whitelist, so what it reports as `cells detected` is this universe — 1.37M barcodes with a "
+        "median of ONE UMI each. 0 keeps the old behaviour, where the ambient barcode count follows "
+        "from the ambient read share alone",
+    )
+    ap.add_argument(
+        "--aggregates",
+        type=int,
+        default=None,
+        help="real-panel: number of ANTIGEN-AGGREGATE barcodes to plant (shallow default 5). Protein "
+        "clumps produce droplets with enormous UMI counts; Cell Ranger removes them before cell "
+        "calling and this block does not. 0 plants none",
+    )
+    ap.add_argument(
+        "--aggregate-umi-share",
+        type=float,
+        default=None,
+        help="real-panel: share of the finished library's UMIs the aggregates hold (shallow default "
+        "0.59, measured). At that share aggregates outnumber real signal UMIs, which is why the "
+        "measured per-cell depth is starved despite large libraries",
+    )
+    ap.add_argument(
+        "--reads-per-umi",
+        type=float,
+        default=None,
+        dest="dup_mean",
+        help="real-panel: mean reads per distinct UMI. Drives FASTQ size and nothing the block "
+        "concludes, since the reading rule counts UMIs. deep ~1.3, shallow 4.0 (measured 2.7-5.8)",
+    )
+    ap.add_argument(
+        "--unpaired-frac",
+        type=float,
+        default=None,
+        help="real-panel: share of cells emitting the HEAVY chain only (shallow default 0.35). In the "
+        "measured libraries the clonotypes dropped for want of a pair outnumbered the paired ones",
+    )
+    ap.add_argument(
+        "--baseline-tag",
+        default=None,
+        help="real-panel: name ONE tag (antigen name or 15 bp sequence) as the baseline the verdict "
+        "simulation reads against. The block refuses a panel declaring several, and its panel rung needs "
+        "at least 25 tags, so a small per-sample panel can otherwise reach no comparator at all and "
+        "every reading comes back unreliable. Cells in samples that do not offer the named tag still "
+        "have no comparator — the baseline is global by tag, the panel is per sample",
+    )
+    ap.add_argument(
+        "--panel-shape",
+        default="auto",
+        choices=["auto", "wide", "narrow"],
+        help="real-panel: wide declares a role column; narrow declares none (sample / antigen / "
+        "sequence) and role is inferred from the antigen NAME. Both shapes are live in production "
+        "on different projects. Default auto-detects from the header",
+    )
+    ap.add_argument(
+        "--control-feature",
+        default=None,
+        help="real-panel: name one member as the comparator, whatever the panel says. Mirrors the "
+        "block, where a user picks a control from a dropdown of antigen names — the only route a "
+        "narrow panel has to a declared comparator",
+    )
+    ap.add_argument(
+        "--barcode-source",
+        default=None,
+        choices=["whitelist737k", "random"],
+        help="real-panel: cell-barcode source (default: whitelist737k, so the 737K cell whitelist "
+        "setting is usable and cellIds match a real VDJ producer)",
+    )
     ap.add_argument("--out", help="override the output directory")
     args = ap.parse_args()
+
+    if args.real_panel:
+        run_dir = args.out or os.path.join(RUNS_DIR, "real-panel")
+        cells = args.cells_per_sample or 6000
+        columns = {
+            k: v
+            for k, v in (
+                ("sample", args.panel_sample_col),
+                ("name", args.panel_name_col),
+                ("sequence", args.panel_seq_col),
+                ("role", args.panel_role_col),
+            )
+            if v
+        }
+        roles = tuple(r.strip().lower() for r in args.target_roles.split(",") if r.strip())
+        off_roles = tuple(r.strip().lower() for r in args.offtarget_roles.split(",") if r.strip())
+        print(f"=== real panel: {args.real_panel} ({cells} cells/sample) -> {run_dir} ===")
+        if args.validate_only:
+            sys.exit(0 if realpanel.validate(run_dir, columns=columns, regime=args.regime,
+                                         baseline_tag=args.baseline_tag, target_roles=roles,
+                                         offtarget_roles=off_roles) else 1)
+        info = realpanel.build(
+            run_dir,
+            args.real_panel,
+            cells_per_sample=cells,
+            barcode_source=args.barcode_source or "whitelist737k",
+            assets_dir=ASSETS_DIR,
+            columns=columns,
+            target_roles=roles,
+            offtarget_roles=off_roles,
+            offset=args.offset,
+            quality_profile=args.library_quality,
+            arm=args.arm,
+            regime=args.regime,
+            clonal_profile=args.clonal_profile,
+            clonal_mean_size=args.clonal_mean_size,
+            clonal_singleton_cell_frac=args.clonal_singleton_cell_frac,
+            ambient_barcode_ratio=args.ambient_barcode_ratio,
+            aggregates=args.aggregates,
+            aggregate_umi_share=args.aggregate_umi_share,
+            dup_mean=args.dup_mean,
+            unpaired_frac=args.unpaired_frac,
+            panel_shape=args.panel_shape,
+            control_feature=args.control_feature,
+        )
+        # A V(D)J-only rebuild leaves the reads, the panel and the tiers exactly as they were, so the
+        # report still describes the run. Rewriting it from a partial build would only replace its read
+        # count with a zero.
+        if args.arm == "all":
+            realpanel.write_run_report(run_dir, info, args.real_panel, args.library_quality,
+                                       baseline_tag=args.baseline_tag)
+            print(f"  settings -> {os.path.join(run_dir, 'RUN.md')}")
+        if not args.no_validate:
+            sample_check = info["samples"][0] if info["samples"] else None
+            if not realpanel.validate(run_dir, columns=columns, sample_check=sample_check,
+                                      regime=args.regime, baseline_tag=args.baseline_tag,
+                                      target_roles=roles, offtarget_roles=off_roles):
+                sys.exit(1)
+        return
 
     if args.beam:
         run_dir = args.out or os.path.join(RUNS_DIR, "beam-exact")
@@ -260,7 +465,7 @@ def main():
         sys.exit(0 if validate.validate(run_dir) else 1)
 
     if args.scenario:
-        # scenarios default to a small scale for hand inspection; --samples/etc override
+        # scenarios default to a small scale for hand inspection. --samples and friends override it.
         samples = args.samples or 2
         cells = args.cells_per_sample or 80
         panel_size = args.panel_size or 4

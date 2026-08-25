@@ -1,7 +1,7 @@
 import { ProgressPattern } from "@platforma-open/milaboratories.feature-integration.model";
 
-// Parse one mitool progress line (already stripped of the [==PROGRESS==] prefix by the accessor) into
-// its stage / percent / ETA parts. Ported from blocks/peptide-extraction (same ProgressPattern).
+// Parse one mitool progress line, already stripped of the [==PROGRESS==] prefix by the accessor, into its
+// stage / percent / ETA parts. Ported from blocks/peptide-extraction (same ProgressPattern).
 export type ParsedProgress = {
   raw?: string;
   stage?: string;

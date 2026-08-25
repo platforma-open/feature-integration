@@ -1,7 +1,7 @@
 """Shared primitives for the manual test-data generators (antigen / VDJ / GEX arms).
 
-Standard library only, deterministic (seeded). Read geometry matches the Feature Integration
-block defaults (10x 5' v2):
+Standard library only, deterministic and seeded. Read geometry matches the Feature Integration block
+defaults (10x 5' v2):
 
   R1 = CELL(16) + UMI(10)           -> 26 bp
   R2 = feature barcode(15) + filler -> 25 bp   (block reads first 15 bp as the feature)
@@ -51,11 +51,11 @@ def gen_distinct(rng, count, length, min_dist, avoid=()):
 
 
 def gen_cells(rng, count):
-    """Distinct random 16-mer cell barcodes, O(count) via a set (the panel's gen_distinct is O(n^2)
-    and does not scale to tens of thousands of cells). Hamming spacing is NOT enforced: at cohort
-    scale a 1 bp error colliding with a *different* real barcode is astronomically unlikely
-    (~count * 48 / 4^16), so the `errors` scenario's clean-correction guarantee still holds, and
-    real barcodes are Hamming-close anyway."""
+    """Distinct random 16-mer cell barcodes, O(count) via a set. The panel's gen_distinct is O(n^2) and
+    does not scale to tens of thousands of cells. Hamming spacing is NOT enforced: at cohort scale a
+    1 bp error colliding with a *different* real barcode is astronomically unlikely
+    (~count * 48 / 4^16), so the `errors` scenario's clean-correction guarantee still holds, and real
+    barcodes are Hamming-close anyway."""
     seen = set()
     out = []
     while len(out) < count:

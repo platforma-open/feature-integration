@@ -2,9 +2,9 @@ import type { SampleStep } from "@platforma-open/milaboratories.feature-integrat
 import { ProgressPrefix } from "@platforma-open/milaboratories.feature-integration.model";
 import { parseProgressString } from "./parseProgress";
 
-// Progress-cell config for the Main grid's Progress column. Maps onto the SDK's ColDefProgress:
-// status → stage, percent → bar fill (undefined = indeterminate), text → label, suffix → right-hand text
-// (set "" to suppress the SDK's default "0%" on an indeterminate bar).
+// Progress-cell config for the Main grid's Progress column, mapping onto the SDK's ColDefProgress: status ->
+// stage, percent -> bar fill where undefined is indeterminate, text -> label, and suffix -> right-hand text.
+// Set suffix to "" to suppress the SDK's default "0%" on an indeterminate bar.
 export type ProgressCell = {
   status: "not_started" | "running" | "done";
   percent?: number;
@@ -12,12 +12,12 @@ export type ProgressCell = {
   suffix?: string;
 };
 
-// The per-sample pipeline runs four stages: parse → refine → tag-stat → per-cell metrics (Python). Each
-// stage owns a quarter-band of the overall bar (parse 0–25, refine 25–50, tag-stat 50–75, metrics
-// 75–100). A stage's own live % fills WITHIN its band; indeterminate phases hold at the band floor. The
-// band floor comes from the deterministic sampleStep (report presence, which only advances), so the bar
-// is MONOTONIC — it never resets to zero when a new step starts (the pre-scrap version drove the full bar
-// per step, which caused that reset). The rich per-step text still comes from the live mitool stdout.
+// The per-sample pipeline runs four stages: parse -> refine -> tag-stat -> per-cell metrics (Python). Each
+// stage owns a quarter-band of the overall bar: parse 0-25, refine 25-50, tag-stat 50-75, metrics 75-100. A
+// stage's own live % fills WITHIN its band, and an indeterminate phase holds at the band floor. That floor
+// comes from the deterministic sampleStep, which is report presence and only advances, so the bar is
+// MONOTONIC and never resets to zero when a new step starts. Never drive the full bar per step, which is
+// what causes that reset. The rich per-step text comes from the live mitool stdout.
 const STEP_ORDINAL: Record<SampleStep, number> = {
   parsing: 0,
   refining: 1,
@@ -27,15 +27,20 @@ const STEP_ORDINAL: Record<SampleStep, number> = {
 const TOTAL_STEPS = 4;
 const BAND = 100 / TOTAL_STEPS;
 
-// The streaming mitool steps in order, with their bar ordinal. The label follows the FURTHEST of these
-// that currently has a live line (see deriveProgress) — NOT the report-derived sampleStep, which advances
-// a beat early (a step's report settles before the next step's live stream starts). Driving the label off
-// reports made the bar flash the next step's name ("Counting UMIs") during that gap while refine was still
-// streaming; keying off the live stream keeps the label honest to what is actually running.
-const WF_STEPS = ["1-parse", "2-refine", "3-tagstat"] as const;
-const WF_ORDINAL: Record<string, number> = { "1-parse": 0, "2-refine": 1, "3-tagstat": 2 };
+// The streaming mitool steps in order, with their bar ordinal. The label follows the FURTHEST of these that
+// currently has a live line (see deriveProgress), NOT the report-derived sampleStep, which advances a beat
+// early: a step's report settles before the next step's live stream starts. Driving the label off reports
+// made the bar flash the next step's name ("Counting UMIs") during that gap while refine was still
+// streaming. Keying off the live stream keeps the label honest to what is actually running.
+const WF_STEPS = ["1-parse", "2-refine", "3-tagstat", "4-metrics"] as const;
+const WF_ORDINAL: Record<string, number> = {
+  "1-parse": 0,
+  "2-refine": 1,
+  "3-tagstat": 2,
+  "4-metrics": 3,
+};
 
-// Fallback step label (used when no live line is available for the current step yet).
+// Fallback step label, used when no live line is available for the current step yet.
 const STEP_LABEL: Record<SampleStep, string> = {
   parsing: "Parsing reads",
   refining: "Refining barcodes",
@@ -43,15 +48,15 @@ const STEP_LABEL: Record<SampleStep, string> = {
   metrics: "Computing metrics",
 };
 
-// mitool progress prose per step. Returns the display text + suffix, plus a localPercent (0–100 WITHIN
-// the step) ONLY for monotonic phases — the caller maps that into the step's band. Indeterminate phases
-// (refine correction passes, tag-stat on-disk sort) return no localPercent so the bar holds at the band
-// floor rather than bouncing.
+// mitool progress prose per step. Returns the display text and suffix, plus a localPercent (0-100 WITHIN the
+// step) ONLY for monotonic phases -- the caller maps that into the step's band. Indeterminate phases (refine
+// correction passes, tag-stat on-disk sort) return no localPercent so the bar holds at the band floor rather
+// than bouncing.
 type StepDisplay = { text: string; suffix: string; localPercent?: number };
 
-// refine-tags corrects CELL → FEATURE → UMI (fb-pipeline passes -t CELL -t FEATURE -t UMI; mitool orders
-// them CELL < FEATURE < UMI). Each tag's correction is recursive/non-monotonic, so we surface WHICH tag
-// is in progress ("2 of 3") on an indeterminate bar rather than a jumpy %.
+// refine-tags corrects CELL -> FEATURE -> UMI (fb-pipeline passes -t CELL -t FEATURE -t UMI, and mitool
+// orders them CELL < FEATURE < UMI). Each tag's correction is recursive and non-monotonic, so we surface
+// WHICH tag is in progress ("2 of 3") on an indeterminate bar rather than a jumpy %.
 const REFINE_TAGS = ["CELL", "FEATURE", "UMI"];
 const REFINE_TAG_LABELS: Record<string, string> = {
   CELL: "Cell barcodes",
@@ -61,12 +66,12 @@ const REFINE_TAG_LABELS: Record<string, string> = {
 const REFINE_INIT_LABEL = /init/i;
 const TAGSTAT_WRITING_LABEL = /writing/i;
 // tag-stat runs a hierarchical on-disk sort ("Sorting records, step N of M: X%") followed by one final
-// "Writing result: X%" pass. Each sub-phase is monotonic 0→100% on its own; naively showing that % makes
-// the bar bounce M+1 times. Instead we compose them into one monotonic fill: the sort passes share a
-// fixed leading portion of the step (0 → SORT_PORTION%), distributed dynamically across whatever M mitool
-// reports, and the write pass owns the remainder (SORT_PORTION → 100%). This is M-independent — sort step
-// M always ends at SORT_PORTION and the write starts there, so the bar never jumps or steps back no
-// matter how many sort passes run (the "Writing result" line carries no M, so we cannot derive it there).
+// "Writing result: X%" pass. Each sub-phase is monotonic 0->100% on its own, and naively showing that % makes
+// the bar bounce M+1 times. Instead we compose them into one monotonic fill: the sort passes share a fixed
+// leading portion of the step (0 -> SORT_PORTION%), distributed dynamically across whatever M mitool reports,
+// and the write pass owns the remainder (SORT_PORTION -> 100%). This is M-independent -- sort step M always
+// ends at SORT_PORTION and the write starts there, so the bar never jumps or steps back no matter how many
+// sort passes run. The "Writing result" line carries no M, so we cannot derive it there.
 const TAGSTAT_SORT_LABEL = /step\s+(\d+)\s+of\s+(\d+)/i;
 const TAGSTAT_SORT_PORTION = 80;
 
@@ -84,8 +89,8 @@ function stepDisplay(
         suffix: `${REFINE_TAGS.indexOf(tag) + 1} of ${REFINE_TAGS.length}`,
       };
     }
-    // Global phases keep the stable "Refining barcodes" prefix so the label doesn't jump. mitool's
-    // lead-in is "Initialization"; the wrap-up stages collapse to ": Finalizing".
+    // Global phases keep the stable "Refining barcodes" prefix so the label does not jump. mitool's lead-in
+    // is "Initialization". The wrap-up stages collapse to ": Finalizing".
     if (REFINE_INIT_LABEL.test(stage)) return { text: "Refining barcodes", suffix: "" };
     return { text: "Refining barcodes: Finalizing", suffix: "" };
   }
@@ -97,14 +102,14 @@ function stepDisplay(
     if (sort) {
       const n = Number(sort[1]);
       const m = Number(sort[2]);
-      // Sort passes share the leading SORT_PORTION; pass M at 100% lands exactly at SORT_PORTION.
+      // Sort passes share the leading SORT_PORTION, so pass M at 100% lands exactly at SORT_PORTION.
       return {
         text: `Counting UMIs: sorting ${n}/${m}${percentage ? ` — ${Math.round(pct)}%` : ""}`,
         suffix: etaLabel ?? "",
         localPercent: ((n - 1 + pct / 100) / m) * TAGSTAT_SORT_PORTION,
       };
     }
-    // Final "Writing result" pass owns the remainder (SORT_PORTION → 100%), so it always continues from
+    // Final "Writing result" pass owns the remainder (SORT_PORTION -> 100%), so it always continues from
     // where the sort ended, independent of how many sort passes ran.
     if (TAGSTAT_WRITING_LABEL.test(stage)) {
       return {
@@ -116,7 +121,18 @@ function stepDisplay(
     return { text: "Counting UMIs", suffix: "" };
   }
 
-  // parse (and any other monotonic step): show the live percent when present, else the bare stage name.
+  // The Python step names its own phase and carries no ETA: these are whole-frame operations with no
+  // iteration count to extrapolate from, and an invented ETA is worse than none.
+  if (step === "4-metrics") {
+    const pct = percentage ? Number(percentage) : undefined;
+    return {
+      text: stage ? `Computing metrics: ${stage}` : "Computing metrics",
+      suffix: "",
+      localPercent: pct,
+    };
+  }
+
+  // parse, and any other monotonic step: show the live percent when present, else the bare stage name.
   if (percentage) {
     return {
       text: `Parsing reads: ${percentage}%`,
@@ -127,41 +143,65 @@ function stepDisplay(
   return { text: "Parsing reads", suffix: "" };
 }
 
-// Progress cell for one sample. Done once its QC settles (completedSamples). Otherwise the band floor
-// comes from the deterministic sampleStep (monotonic), and — if the current step is streaming a live
-// line — the rich mitool prose fills the text and (for monotonic phases) the within-band bar.
+// Progress cell for one sample. Done once its QC settles (completedSamples). Otherwise the band floor comes
+// from the deterministic sampleStep, which is monotonic, and where the current step is streaming a live line
+// the rich mitool prose fills the text and, for monotonic phases, the within-band bar.
+// One step's stream: its last line, and whether the stream is still open. `live` matters because a closed
+// stream's last line is HISTORY, not a reading. mitool prints progress on a timer and the process usually
+// finishes between ticks, so the final line is whatever tick landed last -- 97.8% with an ETA of one second
+// is a normal way for a finished parse to end. Replayed as if current it reads as a stall, and that is
+// exactly how it was read.
+export type StepStream = { line?: string; live?: boolean };
+
 export function deriveProgress(
   sampleId: string,
   completed: Set<string>,
   sampleStep: Record<string, SampleStep> | undefined,
-  liveLines?: Partial<Record<string, string>>,
+  liveLines?: Partial<Record<string, StepStream>>,
 ): ProgressCell {
   if (completed.has(sampleId)) return { status: "done", percent: 100, text: "Done" };
 
   const step = sampleStep?.[sampleId] ?? "parsing";
   const reportFloor = STEP_ORDINAL[step] * BAND;
 
-  // The label follows the FURTHEST streaming step that actually has a live line — not the report-derived
-  // sampleStep. A step's report settles a beat before the next step's live stream starts, so keying the
-  // label off sampleStep flashed the next step's name ("Counting UMIs") during that gap while refine was
-  // still emitting its last (UMI, 3/3) line. The live stream is the source of truth for WHAT is running.
+  // The label follows the FURTHEST streaming step that actually has a live line, not the report-derived
+  // sampleStep. A step's report settles a beat before the next step's live stream starts, so keying the label
+  // off sampleStep flashed the next step's name ("Counting UMIs") during that gap while refine was still
+  // emitting its last (UMI, 3/3) line. The live stream is the source of truth for WHAT is running.
   let liveWf: string | undefined;
   let liveLine: string | undefined;
+  let streamOpen = true;
   if (liveLines) {
     for (const wf of WF_STEPS) {
-      if (liveLines[wf]) {
+      const stream = liveLines[wf];
+      if (stream?.line) {
         liveWf = wf;
-        liveLine = liveLines[wf];
+        liveLine = stream.line;
+        streamOpen = stream.live !== false;
       }
     }
   }
 
-  // metrics (the Python step, no stream) or nothing streaming yet → hold at the report floor with the
-  // step name. metrics sits at 75% through the whole (slow) Python run.
-  if (step === "metrics" || liveWf === undefined || liveLine === undefined) {
+  // Nothing streaming yet: hold at the report floor with the step name. The metrics step used to land
+  // here unconditionally and sat at 75% through the whole slow Python run; it now streams like the
+  // others, so only the gap before a step's first line reaches this.
+  if (liveWf === undefined || liveLine === undefined) {
     return {
       status: "running",
       percent: Math.round(reportFloor),
+      text: STEP_LABEL[step],
+      suffix: "",
+    };
+  }
+
+  // A closed stream means that step finished, whatever percentage its last tick happened to carry. Hold
+  // at the TOP of its band and drop the label's stale figures: an ETA of one second that never elapses is
+  // worse than no ETA, because it invites a reader to wait for something that already happened.
+  if (!streamOpen) {
+    const finishedFloor = (WF_ORDINAL[liveWf] + 1) * BAND;
+    return {
+      status: "running",
+      percent: Math.round(Math.max(reportFloor, finishedFloor)),
       text: STEP_LABEL[step],
       suffix: "",
     };

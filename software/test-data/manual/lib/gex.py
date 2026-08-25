@@ -1,19 +1,20 @@
 """GEX (gene-expression) arm generator.
 
-Builds a synthetic single-cell count matrix per donor sharing the SAME cell barcodes as the antigen +
+Builds a synthetic single-cell count matrix per donor sharing the SAME cell barcodes as the antigen and
 VDJ arms, so import-sc-rnaseq-data -> pl7.app/rna-seq/countMatrix feeds the OPTIONAL GEX input of
 vdj-multiomic-integration and cell-type-annotation (CellTypist).
 
-Coherence: each cell's expression program follows its planted antigen class (from the antigen arm's
-expected-consensus.tsv). Clear-binder cells get a plasmablast/plasma program (MZB1/XBP1/PRDM1/CD38/
-TNFRSF17 high); ambiguous cells get a naive-B program (TCL1A/IGHD/IGHM high). All cells are B lineage
-(a CD19-sorted BEAM experiment).
+Coherence: each cell's expression program follows its planted antigen class, from the antigen arm's
+expected-consensus.tsv. Clear-binder cells get a plasmablast/plasma program, with
+MZB1/XBP1/PRDM1/CD38/TNFRSF17 high. Ambiguous cells get a naive-B program, with TCL1A/IGHD/IGHM high.
+All cells are B lineage, since this is a CD19-sorted BEAM experiment.
 
-Format (verified against import-sc-rnaseq-data): genes-in-rows CSV — first column = real human Ensembl
-IDs (`^ENSG\\d{11}$` -> species=human, gene-format=Ensembl auto-detected); header = bare-16nt cell
-barcodes; body = integer counts. import-sc-rnaseq-data's detect_orientation TRANSPOSES a matrix whenever
-cells outnumber genes, so build() keeps the gene count strictly above the largest per-donor cell count —
-otherwise CellTypist reads barcodes as gene names and fails with "No features overlap with the model".
+Format, verified against import-sc-rnaseq-data: genes-in-rows CSV. The first column is real human
+Ensembl IDs (`^ENSG\\d{11}$` -> species=human, gene-format=Ensembl auto-detected), the header is
+bare-16nt cell barcodes, and the body is integer counts. import-sc-rnaseq-data's detect_orientation
+TRANSPOSES a matrix whenever cells outnumber genes, so build() keeps the gene count strictly above the
+largest per-donor cell count. Otherwise CellTypist reads barcodes as gene names and fails with "No
+features overlap with the model".
 """
 
 import csv
@@ -35,7 +36,7 @@ PROGRAMS = {
 
 
 def poisson(rng, lam):
-    """Small counts via Knuth; gaussian approximation for large lambda."""
+    """Small counts via Knuth. Gaussian approximation for large lambda."""
     if lam <= 0:
         return 0
     if lam > 30:
@@ -98,7 +99,7 @@ def build_gene_table(rng, sym2ens, protein_coding, n_filler):
             genes.append((ens, prog, means))
     if missing:
         print(f"  WARNING: markers not found in gene map (skipped): {missing}")
-    # filler: real protein_coding genes, low baseline noise; per-gene mean gives clustering texture
+    # filler: real protein_coding genes, low baseline noise. Per-gene mean gives clustering texture
     pool = [e for e in protein_coding if e not in used]
     rng.shuffle(pool)
     for ens in pool[:n_filler]:
