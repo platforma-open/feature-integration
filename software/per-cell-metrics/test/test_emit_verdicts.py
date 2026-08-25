@@ -9,7 +9,7 @@ import pytest
 import qc_rows
 from emit_verdicts import _build_grouping, _identity_properties, _linker_frame, undeclared_feature_counts
 from panel import ANY_SAMPLE, consistent_properties, property_columns
-from qc_measures import MEASUREMENTS, Measurement
+from qc_measures import DEFAULT_LINES, MEASUREMENTS, Line, Measurement
 from verdict import DEFAULT_PANEL_MIN_MEMBERS, ReferenceChoice
 
 SRC = Path(__file__).resolve().parents[1] / "src"
@@ -3256,6 +3256,67 @@ def test_a_declared_sample_measurement_nothing_computes_still_takes_a_row(monkey
     assert row["reason"] == qc_rows.UNSUPPLIED_REASON
     # Nothing computed it, so it counts as unchecked rather than as checked and fine.
     assert coverage.not_evaluated >= 1
+
+
+def test_qc_frame_carries_the_line_and_route_for_an_inherited_measurement():
+    # cellBarcodeValidFraction is on the inherited route with a published warn/error pair. A
+    # reader who sees `warn` in the frame must be able to see the number it warned against.
+    rows = []
+    qc_rows._add(rows, "sample", "S1", "cellBarcodeValidFraction", 0.6)
+    frame = qc_rows._qc_frame(rows).row(0, named=True)
+
+    assert frame["lineWarn"] == pytest.approx(0.75)
+    assert frame["lineAlert"] == pytest.approx(0.50)
+    assert frame["route"] == "inherited"
+
+
+def test_qc_frame_leaves_the_numbers_null_for_the_categorical_route():
+    # cellsDetected carries a route -- its status is a fact, not a threshold -- but no numeric
+    # line: `route` is non-null while `lineWarn` and `lineAlert` stay null.
+    rows = []
+    qc_rows._add(rows, "sample", "S1", "cellsDetected", 12.0)
+    frame = qc_rows._qc_frame(rows).row(0, named=True)
+
+    assert frame["lineWarn"] is None
+    assert frame["lineAlert"] is None
+    assert frame["route"] == "categorical"
+
+
+def test_qc_frame_leaves_all_three_null_where_no_line_backs_the_measurement():
+    # readsTotal has no line on any route.
+    rows = []
+    qc_rows._add(rows, "sample", "S1", "readsTotal", 1000.0)
+    frame = qc_rows._qc_frame(rows).row(0, named=True)
+
+    assert frame["lineWarn"] is None
+    assert frame["lineAlert"] is None
+    assert frame["route"] is None
+
+
+def test_qc_frame_reads_the_lines_it_was_given_not_the_shipped_default():
+    # `_qc_frame` renders whatever `lines` the caller passes, the same dict `_add` used to score
+    # the row -- an operator override must show up here, not the shipped default.
+    overridden = dict(DEFAULT_LINES)
+    overridden["cellBarcodeValidFraction"] = Line(warn=0.9, error=0.6)
+
+    rows = []
+    qc_rows._add(rows, "sample", "S1", "cellBarcodeValidFraction", 0.8, lines=overridden)
+    frame = qc_rows._qc_frame(rows, lines=overridden).row(0, named=True)
+
+    assert frame["lineWarn"] == pytest.approx(0.9)
+    assert frame["lineAlert"] == pytest.approx(0.6)
+    # And the status was scored against the override too: 0.8 is below the raised warn line.
+    assert frame["status"] == "warn"
+
+
+def test_qc_frame_rollup_row_carries_no_line_or_route():
+    # The rollup measurement has no declaration at all, so all three fields are null there too.
+    rows = [qc_rows.QcRow("sample", "S1", qc_rows.ROLLUP, None, "", "", None, qc_rows.roll_up([]))]
+    frame = qc_rows._qc_frame(rows).row(0, named=True)
+
+    assert frame["lineWarn"] is None
+    assert frame["lineAlert"] is None
+    assert frame["route"] is None
 
 
 def test_a_value_that_is_not_a_finite_number_is_no_value_and_says_which(monkeypatch):

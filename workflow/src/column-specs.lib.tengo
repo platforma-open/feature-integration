@@ -484,6 +484,9 @@ ADMISSIBILITY_VALUES := string(json.encode([
 // taking a fourth word, and which of the two no-status cases it is reads from the value: a number
 // means computed-with-no-line, its absence means nothing computed it.
 QC_STATUSES := string(json.encode(["OK", "warn", "alert"]))
+// The three defence routes `Measurement.line` names, and no fourth: qc_measures.py's
+// `LINE_ROUTES` plus the categorical route. Empty means the measurement carries no line.
+QC_ROUTES := string(json.encode(["inherited", "categorical", "recommended-and-observed"]))
 MISMATCH_DIRECTIONS := string(json.encode(["declared-never-seen", "undeclared-in-panel"]))
 
 // servedDomain: which comparator and which cell list actually served this run.
@@ -1463,6 +1466,16 @@ qcImportSpec := func(levelAxisSpec, entityAxisSpec, measurementAxisSpec, panelAx
 			// that those are deciles of the total antigen count per cell barcode.
 			col("counts", "pl7.app/antigen/qcCounts", "String", "What it counts", 66000, true, {}),
 			col("implies", "pl7.app/antigen/qcImplies", "String", "What a bad value means", 65000, true, {}),
+			// The line itself, so a reader who meets `warn` can see what it warned against. Empty where
+			// no line stands behind the measurement; the categorical route (`cellsDetected`) has a route
+			// but no numeric threshold, so both stay empty there too.
+			col("lineWarn", "pl7.app/antigen/qcLineWarn", "Double", "Warn threshold", 63500, true, {}),
+			col("lineAlert", "pl7.app/antigen/qcLineAlert", "Double", "Alert threshold", 63400, true, {}),
+			col("route", "pl7.app/antigen/qcRoute", "String", "Line's defence route", 63300, true, {
+				"pl7.app/isDiscreteFilter": "true",
+				"pl7.app/discreteValues": QC_ROUTES,
+				"pl7.app/description": "Which of the three routes backs this measurement's line: a published number, a categorical fact, or a stated recommendation. Empty where no line stands behind it."
+			}),
 			// Also shown by default. A row nothing computed carries the reason in place of a value, and
 			// a deferral whose reason is one click away is a blank cell to everyone who does not click. That
 			// reads as "checked, and fine", the one thing this vocabulary exists to prevent.

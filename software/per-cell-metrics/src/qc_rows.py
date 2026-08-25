@@ -20,6 +20,7 @@ from qc_measures import (
     DEFAULT_LINES,
     MEASUREMENTS,
     Coverage,
+    Line,
     Measurement,
     Reading,
     Status,
@@ -81,7 +82,7 @@ def _leaf(level, entity, measurement, value, detail, panel_id, status: Status | 
     return QcRow(level, entity, measurement, value, detail, panel_id, status, roll_up([reading]), reason)
 
 
-def _qc_frame(rows: list[QcRow]) -> pl.DataFrame:
+def _qc_frame(rows: list[QcRow], lines: dict[str, Line] = DEFAULT_LINES) -> pl.DataFrame:
     """The measurement set as a frame keyed (level, entity, measurement).
 
     Every declared measurement keeps its place whether or not this run could compute it, and
@@ -90,10 +91,18 @@ def _qc_frame(rows: list[QcRow]) -> pl.DataFrame:
     fine". A field with nothing in it is written null rather than as an empty string: polars
     quotes an empty string to keep it apart from a null, and a quoted empty cell is a value a
     downstream import would carry as one.
+
+    `lineWarn` and `lineAlert` are read from `lines`, the same dict `status_for` was given to
+    produce `row.status` -- so a reader who sees `warn` can see the threshold it warned
+    against. `route` is read from `Measurement.line` alone, never a second declaration of which
+    measurement stands on a line. A measurement with no route gets three null fields; the
+    categorical route has a route but no numeric threshold, so it gets a route and two nulls.
     """
     built = []
     for row in rows:
         declared = MEASUREMENT_BY_ID.get(row.measurement)
+        route = None if declared is None else declared.line
+        line = None if declared is None else lines.get(row.measurement)
         built.append(
             {
                 "level": row.level,
@@ -114,6 +123,9 @@ def _qc_frame(rows: list[QcRow]) -> pl.DataFrame:
                 "notEvaluated": row.coverage.not_evaluated,
                 "counts": ROLLUP_COUNTS if declared is None else declared.counts,
                 "implies": None if declared is None else declared.implies,
+                "lineWarn": None if line is None else line.warn,
+                "lineAlert": None if line is None else line.error,
+                "route": route,
                 # Why this row has no number. The declaration wins: a deferred measurement's
                 # reason is the same on every run, and a call site cannot restate it. Any other
                 # row carries its own. Same precedence as `sample_report_rows`.
@@ -136,6 +148,9 @@ def _qc_frame(rows: list[QcRow]) -> pl.DataFrame:
             "notEvaluated": pl.Int64,
             "counts": pl.String,
             "implies": pl.String,
+            "lineWarn": pl.Float64,
+            "lineAlert": pl.Float64,
+            "route": pl.String,
             "reason": pl.String,
         },
     )
@@ -150,12 +165,16 @@ def _add(
     detail: str = "",
     panel_id: str = "",
     reason: str = "",
+    lines: dict[str, Line] = DEFAULT_LINES,
 ):
     """Append one measurement row, taking its status from the lines in force.
 
     Every declared measurement goes through here. One with no line in force carries no
     status, which is honest rather than a refusal: it was computed, no line stands behind it,
     so its number is shown and nothing is claimed.
+
+    `lines` defaults to the shipped set; a caller threading an operator override passes its
+    own dict, which then also governs what `_qc_frame` renders as `lineWarn` / `lineAlert`.
 
     `reason` belongs on a row with no number and is ignored on any other. A value that is not
     a finite number is not a number the caller's reason describes, so it takes its own.
@@ -168,7 +187,7 @@ def _add(
             value,
             detail,
             panel_id,
-            status_for(measurement, value, DEFAULT_LINES),
+            status_for(measurement, value, lines),
             "" if is_computed(value) else (reason if value is None else NOT_A_NUMBER_REASON),
         )
     )
