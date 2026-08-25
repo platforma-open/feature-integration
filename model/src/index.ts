@@ -1553,19 +1553,16 @@ export const platforma = BlockModelV3.create(dataModel)
         primaryColumns: pCols.map((c) => DataColumn.fromColumn(c)),
         columns: null,
         tableState: ctx.data.expansionTableState,
-        // A table CONSUMES a label column to name its axis rather than rendering it as data, but the V3
-        // discovery path does not reach this block's own exports: `createPlDataTableV3` builds its map from
-        // `roots.upstreamBlockCtxes`, which excludes self. A label column for an axis this block invents is
-        // therefore never found on that path, and renders as an ordinary column unless a rule here says
-        // otherwise. `createPlDataTableV2` differs -- its pool is built from a traversal that includes the
-        // root block, so the tables on that path do consume these labels.
+        // The label column is SUPPLIED here as a primary column, filtered out of the frame above -- it is
+        // not discovered from a pool. `PlAgDataTableV2` drops any axis that has a label column and renders
+        // the label column in its place, subject to that column's own visibility.
         //
         // Two rules, and the order matters -- the first match wins. Both columns the table would show as a
         // name are called `pl7.app/label`, so they are told apart by the axis each one labels.
         displayOptions: {
           visibility: [
-            // The identity's name. This is the row's subject. `identityLabelsImportSpec` annotates
-            // the same visibility, so this rule restates it.
+            // The identity's name. This is the row's subject. Required despite the spec already
+            // annotating "default": the catch-all rule below matches this column too, and first match wins.
             {
               match: {
                 name: "^pl7\\.app/label$",

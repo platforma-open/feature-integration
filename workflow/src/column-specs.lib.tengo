@@ -1065,7 +1065,7 @@ tagIdentityLinkerImportSpec := func(tagAxisSpec, identityAxisSpec) {
 // appends the tag. That is where the name map lives and the only place the collision is visible.
 //
 // A label column REPLACES its axis in a data table: PlAgDataTableV2 drops any axis that has one, whatever
-// the axis's own visibility says. A hidden label column therefore removes the axis from view as well, and
+// the axis's own visibility says. A hidden label column therefore leaves nothing in the axis's place, and
 // the rows keyed on it stop being distinguishable. Every label column below is visible for that reason.
 identityLabelsImportSpec := func(identityAxisSpec) {
 	return {
