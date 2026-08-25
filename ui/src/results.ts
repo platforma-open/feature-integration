@@ -1,4 +1,8 @@
-import type { QcRow } from "@platforma-open/milaboratories.feature-integration.model";
+import type {
+  QcMeasurementStatus,
+  QcRow,
+  SampleQcReport,
+} from "@platforma-open/milaboratories.feature-integration.model";
 import type { Color } from "@platforma-sdk/ui-vue";
 import { Gradient } from "@platforma-sdk/ui-vue";
 import { computed } from "vue";
@@ -15,116 +19,35 @@ export type SampleResult = {
   // recovery columns. Absent while the sample is still running.
   quality?: QcStatus;
   recovery?: RecoveryBar;
-  // The raw per-sample metrics behind quality/recovery, carried through so the sample report panel can show
-  // the individual checks and figures without re-deriving them from a second source.
+  // The raw per-sample read metrics behind the recovery bar, carried through so the funnel is not re-derived
+  // from a second source.
   qc?: QcRow;
+  // The sample's own quality report: every sample-level measurement the software declares, with its status,
+  // its value and, where it has none, the reason in its place. The Quality tag above is this report's rollup,
+  // so the tag and the report cannot disagree about one sample.
+  qcReport?: SampleQcReport;
 };
 
-// QC status tag shown in the Quality column (worst-case per sample). Rendered by PlAgCellStatusTag.
+// QC status tag shown in the Quality column and beside each measurement. Rendered by PlAgCellStatusTag and
+// PlStatusTag, whose vocabulary is upper-case; the software's is not. A measurement with no line behind it
+// carries no status at all, and there is no fourth word for that.
 export type QcStatus = "OK" | "WARN" | "ALERT";
+
+const STATUS_TAG: Record<QcMeasurementStatus, QcStatus> = {
+  OK: "OK",
+  warn: "WARN",
+  alert: "ALERT",
+};
+
+export function qcStatusTag(status: QcMeasurementStatus | null): QcStatus | undefined {
+  return status === null ? undefined : STATUS_TAG[status];
+}
 
 // Stacked-bar settings consumed by PlAgChartStackedBarCell for the Read recovery column.
 export type RecoveryBar = {
   title: string;
   data: { label: string; value: number; color: Color; description: string }[];
 };
-
-// One QC check on a sample: what was measured, how it is judged, the value as the reader should see it, and
-// prose explaining what the metric means. The sample report panel renders one row per check, so the reader
-// learns *which* metric is bad, where the grid's single tag can only say that something is.
-//
-// status is undefined where the metric could not be evaluated at all. That is a real state rather than a
-// failure: panelAssignedFraction is "" whenever no refine report was produced, and calling that "OK" would
-// report a passing verdict on a measurement that never happened. PlStatusTag renders nothing for an absent
-// type, and the worst-of roll-up below skips these rows, so an unevaluated check stays silent everywhere.
-export type QcCheck = {
-  label: string;
-  status: QcStatus | undefined;
-  printedValue: string;
-  description: string;
-};
-
-const percent = (fraction: number) => `${(fraction * 100).toFixed(1)}%`;
-
-// The per-sample QC checks. Each status rests on a line with a stated source, or it is undefined and the
-// value speaks for itself. No number here is invented: a line comes from a figure the field published, from a
-// categorical fact, or from a stated recommendation, and from nowhere else. Where none of the three applies,
-// the check carries no status rather than a number with nothing behind it.
-//
-// The single definition of the sample's quality. The grid's one-tag Quality column is the worst of these
-// statuses (qualityStatus below), so the tag and the panel's rows can never disagree about one sample, which
-// they would if each carried its own copy of the thresholds.
-//
-// These are NOT the software layer's quality measurements. That is a larger set with its own statuses, its
-// own line provenance and its own page. Bringing the two together is a separate change.
-
-// Inherited from the field rather than calibrated here: the complement of the published 0.50
-// unrecognized-barcode fraction. `qc_measures.py` holds the same number for panelAssignedFraction, and the
-// two must not drift.
-const PANEL_ASSIGNED_LINE = 0.5;
-export function qcChecks(qc: QcRow): QcCheck[] {
-  const paf = typeof qc.panelAssignedFraction === "number" ? qc.panelAssignedFraction : undefined;
-
-  return [
-    {
-      label: "Cells detected",
-      // Categorical, not a quantity judged against a cutoff. Zero cells means nothing downstream of this
-      // sample can be computed, and that is a fact rather than a threshold somebody chose. Above zero the
-      // fact does not hold, which is all OK says here -- never that the yield was good. How many cells a
-      // sample *should* yield depends on the experiment, and no number for that is defensible.
-      status: qc.cellsDetected === 0 ? "ALERT" : "OK",
-      printedValue: qc.cellsDetected.toLocaleString(),
-      description:
-        "Cell barcodes that survived the whole pipeline and carry at least one counted UMI. " +
-        "Zero means the read geometry or the cell-barcode pattern did not match this sample's reads, " +
-        "so no per-cell result can be produced for it.",
-    },
-    {
-      label: "Reads assigned to the panel",
-      // One line, inherited, and no second tier. The field publishes 0.50 and nothing else, so an ALERT
-      // level below it would be a number invented here -- a confident label on an arbitrary cut, which is
-      // worse than saying less. A reader can act on WARN. They cannot act on a severity nobody calibrated.
-      status: paf === undefined ? undefined : paf < PANEL_ASSIGNED_LINE ? "WARN" : "OK",
-      printedValue: paf === undefined ? "not reported" : percent(paf),
-      description:
-        paf === undefined
-          ? "The fraction of pattern-matched reads whose feature barcode was kept after panel " +
-            "correction. Not reported for this sample: no refine-tags report was produced, which " +
-            "happens when no reads matched the read pattern in the first place. This is a missing " +
-            "measurement, not a fraction of zero."
-          : "The fraction of pattern-matched reads whose feature barcode was kept after correction " +
-            "against the supplied feature-barcode panel. A low value means most barcodes that were " +
-            "read are not in the panel — usually the wrong panel file, or the wrong barcode column " +
-            "within it.",
-    },
-    {
-      label: "Reads matching the read pattern",
-      // Unjudged, and shown with its value beside it. The matched share is not one of the four numbers the
-      // field publishes for this assay, and nothing published says what a low one means, so no status is
-      // claimed. The finding survives anyway: one sample at 40% beside its neighbours at 95% is visible in
-      // the column, which is a comparison a reader makes rather than a line this code can apply.
-      status: undefined,
-      printedValue: `${percent(qc.matchedFraction)} (${qc.readsMatched.toLocaleString()} of ${qc.readsTotal.toLocaleString()})`,
-      description:
-        "The fraction of raw reads whose structure matched the read pattern, i.e. reads from which a " +
-        "cell barcode, a UMI and a feature barcode could be parsed at all. A low value points at the " +
-        "read pattern or the chemistry preset, not at the panel.",
-    },
-  ];
-}
-
-// The Quality column's single tag: the worst status across the checks above. A check that could not be
-// evaluated, with status undefined, contributes nothing.
-const STATUS_SEVERITY: Record<QcStatus, number> = { OK: 0, WARN: 1, ALERT: 2 };
-
-function qualityStatus(qc: QcRow): QcStatus {
-  let worst: QcStatus = "OK";
-  for (const check of qcChecks(qc)) {
-    if (check.status === undefined) continue;
-    if (STATUS_SEVERITY[check.status] > STATUS_SEVERITY[worst]) worst = check.status;
-  }
-  return worst;
-}
 
 // Read-recovery funnel, splitting each sample's reads three ways: usable, meaning matched the pattern AND
 // kept after the feature-barcode panel correction; off-panel, meaning matched but dropped; and no pattern
@@ -194,6 +117,9 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
   const labels = app.model.outputs.sampleLabels ?? {};
   const completed = new Set(app.model.outputs.completedSamples ?? []);
   const qcBySample = app.model.outputs.sampleQc ?? {};
+  // Written by the verdict step, so it settles later than the per-sample read QC above and only for a run
+  // with a V(D)J dataset. A sample without one keeps its progress and its recovery bar and shows no tag.
+  const reportBySample = app.model.outputs.sampleQcReport ?? {};
   const sampleStep = app.model.outputs.sampleStep;
 
   // Early roster signal. The flat parseLogStream registers per sample the moment parse starts, before any
@@ -263,7 +189,13 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
       const label = labels[sampleId] ?? sampleId;
       // Per-sample QC settles when the sample finishes, so Quality + Read recovery fill in at completion.
       const qc = qcBySample[sampleId];
-      const qcFields = qc ? { quality: qualityStatus(qc), recovery: recoveryBar(qc), qc } : {};
+      const qcReport = reportBySample[sampleId];
+      const qcFields = {
+        ...(qc ? { recovery: recoveryBar(qc), qc } : {}),
+        // The tag IS the report's rollup. Nothing here recomputes it, so the grid and the sample's own
+        // report state one status rather than two that can drift.
+        ...(qcReport ? { quality: qcStatusTag(qcReport.status), qcReport } : {}),
+      };
       const progressCell = deriveProgress(sampleId, completed, sampleStep, liveLinesFor(sampleId));
       return { sampleId, label, progress: progressCell, ...qcFields };
     })

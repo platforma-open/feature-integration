@@ -118,12 +118,18 @@ self.body(func(inputs) {
 	for table in RESULT_TABLES {
 		b = b.saveFile(table.file)
 	}
-	run := b.saveFileContent("result_run_meta.json").run()
+	run := b.saveFileContent("result_run_meta.json").saveFileContent("result_qc_by_sample.json").run()
 
-	// The run record travels as content because the import template reads it as a VALUE. The tables travel as
-	// files because the import template hands them to xsv.importFile. An exec result object is not
-	// serializable as a template output, so each table is returned on its own field.
-	result := { runMeta: run.getFileContent("result_run_meta.json") }
+	// The run record and the per-sample quality report travel as content because the model reads each as a
+	// VALUE. The tables travel as files because the import template hands them to xsv.importFile. An exec
+	// result object is not serializable as a template output, so each table is returned on its own field.
+	result := {
+		runMeta: run.getFileContent("result_run_meta.json"),
+		// The sample-level measurements keyed by sample, for the sample detail view's Quality Checks tab.
+		// That view holds one sample at a time and resolves it synchronously. result_qc.csv carries the
+		// same measurements for every other reader.
+		qcBySample: run.getFileContent("result_qc_by_sample.json")
+	}
 	for table in RESULT_TABLES {
 		result[table.out] = run.getFile(table.file)
 	}

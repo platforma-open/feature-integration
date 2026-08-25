@@ -8,6 +8,7 @@ import polars as pl
 import pytest
 from emit_verdicts import _build_grouping, _identity_properties, _linker_frame
 from panel import ANY_SAMPLE, consistent_properties, property_columns
+from qc_measures import MEASUREMENTS
 from verdict import DEFAULT_PANEL_MIN_MEMBERS, ReferenceChoice
 
 SRC = Path(__file__).resolve().parents[1] / "src"
@@ -2776,3 +2777,70 @@ def test_a_barcode_reused_for_two_antigens_takes_a_row_under_each(tmp_path):
     # The denominator is the roster for the identity, not the panel's.
     assert int(figures["AgA"]["samplesInPanel"]) == 1
     assert int(figures["AgB"]["samplesInPanel"]) == 1
+
+
+def _sample_report(bed, sample: str = "S1") -> dict:
+    return json.loads((bed / "result_qc_by_sample.json").read_text())[sample]
+
+
+def test_the_sample_report_lists_every_sample_measurement(bed):
+    # 330: a measurement that did not run appears in the list rather than being omitted, so a
+    # reader meets it instead of noticing an absence. The set is the declaration order of every
+    # sample-level measurement, deferred ones included.
+    _run(bed, *BASE)
+    listed = [m["id"] for m in _sample_report(bed)["measurements"]]
+    assert listed == [m.id for m in MEASUREMENTS if m.level == "sample"]
+
+
+def test_a_sample_measurement_with_no_value_states_why(bed):
+    # This bed passes no --qc-summary, so panelAssignedFraction never arrived. A blank and a zero
+    # are opposite findings, so the row carries the reason where its number would have been. No
+    # line can be applied to a value that does not exist, so it carries no status either.
+    _run(bed, *BASE)
+    row = {m["id"]: m for m in _sample_report(bed)["measurements"]}["panelAssignedFraction"]
+
+    assert row["value"] is None
+    assert row["reason"], "a measurement with no value names the reason in its place"
+    assert row["status"] is None
+
+
+def test_no_sample_measurement_is_blank_without_a_reason(bed):
+    # The invariant, over the whole set rather than one row: every entry either carries a number
+    # or says why it does not. Neither case is ever rendered as an absence.
+    _run(bed, *BASE)
+    for row in _sample_report(bed)["measurements"]:
+        if row["value"] is None:
+            assert row["reason"], f"{row['id']} has no value and no reason"
+        assert row["label"] and row["counts"], row["id"]
+
+
+def test_the_sample_report_carries_the_rollup_the_qc_frame_carries(bed):
+    # The Main grid's tag is this rollup, and the report beside it lists the measurements it was
+    # taken over. One number in two places would let the tag and the list disagree about one
+    # sample, which is the defect this file exists to keep out.
+    _run(bed, *BASE)
+    report = _sample_report(bed)
+
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    rollup = qc.filter(
+        (pl.col("measurement") == "rollup") & (pl.col("level") == "sample") & (pl.col("entity") == "S1")
+    ).row(0, named=True)
+
+    assert report["status"] == rollup["status"]
+    assert report["judged"] == int(rollup["judged"])
+    assert report["unjudged"] == int(rollup["unjudged"])
+    assert report["notEvaluated"] == int(rollup["notEvaluated"])
+    # Coverage accounts for every measurement the rollup was taken over.
+    counted = [m for m in report["measurements"] if m["rollsUp"]]
+    assert report["judged"] + report["unjudged"] + report["notEvaluated"] == len(counted)
+
+
+def test_a_deferred_sample_measurement_reaches_the_report_with_its_reason(bed):
+    # Nothing computes the aggregate-barcode fraction in this block. Omitting it would read
+    # exactly like a run that checked it and found nothing wrong.
+    _run(bed, *BASE)
+    row = {m["id"]: m for m in _sample_report(bed)["measurements"]}["aggregateBarcodeFraction"]
+
+    assert row["value"] is None
+    assert row["status"] is None
+    assert row["reason"] == next(m.deferred_reason for m in MEASUREMENTS if m.id == "aggregateBarcodeFraction")

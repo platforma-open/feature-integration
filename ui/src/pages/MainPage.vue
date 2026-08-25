@@ -640,8 +640,9 @@ const columnDefs: ColDef<SampleResult>[] = [
     // results.ts already produces the cell config (status / percent / text / suffix). Pass it through.
     progress: (value) => value,
   }),
-  // Quality status tag (OK / WARN / ALERT), worst-case per sample from the QC metrics (results.ts). Blank
-  // while the sample is still running, since quality is undefined until its QC settles.
+  // Quality status tag (OK / WARN / ALERT): the sample's rolled-up status, taken by the software over its
+  // own measurements. Blank while the sample is still running, and blank on a finished sample where no
+  // measurement carried a line to judge it.
   createAgGridColDef<SampleResult, QcStatus | undefined>({
     colId: "quality",
     field: "quality",
@@ -649,10 +650,11 @@ const columnDefs: ColDef<SampleResult>[] = [
     headerComponentParams: {
       type: "Text",
       info:
-        "Per-sample QC status.\n" +
-        "ALERT — no cells detected, or under 25% of reads assigned to the panel.\n" +
-        "WARN — under 50% of reads panel-assigned, or under 80% matched the read pattern.\n" +
-        "OK — otherwise.",
+        "The worst status among this sample's own quality measurements. A measurement carries a status " +
+        "only where a published or stated line stands behind it; the rest are shown with their value and " +
+        "no status.\n" +
+        "Blank means no measurement of this sample carried a line, which is not the same as OK.\n" +
+        "Double-click the sample to see every measurement, its value, and the reason where it has none.",
     } satisfies PlAgHeaderComponentParams,
     width: 120,
     cellRendererSelector: (params) =>

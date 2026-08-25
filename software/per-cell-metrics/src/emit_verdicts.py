@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import sys
 from collections import Counter
 from collections.abc import Collection
@@ -191,6 +192,9 @@ class QcRow(NamedTuple):
     `panel_id` is set on tag-level and identity-level rows and left empty on the rest. A
     panel carries the worst status among those measurements, so those rows have to say
     which panel they belong to.
+
+    `reason` is set only where `value` is None, and it is separate from `detail`: a detail
+    is carried alongside a number, a reason stands in place of one.
     """
 
     level: str
@@ -201,6 +205,7 @@ class QcRow(NamedTuple):
     panel_id: str
     status: Status | None
     coverage: Coverage
+    reason: str = ""
 
 
 def _write_sorted(frame: pl.DataFrame, path: str, by: list[str]) -> None:
@@ -790,14 +795,14 @@ def _pivot_cell_punch(
     )
 
 
-def _leaf(level, entity, measurement, value, detail, panel_id, status: Status | None) -> QcRow:
+def _leaf(level, entity, measurement, value, detail, panel_id, status: Status | None, reason: str = "") -> QcRow:
     """One measurement's row: its own status, and the coverage of that one status.
 
     The triple comes from `roll_up`, so a leaf and a rollup are counted by one rule, and the
     row keeps the status `roll_up` would have flattened.
     """
     reading = Reading(status, value)
-    return QcRow(level, entity, measurement, value, detail, panel_id, status, roll_up([reading]))
+    return QcRow(level, entity, measurement, value, detail, panel_id, status, roll_up([reading]), reason)
 
 
 def _qc_frame(rows: list[QcRow]) -> pl.DataFrame:
@@ -833,7 +838,9 @@ def _qc_frame(rows: list[QcRow]) -> pl.DataFrame:
                 "notEvaluated": row.coverage.not_evaluated,
                 "counts": ROLLUP_COUNTS if declared is None else declared.counts,
                 "implies": None if declared is None else declared.implies,
-                "reason": None if declared is None else declared.deferred_reason,
+                # Why this row has no number. A deferred measurement's reason is the same on
+                # every run and is declared once; any other row states its own.
+                "reason": row.reason or (None if declared is None else declared.deferred_reason),
             }
         )
     return pl.DataFrame(
@@ -857,16 +864,87 @@ def _qc_frame(rows: list[QcRow]) -> pl.DataFrame:
     )
 
 
-def _add(rows: list[QcRow], level: str, entity: str, measurement: str, value, detail: str = "", panel_id: str = ""):
+def _add(
+    rows: list[QcRow],
+    level: str,
+    entity: str,
+    measurement: str,
+    value,
+    detail: str = "",
+    panel_id: str = "",
+    reason: str = "",
+):
     """Append one measurement row, taking its status from the lines in force.
 
     Every declared measurement goes through here. One with no line in force carries no
     status, which is honest rather than a refusal: it was computed, no line stands behind it,
     so its number is shown and nothing is claimed.
+
+    `reason` belongs on a row whose `value` is None and is ignored on any other.
     """
     rows.append(
-        _leaf(level, entity, measurement, value, detail, panel_id, status_for(measurement, value, DEFAULT_LINES))
+        _leaf(
+            level,
+            entity,
+            measurement,
+            value,
+            detail,
+            panel_id,
+            status_for(measurement, value, DEFAULT_LINES),
+            reason if value is None else "",
+        )
     )
+
+
+# Stands in where a row reaches the report with no number and no reason. Every call site that
+# can produce a valueless sample measurement states its own, so this covers only a measurement
+# no run supplied at all.
+UNSUPPLIED_REASON = "nothing in this run supplied a value for this measurement"
+
+
+def sample_report_rows(sample: str, rows: list[QcRow]) -> tuple[list[dict], Coverage]:
+    """One sample's report: every sample-level measurement, and the rollup over them.
+
+    The walk is over `MEASUREMENTS` rather than over `rows`, so the report is the declared set:
+    a measurement this run never reached takes its place carrying a reason.
+
+    A value that is not a finite number counts as no value, and the reason goes out in its
+    place. The entry's own account of itself and the coverage triple follow one rule.
+
+    A measurement declaring `rolls_up=False` is listed with its own status and left out of the
+    rollup. The entry carries `rollsUp`, which is what separates a status shown here from the
+    status the tag beside the list carries.
+    """
+    by_id = {r.measurement: r for r in rows if r.level == "sample" and r.entity == sample}
+    entries: list[dict] = []
+    readings: list[Reading] = []
+    for m in MEASUREMENTS:
+        if m.level != "sample":
+            continue
+        row = by_id.get(m.id)
+        value = None if row is None else row.value
+        if value is not None and not math.isfinite(value):
+            value = None
+        status = None if row is None or value is None else row.status
+        reason = None
+        if value is None:
+            reason = m.deferred_reason or (row.reason if row is not None else "") or UNSUPPLIED_REASON
+        entries.append(
+            {
+                "id": m.id,
+                "label": m.label,
+                "value": value,
+                "detail": (row.detail if row is not None else "") or None,
+                "reason": reason,
+                "status": None if status is None else status.value,
+                "counts": m.counts,
+                "implies": m.implies,
+                "rollsUp": m.rolls_up,
+            }
+        )
+        if m.rolls_up:
+            readings.append(Reading(status, value))
+    return entries, roll_up(readings)
 
 
 _DECILE_SCHEMA = {"distribution": pl.String, "decile": pl.Int64, "value": pl.Float64}
@@ -1610,8 +1688,17 @@ def main() -> None:
             return None
         return float(raw)
 
+    # Why a read-level figure has no number, per source. The summary is one row per sample built
+    # by `qc_report.py`: it leaves `panelAssignedFraction` and `cellBarcodeValidFraction` blank
+    # where the refine-tags report is absent or unreadable, carries no step for that tag, or the
+    # step read no input. `readsTotal` comes from the parse report and is blank only when no
+    # summary reached this run at all.
+    NO_READ_QC = "no per-sample read QC summary reached this run"
+    NO_REFINE_STEP = "the refine-tags report supplied no %s step with input reads, so nothing measured this"
+
     rows: list[QcRow] = []
     sample_coverage: dict[str, Coverage] = {}
+    sample_report: dict[str, dict] = {}
     for sample in samples:
         first = len(rows)
         sample_counts = counts.filter(pl.col("sampleId") == sample)
@@ -1620,9 +1707,23 @@ def main() -> None:
 
         reads_matched = _number(qc, "readsMatched")
         matched_detail = "" if reads_matched is None else f"readsMatched={int(reads_matched)}"
-        _add(rows, "sample", sample, "readsTotal", _number(qc, "readsTotal"), matched_detail)
-        _add(rows, "sample", sample, "panelAssignedFraction", _number(qc, "panelAssignedFraction"))
-        _add(rows, "sample", sample, "cellBarcodeValidFraction", _number(qc, "cellBarcodeValidFraction"))
+        _add(rows, "sample", sample, "readsTotal", _number(qc, "readsTotal"), matched_detail, reason=NO_READ_QC)
+        _add(
+            rows,
+            "sample",
+            sample,
+            "panelAssignedFraction",
+            _number(qc, "panelAssignedFraction"),
+            reason=NO_READ_QC if not qc else NO_REFINE_STEP % "FEATURE",
+        )
+        _add(
+            rows,
+            "sample",
+            sample,
+            "cellBarcodeValidFraction",
+            _number(qc, "cellBarcodeValidFraction"),
+            reason=NO_READ_QC if not qc else NO_REFINE_STEP % "CELL",
+        )
         # The denominator is the cell list, never the barcodes the reads happened to touch: the
         # five-thousand recommendation is per called cell, and in droplet data observed barcodes
         # run one to two orders of magnitude higher, so dividing by them would alert on a healthy
@@ -1633,14 +1734,29 @@ def main() -> None:
             else None
         )
         detail = f"cellsInList={len(listed_here)}" if listed_here is not None else "no cell list supplied"
-        _add(rows, "sample", sample, "readsPerCell", depth, detail)
+        depth_reason = (
+            "no cell list supplied, so depth has no denominator"
+            if listed_here is None
+            else "no read count reached this sample, so depth has no numerator"
+        )
+        _add(rows, "sample", sample, "readsPerCell", depth, detail, reason=depth_reason)
 
         deciles = antigen_count_deciles(sample_counts)
         decile_detail = "|".join(
             f"{d}:{'' if v is None else round(v, 3)}" for d, v in zip(deciles["decile"], deciles["value"], strict=True)
         )
         middle = deciles.filter(pl.col("decile") == 50)["value"].to_list()
-        _add(rows, "sample", sample, "antigenCountDistribution", middle[0] if middle else None, decile_detail)
+        # An empty input still returns all eleven decile points, each unanswered, so a value of
+        # None here means this sample holds no counted reading at all.
+        _add(
+            rows,
+            "sample",
+            sample,
+            "antigenCountDistribution",
+            middle[0] if middle else None,
+            decile_detail,
+            reason="no barcode in this sample holds a counted reading",
+        )
         _add(rows, "sample", sample, "aggregateBarcodeFraction", None)
 
         stats = floor_stats.get(sample, {"readingsFloored": 0, "cellsEmptied": 0})
@@ -1666,22 +1782,44 @@ def main() -> None:
             "uniqueCountsPerCell",
             _median([float(v) for v in listed_totals]),
             f"cellsWithAReading={len(listed_totals)}",
+            reason="no listed cell in this sample holds a counted reading",
         )
 
         # Two forms, and the gate decides which. With a gate declared this counts the cells it
         # set aside. With none there is no *high* to count, so the measurement is the spread of
         # the readings themselves -- which `290-reference-two-roles` names as what a scientist
         # reads in order to declare a gate.
+        #
+        # A gate makes the value a count, which is 0.0 over no readings rather than absent. The
+        # spread has no median over none, so only the gateless form can reach the report with no
+        # number, and it does so exactly when no cell of this sample carries a comparator.
         here = {key: value for key, value in reference.by_cell.items() if key[0] == sample}
         high_value, high_detail = _sticky_measure(here, args.gate_threshold)
-        _add(rows, "sample", sample, "highReferenceCells", high_value, high_detail)
+        _add(
+            rows,
+            "sample",
+            sample,
+            "highReferenceCells",
+            high_value,
+            high_detail,
+            reason="no cell in this sample carries a comparator reading",
+        )
 
         # A measurement declaring `rolls_up=False` states a reagent's condition on a sample's
         # row, and `310` keeps a reagent's failure off every sample: one bad reagent marking
         # twenty samples is how a sample status becomes noise. Its own row keeps its status.
-        sample_coverage[sample] = roll_up(
-            [Reading(r.status, r.value) for r in rows[first:] if _rolls_up(r.measurement)]
-        )
+        #
+        # The report and the rollup come out of one call, so the tag a reader sees beside the
+        # list cannot disagree with the list.
+        report, coverage = sample_report_rows(sample, rows[first:])
+        sample_report[sample] = {
+            "status": None if coverage.status is None else coverage.status.value,
+            "judged": coverage.judged,
+            "unjudged": coverage.unjudged,
+            "notEvaluated": coverage.not_evaluated,
+            "measurements": report,
+        }
+        sample_coverage[sample] = coverage
 
     per_sample_tag_total = {
         (row["sampleId"], row["tag"]): row["total"]
@@ -1905,6 +2043,12 @@ def main() -> None:
         rows.append(QcRow("sample", sample, ROLLUP, None, "", "", coverage.status, coverage))
 
     _write_sorted(_qc_frame(rows), f"{prefix}_qc.csv", ["level", "entity", "panelId", "measurement"])
+
+    # The same sample-level measurements as the frame above, keyed by sample. Read as content and
+    # not as a table: the sample detail view holds one sample at a time and resolves it
+    # synchronously. The frame stays the artefact every other reader takes.
+    with open(f"{prefix}_qc_by_sample.json", "w") as out:
+        json.dump(sample_report, out, indent=2, sort_keys=True)
 
     # The three distributions `330-the-quality-readout` puts last, as plottable frames rather than
     # as detail strings on a measurement row. A reader settles the cutoff and the gate by looking at

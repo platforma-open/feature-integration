@@ -139,6 +139,51 @@ export type VerdictRunMeta = {
   cellsSetAsideBySet?: Record<string, number>;
 };
 
+// A measurement's status. Three words and no fourth: a measurement carries one only where a line stands
+// behind it, and null covers both cases where none does. Which of the two happened is read from the value --
+// a number means computed and unjudged, its absence means nothing computed it, and the reason says which.
+export type QcMeasurementStatus = "OK" | "warn" | "alert";
+
+// One sample-level quality measurement, as emit_verdicts.py writes it into result_qc_by_sample.json.
+export type SampleQcMeasurement = {
+  /** The measurement id. Stable: it is also a value on the `measurement` axis and a p-column name. */
+  id: string;
+  /** The readable name, carried beside the id rather than instead of it. */
+  label: string;
+  /** The number, or null where the run could not compute one. Then `reason` says why, and is never empty. */
+  value: number | null;
+  /** What went in, carried alongside a number. Null where there is nothing to add. */
+  detail: string | null;
+  /** Why there is no number. Non-null exactly when `value` is null. */
+  reason: string | null;
+  /** Null where no line stands behind the measurement, or where there is no value to judge. */
+  status: QcMeasurementStatus | null;
+  /** What the measurement counts. */
+  counts: string;
+  /** What a bad value means, where a line exists to make that claim. */
+  implies: string | null;
+  /**
+   * Whether this measurement's status reaches the sample's rollup. False for a measurement whose finding
+   * belongs to a reagent rather than to the sample it was measured on, which is why a row can carry a
+   * status the sample's own tag does not.
+   */
+  rollsUp: boolean;
+};
+
+// One sample's quality report: every sample-level measurement, and the rollup over those that roll up.
+export type SampleQcReport = {
+  /** The worst status among the measurements that carry one. Null where none did. */
+  status: QcMeasurementStatus | null;
+  /** How many measurements carried a status. */
+  judged: number;
+  /** How many were computed with no line to judge them against. */
+  unjudged: number;
+  /** How many the run could not compute at all. */
+  notEvaluated: number;
+  /** Every sample-level measurement in declaration order, including the ones nothing computed. */
+  measurements: SampleQcMeasurement[];
+};
+
 // What the software resolves an unset reference source to, restated so the dropdown can say it. Mirrors
 // verdict.py resolve_default_source: a declared reagent, else the panel's own readings where the panel is
 // big enough, else nothing.
@@ -1753,6 +1798,15 @@ export const platforma = BlockModelV3.create(dataModel)
     ctx.outputs
       ?.resolve({ field: "antigenRunMeta", allowPermanentAbsence: true })
       ?.getDataAsJsonOrUndefined<VerdictRunMeta>(),
+  )
+  // Every sample-level quality measurement, keyed by sample, with that sample's rolled-up status. The single
+  // source for both the Main grid's Quality tag and the sample detail view's Quality Checks tab, so the tag
+  // and the list beside it cannot disagree about one sample. Absent until a run with a V(D)J dataset has
+  // produced it: the sample report is written by the verdict step.
+  .output("sampleQcReport", (ctx): Record<string, SampleQcReport> | undefined =>
+    ctx.outputs
+      ?.resolve({ field: "antigenSampleQc", allowPermanentAbsence: true })
+      ?.getDataAsJsonOrUndefined<Record<string, SampleQcReport>>(),
   )
   // The rung the run WILL be answered under, for the settings field to show. The same call `args()` projects,
   // so the field cannot show one rule while the workflow receives another. Keep it that way: the last

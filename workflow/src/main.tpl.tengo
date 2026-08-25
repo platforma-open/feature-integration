@@ -554,6 +554,10 @@ wf.body(func(args) {
 		// What the run was answered under, including the comparator and cell list that actually served and every
 		// parameter the reading used. Read as content by the model for the run summary.
 		blockOutputs.antigenRunMeta = verdictRun.output("runMeta")
+		// Every sample-level quality measurement, keyed by sample, with that sample's rolled-up status and
+		// coverage. Read as content by the model. It is the only source for both the Main grid's Quality
+		// tag and the sample detail view's Quality Checks tab.
+		blockOutputs.antigenSampleQc = verdictRun.output("qcBySample")
 	}
 
 	return {
