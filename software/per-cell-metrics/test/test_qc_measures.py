@@ -876,6 +876,56 @@ def test_the_denominator_is_the_declared_roster_not_the_observed_samples():
     assert row["samplesInPanel"] == 3
 
 
+# --- seen-in names its samples, so a staged panel reads apart from a dead reagent -----------
+#
+# samplesSeenIn/samplesInPanel stay as counts (ADD, do not rename). These name the same two
+# groups so a reader tells "not declared here" from "declared, zero reads" without a second
+# table. All three tests share a four-sample roster so the three readings sit side by side.
+
+FOUR_SAMPLES = ["S1", "S2", "S3", "S4"]
+
+
+def test_declared_and_seen_names_every_sample_for_a_working_tag():
+    # Declared on every sample's panel, seen on all of them: the two named lists match the
+    # full roster.
+    counts = _counts(["T1"] * 4, [5, 5, 5, 5], FOUR_SAMPLES)
+    states = _states(["T1"], ["bound"])
+
+    row = per_antigen_measures(counts, states, ["T1"], FOUR_SAMPLES).row(0, named=True)
+
+    assert row["samplesInPanelNames"] == FOUR_SAMPLES
+    assert row["samplesSeenInNames"] == FOUR_SAMPLES
+
+
+def test_a_dead_tag_is_declared_everywhere_and_seen_nowhere():
+    # Declared on the full roster, seen on none. samplesSeenInNames is an empty list -- a
+    # zero, not an absence -- while samplesInPanelNames still names the full roster.
+    counts = _counts(["T1"], [5], ["S1"])
+    states = _states(["T1"], ["bound"])
+
+    out = per_antigen_measures(counts, states, ["T1", "DEAD"], FOUR_SAMPLES)
+    dead = out.filter(pl.col("tag") == "DEAD").row(0, named=True)
+
+    assert dead["samplesInPanelNames"] == FOUR_SAMPLES
+    assert dead["samplesSeenInNames"] == []
+
+
+def test_a_staged_tag_reads_apart_from_a_dead_one():
+    # Declared on only two of the four-sample roster and seen on both of those -- the case
+    # this exists to distinguish. samplesInPanelNames names the narrower roster the caller
+    # declared it against, not the full one, and samplesSeenInNames matches it exactly:
+    # neither list is empty, which is what keeps this from reading like the dead tag above
+    # (declared on the full roster, seen on none).
+    counts = _counts(["T1", "T1"], [5, 5], ["S1", "S2"])
+    states = _states(["T1"], ["bound"])
+
+    row = per_antigen_measures(counts, states, ["T1"], ["S1", "S2"]).row(0, named=True)
+
+    assert row["samplesInPanelNames"] == ["S1", "S2"]
+    assert row["samplesSeenInNames"] == ["S1", "S2"]
+    assert row["samplesSeenInNames"] != []
+
+
 # --- sibling disagreement: a tag against the other tags of its identity ------
 
 

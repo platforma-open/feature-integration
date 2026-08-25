@@ -1009,6 +1009,8 @@ _REAGENT_SCHEMA = {
     "identity": pl.String,
     "samplesSeenIn": pl.Int64,
     "samplesInPanel": pl.Int64,
+    "samplesSeenInNames": pl.String,
+    "samplesInPanelNames": pl.String,
     "cellsWithCount": pl.Int64,
     "cellsAboveTheLine": pl.Float64,
     "medianCountPerCell": pl.Float64,
@@ -2192,6 +2194,10 @@ def main() -> None:
                         absences.append("siblingDisagreement=no cell gave this tag's siblings a majority")
                 if own is None:
                     absences.append("selfDisagreement=no cell set held this tag under an evaluable read")
+                # Named beside the counts above rather than replacing them: samplesSeenIn and
+                # samplesInPanel are released p-columns and keep their id. Sample ids are mapped
+                # through `label_of_sample`, the same map that resolves the panel file's own
+                # names, so a raw sampleId does not reach this column where a label exists.
                 reagent_rows.append(
                     {
                         "panelId": panel_id,
@@ -2199,6 +2205,12 @@ def main() -> None:
                         "identity": identity,
                         "samplesSeenIn": int(measure.get("samplesSeenIn") or 0),
                         "samplesInPanel": int(measure.get("samplesInPanel") or 0),
+                        "samplesSeenInNames": ", ".join(
+                            label_of_sample.get(s, s) for s in measure.get("samplesSeenInNames") or []
+                        ),
+                        "samplesInPanelNames": ", ".join(
+                            label_of_sample.get(s, s) for s in measure.get("samplesInPanelNames") or []
+                        ),
                         "cellsWithCount": int(measure.get("cellsWithCount") or 0),
                         "cellsAboveTheLine": float(above) if above is not None else None,
                         "medianCountPerCell": float(median) if median is not None else None,

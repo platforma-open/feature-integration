@@ -2855,6 +2855,8 @@ REAGENT_COLUMNS = [
     "identity",
     "samplesSeenIn",
     "samplesInPanel",
+    "samplesSeenInNames",
+    "samplesInPanelNames",
     "cellsWithCount",
     "cellsAboveTheLine",
     "medianCountPerCell",
@@ -2926,6 +2928,50 @@ def test_a_barcode_reused_for_two_antigens_takes_a_row_under_each(tmp_path):
     # The denominator is the roster for the identity, not the panel's.
     assert int(figures["AgA"]["samplesInPanel"]) == 1
     assert int(figures["AgB"]["samplesInPanel"]) == 1
+
+
+def test_a_staged_reagent_reads_apart_from_a_dead_one(tmp_path):
+    # STAGE is declared on S1 and S2 only, and carries a count on both -- staged into a
+    # two-sample study by design. DEAD is declared on all four samples and carries a count on
+    # none. Declaring DEAD on every sample splits it across two panels (S1+S2 share one
+    # declared tag set, S3+S4 share another), so it takes one row per panel; both must read
+    # empty under samplesSeenInNames, and neither reads like STAGE's row.
+    (tmp_path / "counts.csv").write_text(
+        "sampleId,cellId,tag,umiCount\n"
+        "S1,c1,STAGE,500\nS1,c1,CTRL,6\n"
+        "S2,c1,STAGE,500\nS2,c1,CTRL,6\n"
+        "S3,c1,CTRL,6\nS4,c1,CTRL,6\n"
+    )
+    (tmp_path / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type\n"
+        "S1,AgStage,STAGE,Target\nS2,AgStage,STAGE,Target\n"
+        "S1,AgDead,DEAD,Target\nS2,AgDead,DEAD,Target\nS3,AgDead,DEAD,Target\nS4,AgDead,DEAD,Target\n"
+        "S1,Ctrl,CTRL,Control\nS2,Ctrl,CTRL,Control\nS3,Ctrl,CTRL,Control\nS4,Ctrl,CTRL,Control\n"
+    )
+    (tmp_path / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS2,c1,K2\nS3,c1,K3\nS4,c1,K4\n")
+    _run(tmp_path, *BASE)
+
+    reagents = pl.read_csv(tmp_path / "result_reagents.csv", infer_schema_length=0)
+
+    stage = reagents.filter(pl.col("tag") == "STAGE").row(0, named=True)
+    assert stage["samplesInPanelNames"] == "S1, S2"
+    assert stage["samplesSeenInNames"] == "S1, S2"
+
+    dead_rows = reagents.filter(pl.col("tag") == "DEAD")
+    assert dead_rows.height == 2
+    assert sorted(dead_rows["samplesInPanelNames"].to_list()) == ["S1, S2", "S3, S4"]
+    # Empty, not null: a blank and a zero are opposite findings, and no read carried this tag.
+    assert set(dead_rows["samplesSeenInNames"].fill_null("").to_list()) == {""}
+
+
+def test_reagent_sample_names_come_from_the_run_labels_not_the_id(labelled_bed):
+    # `label_of_sample` is reachable here, so a raw sampleId never has to reach this
+    # user-facing column.
+    _run(labelled_bed, *BASE, "--sample-labels", json.dumps({OPAQUE: "donor01"}))
+    reagents = pl.read_csv(labelled_bed / "result_reagents.csv", infer_schema_length=0)
+    row = reagents.filter(pl.col("tag") == "AAAA").row(0, named=True)
+    assert row["samplesInPanelNames"] == "donor01"
+    assert row["samplesSeenInNames"] == "donor01"
 
 
 def _sample_report(bed, sample: str = "S1") -> dict:
