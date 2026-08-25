@@ -1119,6 +1119,216 @@ const gridOptions = {
           </template>
         </PlNumberField>
       </PlAccordionSection>
+
+      <!-- The QC lines (315-where-the-lines-come-from), separate from Compute resources: these change what
+           a measurement's own status reads, never what the run computes. Every field here is clearable --
+           empty means the shipped default, the same number the tooltip names. -->
+      <PlAccordionSection label="Quality lines">
+        <PlRow>
+          <PlNumberField
+            :class="$style.half"
+            v-model="app.model.data.cellBarcodeValidWarn"
+            :min-value="0"
+            :max-value="1"
+            :step="0.01"
+            clearable
+            label="Barcode validity: warn below"
+          >
+            <template #tooltip>
+              Below this share of reads whose cell barcode corrects onto the chemistry's whitelist,
+              the measurement warns.<br /><br />
+              Default 0.75, inherited from the field rather than calibrated for this assay: it is a
+              round number, and no test asserts it.
+            </template>
+          </PlNumberField>
+          <PlNumberField
+            :class="$style.half"
+            v-model="app.model.data.cellBarcodeValidError"
+            :min-value="0"
+            :max-value="1"
+            :step="0.01"
+            clearable
+            label="Barcode validity: alert below"
+          >
+            <template #tooltip>
+              Below this share the measurement alerts instead of warning.<br /><br />
+              Default 0.50, inherited from the field rather than calibrated for this assay: it is a
+              round number, and no test asserts it.
+            </template>
+          </PlNumberField>
+        </PlRow>
+        <PlNumberField
+          v-model="app.model.data.readsPerCellWarn"
+          :min-value="0"
+          :step="100"
+          clearable
+          label="Reads per cell: warn below"
+        >
+          <template #tooltip>
+            Below this many reads matched per cell in the cell list, the measurement warns. There is
+            no alert threshold: the vendor published one boundary.<br /><br />
+            Default 5000, the vendor's recommended minimum for this assay type -- not a number
+            calibrated against your own data, and no test asserts it.
+          </template>
+        </PlNumberField>
+        <PlRow>
+          <PlNumberField
+            :class="$style.half"
+            v-model="app.model.data.aggregateBarcodeWarn"
+            :min-value="0"
+            :max-value="1"
+            :step="0.01"
+            clearable
+            label="Aggregate-barcode reads: warn above"
+          >
+            <template #tooltip>
+              Above this share of reads sitting in barcodes flagged as aggregates, the measurement
+              warns.<br /><br />
+              Default 0.05, inherited from the field rather than calibrated for this assay: it is a
+              round number, and no test asserts it. Moving any of the three detection knobs below
+              changes what this line judges, since they decide which barcodes count as aggregates in
+              the first place.
+            </template>
+          </PlNumberField>
+          <PlNumberField
+            :class="$style.half"
+            v-model="app.model.data.aggregateBarcodeError"
+            :min-value="0"
+            :max-value="1"
+            :step="0.01"
+            clearable
+            label="Aggregate-barcode reads: alert at"
+          >
+            <template #tooltip>
+              At this share the measurement alerts.<br /><br />
+              Default 1.0 (total failure), inherited from the field rather than calibrated for this
+              assay: it is a round number, and no test asserts it.
+            </template>
+          </PlNumberField>
+        </PlRow>
+        <PlRow>
+          <PlNumberField
+            :class="$style.half"
+            v-model="app.model.data.undeclaredBarcodeWarn"
+            :min-value="0"
+            :max-value="1"
+            :step="0.01"
+            clearable
+            label="Undeclared-barcode reads: warn above"
+          >
+            <template #tooltip>
+              Above this share of a sample's reads landing in barcodes the panel never declared, the
+              measurement warns.<br /><br />
+              Default 0.50, inherited from the field rather than calibrated for this assay: it is a
+              round number, and no test asserts it.
+            </template>
+          </PlNumberField>
+          <PlNumberField
+            :class="$style.half"
+            v-model="app.model.data.undeclaredBarcodeError"
+            :min-value="0"
+            :max-value="1"
+            :step="0.01"
+            clearable
+            label="Undeclared-barcode reads: alert at"
+          >
+            <template #tooltip>
+              At this share the measurement alerts.<br /><br />
+              Default 1.0 (total failure), inherited from the field rather than calibrated for this
+              assay: it is a round number, and no test asserts it.
+            </template>
+          </PlNumberField>
+        </PlRow>
+        <PlRow>
+          <PlNumberField
+            :class="$style.half"
+            v-model="app.model.data.usableReadWarn"
+            :min-value="0"
+            :max-value="1"
+            :step="0.01"
+            clearable
+            label="Usable antigen-read fraction: warn below"
+          >
+            <template #tooltip>
+              Below this share of the library's reads reaching a called cell with a panel-recognised
+              barcode, the measurement warns.<br /><br />
+              Default 0.20, inherited from the field rather than calibrated for this assay: it is a
+              round number, and no test asserts it.
+            </template>
+          </PlNumberField>
+          <PlNumberField
+            :class="$style.half"
+            v-model="app.model.data.usableReadError"
+            :min-value="0"
+            :max-value="1"
+            :step="0.01"
+            clearable
+            label="Usable antigen-read fraction: alert below"
+          >
+            <template #tooltip>
+              Below this share the measurement alerts instead of warning.<br /><br />
+              Default 0.0 (total failure), inherited from the field rather than calibrated for this
+              assay: it is a round number, and no test asserts it.
+            </template>
+          </PlNumberField>
+        </PlRow>
+      </PlAccordionSection>
+
+      <!-- Separate from Quality lines on purpose: these decide what a barcode has to look like to be
+           called an aggregate, not what to think of the resulting share. Moving one changes which reads
+           the aggregate-barcode line above is judging. -->
+      <PlAccordionSection label="Aggregate-barcode detection">
+        <PlAlert type="info">
+          These three settings decide which barcodes count as aggregates before the
+          aggregate-barcode line above ever reads a number. The 0.05 warn line was calibrated
+          against Cell Ranger's default setting of all three; moving any of them changes what that
+          line is judging.
+        </PlAlert>
+        <PlRow>
+          <PlNumberField
+            :class="$style.half"
+            v-model="app.model.data.aggregateBarcodeIqrMultiplier"
+            :min-value="0"
+            :step="0.5"
+            clearable
+            label="IQR multiplier"
+          >
+            <template #tooltip>
+              A barcode among the top cohort (below) is flagged once its antigen UMI count reaches
+              the third quartile plus this many interquartile ranges.<br /><br />
+              Default 3.0, Cell Ranger's own constant for the ANTIGEN branch of its outlier
+              detection.
+            </template>
+          </PlNumberField>
+          <PlNumberField
+            :class="$style.half"
+            v-model="app.model.data.aggregateBarcodeMinUmiThreshold"
+            :min-value="0"
+            :step="100"
+            clearable
+            label="Minimum UMI floor"
+          >
+            <template #tooltip>
+              Below this computed threshold, nothing is flagged -- a shallow library can sit
+              entirely under this floor while still carrying real aggregate reads.<br /><br />
+              Default 1000, Cell Ranger's own floor.
+            </template>
+          </PlNumberField>
+        </PlRow>
+        <PlNumberField
+          v-model="app.model.data.aggregateBarcodeTopN"
+          :min-value="1"
+          :step="10"
+          clearable
+          label="Barcode cohort size"
+        >
+          <template #tooltip>
+            How many of the highest-count observed barcodes enter the quantile calculation. A
+            barcode outside this cohort is never flagged, however large its count.<br /><br />
+            Default 100, Cell Ranger's own constant.
+          </template>
+        </PlNumberField>
+      </PlAccordionSection>
     </PlSlideModal>
 
     <PlSlideModal v-model="logsOpen" width="80%">

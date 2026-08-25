@@ -16,6 +16,9 @@ maps := import("@platforma-sdk/workflow-tengo:maps")
 // Every key main.tpl.tengo may pass as a per-sample body input. All of these describe how one sample's reads
 // are parsed and counted. None describes how the counts are read.
 EXTRA_INPUT_KEYS := [
+	"aggregateBarcodeIqrMultiplier",
+	"aggregateBarcodeMinUmiThreshold",
+	"aggregateBarcodeTopN",
 	"barcodeSeqColumn",
 	"cellWhitelist",
 	"combineColumn",

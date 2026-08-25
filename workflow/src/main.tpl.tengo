@@ -118,6 +118,18 @@ wf.body(func(args) {
 	if !is_undefined(args.limitInput) {
 		extraInputs.limitInput = args.limitInput
 	}
+	// The aggregate-barcode detection knobs (qc_measures.py AGGREGATE_BARCODE_*). Same rule as limitInput
+	// above: added only when set, so an unset knob never creates a body field that stalls waiting for a
+	// value nobody will supply. qc_report.py's own argparse default applies where absent.
+	if !is_undefined(args.aggregateBarcodeIqrMultiplier) {
+		extraInputs.aggregateBarcodeIqrMultiplier = args.aggregateBarcodeIqrMultiplier
+	}
+	if !is_undefined(args.aggregateBarcodeMinUmiThreshold) {
+		extraInputs.aggregateBarcodeMinUmiThreshold = args.aggregateBarcodeMinUmiThreshold
+	}
+	if !is_undefined(args.aggregateBarcodeTopN) {
+		extraInputs.aggregateBarcodeTopN = args.aggregateBarcodeTopN
+	}
 
 	// processColumn outputs: the per-cell contract value columns, the per-sample QC CSV collected as a
 	// [sampleId] file map, and the per-sample QC-JSON map the model reads to build the Analysis logs.
@@ -424,6 +436,15 @@ wf.body(func(args) {
 		setParam("grouping", args.grouping)
 		setParam("contendingGroups", args.contendingGroups)
 		setParam("captureMap", args.captureMap)
+		setParam("cellBarcodeValidWarn", args.cellBarcodeValidWarn)
+		setParam("cellBarcodeValidError", args.cellBarcodeValidError)
+		setParam("readsPerCellWarn", args.readsPerCellWarn)
+		setParam("aggregateBarcodeWarn", args.aggregateBarcodeWarn)
+		setParam("aggregateBarcodeError", args.aggregateBarcodeError)
+		setParam("undeclaredBarcodeWarn", args.undeclaredBarcodeWarn)
+		setParam("undeclaredBarcodeError", args.undeclaredBarcodeError)
+		setParam("usableReadWarn", args.usableReadWarn)
+		setParam("usableReadError", args.usableReadError)
 
 		verdictRun = render.createEphemeral(verdictRunTpl, {
 			columns: verdictBundle,

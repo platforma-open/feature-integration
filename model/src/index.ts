@@ -49,6 +49,12 @@ const DEFAULT_PANEL_REFERENCE_MIN_MEMBERS = 25;
 // tag_distribution.py.
 const DEFAULT_DISTRIBUTION_MIN_CELLS = 300;
 
+// The four inherited lines and the three aggregate-barcode knobs (see BlockArgs) are projected straight
+// through in args() below, undefined included, rather than seeded with a mirrored TS constant here:
+// verdict-args.lib.tengo and qc_report.py's own argparse are the one place each shipped default is
+// stated. The UI's tooltips name the same numbers as prose, the same way the tooltip on countFloor below
+// says "The default of 4 is declared" without importing a constant to say it.
+
 // The punchcard's frame is keyed on the clonotype set alone, and each identity is a COLUMN rather than
 // an axis value: that is what a punchcard needs, and a (set, identity) frame cannot give it to a table.
 // The identity travels in the column's DOMAIN, so the model reads a column's identity without parsing a
@@ -864,6 +870,15 @@ export const platforma = BlockModelV3.create(dataModel)
       ...(data.combineColumn && typeof data.minUmi === "number" && data.minUmi >= 1
         ? { minUmi: Math.round(data.minUmi) }
         : {}),
+      // The aggregate-barcode detection knobs. Undefined projects as undefined, and the workflow's own
+      // default stands. Passed through raw, never gated on a positivity check: unlike minAgreement/
+      // gateThreshold below, none of these three is an "off means absent" switch.
+      aggregateBarcodeIqrMultiplier: data.aggregateBarcodeIqrMultiplier,
+      aggregateBarcodeMinUmiThreshold: data.aggregateBarcodeMinUmiThreshold,
+      aggregateBarcodeTopN:
+        typeof data.aggregateBarcodeTopN === "number"
+          ? Math.round(data.aggregateBarcodeTopN)
+          : undefined,
       // --- the binding reading ---
       // The dataset anchor. Absent is a legitimate state, not a half-filled form, so it projects as absent
       // and the workflow skips the verdict stage alone.
@@ -913,6 +928,18 @@ export const platforma = BlockModelV3.create(dataModel)
           ? { by: "property" as const, columns: groupingColumns(data.grouping) }
           : data.grouping,
       contendingGroups: contendingGroups.length > 0 ? contendingGroups : undefined,
+      // The four inherited lines. Each undefined projects as undefined, and emit_verdicts.py's own
+      // shipped default stands -- passed through raw rather than gated on positivity, since 0.0 is a
+      // real published threshold (usableReadError) and not an "off" state.
+      cellBarcodeValidWarn: data.cellBarcodeValidWarn,
+      cellBarcodeValidError: data.cellBarcodeValidError,
+      readsPerCellWarn: data.readsPerCellWarn,
+      aggregateBarcodeWarn: data.aggregateBarcodeWarn,
+      aggregateBarcodeError: data.aggregateBarcodeError,
+      undeclaredBarcodeWarn: data.undeclaredBarcodeWarn,
+      undeclaredBarcodeError: data.undeclaredBarcodeError,
+      usableReadWarn: data.usableReadWarn,
+      usableReadError: data.usableReadError,
       // Preview: cap reads only in dry mode. A full run omits it. Projected only when dry, so toggling back
       // to full changes the args hash and re-runs on the complete input.
       ...(data.runMode === "dry" && data.limitInput

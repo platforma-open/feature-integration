@@ -72,6 +72,13 @@ export type BlockArgs = {
   // the workflow.
   combineColumn?: string;
   minUmi?: number;
+  // The aggregate-barcode detection knobs (qc_measures.py AGGREGATE_BARCODE_*). Undefined means the
+  // shipped default. These run inside qc_report.py, which is part of the per-sample mitool fan-out, so
+  // they belong here rather than beside the reading's own parameters below: moving one re-runs that
+  // sample's parse/refine-tags/tag-stat chain, the same cost combineColumn or minUmi already carry.
+  aggregateBarcodeIqrMultiplier?: number;
+  aggregateBarcodeMinUmiThreshold?: number;
+  aggregateBarcodeTopN?: number;
 
   // --- the binding reading -------------------------------------------------------------------------
   // Everything below reaches emit_verdicts.py through verdict-args.lib.tengo, and nothing below reaches
@@ -110,6 +117,19 @@ export type BlockArgs = {
   // Identities declared to contend for one binding site. Canonicalised by the args lambda: each group
   // sorted, groups sorted, groups of fewer than two members dropped.
   contendingGroups?: string[][];
+
+  // The four inherited lines (`315-where-the-lines-come-from`), each undefined meaning the shipped
+  // default. All four are round numbers carried over from the field rather than calibrated for this
+  // assay; error is absent for readsPerCellWarn because the field published one boundary.
+  cellBarcodeValidWarn?: number;
+  cellBarcodeValidError?: number;
+  readsPerCellWarn?: number;
+  aggregateBarcodeWarn?: number;
+  aggregateBarcodeError?: number;
+  undeclaredBarcodeWarn?: number;
+  undeclaredBarcodeError?: number;
+  usableReadWarn?: number;
+  usableReadError?: number;
 };
 
 /**
@@ -163,6 +183,10 @@ export type BlockData = {
   // member barcode fires. minUmi is the AND per-barcode "fired" floor, an integer >= 1 defaulting to 1.
   combineColumn?: string;
   minUmi?: number;
+  // The aggregate-barcode detection knobs. See BlockArgs for what each means to the reading.
+  aggregateBarcodeIqrMultiplier?: number;
+  aggregateBarcodeMinUmiThreshold?: number;
+  aggregateBarcodeTopN?: number;
 
   // --- the binding reading -------------------------------------------------------------------------
   // See BlockArgs for what each one means to the reading. The notes here are about the DATA layer only.
@@ -192,6 +216,16 @@ export type BlockData = {
   minAgreement?: number;
   gateThreshold?: number;
   grouping?: GroupingRule;
+  // The four inherited lines. See BlockArgs for what each means to the reading.
+  cellBarcodeValidWarn?: number;
+  cellBarcodeValidError?: number;
+  readsPerCellWarn?: number;
+  aggregateBarcodeWarn?: number;
+  aggregateBarcodeError?: number;
+  undeclaredBarcodeWarn?: number;
+  undeclaredBarcodeError?: number;
+  usableReadWarn?: number;
+  usableReadError?: number;
   /**
    * Written on a user gesture only. The identities to choose from come from the identityOptions model
    * output, and a watcher that copied that output into data would make the model output depend on the data

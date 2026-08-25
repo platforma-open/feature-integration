@@ -52,8 +52,19 @@ self.body(func(inputs) {
 		arg("--sample-id").arg("sample").
 		arg("--cell-col").arg(tags.cell).
 		arg("--feature-col").arg(tags.feature).
-		arg("--umi-col").arg("unique_" + tags.umi).
-		arg("--output").arg("result_qc.csv").saveFile("result_qc.csv").
+		arg("--umi-col").arg("unique_" + tags.umi)
+	// The aggregate-barcode detection knobs. Added only where set, so the exec's own argparse default
+	// (qc_measures.py AGGREGATE_BARCODE_*) applies otherwise.
+	if !is_undefined(inputs.aggregateBarcodeIqrMultiplier) {
+		qc = qc.arg("--aggregate-iqr-multiplier").arg(string(inputs.aggregateBarcodeIqrMultiplier))
+	}
+	if !is_undefined(inputs.aggregateBarcodeMinUmiThreshold) {
+		qc = qc.arg("--aggregate-min-umi-threshold").arg(string(inputs.aggregateBarcodeMinUmiThreshold))
+	}
+	if !is_undefined(inputs.aggregateBarcodeTopN) {
+		qc = qc.arg("--aggregate-top-n").arg(string(inputs.aggregateBarcodeTopN))
+	}
+	qc = qc.arg("--output").arg("result_qc.csv").saveFile("result_qc.csv").
 		saveFileContent("result_qc.json").
 		run()
 
