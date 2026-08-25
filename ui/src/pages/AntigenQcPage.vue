@@ -194,6 +194,7 @@ const DISTRIBUTION_AXIS = "pl7.app/antigen/qcDistribution";
 const BACKGROUND_MEAN = "pl7.app/antigen/fittedBackgroundMean";
 const SIGNAL_MEAN = "pl7.app/antigen/fittedSignalMean";
 const BACKGROUND_WEIGHT = "pl7.app/antigen/fittedBackgroundWeight";
+const SAMPLE_AXIS = "pl7.app/sampleId";
 
 // GraphMaker resolves a source by name, value type, annotations and domain only, so `axesSpec` is
 // required by the type and unread. Building the source through a typed helper keeps `inputName`
@@ -233,10 +234,44 @@ const referenceOptions = computed(() => decileOptions("referenceReading"));
 // The two means side by side, which is the whole reading: a background alone says nothing about
 // whether the counts separated, and a tag that bound nothing shows as two means almost on top of
 // each other rather than as a refusal.
+//
+// Faceted by sample, because the fit runs per (tag, sample): one panel pools two samples' fits and
+// reads as one population. `330` asks for one plot per tag per sample. This is a panel per sample
+// with a point per tag, which is not that grid — the frame carries the two fitted means, and two
+// means cannot draw the two humps the atom asks a reader to judge.
 const backgroundOptions = computed<PredefinedGraphOption<"scatterplot">[]>(() => [
   { inputName: "x", selectedSource: col(BACKGROUND_MEAN, "Double") },
   { inputName: "y", selectedSource: col(SIGNAL_MEAN, "Double") },
+  { inputName: "facetBy", selectedSource: { name: SAMPLE_AXIS, type: "String" } },
 ]);
+
+// What this assay never measures, and why. Wording mirrors the three exclusion statements in
+// `qc_measures.py`; the two must not drift.
+//
+// These are properties of the method, true of every run. A measurement reading *not evaluated* is a
+// property of THIS run. `310` forbids collapsing the two, and `320` requires the absence to be
+// stated rather than left to be noticed. Not a status, not a rollup member, not a measurement row.
+const NOT_MEASURED: { what: string; why: string }[] = [
+  {
+    what: "Doublets, from cells positive on several antigens",
+    why: "The field does not read multi-antigen positivity as a doublet estimate, and one vendor states outright that it should not be.",
+  },
+  {
+    what: "A false-discovery rate",
+    why: "None exists for this assay. The bulk-readout relative has had one for a decade and the per-cell form has none, so no calibrated statement is available about how many positives in a run are spurious.",
+  },
+  {
+    what: "The share of counts landing in droplets that held no cell",
+    why: "It cannot be computed against a cell list derived from recovered receptors: cells whose receptor did not assemble are classified as empty and inflate the very quantity being measured.",
+  },
+];
+
+// Carried apart from the three above, and the difference is the reason. Saturation exists and the
+// vendor's own report gives it. The three above do not exist for this assay at all.
+const NOT_CARRIED = {
+  what: "Sequencing saturation",
+  why: "The vendor's own report carries it. Whether the run was deep enough is answered by reads per cell above.",
+};
 
 // Status is rendered as the plain string the workflow emitted, with the discrete filter its spec declares.
 // The vocabulary is now OK / warn / alert and nothing else, which IS a rank, so a status tag would fit the
@@ -277,6 +312,17 @@ const backgroundOptions = computed<PredefinedGraphOption<"scatterplot">[]>(() =>
           no-rows-text="The report imported with no measurements in it. Every declared measurement should keep a row — a deferred one carries no status and gives its reason in place of a value — so an empty report means the measurements were lost on the way here, not that the run was clean."
           show-export-button
         />
+        <div :class="$style.notMeasured">
+          <div :class="$style.notMeasuredTitle">Not measured, and why</div>
+          <dl :class="$style.notMeasuredList">
+            <template v-for="item in NOT_MEASURED" :key="item.what">
+              <dt>{{ item.what }}</dt>
+              <dd>{{ item.why }}</dd>
+            </template>
+            <dt>{{ NOT_CARRIED.what }}</dt>
+            <dd>{{ NOT_CARRIED.why }}</dd>
+          </dl>
+        </div>
       </template>
 
       <template v-else-if="activeView === 'reagents'">
@@ -388,6 +434,31 @@ const backgroundOptions = computed<PredefinedGraphOption<"scatterplot">[]>(() =>
 
 <style module>
 /* GraphMaker fills its container, and a container with no height collapses to nothing. */
+.notMeasured {
+  padding: 16px 0 4px;
+}
+
+.notMeasuredTitle {
+  font-size: 13px;
+  font-weight: 600;
+  padding-bottom: 6px;
+}
+
+.notMeasuredList {
+  margin: 0;
+  font-size: 13px;
+  color: var(--color-txt-03);
+}
+
+.notMeasuredList dt {
+  font-weight: 600;
+  padding-top: 6px;
+}
+
+.notMeasuredList dd {
+  margin: 0;
+}
+
 .plot {
   height: 480px;
 }
