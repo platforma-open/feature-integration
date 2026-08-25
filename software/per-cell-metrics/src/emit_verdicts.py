@@ -1842,7 +1842,24 @@ def main() -> None:
             decile_detail,
             reason="no barcode in this sample holds a counted reading",
         )
-        _add(rows, "sample", sample, "aggregateBarcodeFraction", None)
+        # qc_report.py computes this directly from the tag-stat TSV and the parse report, both
+        # required inputs of that script, so a missing figure means no read-QC row reached this
+        # sample at all -- same cause and reason as `readsTotal` above.
+        agg_fraction = _number(qc, "aggregateBarcodeFraction")
+        agg_flagged = _number(qc, "aggregateBarcodesFlagged")
+        agg_threshold = _number(qc, "aggregateBarcodeThreshold")
+        agg_detail = "" if agg_fraction is None else f"barcodesFlagged={int(agg_flagged or 0)}"
+        if agg_threshold is not None:
+            agg_detail += f"|threshold={agg_threshold:.1f}"
+        _add(
+            rows,
+            "sample",
+            sample,
+            "aggregateBarcodeFraction",
+            agg_fraction,
+            agg_detail,
+            reason=NO_READ_QC,
+        )
 
         stats = floor_stats.get(sample, {"readingsFloored": 0, "cellsEmptied": 0})
         _add(

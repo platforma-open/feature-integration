@@ -2,6 +2,7 @@ import dataclasses
 import re
 
 import polars as pl
+import pytest
 from qc_measures import (
     _COMPARISON,
     DEFAULT_LINES,
@@ -12,7 +13,9 @@ from qc_measures import (
     Measurement,
     Reading,
     Status,
+    aggregate_barcode_fraction,
     antigen_count_deciles,
+    detect_aggregate_barcodes,
     measurement_rows,
     per_antigen_measures,
     reads_per_cell,
@@ -44,7 +47,7 @@ EXPECTED_LEVEL_BY_ID = {
     "siblingDisagreement": "tag",
 }
 
-DEFERRED_IDS = {"aggregateBarcodeFraction", "usableReadFraction"}
+DEFERRED_IDS = {"usableReadFraction"}
 
 
 def test_every_declared_id_is_expected_and_every_expected_id_is_declared():
@@ -362,6 +365,104 @@ def test_reads_per_cell_empty_cell_list_does_not_divide_by_zero():
     assert reads_per_cell(1000, 0) is None
 
 
+# --- aggregate-barcode detection --------------------------------------------
+#
+# Ports `detect_outlier_umis_bcs` from Cell Ranger `main`,
+# `lib/python/cellranger/feature/antibody/analysis.py`, called for the ANTIGEN library type
+# from `cell_calling_helpers.py::remove_antibody_antigen_aggregates`.
+
+
+def _per_barcode(umi: list[int], read: list[int] | None = None, barcode: list[str] | None = None) -> pl.DataFrame:
+    n = len(umi)
+    return pl.DataFrame(
+        {
+            "barcode": barcode or [f"b{i}" for i in range(n)],
+            "umiCount": umi,
+            "readCount": read or [c * 2 for c in umi],
+        }
+    )
+
+
+def test_detect_aggregate_barcodes_flags_a_clear_outlier():
+    # 20 barcodes spread 600..790 plus one at 5000. q1=650, q3=750, threshold=750+(750-650)*3=1050,
+    # which clears the 1000-UMI floor, so only the barcode at 5000 (the sole one >= 1050) is flagged.
+    normal = list(range(600, 600 + 20 * 10, 10))
+    per_barcode = _per_barcode(normal + [5000], barcode=[f"b{i}" for i in range(20)] + ["AGG"])
+    flagged, threshold = detect_aggregate_barcodes(per_barcode.select("barcode", "umiCount"))
+    assert flagged == frozenset({"AGG"})
+    assert threshold == pytest.approx(1050.0)
+
+
+def test_detect_aggregate_barcodes_below_the_floor_flags_nothing():
+    # q1=12, q3=20, threshold=20+(20-12)*3=44 -- well under the 1000-UMI floor. The source refuses
+    # to flag anything under that floor, so nothing is flagged even though 400 clears 44 on its own.
+    per_barcode = _per_barcode([10, 12, 15, 20, 400])
+    flagged, threshold = detect_aggregate_barcodes(per_barcode.select("barcode", "umiCount"))
+    assert flagged == frozenset()
+    assert threshold == pytest.approx(44.0)
+
+
+def test_detect_aggregate_barcodes_works_under_a_hundred_barcodes():
+    # Same rule, five barcodes. q1=650, q3=750, threshold=1050, clears the floor, and the one
+    # barcode at 9000 is the only one at or above it.
+    per_barcode = _per_barcode([600, 650, 700, 750, 9000], barcode=["b0", "b1", "b2", "b3", "AGG"])
+    flagged, threshold = detect_aggregate_barcodes(per_barcode.select("barcode", "umiCount"))
+    assert flagged == frozenset({"AGG"})
+    assert threshold == pytest.approx(1050.0)
+
+
+def test_aggregate_barcode_fraction_divides_flagged_reads_by_reads_total():
+    normal = list(range(600, 600 + 20 * 10, 10))
+    per_barcode = _per_barcode(
+        normal + [5000],
+        read=[c * 2 for c in normal] + [10000],
+        barcode=[f"b{i}" for i in range(20)] + ["AGG"],
+    )
+    fraction, detail = aggregate_barcode_fraction(per_barcode, reads_total=100_000)
+    assert fraction == pytest.approx(0.1)
+    assert "AGG" not in detail  # the detail states counts, not which barcodes
+    assert "1" in detail  # one barcode flagged, stated somewhere in the detail
+
+
+def test_aggregate_barcode_fraction_below_the_floor_is_zero_with_a_stated_reason():
+    per_barcode = _per_barcode([10, 12, 15, 20, 400])
+    fraction, detail = aggregate_barcode_fraction(per_barcode, reads_total=1000)
+    assert fraction == 0.0
+    assert detail  # a stated reason, not a bare blank and not a silent zero
+    assert "floor" in detail.lower() or "1000" in detail
+
+
+def test_aggregate_barcode_fraction_needs_a_reads_total_denominator():
+    per_barcode = _per_barcode([600, 650, 700, 750, 9000])
+    fraction, detail = aggregate_barcode_fraction(per_barcode, reads_total=None)
+    assert fraction is None
+    assert detail
+    fraction, detail = aggregate_barcode_fraction(per_barcode, reads_total=0)
+    assert fraction is None
+    assert detail
+
+
+def test_aggregate_barcode_fraction_measurement_is_no_longer_deferred():
+    by_id = {m.id: m for m in MEASUREMENTS}
+    m = by_id["aggregateBarcodeFraction"]
+    assert m.deferred_reason is None
+    assert m.line == "inherited"
+    assert m.implies
+
+
+def test_aggregate_barcode_fraction_line_and_comparison():
+    assert DEFAULT_LINES["aggregateBarcodeFraction"] == Line(warn=0.05, error=1.0)
+    assert _COMPARISON["aggregateBarcodeFraction"] == ("at-most", "alerting-at")
+
+
+def test_aggregate_barcode_fraction_status_boundaries():
+    assert status_for("aggregateBarcodeFraction", 0.04, DEFAULT_LINES) is Status.OK
+    assert status_for("aggregateBarcodeFraction", 0.06, DEFAULT_LINES) is Status.WARN
+    # Error is `alerting-at`, total failure, not a further step past warn: 0.99 still warns.
+    assert status_for("aggregateBarcodeFraction", 0.99, DEFAULT_LINES) is Status.WARN
+    assert status_for("aggregateBarcodeFraction", 1.0, DEFAULT_LINES) is Status.ALERT
+
+
 # --- antigen_count_deciles -----------------------------------------------------
 
 
@@ -539,10 +640,8 @@ def test_at_least_is_acceptable_exactly_at_the_line():
 
 
 def test_at_most_is_acceptable_exactly_at_the_line(monkeypatch):
-    # No shipped measurement reads `at-most`: the only candidate was the undeclared-barcode fraction,
-    # which now ships unjudged. The reading stays in the vocabulary because a line can be an upper
-    # bound as easily as a lower one, so it is exercised against a registered stand-in rather than
-    # left as an untested branch.
+    # `aggregateBarcodeFraction` reads `at-most` now, but this exercises the branch directly
+    # against a registered stand-in rather than depending on that measurement's own thresholds.
     monkeypatch.setitem(_COMPARISON, "syntheticUpperBound", ("at-most", None))
     lines = {"syntheticUpperBound": Line(warn=0.1)}
     assert status_for("syntheticUpperBound", 0.1, lines) is Status.OK
@@ -585,7 +684,7 @@ def test_no_defensible_line_means_unjudged():
 
 
 def test_a_deferred_measurement_is_never_unjudged_even_holding_a_value():
-    assert status_for("aggregateBarcodeFraction", 0.9, DEFAULT_LINES) is None
+    assert status_for("usableReadFraction", 0.9, DEFAULT_LINES) is None
 
 
 def test_a_missing_value_is_not_evaluated():

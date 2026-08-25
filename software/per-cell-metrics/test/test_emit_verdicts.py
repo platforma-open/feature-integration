@@ -2944,14 +2944,14 @@ def test_the_sample_report_carries_the_rollup_the_qc_frame_carries(bed):
 
 
 def test_a_deferred_sample_measurement_reaches_the_report_with_its_reason(bed):
-    # Nothing computes the aggregate-barcode fraction in this block. Omitting it would read
-    # exactly like a run that checked it and found nothing wrong.
+    # Nothing computes the usable-read fraction in this block. Omitting it would read exactly
+    # like a run that checked it and found nothing wrong.
     _run(bed, *BASE)
-    row = {m["id"]: m for m in _sample_report(bed)["measurements"]}["aggregateBarcodeFraction"]
+    row = {m["id"]: m for m in _sample_report(bed)["measurements"]}["usableReadFraction"]
 
     assert row["value"] is None
     assert row["status"] is None
-    assert row["reason"] == next(m.deferred_reason for m in MEASUREMENTS if m.id == "aggregateBarcodeFraction")
+    assert row["reason"] == next(m.deferred_reason for m in MEASUREMENTS if m.id == "usableReadFraction")
 
 
 def test_a_declared_sample_measurement_nothing_computes_still_takes_a_row(monkeypatch):

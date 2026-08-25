@@ -117,6 +117,60 @@ def test_panel_assigned_fraction_from_feature_step(tmp_path, input_count, output
     assert float(row["panelAssignedFraction"]) == pytest.approx(expected)
 
 
+def _tagstat_lines(umi_by_cell: dict[str, int], read_by_cell: dict[str, int]) -> str:
+    """One FEATURE row per cell, so group-by-CELL sums equal the given per-cell totals."""
+    lines = ["CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\n"]
+    for cell, umi in umi_by_cell.items():
+        lines.append(f"{cell}\tAAAA\t{read_by_cell[cell]}\t{read_by_cell[cell]}\t{umi}\n")
+    return "".join(lines)
+
+
+def test_aggregate_barcode_fraction_flags_a_clear_outlier(tmp_path):
+    # 20 cells spread 600..790 antigen UMIs, one at 5000. q1=650, q3=750, threshold=1050 --
+    # above the 1000-UMI floor -- so only the 5000 barcode is flagged. Its reads are 10000 of
+    # a 100000 total, so the fraction is 0.1.
+    normal = {f"c{i}": 600 + i * 10 for i in range(20)}
+    umi = {**normal, "agg": 5000}
+    reads = {c: v * 2 for c, v in umi.items()}
+    reads["agg"] = 10_000
+    tagstat = tmp_path / "tagstat.tsv"
+    tagstat.write_text(_tagstat_lines(umi, reads))
+    parse_report = tmp_path / "parse.json"
+    parse_report.write_text(json.dumps({"parseReport": {"total": 100_000, "matched": sum(reads.values())}}))
+
+    row = _run(tmp_path, tagstat, parse_report)
+    assert float(row["aggregateBarcodeFraction"]) == pytest.approx(0.1)
+    assert int(row["aggregateBarcodesFlagged"]) == 1
+    assert float(row["aggregateBarcodeThreshold"]) == pytest.approx(1050.0)
+
+
+def test_aggregate_barcode_fraction_below_the_floor_is_zero(tmp_path):
+    # q1=12, q3=20, threshold=44 -- under the 1000-UMI floor, so nothing is flagged even
+    # though one barcode (400) clears 44 on its own.
+    umi = {"c0": 10, "c1": 12, "c2": 15, "c3": 20, "c4": 400}
+    reads = {c: v for c, v in umi.items()}
+    tagstat = tmp_path / "tagstat.tsv"
+    tagstat.write_text(_tagstat_lines(umi, reads))
+    parse_report = tmp_path / "parse.json"
+    parse_report.write_text(json.dumps({"parseReport": {"total": 1000, "matched": sum(reads.values())}}))
+
+    row = _run(tmp_path, tagstat, parse_report)
+    assert float(row["aggregateBarcodeFraction"]) == 0.0
+    assert int(row["aggregateBarcodesFlagged"]) == 0
+    assert float(row["aggregateBarcodeThreshold"]) == pytest.approx(44.0)
+
+
+def test_aggregate_barcode_fraction_survives_header_only_tagstat(tmp_path):
+    tagstat = tmp_path / "tagstat.tsv"
+    tagstat.write_text("CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\n")
+    parse_report = tmp_path / "parse.json"
+    parse_report.write_text(json.dumps({"parseReport": {"total": 1000, "matched": 0}}))
+    row = _run(tmp_path, tagstat, parse_report)
+    assert float(row["aggregateBarcodeFraction"]) == 0.0
+    assert int(row["aggregateBarcodesFlagged"]) == 0
+    assert row["aggregateBarcodeThreshold"] == ""
+
+
 def test_panel_assigned_fraction_blank_without_feature_step(tmp_path):
     # A refine report with no FEATURE step (e.g. CELL/UMI only) leaves the fraction blank rather than
     # reporting a wrong number.

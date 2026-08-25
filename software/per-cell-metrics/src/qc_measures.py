@@ -201,17 +201,29 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "sample",
         "Deciles of the total antigen count per cell barcode.",
     ),
-    # Aggregate-barcode (droplet-clumping) detection is neither run nor imported anywhere in
-    # this block: refine-tags (`workflow/src/fb-refine.tpl.tengo`) corrects and
-    # whitelist-filters barcodes but does not flag clumped ones, no other step in this
-    # workflow computes it, and no atom in the spec (searched for "aggregate") names a source
-    # that carries it into a run.
+    # Ports `detect_outlier_umis_bcs` from Cell Ranger `main`,
+    # `lib/python/cellranger/feature/antibody/analysis.py`, called for the ANTIGEN library
+    # type from `cell_calling_helpers.py::remove_antibody_antigen_aggregates`. That function's
+    # antibody sibling (`detect_aggregate_barcodes`, cross-feature co-elevation against gene
+    # expression) is a different rule and is not ported.
+    #
+    # The source's own floor -- a threshold under 1000 UMIs flags nothing -- is kept unchanged.
+    # A shallow library can sit entirely under that floor while carrying real aggregate reads,
+    # in which case this measurement reports 0.0 with the computed threshold in its detail
+    # rather than a blank: the rule ran and found nothing past its own gate, which is a
+    # different fact from nothing having run at all.
+    #
+    # Divided by `readsTotal` (whole-library, pre-match), not `readsMatched`: the source
+    # divides flagged reads by the whole antigen library's read count before any matching
+    # step, and `readsTotal` is the field this module holds that corresponds to that count.
     Measurement(
         "aggregateBarcodeFraction",
         "Fraction of reads in aggregate barcodes",
         "sample",
-        "Reads in barcodes flagged as aggregates, over reads matched.",
-        deferred_reason="no aggregate-barcode detection exists in this block",
+        "Reads in barcodes flagged as aggregates by the top-100 IQR rule, over readsTotal.",
+        "A high share means much of the run's antigen signal comes from a small number of "
+        "clumped droplets rather than single cells.",
+        "inherited",
     ),
     # No line, and worth spelling out because the spec looks like it supplies one. The
     # field publishes 0.50, but for one aggregate library fraction. This measurement is
@@ -365,9 +377,9 @@ LINE_ROUTES: frozenset[str] = frozenset({"inherited", "categorical", "recommende
 # them. No line is invented -- where none of the three routes applies the measurement carries
 # no status rather than being given a number with nothing behind it.
 #
-# Three of `315`'s four inherited lines are in force. The fourth, the usable-read fraction,
-# is deferred alongside the aggregate-barcode fraction -- see each measurement's own comment
-# above for why nothing computes it yet.
+# Three of `315`'s four inherited lines are in force: `panelAssignedFraction` and
+# `cellBarcodeValidFraction` from the start, `aggregateBarcodeFraction` here. The fourth, the
+# usable-read fraction, stays deferred -- see that measurement's own comment above.
 DEFAULT_LINES: dict[str, Line] = {
     # `error` at total failure, which is where three of the four inherited lines put it: a
     # catastrophe rather than a degree. `warn` is 0.5 rather than the field's 0.20 because the
@@ -378,6 +390,9 @@ DEFAULT_LINES: dict[str, Line] = {
     "cellBarcodeValidFraction": Line(warn=0.75, error=0.50),
     # One published number gives one boundary, so depth warns and never alerts.
     "readsPerCell": Line(warn=5_000),
+    # 315's published values for the aggregate-barcode read fraction: warn above 0.05, error at
+    # total failure (1.0).
+    "aggregateBarcodeFraction": Line(warn=0.05, error=1.0),
 }
 
 # How each line is read. Deliberately *not* overridable: an operator moves a number, never
@@ -407,13 +422,17 @@ DEFAULT_LINES: dict[str, Line] = {
 #
 # The second entry is None where the line published no error threshold.
 #
-# `at-most` has no member. The field's two upward lines are the undeclared-barcode fraction,
-# which is registered above as its complement and so reads at-least, and the aggregate-barcode
-# fraction, which is deferred. The reading stays because a line can bound from above.
+# `at-most` reads `aggregateBarcodeFraction`: a high share is the bad direction, unlike the
+# other two upward-published lines, which read at-least because the undeclared-barcode
+# fraction is registered above as its complement.
 _COMPARISON: dict[str, tuple[str, str | None]] = {
     "panelAssignedFraction": ("at-least", "alerting-at"),
     "cellBarcodeValidFraction": ("at-least", "at-least"),
     "readsPerCell": ("at-least", None),
+    # Error at total failure (`alerting-at` 1.0) rather than a further step past warn: `315`
+    # puts every share it inherits at either "at least" or "at most" with error at the
+    # catastrophe end, and this is the one upward-facing member of that set.
+    "aggregateBarcodeFraction": ("at-most", "alerting-at"),
 }
 
 
@@ -676,6 +695,84 @@ def reads_per_cell(reads_matched: int, cells_in_list: int) -> float | None:
     if cells_in_list <= 0:
         return None
     return reads_matched / cells_in_list
+
+
+# Cell Ranger's own constants for the ANTIGEN branch of `detect_outlier_umis_bcs`
+# (`lib/python/cellranger/feature/antibody/analysis.py`): a 3x interquartile multiplier over
+# the top 100 barcodes by count, and a 1000-UMI floor below which nothing is flagged.
+AGGREGATE_BARCODE_IQR_MULTIPLIER: float = 3.0
+AGGREGATE_BARCODE_MIN_THRESHOLD: float = 1000.0
+AGGREGATE_BARCODE_TOP_N: int = 100
+
+
+def detect_aggregate_barcodes(
+    per_barcode: pl.DataFrame,
+    multiplier: float = AGGREGATE_BARCODE_IQR_MULTIPLIER,
+    min_umi_threshold: float = AGGREGATE_BARCODE_MIN_THRESHOLD,
+) -> tuple[frozenset[str], float | None]:
+    """Barcodes whose antigen UMI count is an outlier, and the threshold that decided it.
+
+    Ports `detect_outlier_umis_bcs` (Cell Ranger `main`,
+    `lib/python/cellranger/feature/antibody/analysis.py`), called for the ANTIGEN library type
+    from `cell_calling_helpers.py::remove_antibody_antigen_aggregates`.
+
+    `per_barcode` has one row per observed barcode, columns `barcode` and `umiCount` -- the
+    whole whitelist-corrected barcode universe, not the cell list. q1 and q3 are taken over
+    the top 100 barcodes by count (or however many exist, below 100), and a flagged barcode
+    must be IN that top slice: one outside it is never flagged however large its count, which
+    is a property of the source and not a choice made here.
+
+    Returns an empty set and the computed threshold where the threshold falls under
+    `min_umi_threshold`, the source's own floor. Returns an empty set and `None` where
+    `per_barcode` holds no row at all, since no quantile exists over nothing.
+    """
+    if per_barcode.height == 0:
+        return frozenset(), None
+    top = per_barcode.sort("umiCount", descending=True).head(AGGREGATE_BARCODE_TOP_N)
+    counts = top["umiCount"].to_numpy().astype(float)
+    q1 = float(np.quantile(counts, 0.25))
+    q3 = float(np.quantile(counts, 0.75))
+    threshold = q3 + (q3 - q1) * multiplier
+    if threshold < min_umi_threshold:
+        return frozenset(), threshold
+    flagged = top.filter(pl.col("umiCount") >= threshold)["barcode"].to_list()
+    return frozenset(flagged), threshold
+
+
+def aggregate_barcode_fraction(
+    per_barcode: pl.DataFrame,
+    reads_total: int | None,
+    multiplier: float = AGGREGATE_BARCODE_IQR_MULTIPLIER,
+    min_umi_threshold: float = AGGREGATE_BARCODE_MIN_THRESHOLD,
+) -> tuple[float | None, str]:
+    """Reads in barcodes `detect_aggregate_barcodes` flags, over `reads_total`.
+
+    `per_barcode` carries `barcode`, `umiCount` (what detection runs on) and `readCount`
+    (what the fraction's numerator sums) -- the source's ANTIGEN-branch numerator is reads,
+    not UMIs, for the flagged barcodes.
+
+    `reads_total` is the whole-library, pre-match read count (mitool's parse-report `total`),
+    matching the source's undivided-by-matching denominator. Returns `(None, reason)` where
+    `reads_total` is absent or zero, since a fraction has no denominator there.
+
+    Otherwise always returns a number, never a bare blank: where the floor in
+    `detect_aggregate_barcodes` suppresses every flag, the fraction is 0.0 and the detail
+    states the computed threshold and the floor, so a zero here is never silent.
+    """
+    if not reads_total:
+        return None, "no total read count to divide by"
+    flagged, threshold = detect_aggregate_barcodes(
+        per_barcode.select("barcode", "umiCount"), multiplier, min_umi_threshold
+    )
+    tested = min(per_barcode.height, AGGREGATE_BARCODE_TOP_N)
+    if threshold is None:
+        detail = "no antigen barcode observed in this sample"
+    elif threshold < min_umi_threshold:
+        detail = f"barcodesTested={tested}|threshold={threshold:.1f} (below the 1000-UMI floor, no barcode flagged)"
+    else:
+        detail = f"barcodesTested={tested}|threshold={threshold:.1f}|barcodesFlagged={len(flagged)}"
+    flagged_reads = per_barcode.filter(pl.col("barcode").is_in(flagged))["readCount"].sum() if flagged else 0
+    return flagged_reads / reads_total, detail
 
 
 # The extremes are included alongside the interior deciles so the distribution's edges are
