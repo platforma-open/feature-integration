@@ -25,8 +25,12 @@ OUTPUT_PREFIX := "result"
 // has leaked into the per-sample mitool fan-out, which is what keeps the fan-out cached when only the
 // reading's parameters change. Extend this list whenever a parameter is added below.
 PARAMETER_NAMES := [
+	"aggregateBarcodeError",
+	"aggregateBarcodeWarn",
 	"boundCutoff",
 	"captureMap",
+	"cellBarcodeValidError",
+	"cellBarcodeValidWarn",
 	"contendingGroups",
 	"countFloor",
 	"datasetRef",
@@ -36,9 +40,14 @@ PARAMETER_NAMES := [
 	"minAgreement",
 	"minVotingCells",
 	"panelReferenceMinMembers",
+	"readsPerCellWarn",
 	"referenceSource",
 	"referenceValues",
-	"roleColumn"
+	"roleColumn",
+	"undeclaredBarcodeError",
+	"undeclaredBarcodeWarn",
+	"usableReadError",
+	"usableReadWarn"
 ]
 
 // Defaults mirroring the CLI's own (verdict.py DEFAULT_FLOOR, BOUND_CUTOFF, combine.py DEFAULT_MIN_VOTERS,
@@ -50,6 +59,18 @@ DEFAULT_BOUND_CUTOFF := 75
 DEFAULT_MIN_VOTING_CELLS := 1
 DEFAULT_PANEL_MIN_MEMBERS := 25
 DEFAULT_DISTRIBUTION_MIN_CELLS := 300
+
+// The four inherited lines (qc_measures.py DEFAULT_LINES), restated here for the same reason as the
+// defaults above: the value that scored a run belongs on its own command line.
+DEFAULT_CELL_BARCODE_VALID_WARN := 0.75
+DEFAULT_CELL_BARCODE_VALID_ERROR := 0.50
+DEFAULT_READS_PER_CELL_WARN := 5000
+DEFAULT_AGGREGATE_BARCODE_WARN := 0.05
+DEFAULT_AGGREGATE_BARCODE_ERROR := 1.0
+DEFAULT_UNDECLARED_BARCODE_WARN := 0.5
+DEFAULT_UNDECLARED_BARCODE_ERROR := 1.0
+DEFAULT_USABLE_READ_WARN := 0.20
+DEFAULT_USABLE_READ_ERROR := 0.0
 
 _num := func(value, fallback) {
 	return is_undefined(value) ? fallback : value
@@ -163,6 +184,18 @@ build := func(params) {
 	if !is_undefined(params.sampleLabels) {
 		add("--sample-labels", canonical.encode(params.sampleLabels))
 	}
+
+	// The four inherited lines. Passed on every run, not only where an operator moved one, so the run
+	// record states the number a status was read against.
+	add("--cell-barcode-valid-warn", string(_num(params.cellBarcodeValidWarn, DEFAULT_CELL_BARCODE_VALID_WARN)))
+	add("--cell-barcode-valid-error", string(_num(params.cellBarcodeValidError, DEFAULT_CELL_BARCODE_VALID_ERROR)))
+	add("--reads-per-cell-warn", string(_num(params.readsPerCellWarn, DEFAULT_READS_PER_CELL_WARN)))
+	add("--aggregate-barcode-warn", string(_num(params.aggregateBarcodeWarn, DEFAULT_AGGREGATE_BARCODE_WARN)))
+	add("--aggregate-barcode-error", string(_num(params.aggregateBarcodeError, DEFAULT_AGGREGATE_BARCODE_ERROR)))
+	add("--undeclared-barcode-warn", string(_num(params.undeclaredBarcodeWarn, DEFAULT_UNDECLARED_BARCODE_WARN)))
+	add("--undeclared-barcode-error", string(_num(params.undeclaredBarcodeError, DEFAULT_UNDECLARED_BARCODE_ERROR)))
+	add("--usable-read-warn", string(_num(params.usableReadWarn, DEFAULT_USABLE_READ_WARN)))
+	add("--usable-read-error", string(_num(params.usableReadError, DEFAULT_USABLE_READ_ERROR)))
 
 	add("--output-prefix", OUTPUT_PREFIX)
 

@@ -26,7 +26,16 @@ _full := {
 	gateThreshold: 40,
 	grouping: { by: "property", column: "family" },
 	contendingGroups: [["AgA", "AgB"]],
-	captureMap: { S1: "lane1" }
+	captureMap: { S1: "lane1" },
+	cellBarcodeValidWarn: 0.8,
+	cellBarcodeValidError: 0.55,
+	readsPerCellWarn: 6000,
+	aggregateBarcodeWarn: 0.07,
+	aggregateBarcodeError: 0.9,
+	undeclaredBarcodeWarn: 0.6,
+	undeclaredBarcodeError: 0.95,
+	usableReadWarn: 0.25,
+	usableReadError: 0.05
 }
 
 // Every flag emit_verdicts.py declares, checked against the built vector. An unthreaded parameter fails
@@ -40,7 +49,11 @@ Test_every_flag_is_threaded := func() {
 		"--reference-source", "--panel-min-members", "--distribution-min-cells",
 		"--floor", "--cutoff",
 		"--min-voters", "--min-agreement", "--gate-threshold",
-		"--grouping", "--contending", "--capture-map", "--output-prefix"
+		"--grouping", "--contending", "--capture-map", "--output-prefix",
+		"--cell-barcode-valid-warn", "--cell-barcode-valid-error", "--reads-per-cell-warn",
+		"--aggregate-barcode-warn", "--aggregate-barcode-error",
+		"--undeclared-barcode-warn", "--undeclared-barcode-error",
+		"--usable-read-warn", "--usable-read-error"
 	]
 	for flag in flags {
 		test.isTrue(va.has(args, flag), "argument list is missing " + flag)
@@ -60,7 +73,16 @@ Test_every_flag_is_threaded := func() {
 		"--cutoff": "90",
 		"--min-voters": "3",
 		"--min-agreement": "0.6",
-		"--gate-threshold": "40"
+		"--gate-threshold": "40",
+		"--cell-barcode-valid-warn": "0.8",
+		"--cell-barcode-valid-error": "0.55",
+		"--reads-per-cell-warn": "6000",
+		"--aggregate-barcode-warn": "0.07",
+		"--aggregate-barcode-error": "0.9",
+		"--undeclared-barcode-warn": "0.6",
+		"--undeclared-barcode-error": "0.95",
+		"--usable-read-warn": "0.25",
+		"--usable-read-error": "0.05"
 	}
 	for flag, want in expected {
 		test.isEqual(want, string(va.valueOf(args, flag)), "wrong value threaded for " + flag)
@@ -131,6 +153,21 @@ Test_shaping_parameters_are_always_present := func() {
 	test.isEqual("1", va.valueOf(args, "--min-voters"), "the voter minimum is stated even when defaulted")
 	test.isEqual("25", va.valueOf(args, "--panel-min-members"), "the panel minimum is stated")
 	test.isEqual("300", va.valueOf(args, "--distribution-min-cells"), "the cell condition is stated")
+}
+
+// The four inherited lines are stated on every run too, so a status is always readable against the
+// number that produced it, defaulted or not.
+Test_line_thresholds_are_always_present := func() {
+	args := va.build({ barcodeSeqColumn: "Sequence", featureNameColumn: "Name" })
+	test.isEqual("0.75", va.valueOf(args, "--cell-barcode-valid-warn"), "the barcode-validity warn line is stated")
+	test.isEqual("0.5", va.valueOf(args, "--cell-barcode-valid-error"), "the barcode-validity alert line is stated")
+	test.isEqual("5000", va.valueOf(args, "--reads-per-cell-warn"), "the depth line is stated")
+	test.isEqual("0.05", va.valueOf(args, "--aggregate-barcode-warn"), "the aggregate-barcode warn line is stated")
+	test.isEqual("1", va.valueOf(args, "--aggregate-barcode-error"), "the aggregate-barcode alert line is stated")
+	test.isEqual("0.5", va.valueOf(args, "--undeclared-barcode-warn"), "the undeclared-barcode warn line is stated")
+	test.isEqual("1", va.valueOf(args, "--undeclared-barcode-error"), "the undeclared-barcode alert line is stated")
+	test.isEqual("0.2", va.valueOf(args, "--usable-read-warn"), "the usable-read warn line is stated")
+	test.isEqual("0", va.valueOf(args, "--usable-read-error"), "the usable-read alert line is stated")
 }
 
 // argparse declares --floor, --min-voters, --panel-min-members and --gate-threshold
