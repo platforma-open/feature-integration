@@ -4,9 +4,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-import emit_verdicts
 import polars as pl
 import pytest
+import qc_rows
 from emit_verdicts import _build_grouping, _identity_properties, _linker_frame, undeclared_feature_counts
 from panel import ANY_SAMPLE, consistent_properties, property_columns
 from qc_measures import MEASUREMENTS, Measurement
@@ -672,11 +672,17 @@ def test_sequencing_depth_divides_by_the_cell_list_not_by_observed_barcodes(bed)
     assert depth["status"] == "OK"
 
 
+# Every module the entrypoint reaches, not just the entrypoint file. The check is on source
+# text, so a helper moved out of `emit_verdicts.py` leaves it behind unless it is named here.
+ENTRYPOINT_MODULES = ("emit_verdicts.py", "frame_io.py", "identity_tables.py", "qc_rows.py")
+
+
 def test_the_dense_oracle_is_not_reachable_from_the_entrypoint():
     # The dense oracle exists to check the analytic tally in tests. On a realistic panel
     # the grid it builds is 11-20x the sparse input, so a production caller is a memory
     # failure waiting for a big panel.
-    assert "densify" not in (SRC / "emit_verdicts.py").read_text()
+    for module in ENTRYPOINT_MODULES:
+        assert "densify" not in (SRC / module).read_text(), module
 
 
 def test_property_grouping_normalises_and_excludes_the_reference(bed):
@@ -3235,11 +3241,11 @@ def test_a_declared_sample_measurement_nothing_computes_still_takes_a_row(monkey
     # measurement has a call site today, so an implementation iterating the rows passes every
     # other test in this file byte for byte. This is the one that separates them.
     extra = Measurement("neverComputed", "Never computed", "sample", "nothing computes this")
-    monkeypatch.setattr(emit_verdicts, "MEASUREMENTS", MEASUREMENTS + (extra,))
+    monkeypatch.setattr(qc_rows, "MEASUREMENTS", MEASUREMENTS + (extra,))
 
     rows = []
-    emit_verdicts._add(rows, "sample", "S1", "readsTotal", 10.0)
-    entries, coverage = emit_verdicts.sample_report_rows("S1", rows)
+    qc_rows._add(rows, "sample", "S1", "readsTotal", 10.0)
+    entries, coverage = qc_rows.sample_report_rows("S1", rows)
 
     declared = [m for m in MEASUREMENTS if m.level == "sample"]
     assert len(entries) == len(declared) + 1, "one row per declared measurement, not per emitted row"
@@ -3247,7 +3253,7 @@ def test_a_declared_sample_measurement_nothing_computes_still_takes_a_row(monkey
     row = {e["id"]: e for e in entries}["neverComputed"]
     assert row["value"] is None
     assert row["status"] is None
-    assert row["reason"] == emit_verdicts.UNSUPPLIED_REASON
+    assert row["reason"] == qc_rows.UNSUPPLIED_REASON
     # Nothing computed it, so it counts as unchecked rather than as checked and fine.
     assert coverage.not_evaluated >= 1
 
@@ -3256,7 +3262,7 @@ def test_a_value_that_is_not_a_finite_number_is_no_value_and_says_which(monkeypa
     # A NaN is not the absence the caller's reason describes: that reason names a missing input,
     # and here the input arrived. Reporting it would send a reader to fix something that is fine.
     rows = []
-    emit_verdicts._add(
+    qc_rows._add(
         rows,
         "sample",
         "S1",
@@ -3264,11 +3270,11 @@ def test_a_value_that_is_not_a_finite_number_is_no_value_and_says_which(monkeypa
         float("nan"),
         reason="no cell list supplied, so depth has no denominator",
     )
-    entries, coverage = emit_verdicts.sample_report_rows("S1", rows)
+    entries, coverage = qc_rows.sample_report_rows("S1", rows)
 
     row = {e["id"]: e for e in entries}["readsPerCell"]
     assert row["value"] is None
-    assert row["reason"] == emit_verdicts.NOT_A_NUMBER_REASON
+    assert row["reason"] == qc_rows.NOT_A_NUMBER_REASON
     assert row["status"] is None
     # Counted the way `is_computed` counts it, so the entry and the triple cannot disagree.
     assert coverage.judged == 0
