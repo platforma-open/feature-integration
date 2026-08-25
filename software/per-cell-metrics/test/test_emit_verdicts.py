@@ -3162,3 +3162,22 @@ def test_the_wide_summary_status_is_the_sample_rollup_and_is_not_recomputed(bed)
             f"wide table status {got!r} for {sample_id!r} disagrees with the sample's own report "
             f"{report['status']!r}; the two must read off one rollup"
         )
+
+
+def test_a_present_read_qc_row_with_no_reads_names_the_denominator_not_the_row(bed):
+    # Two conditions blank aggregateBarcodeFraction: no read-QC row at all, and a row whose
+    # readsTotal is zero. The second is reachable through parse_gate.py's empty-input path,
+    # where readsTotal is present and zero. Naming the row as missing would be false -- the
+    # row is here, and readsTotal on it reads 0.
+    (bed / "qc.csv").write_text(
+        "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
+        "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction\n"
+        "S1,0,0,0.0,0,0,0,0,\n"
+    )
+    r = _run(bed, *BASE, "--qc-summary", "qc.csv")
+    assert r.returncode == 0, r.stderr
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    row = qc.filter(pl.col("measurement") == "aggregateBarcodeFraction").row(0, named=True)
+    assert row["value"] in ("", None)
+    assert "no denominator" in row["reason"]
+    assert "reached this sample" not in row["reason"]

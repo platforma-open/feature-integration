@@ -1814,6 +1814,7 @@ def main() -> None:
     # summary reached this run at all.
     NO_READ_QC = "no read QC summary row reached this sample"
     NO_REFINE_STEP = "no refine-tags report was produced, or it supplied no %s step with input reads"
+    NO_READS_TO_DIVIDE = "this sample's read QC reports no reads, so the share has no denominator"
 
     # The pre-refine pass Task 5 added: one FEATURE tag-stat row per sequence the reads carried,
     # before refine-tags snaps each one onto the panel. Without this file the table below stays
@@ -1916,9 +1917,11 @@ def main() -> None:
             decile_detail,
             reason="no barcode in this sample holds a counted reading",
         )
-        # qc_report.py computes this directly from the tag-stat TSV and the parse report, both
-        # required inputs of that script, so a missing figure means no read-QC row reached this
-        # sample at all -- same cause and reason as `readsTotal` above.
+        # qc_report.py computes this from the tag-stat TSV and the parse report. It blanks the
+        # figure on two distinct conditions: no read-QC row for this sample at all, and a row
+        # whose readsTotal is zero, which leaves the fraction no denominator. The second is
+        # reachable through the empty-input path in parse_gate.py, where readsTotal is present
+        # and zero rather than absent.
         agg_fraction = _number(qc, "aggregateBarcodeFraction")
         agg_flagged = _number(qc, "aggregateBarcodesFlagged")
         agg_threshold = _number(qc, "aggregateBarcodeThreshold")
@@ -1932,7 +1935,7 @@ def main() -> None:
             "aggregateBarcodeFraction",
             agg_fraction,
             agg_detail,
-            reason=NO_READ_QC,
+            reason=NO_READ_QC if not qc else NO_READS_TO_DIVIDE,
         )
 
         stats = floor_stats.get(sample, {"readingsFloored": 0, "cellsEmptied": 0})
