@@ -142,9 +142,7 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "inherited",
         rolls_up=False,
     ),
-    # Declared per this module's own rule (see the module docstring) rather than left off the
-    # set: a measurement this module cannot compute is declared anyway, with the reason, so a
-    # reader never mistakes absence for "checked and found fine".
+    # Declared per this module's own rule (see the module docstring), not left off the set.
     #
     # `315`'s first inherited line (warn below 0.20, error at 0) is published for reads
     # carrying both a cell-associated barcode and a valid UMI, independent of panel
