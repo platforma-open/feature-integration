@@ -22,6 +22,7 @@ from qc_measures import (
     roll_up,
     sibling_disagreement,
     status_for,
+    usable_read_fraction,
 )
 
 # Every row maps one to one. This is the expected per-id level, built from the
@@ -48,7 +49,7 @@ EXPECTED_LEVEL_BY_ID = {
     "siblingDisagreement": "tag",
 }
 
-DEFERRED_IDS = {"usableReadFraction"}
+DEFERRED_IDS: set[str] = set()
 
 
 def test_every_declared_id_is_expected_and_every_expected_id_is_declared():
@@ -226,19 +227,56 @@ def test_deferred_measurement_produces_a_row_with_its_reason_and_no_status():
         assert row["reason"]
 
 
-def test_usable_read_fraction_is_declared_but_deferred():
-    # `315` inherits this line (warn below 0.20, error at 0) for reads carrying both a
-    # cell-associated barcode and a valid UMI, independent of panel assignment. mitool's
-    # refine-tags report chains CELL, FEATURE and UMI correction sequentially -- each step's
-    # input is the previous step's surviving output -- so no combination of the report's
-    # per-step or whole-chain counts isolates CELL-and-UMI validity from the FEATURE
-    # (panel-assignment) step sitting between them, without assuming the two are independent.
+def test_usable_read_fraction_measurement_is_no_longer_deferred():
     by_id = {m.id: m for m in MEASUREMENTS}
     m = by_id["usableReadFraction"]
-    assert m.line is None
-    assert m.id not in DEFAULT_LINES
-    assert m.id not in _COMPARISON
-    assert status_for("usableReadFraction", 0.83, DEFAULT_LINES) is None
+    assert m.deferred_reason is None
+    assert m.line == "inherited"
+    assert m.implies
+
+
+def test_usable_read_fraction_line_and_comparison():
+    assert DEFAULT_LINES["usableReadFraction"] == Line(warn=0.20, error=0.0)
+    assert _COMPARISON["usableReadFraction"] == ("at-least", "alerting-at")
+
+
+def test_usable_read_fraction_status_boundaries():
+    assert status_for("usableReadFraction", 0.19, DEFAULT_LINES) is Status.WARN
+    assert status_for("usableReadFraction", 0.21, DEFAULT_LINES) is Status.OK
+    # Error is `alerting-at` total failure (0.0), not a further step past warn.
+    assert status_for("usableReadFraction", 0.0, DEFAULT_LINES) is Status.ALERT
+
+
+def _tag_stat(cells: list[str], weights: list[int]) -> pl.DataFrame:
+    return pl.DataFrame({"CELL": cells, "totalWeight": weights}, schema={"CELL": pl.String, "totalWeight": pl.Int64})
+
+
+def test_usable_read_fraction_sums_listed_cells_over_total_reads():
+    tag_stat = _tag_stat(["c1", "c1", "c2", "c3"], [10, 5, 20, 100])
+    fraction, detail = usable_read_fraction(tag_stat, "CELL", {"c1", "c2"}, reads_total=1000)
+    assert fraction == pytest.approx(0.035)  # (10 + 5 + 20) / 1000
+    assert detail
+
+
+def test_usable_read_fraction_excludes_a_read_whose_cell_is_outside_the_list():
+    tag_stat = _tag_stat(["c1", "c2"], [10, 990])
+    fraction, _detail = usable_read_fraction(tag_stat, "CELL", {"c1"}, reads_total=1000)
+    assert fraction == pytest.approx(0.01)
+
+
+def test_usable_read_fraction_with_no_cell_list_is_no_value_with_a_reason():
+    # No list means the called-cell condition cannot be evaluated -- a blank, never a zero.
+    tag_stat = _tag_stat(["c1"], [10])
+    fraction, reason = usable_read_fraction(tag_stat, "CELL", None, reads_total=1000)
+    assert fraction is None
+    assert reason
+
+
+def test_usable_read_fraction_needs_a_reads_total_denominator():
+    tag_stat = _tag_stat(["c1"], [10])
+    fraction, reason = usable_read_fraction(tag_stat, "CELL", {"c1"}, reads_total=None)
+    assert fraction is None
+    assert reason
 
 
 def test_a_computed_measurement_carries_no_status():
@@ -716,10 +754,6 @@ def test_cells_detected_claims_nothing_about_yield():
 
 def test_no_defensible_line_means_unjudged():
     assert status_for("antigenCountDistribution", 12, DEFAULT_LINES) is None
-
-
-def test_a_deferred_measurement_is_never_unjudged_even_holding_a_value():
-    assert status_for("usableReadFraction", 0.9, DEFAULT_LINES) is None
 
 
 def test_a_missing_value_is_not_evaluated():

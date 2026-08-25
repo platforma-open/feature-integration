@@ -125,12 +125,15 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # quantity it was published for, and this sample-grain fraction is a different quantity from
     # that one only by having been corrected onto the panel first.
     #
-    # The usable row needs reads that carry both a cell-associated barcode and a valid UMI,
-    # independent of which panel entry (if any) they were assigned to. The refine-tags report
-    # carries top-level inputRecords/outputRecords across the whole chain, plus a per-step
-    # inputCount/outputCount for CELL, FEATURE and UMI -- all of it real, none of it missing.
-    # It is declared below as `usableReadFraction`, deferred rather than computed: see that
-    # row's own comment for why the data on hand does not settle it.
+    # The usable row is a different quantity: Cell Ranger `main`,
+    # `lib/python/cellranger/rna/report_matrix.py`, `_report_genome_agnostic_metrics`, defines
+    # `frac_feature_reads_usable` as conf-mapped, barcoded reads restricted to the called-cell
+    # partition (`cell_bcs_union`), over the whole library's read count. UMI validity is that
+    # source's separate `good_umi_frac` figure and is not part of this one. It is declared below
+    # as `usableReadFraction` and computed by `usable_read_fraction`, from the post-refine
+    # tag-stat's `totalWeight` and the cell list -- panel recognition is already built into that
+    # table, since refine-tags has dropped every FEATURE value outside the panel by the time it
+    # is written.
     #
     # The id is a value on the `measurement` axis and a p-column name in the per-sample QC
     # frame. Renaming it breaks both. Only the label, the wording and the line moved.
@@ -140,27 +143,21 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "sample",
         "Reads whose corrected barcode is on the panel, over reads matched.",
     ),
-    # Declared per this module's own rule (see the module docstring), not left off the set.
-    #
-    # `315`'s first inherited line (warn below 0.20, error at 0) is published for reads
-    # carrying both a cell-associated barcode and a valid UMI, independent of panel
-    # assignment. mitool's `TagCorrector` (tools/mitool, `refinement/TagCorrector.kt`) runs
-    # the refine-tags steps in sequence -- CELL, then FEATURE against the panel, then UMI --
-    # and each step's `inputCount` is the previous step's surviving `outputCount`. The FEATURE
-    # step sits between CELL and UMI in that chain, so neither the whole-chain
-    # inputRecords/outputRecords nor any product of per-step ratios isolates CELL-and-UMI
-    # validity from the FEATURE step's own loss, without assuming the two are independent.
+    # Ported from Cell Ranger `main`, `lib/python/cellranger/rna/report_matrix.py`,
+    # `_report_genome_agnostic_metrics::frac_feature_reads_usable`: conf-mapped, barcoded
+    # reads restricted to the called-cell partition, over the whole library's read count.
+    # `usable_read_fraction` sums the post-refine tag-stat's `totalWeight` over rows whose
+    # cell barcode is in the cell list, divided by readsTotal. Every row of that table already
+    # carries a panel-recognised FEATURE value, since refine-tags drops the rest before the
+    # table is written, so restricting to the cell list is the only condition left to apply.
     Measurement(
         "usableReadFraction",
         "Fraction of antigen reads usable",
         "sample",
-        "Reads matched that also carry a cell-associated barcode and a valid UMI, over reads matched.",
-        deferred_reason=(
-            "refine-tags chains CELL, FEATURE and UMI correction sequentially, so no "
-            "combination of the report's per-step or whole-chain counts isolates "
-            "cell-barcode-and-UMI validity from panel assignment without assuming the "
-            "two are independent"
-        ),
+        "Reads whose corrected barcode is on the panel and whose cell barcode is in the cell list, over readsTotal.",
+        "A low share means most of the library's reads are lost before reaching a called cell "
+        "with a panel-recognised barcode.",
+        "inherited",
     ),
     # The fourth inherited line, and the one `315` says the third status level exists for: the
     # only one whose thresholds step the same way twice rather than putting error at total
@@ -403,9 +400,8 @@ _CATEGORICAL: frozenset[str] = frozenset(m.id for m in MEASUREMENTS if m.line ==
 # `status_for` under this id. `test_a_measurement_with_a_route_has_a_line_and_a_comparison_...`
 # names it as the one exception to "every line backs a declared measurement".
 #
-# Three of `315`'s four inherited lines are in force: `cellBarcodeValidFraction` from the
-# start, `aggregateBarcodeFraction` and `undeclaredBarcodeShare` here. The fourth, the
-# usable-read fraction, stays deferred -- see that measurement's own comment above.
+# All four of `315`'s inherited lines are in force: `cellBarcodeValidFraction` from the start,
+# `aggregateBarcodeFraction` and `undeclaredBarcodeShare` here, and `usableReadFraction` here too.
 DEFAULT_LINES: dict[str, Line] = {
     # Both thresholds step the same way. This is the line with a real gradient at the far end.
     "cellBarcodeValidFraction": Line(warn=0.75, error=0.50),
@@ -417,6 +413,9 @@ DEFAULT_LINES: dict[str, Line] = {
     # 315's published values for the undeclared-barcode read fraction, read direct rather than
     # as a complement: warn above 0.50, error at total failure (1.0).
     "undeclaredBarcodeShare": Line(warn=0.5, error=1.0),
+    # 315's published values for the usable antigen-read fraction: warn below 0.20, error at
+    # total failure (0.0).
+    "usableReadFraction": Line(warn=0.20, error=0.0),
 }
 
 # How each line is read. Deliberately *not* overridable: an operator moves a number, never
@@ -447,7 +446,9 @@ DEFAULT_LINES: dict[str, Line] = {
 # The second entry is None where the line published no error threshold.
 #
 # `at-most` reads both `aggregateBarcodeFraction` and `undeclaredBarcodeShare`: a high share
-# is the bad direction for each, unlike barcode validity, which reads at-least.
+# is the bad direction for each, unlike barcode validity, which reads at-least. `usableReadFraction`
+# also reads at-least -- a low share is the bad direction -- but its error sits at total failure
+# (0.0) rather than stepping further along the warn direction, unlike barcode validity.
 _COMPARISON: dict[str, tuple[str, str | None]] = {
     "cellBarcodeValidFraction": ("at-least", "at-least"),
     "readsPerCell": ("at-least", None),
@@ -456,6 +457,8 @@ _COMPARISON: dict[str, tuple[str, str | None]] = {
     # catastrophe end, and this is one of the two upward-facing members of that set.
     "aggregateBarcodeFraction": ("at-most", "alerting-at"),
     "undeclaredBarcodeShare": ("at-most", "alerting-at"),
+    # Error at total failure (`alerting-at` 0.0), the downward-facing member of that same set.
+    "usableReadFraction": ("at-least", "alerting-at"),
 }
 
 
@@ -734,6 +737,40 @@ def reads_per_cell(reads_matched: int, cells_in_list: int) -> float | None:
     if cells_in_list <= 0:
         return None
     return reads_matched / cells_in_list
+
+
+def usable_read_fraction(
+    tag_stat: pl.DataFrame,
+    cell_col: str,
+    listed_cells: Collection[str] | None,
+    reads_total: int | None,
+) -> tuple[float | None, str]:
+    """Reads landing on a called cell, recognised against the panel, over `reads_total`.
+
+    Ports Cell Ranger's `frac_feature_reads_usable` (Cell Ranger `main`,
+    `lib/python/cellranger/rna/report_matrix.py`, `_report_genome_agnostic_metrics`):
+    conf-mapped, barcoded reads restricted to the called-cell partition, over the whole
+    library's read count. UMI validity is that source's separate `good_umi_frac` figure and
+    is not part of this one.
+
+    `tag_stat` is the post-refine tag-stat table, one row per (cell, feature barcode)
+    surviving refine-tags -- every FEATURE value outside the panel is already gone by
+    construction, which is the recognition condition. `totalWeight` is its read-weight
+    column. Restricting `cell_col` to `listed_cells` is the called-cell condition;
+    `listed_cells` is the sample's own cell list, not the barcodes the reads happened to
+    touch.
+
+    Returns `(None, reason)` where `listed_cells` is None -- the called-cell condition
+    cannot be evaluated with no cell list -- or where `reads_total` is absent or zero, since
+    the fraction then has no denominator. An empty (non-None) cell list still returns 0.0:
+    no read landing on a called cell is a real finding, not a missing input.
+    """
+    if listed_cells is None:
+        return None, "no cell list supplied, so the called-cell condition cannot be evaluated"
+    if not reads_total:
+        return None, "no total read count to divide by"
+    usable = float(tag_stat.filter(pl.col(cell_col).is_in(list(listed_cells)))["totalWeight"].sum())
+    return usable / reads_total, f"cellsInList={len(listed_cells)}"
 
 
 # Cell Ranger's own constants for the ANTIGEN branch of `detect_outlier_umis_bcs`
