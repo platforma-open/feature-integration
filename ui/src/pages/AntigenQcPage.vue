@@ -62,7 +62,7 @@ function qcCellRenderer(params: RendererParams) {
   if (axis?.name !== QC_ENTITY_AXIS) return undefined;
   return {
     component: QcEntityCell,
-    params: { value: String(params.value ?? ""), labels: app.model.outputs.sampleLabels ?? {} },
+    params: { value: params.value, labels: app.model.outputs.sampleLabels ?? {} },
   };
 }
 
