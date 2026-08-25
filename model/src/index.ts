@@ -1553,19 +1553,19 @@ export const platforma = BlockModelV3.create(dataModel)
         primaryColumns: pCols.map((c) => DataColumn.fromColumn(c)),
         columns: null,
         tableState: ctx.data.expansionTableState,
-        // The identity's own name, made visible. `identityLabelsImportSpec` annotates it hidden, the right
-        // convention for a `pl7.app/label` column: a table CONSUMES a label column to name its axis rather
-        // than rendering it as data. That convention fails here for one reason -- the identity axis is
-        // invented by this block, so its label column can never sit in this block's own result pool, and the
-        // pool is the only place the table looks.
+        // A table CONSUMES a label column to name its axis rather than rendering it as data, but the V3
+        // discovery path does not reach this block's own exports: `createPlDataTableV3` builds its map from
+        // `roots.upstreamBlockCtxes`, which excludes self. A label column for an axis this block invents is
+        // therefore never found on that path, and renders as an ordinary column unless a rule here says
+        // otherwise. `createPlDataTableV2` differs -- its pool is built from a traversal that includes the
+        // root block, so the tables on that path do consume these labels.
         //
-        // Overridden here rather than in the workflow spec, because that column is an EXPORT with downstream
-        // readers, and making it default-visible would change their tables to fix ours. Two rules, and the
-        // order matters -- the first match wins. Both columns the table would show as a name are called
-        // `pl7.app/label`, so they are told apart by the axis each one labels.
+        // Two rules, and the order matters -- the first match wins. Both columns the table would show as a
+        // name are called `pl7.app/label`, so they are told apart by the axis each one labels.
         displayOptions: {
           visibility: [
-            // The identity's name, promoted out of hidden. This is the row's subject.
+            // The identity's name. This is the row's subject. `identityLabelsImportSpec` annotates
+            // the same visibility, so this rule restates it.
             {
               match: {
                 name: "^pl7\\.app/label$",
