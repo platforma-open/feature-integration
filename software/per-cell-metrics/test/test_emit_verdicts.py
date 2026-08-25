@@ -3344,3 +3344,20 @@ def test_a_present_read_qc_row_with_no_reads_names_the_denominator_not_the_row(b
     assert row["value"] in ("", None)
     assert "no denominator" in row["reason"]
     assert "reached this sample" not in row["reason"]
+
+
+def test_a_valueless_usable_fraction_carries_its_reason_and_no_detail(bed):
+    # QcRow's invariant: a detail rides alongside a number, a reason stands in place of one. A row
+    # with neither a value nor a number to describe must not carry the same string twice.
+    (bed / "qc.csv").write_text(
+        "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
+        "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction\n"
+        "S1,20000,18000,0.9,3,2,1200,300,0.82\n"
+    )
+    r = _run(bed, *BASE, "--qc-summary", "qc.csv")
+    assert r.returncode == 0, r.stderr
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    row = qc.filter(pl.col("measurement") == "usableReadFraction").row(0, named=True)
+    assert row["value"] in ("", None)
+    assert row["reason"]
+    assert row["detail"] in ("", None)

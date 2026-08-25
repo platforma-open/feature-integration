@@ -1908,7 +1908,18 @@ def main() -> None:
             )
         else:
             usable_value, usable_detail = None, "the counts file carries no totalWeight column"
-        _add(rows, "sample", sample, "usableReadFraction", usable_value, usable_detail, reason=usable_detail)
+        # `usable_read_fraction` returns one string for both roles, and they are not the same role:
+        # a detail rides alongside a number, a reason stands in place of one. Passing it as the
+        # detail only when a number came back keeps QcRow's invariant.
+        _add(
+            rows,
+            "sample",
+            sample,
+            "usableReadFraction",
+            usable_value,
+            "" if usable_value is None else usable_detail,
+            reason=usable_detail,
+        )
 
         # 330's undeclared-barcode table: keyed by sequence, never by (panel, tag), because an
         # undeclared barcode has no row in the panel to sit beside. Read on the PRE-refine pass,
