@@ -268,6 +268,26 @@ def undeclared_feature_counts(raw_counts: pl.DataFrame, declared: Collection[str
     return undeclared, undeclared_weight / total_weight
 
 
+def _read_raw_feature_counts(path: str) -> pl.DataFrame:
+    """The gathered pre-refine FEATURE tag-stat table, across every sample.
+
+    Columns `sampleId`, `FEATURE`, `totalWeight` -- the workflow's per-sample gather step
+    injects `sampleId` from the resource-map key the same way `_read_counts` documents for the
+    (cell, tag) counts. Read as strings and stripped, same join-safety reason as
+    `_read_columns`, then `totalWeight` cast to a whole number.
+    """
+    frame = _read_columns(path, ("sampleId", "FEATURE", "totalWeight"), "raw feature counts file")
+    weight = frame["totalWeight"].cast(pl.Int64, strict=False)
+    offenders = [raw for raw, cast in zip(frame["totalWeight"], weight, strict=True) if cast is None]
+    if offenders:
+        shown = ", ".join(repr(v) for v in offenders[:5])
+        raise SystemExit(
+            f"raw feature counts file {path!r} has {len(offenders)} totalWeight value(s) that are not "
+            f"whole numbers: {shown}"
+        )
+    return frame.with_columns(weight.alias("totalWeight"))
+
+
 def _json_arg(raw: str | None, flag: str):
     if raw is None or not raw.strip():
         return None
@@ -997,6 +1017,21 @@ _REAGENT_SCHEMA = {
     "reason": pl.String,
 }
 
+# One row per (sampleId, tag) the pre-refine pass saw and the sample's panel does not declare.
+# `readShare` and `status` are the SAMPLE's undeclared-read share, repeated on every one of that
+# sample's rows -- 330's "the field publishes a line for the share of a sample's reads that land
+# in barcodes nobody declared", read together with 310's "its status is the barcode's, and it
+# does not become a sample's": the status is computed at the sample and carried on the barcode's
+# own row, never on the sample's. Usually there are no rows for a sample at all, which is the
+# outcome the field wants.
+_UNDECLARED_BARCODE_SCHEMA = {
+    "sampleId": pl.String,
+    "tag": pl.String,
+    "totalWeight": pl.Int64,
+    "readShare": pl.Float64,
+    "status": pl.String,
+}
+
 
 def _decile_rows(distribution: str, deciles: pl.DataFrame) -> list[dict]:
     """One distribution's decile points as rows. A point with no value contributes none."""
@@ -1194,6 +1229,11 @@ def main() -> None:
     )
     p.add_argument(
         "--qc-summary", default=None, help="per-sample read QC CSV (sampleId, readsTotal, readsMatched, ...)"
+    )
+    p.add_argument(
+        "--raw-feature-counts",
+        default=None,
+        help="gathered pre-refine tag-stat -t FEATURE table (sampleId, FEATURE, totalWeight)",
     )
     p.add_argument("--output-prefix", default="result")
     args = p.parse_args()
@@ -1776,6 +1816,14 @@ def main() -> None:
     NO_READ_QC = "no read QC summary row reached this sample"
     NO_REFINE_STEP = "no refine-tags report was produced, or it supplied no %s step with input reads"
 
+    # The pre-refine pass Task 5 added: one FEATURE tag-stat row per sequence the reads carried,
+    # before refine-tags snaps each one onto the panel. Without this file the table below stays
+    # the ordinary empty case rather than raising, because a run wired without it has made no
+    # claim about undeclared barcodes -- it has not checked, which is a different fact from
+    # having checked and found none.
+    raw_feature_counts = _read_raw_feature_counts(args.raw_feature_counts) if args.raw_feature_counts else None
+    undeclared_barcode_rows: list[dict] = []
+
     rows: list[QcRow] = []
     sample_coverage: dict[str, Coverage] = {}
     sample_report: dict[str, dict] = {}
@@ -1796,6 +1844,29 @@ def main() -> None:
             _number(qc, "panelAssignedFraction"),
             reason=NO_READ_QC if not qc else NO_REFINE_STEP % "FEATURE",
         )
+
+        # 330's undeclared-barcode table: keyed by sequence, never by (panel, tag), because an
+        # undeclared barcode has no row in the panel to sit beside. Read on the PRE-refine pass,
+        # where a sequence the panel never declared can still be seen -- `counts` above has
+        # already been snapped onto the panel by refine-tags, which is why that path cannot
+        # produce this direction (see result_panel_mismatch.csv's "undeclared-in-panel" rows).
+        if raw_feature_counts is not None:
+            sample_raw = raw_feature_counts.filter(pl.col("sampleId") == sample).select("FEATURE", "totalWeight")
+            undeclared, undeclared_share = undeclared_feature_counts(sample_raw, declared[sample])
+            # The share is the SAMPLE's, computed once and carried on every one of that sample's
+            # rows. 310: the status is the barcode's and never the sample's, so it is written
+            # here rather than added to `rows` / `sample_report_rows`.
+            undeclared_status = status_for("undeclaredBarcodeShare", undeclared_share, DEFAULT_LINES)
+            for undeclared_row in undeclared.iter_rows(named=True):
+                undeclared_barcode_rows.append(
+                    {
+                        "sampleId": sample,
+                        "tag": undeclared_row["tag"],
+                        "totalWeight": int(undeclared_row["totalWeight"]),
+                        "readShare": undeclared_share,
+                        "status": None if undeclared_status is None else undeclared_status.value,
+                    }
+                )
         _add(
             rows,
             "sample",
@@ -2215,6 +2286,12 @@ def main() -> None:
         pl.DataFrame(reagent_rows, schema=_REAGENT_SCHEMA),
         f"{prefix}_reagents.csv",
         ["panelId", "identity", "tag"],
+    )
+
+    _write_sorted(
+        pl.DataFrame(undeclared_barcode_rows, schema=_UNDECLARED_BARCODE_SCHEMA),
+        f"{prefix}_undeclared_barcodes.csv",
+        ["sampleId", "tag"],
     )
 
     meta = {

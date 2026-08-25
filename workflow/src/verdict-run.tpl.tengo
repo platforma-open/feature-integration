@@ -40,6 +40,7 @@ RESULT_TABLES := [
 	{ out: "panelLabels", file: "result_panel_labels.csv" },
 	{ out: "samplePanel", file: "result_sample_panel.csv" },
 	{ out: "panelMismatch", file: "result_panel_mismatch.csv" },
+	{ out: "undeclaredBarcodes", file: "result_undeclared_barcodes.csv" },
 	{ out: "qc", file: "result_qc.csv" },
 	{ out: "qcSummary", file: "result_qc_summary.csv" },
 	{ out: "qcDeciles", file: "result_qc_deciles.csv" },
@@ -94,7 +95,8 @@ self.body(func(inputs) {
 
 	params := maps.merge(inputs.params, {
 		hasLinker: true,
-		hasQcSummary: !is_undefined(inputs.qcSummaryFile)
+		hasQcSummary: !is_undefined(inputs.qcSummaryFile),
+		hasRawFeatureCounts: !is_undefined(inputs.rawFeatureCountsFile)
 	})
 
 	b := exec.builder().
@@ -111,6 +113,12 @@ self.body(func(inputs) {
 	// readsPerCell is the only sequencing-depth alert the block ships.
 	if params.hasQcSummary {
 		b = b.addFile(va.FILE_QC_SUMMARY, inputs.qcSummaryFile)
+	}
+	// The pre-refine pass: without it the undeclared-barcode table stays the ordinary empty
+	// case rather than raising, because a run wired without this file has not checked for an
+	// undeclared barcode, which is a different fact from having checked and found none.
+	if params.hasRawFeatureCounts {
+		b = b.addFile(va.FILE_RAW_FEATURE_COUNTS, inputs.rawFeatureCountsFile)
 	}
 
 	for a in va.build(params) {

@@ -26,6 +26,7 @@ prerunTpl := assets.importTemplate(":prerun")
 qcSummaryTpl := assets.importTemplate(":qc-summary")
 featurePropsTpl := assets.importTemplate(":fb-feature-properties")
 gatherCountsTpl := assets.importTemplate(":gather-counts")
+gatherRawFeatureCountsTpl := assets.importTemplate(":gather-raw-feature-counts")
 verdictRunTpl := assets.importTemplate(":verdict-run")
 verdictImportTpl := assets.importTemplate(":verdict-import")
 
@@ -196,7 +197,7 @@ wf.body(func(args) {
 	// downstream reuses them instead of re-running the block on a settings change. No model or UI consumer:
 	// the persistence is the point. Mirrors blocks/peptide-extraction. Each is a per-sample Resource, so
 	// processColumn yields a [sampleId] map.
-	for pn in ["parsedMic", "parseReport", "refineReport", "tagstatTsv"] {
+	for pn in ["parsedMic", "parseReport", "refineReport", "tagstatTsv", "rawFeatureCounts"] {
 		outputs = append(outputs, {
 			type: "Resource",
 			spec: {
@@ -369,6 +370,14 @@ wf.body(func(args) {
 			tags: args.tags
 		})
 
+		// Pre-refine FEATURE counts, gathered the same way, for the undeclared-barcode table
+		// (330): refine-tags snaps every barcode onto the panel before the distinct-UMI counts
+		// above are even computed, so a sequence the panel never declared has to be read from
+		// this earlier pass or it cannot be seen at all.
+		rawFeatureCountsGather := render.create(gatherRawFeatureCountsTpl, {
+			rawFeatureData: perSampleResults.outputData("rawFeatureCounts")
+		})
+
 		// Built HERE, in the body, and not in prepare -- see the note on wf.prepare above. The bundle is passed
 		// to both child templates unresolved. A resolved bundle is a map with methods, which cannot be
 		// serialized as a template input, so each template resolves it for itself.
@@ -427,6 +436,7 @@ wf.body(func(args) {
 			// silently, since a non-evaluation is a legitimate state rather than an error. readsPerCell is the
 			// only sequencing-depth alert the block ships.
 			qcSummaryFile: qcSummaryResult.output("qcSummaryCsv"),
+			rawFeatureCountsFile: rawFeatureCountsGather.output("rawCountsFile"),
 			params: verdictParams
 		})
 
@@ -458,6 +468,7 @@ wf.body(func(args) {
 			panelLabels: verdictRun.output("panelLabels"),
 			samplePanel: verdictRun.output("samplePanel"),
 			panelMismatch: verdictRun.output("panelMismatch"),
+			undeclaredBarcodes: verdictRun.output("undeclaredBarcodes"),
 			qc: verdictRun.output("qc"),
 			qcSummary: verdictRun.output("qcSummary"),
 			qcDeciles: verdictRun.output("qcDeciles"),
@@ -487,6 +498,7 @@ wf.body(func(args) {
 		parseReport: perSampleResults.outputData("parseReport"),
 		refineReport: perSampleResults.outputData("refineReport"),
 		tagstatTsv: perSampleResults.outputData("tagstatTsv"),
+		rawFeatureCounts: perSampleResults.outputData("rawFeatureCounts"),
 		// metrics-exec file outputs kept reachable so they are content-hash-persisted, per the persist loop
 		// above. This is what makes capturing the metrics stdout CID-safe. No model consumer.
 		abundancePersist: perSampleResults.outputData("abundancePersist"),
@@ -543,6 +555,10 @@ wf.body(func(args) {
 		// and that stage has no clonotype set to run against until a dataset is picked.
 		blockOutputs.qcSummaryTable = pframes.exportFrame(verdictImport.output("qcSummaryTable"))
 		blockOutputs.antigenPanelMismatchTable = pframes.exportFrame(verdictImport.output("panelMismatchTable"))
+		// 330's own table: barcodes the reads carried that no panel declares, keyed by sequence,
+		// carrying the one status this run's quality surface publishes outside the measurement
+		// list -- the share of a sample's reads landing in undeclared barcodes. Usually empty.
+		blockOutputs.antigenUndeclaredBarcodesTable = pframes.exportFrame(verdictImport.output("undeclaredBarcodesTable"))
 		// The three distributions the readout draws. Outputs rather than exports, like the report above:
 		// they are what this block says about its own run, and nothing downstream reads them.
 		blockOutputs.antigenQcDistributions = pframes.exportFrame(verdictImport.output("qcDistributions"))

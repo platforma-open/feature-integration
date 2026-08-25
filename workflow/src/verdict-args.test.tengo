@@ -6,6 +6,7 @@ va := import(":verdict-args")
 _full := {
 	hasLinker: true,
 	hasQcSummary: true,
+	hasRawFeatureCounts: true,
 	barcodeSeqColumn: "Sequence",
 	featureNameColumn: "Name",
 	sampleColumn: "Samples",
@@ -34,7 +35,7 @@ _full := {
 Test_every_flag_is_threaded := func() {
 	args := va.build(_full)
 	flags := [
-		"--linker", "--qc-summary",
+		"--linker", "--qc-summary", "--raw-feature-counts",
 		"--barcode-col", "--feature-col", "--sample-col", "--role-column", "--reference-values",
 		"--reference-source", "--panel-min-members", "--distribution-min-cells",
 		"--floor", "--cutoff",
@@ -75,6 +76,15 @@ Test_qc_summary_points_at_the_staged_file := func() {
 		"--qc-summary must name the staged per-sample QC CSV")
 }
 
+// Same requirement for the pre-refine pass: without it the undeclared-barcode table stays the
+// ordinary empty case rather than raising, and a flag naming a file the exec never received is
+// still a hard failure.
+Test_raw_feature_counts_points_at_the_staged_file := func() {
+	args := va.build(_full)
+	test.isEqual(va.FILE_RAW_FEATURE_COUNTS, va.valueOf(args, "--raw-feature-counts"),
+		"--raw-feature-counts must name the staged pre-refine FEATURE table")
+}
+
 // The two positionals lead, and each names a staged file.
 Test_positionals_lead_and_name_staged_files := func() {
 	args := va.build(_full)
@@ -88,6 +98,8 @@ Test_file_flags_follow_their_files := func() {
 	args := va.build({ barcodeSeqColumn: "Sequence", featureNameColumn: "Name" })
 	test.isFalse(va.has(args, "--linker"), "the linker flag must be absent when no linker was staged")
 	test.isFalse(va.has(args, "--qc-summary"), "the QC flag must be absent when no QC table was staged")
+	test.isFalse(va.has(args, "--raw-feature-counts"),
+		"the raw-feature-counts flag must be absent when no pre-refine table was staged")
 }
 
 // Off means absent, not zero. A zero gate would set aside every cell, and a zero agreement floor would pass

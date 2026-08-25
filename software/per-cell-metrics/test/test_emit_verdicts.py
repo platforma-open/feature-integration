@@ -90,6 +90,7 @@ def test_writes_every_artifact(bed):
         "result_identity_labels.csv",
         "result_identity_properties.csv",
         "result_panel_mismatch.csv",
+        "result_undeclared_barcodes.csv",
         "result_run_meta.json",
     ):
         assert (bed / name).exists(), name
@@ -359,11 +360,10 @@ def test_only_the_sample_rolls_up(bed):
     assert sum(_triple("sample")) > 0, "the sample rollup still counts what was checked"
 
 
-def test_a_reagent_condition_keeps_its_status_and_stays_out_of_the_sample_rollup(bed):
-    # Atom 310: the undeclared-barcode line is published on a sample's share, but the finding
-    # belongs to a reagent, and a reagent belongs to the run rather than to any one sample. Its
-    # own row keeps the status. The sample's rollup must not count it, or one bad panel marks
-    # every sample that saw it.
+def test_panel_assigned_fraction_keeps_its_value_and_carries_no_status(bed):
+    # Atom 310: the undeclared-barcode line is the barcode's, and it never becomes a sample's.
+    # This sample-grain measurement keeps its number and is never judged, so it never reaches
+    # the sample's rollup either.
     (bed / "qc.csv").write_text(
         "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
         "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction,"
@@ -375,9 +375,10 @@ def test_a_reagent_condition_keeps_its_status_and_stays_out_of_the_sample_rollup
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
 
     row = qc.filter(pl.col("measurement") == "panelAssignedFraction").row(0, named=True)
-    assert row["status"] == "OK", "0.82 assigned is well clear of the 0.50 line"
-    # It is judged on its own row: the triple beside it counts one judged measurement.
-    assert (row["judged"], row["unjudged"], row["notEvaluated"]) == ("1", "0", "0")
+    assert row["value"] == "0.82"
+    assert row["status"] is None
+    # Computed but never judged: it counts as unjudged, never judged, and never not-evaluated.
+    assert (row["judged"], row["unjudged"], row["notEvaluated"]) == ("0", "1", "0")
 
     sample = row["level"], row["entity"]
     rollup = qc.filter(
@@ -467,6 +468,74 @@ def test_undeclared_barcode_is_reported_and_does_not_stop_the_reading(bed):
     m = pl.read_csv(bed / "result_panel_mismatch.csv")
     assert "TTTT" in m.filter(pl.col("direction") == "undeclared-in-panel")["tag"].to_list()
     assert pl.read_csv(bed / "result_verdicts.csv").height > 0
+
+
+# --- the undeclared-barcode table: keyed by sequence, carrying the field's own status ------
+#
+# 330: barcodes the reads carried that no panel declares get their own table, keyed by
+# sequence, and it is the one thing on that surface that carries a status -- the share of a
+# sample's reads landing in undeclared barcodes. 310: that status is the barcode's, and it
+# never becomes a sample's.
+
+
+def _write_raw_feature_counts(bed, rows):
+    lines = ["sampleId,FEATURE,totalWeight"] + [f"{s},{f},{w}" for s, f, w in rows]
+    (bed / "raw_feature_counts.csv").write_text("\n".join(lines) + "\n")
+
+
+def test_undeclared_barcode_table_is_empty_without_the_raw_feature_counts_input(bed):
+    # No pre-refine pass reached this run, so the table reads as the ordinary empty case --
+    # usually empty is the outcome to want -- rather than as an error.
+    _run(bed, *BASE)
+    t = pl.read_csv(bed / "result_undeclared_barcodes.csv")
+    assert t.height == 0
+    assert set(t.columns) == {"sampleId", "tag", "totalWeight", "readShare", "status"}
+
+
+def test_undeclared_barcode_table_is_keyed_by_sequence_with_the_samples_share(bed):
+    # The panel declares AAAA and CTRL for S1 (bed's panel.csv). ZZZZ is neither.
+    _write_raw_feature_counts(bed, [("S1", "AAAA", 40), ("S1", "CTRL", 10), ("S1", "ZZZZ", 10)])
+    _run(bed, *BASE, "--raw-feature-counts", "raw_feature_counts.csv")
+    t = pl.read_csv(bed / "result_undeclared_barcodes.csv")
+    assert t["tag"].to_list() == ["ZZZZ"]
+    row = t.row(0, named=True)
+    assert row["totalWeight"] == 10
+    assert row["readShare"] == pytest.approx(10 / 60)
+    assert row["status"] == "OK"  # 10/60 is well under the 0.50 warn line
+
+
+def test_undeclared_barcode_share_warns_above_half(bed):
+    _write_raw_feature_counts(bed, [("S1", "AAAA", 10), ("S1", "ZZZZ", 15)])
+    _run(bed, *BASE, "--raw-feature-counts", "raw_feature_counts.csv")
+    t = pl.read_csv(bed / "result_undeclared_barcodes.csv")
+    assert t.row(0, named=True)["status"] == "warn"
+
+
+def test_undeclared_barcode_share_alerts_when_every_read_is_undeclared(bed):
+    _write_raw_feature_counts(bed, [("S1", "ZZZZ", 5)])
+    _run(bed, *BASE, "--raw-feature-counts", "raw_feature_counts.csv")
+    t = pl.read_csv(bed / "result_undeclared_barcodes.csv")
+    assert t.row(0, named=True)["status"] == "alert"
+
+
+def test_undeclared_barcode_table_stays_empty_when_the_panel_covers_every_sequence(bed):
+    # Every barcode the pre-refine pass saw is declared -- the outcome the field wants -- so the
+    # table carries no row, not a claim that something failed.
+    _write_raw_feature_counts(bed, [("S1", "AAAA", 40), ("S1", "CTRL", 10)])
+    _run(bed, *BASE, "--raw-feature-counts", "raw_feature_counts.csv")
+    t = pl.read_csv(bed / "result_undeclared_barcodes.csv")
+    assert t.height == 0
+
+
+def test_undeclared_barcode_share_never_reaches_the_sample_report_or_rollup(bed):
+    # 310: the status is the barcode's, and it does not become a sample's. It must not appear
+    # among the sample's own measurements or feed the sample's rolled-up status.
+    _write_raw_feature_counts(bed, [("S1", "ZZZZ", 5)])
+    r = _run(bed, *BASE, "--raw-feature-counts", "raw_feature_counts.csv")
+    assert r.returncode == 0, r.stderr
+    report = json.loads((bed / "result_qc_by_sample.json").read_text())
+    ids = {m["id"] for m in report["S1"]["measurements"]}
+    assert "undeclaredBarcodeShare" not in ids
 
 
 def test_empty_join_writes_headers(bed):

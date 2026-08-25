@@ -462,9 +462,12 @@ const INITIAL_GRAPH_STATES = {
   "scoreDistributionGraphState" | "referenceReadingGraphState" | "fittedBackgroundGraphState"
 >;
 
-// v5 data shape: everything the current shape has except the reagent grid's state, which arrived with
-// the reagent table.
-type BlockDataV5 = Omit<BlockData, "reagentTableState">;
+// v6 data shape: everything the current shape has except the undeclared-barcode grid's state, which
+// arrived with that table.
+type BlockDataV6 = Omit<BlockData, "undeclaredBarcodesTableState">;
+
+// v5 data shape: v6 without the reagent grid's state, which arrived with the reagent table.
+type BlockDataV5 = Omit<BlockDataV6, "reagentTableState">;
 
 // v4 data shape: v5 without the three GraphMaker states, which arrived with the distribution plots.
 type BlockDataV4 = Omit<
@@ -584,9 +587,15 @@ const dataModel = new DataModelBuilder()
   }))
   // v5 -> v6: the reagent grid's state arrives. `init` seeds a NEW project only, and a
   // `PlAgDataTableV2` bound to an undefined state renders nothing and reports no error.
-  .migrate<BlockData>("v6", (data) => ({
+  .migrate<BlockDataV6>("v6", (data) => ({
     ...data,
     reagentTableState: createPlDataTableStateV2(),
+  }))
+  // v6 -> v7: the undeclared-barcode grid's state arrives, for the same reason the reagent
+  // grid's did one version earlier.
+  .migrate<BlockData>("v7", (data) => ({
+    ...data,
+    undeclaredBarcodesTableState: createPlDataTableStateV2(),
   }))
   .init(() => ({
     runMode: "full" as const, // full run by default. "dry" = read-limited Preview
@@ -610,6 +619,7 @@ const dataModel = new DataModelBuilder()
     ...INITIAL_GRAPH_STATES,
     runQualityMismatchTableState: createPlDataTableStateV2(),
     reagentTableState: createPlDataTableStateV2(),
+    undeclaredBarcodesTableState: createPlDataTableStateV2(),
   }));
 
 export const platforma = BlockModelV3.create(dataModel)
@@ -1787,6 +1797,22 @@ export const platforma = BlockModelV3.create(dataModel)
         ?.getPColumns();
       if (pCols === undefined) return undefined;
       return createPlDataTableV2(ctx, pCols, ctx.data.runQualityMismatchTableState);
+    },
+    { retentive: true, withStatus: true },
+  )
+  // 330's own table: barcodes the reads carried that no panel declares, keyed by sequence. It carries
+  // the one status this run's quality surface publishes outside the measurement list -- the share of a
+  // sample's reads landing in undeclared barcodes -- and that status is the barcode's, never rolled into
+  // any sample's own. Usually empty, which is the outcome the field wants. `allowPermanentAbsence` for
+  // the same reason the tables above need it: the verdict stage is gated on a chosen V(D)J dataset.
+  .output(
+    "undeclaredBarcodesTable",
+    (ctx) => {
+      const pCols = ctx.outputs
+        ?.resolve({ field: "antigenUndeclaredBarcodesTable", allowPermanentAbsence: true })
+        ?.getPColumns();
+      if (pCols === undefined) return undefined;
+      return createPlDataTableV2(ctx, pCols, ctx.data.undeclaredBarcodesTableState);
     },
     { retentive: true, withStatus: true },
   )

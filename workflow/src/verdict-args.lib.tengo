@@ -18,6 +18,7 @@ FILE_COUNTS := "counts.csv"
 FILE_PANEL := "panel.csv"
 FILE_LINKER := "linker.csv"
 FILE_QC_SUMMARY := "qc_summary.csv"
+FILE_RAW_FEATURE_COUNTS := "raw_feature_counts.csv"
 OUTPUT_PREFIX := "result"
 
 // The block arguments this module reads. Exported so fanout-inputs.test.tengo can assert that none of them
@@ -78,6 +79,9 @@ build := func(params) {
 	}
 	if !is_undefined(params.hasQcSummary) && params.hasQcSummary {
 		add("--qc-summary", FILE_QC_SUMMARY)
+	}
+	if !is_undefined(params.hasRawFeatureCounts) && params.hasRawFeatureCounts {
+		add("--raw-feature-counts", FILE_RAW_FEATURE_COUNTS)
 	}
 
 	// The panel-file column roles. Passed even when empty: an empty --sample-col declares one panel for every
@@ -192,6 +196,7 @@ export {
 	FILE_PANEL: FILE_PANEL,
 	FILE_LINKER: FILE_LINKER,
 	FILE_QC_SUMMARY: FILE_QC_SUMMARY,
+	FILE_RAW_FEATURE_COUNTS: FILE_RAW_FEATURE_COUNTS,
 	OUTPUT_PREFIX: OUTPUT_PREFIX,
 	PARAMETER_NAMES: PARAMETER_NAMES,
 	build: build,

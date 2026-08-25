@@ -253,6 +253,15 @@ self.body(func(inputs) {
 	addTo(mismatchFb, "panelMismatch", inputs.panelMismatch,
 		columnSpecs.panelMismatchImportSpec(panelAxis, tagAxis))
 
+	// 330's own table: barcodes the reads carried that no panel declares, keyed by sequence. Its own
+	// frame, because it keys on (sampleId, tag) rather than any axis the tables above use, and because
+	// panelMismatch's "undeclared-in-panel" direction is structurally unreachable there -- refine-tags
+	// has already snapped every barcode onto the panel before that check's counts are built, which is
+	// exactly why this table reads the pre-refine pass instead.
+	undeclaredFb := pframes.pFrameBuilder()
+	addTo(undeclaredFb, "undeclaredBarcodes", inputs.undeclaredBarcodes,
+		columnSpecs.undeclaredBarcodeImportSpec(sampleAxis, tagAxis))
+
 	return {
 		antigenVerdicts: exportFb.build(),
 		punchcard: punchFb.build(),
@@ -261,6 +270,7 @@ self.body(func(inputs) {
 		qcSummaryTable: qcSummaryFb.build(),
 		qcDistributions: distributionFb.build(),
 		reagentTable: reagentFb.build(),
-		panelMismatchTable: mismatchFb.build()
+		panelMismatchTable: mismatchFb.build(),
+		undeclaredBarcodesTable: undeclaredFb.build()
 	}
 })

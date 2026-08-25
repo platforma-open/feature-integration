@@ -527,19 +527,33 @@ def test_a_measurement_with_a_route_has_a_line_and_a_comparison_and_nothing_else
     # Every surviving route puts an absolute number on the measurement, so the
     # route set and the line set are the same set. A comparison is not a line and
     # so declares no route at all.
+    #
+    # `undeclaredBarcodeShare` is the one exception: it backs the undeclared-barcode table's
+    # own row (310), not a declared sample/tag measurement, so it carries a line with no
+    # `Measurement` behind it.
     routed = {m.id for m in MEASUREMENTS if m.line}
-    assert set(DEFAULT_LINES) == routed
-    assert set(_COMPARISON) == routed
+    assert set(DEFAULT_LINES) - {"undeclaredBarcodeShare"} == routed
+    assert set(_COMPARISON) - {"undeclaredBarcodeShare"} == routed
+    assert "undeclaredBarcodeShare" in DEFAULT_LINES
+    assert "undeclaredBarcodeShare" in _COMPARISON
 
 
-def test_the_undeclared_barcode_line_transfers_as_its_complement():
-    # 315 publishes this line on the UNDECLARED share: warn above 0.50, error at 1.0. The block
-    # measures the assigned share, which is one minus that, so both thresholds mirror. A run
-    # where every read carries an undeclared barcode assigns nothing and alerts.
-    line = DEFAULT_LINES["panelAssignedFraction"]
-    assert (line.warn, line.error) == (1 - 0.50, 1 - 1.0)
-    assert status_for("panelAssignedFraction", 1 - 0.60, DEFAULT_LINES) is Status.WARN
-    assert status_for("panelAssignedFraction", 1 - 1.0, DEFAULT_LINES) is Status.ALERT
+def test_the_undeclared_barcode_line_is_read_direct_not_as_a_complement():
+    # 315 publishes this line on the undeclared share itself: warn above 0.50, error at 1.0.
+    # The barcode table measures that share directly, so the thresholds are not mirrored.
+    line = DEFAULT_LINES["undeclaredBarcodeShare"]
+    assert (line.warn, line.error) == (0.50, 1.0)
+    assert status_for("undeclaredBarcodeShare", 0.60, DEFAULT_LINES) is Status.WARN
+    assert status_for("undeclaredBarcodeShare", 1.0, DEFAULT_LINES) is Status.ALERT
+    assert status_for("undeclaredBarcodeShare", 0.40, DEFAULT_LINES) is Status.OK
+
+
+def test_panel_assigned_fraction_carries_no_line_any_more():
+    # The line moved to the barcode's own row (310: "its status is the barcode's, and it does
+    # not become a sample's"). This measurement keeps its value and is never judged.
+    assert "panelAssignedFraction" not in DEFAULT_LINES
+    assert "panelAssignedFraction" not in _COMPARISON
+    assert status_for("panelAssignedFraction", 0.1, DEFAULT_LINES) is None
 
 
 def test_barcode_validity_is_the_line_with_a_gradient_at_both_ends():
@@ -554,13 +568,11 @@ def test_barcode_validity_is_the_line_with_a_gradient_at_both_ends():
     assert status_for("cellBarcodeValidFraction", 0.40, DEFAULT_LINES) is Status.ALERT
 
 
-def test_a_reagent_condition_declares_that_it_does_not_roll_up():
-    # 310 keeps a reagent's failure off every sample: one bad panel marking twenty samples is how
-    # a sample status becomes noise. The undeclared-barcode share is the one measurement whose
-    # line is published per sample while the finding belongs to the run.
-    by_id = {m.id: m for m in MEASUREMENTS}
-    assert by_id["panelAssignedFraction"].rolls_up is False
-    assert [m.id for m in MEASUREMENTS if not m.rolls_up] == ["panelAssignedFraction"]
+def test_no_measurement_declares_rolls_up_false():
+    # The undeclared-barcode line no longer sits on a sample measurement at all -- it moved to
+    # the barcode's own row in the undeclared-barcode table -- so no declared measurement needs
+    # the rollup exemption `rolls_up=False` exists for.
+    assert [m.id for m in MEASUREMENTS if not m.rolls_up] == []
 
 
 def test_a_line_without_an_error_threshold_declares_no_error_comparison():
@@ -611,11 +623,11 @@ def test_a_stated_recommendation_warns_and_never_alerts():
 def test_two_thresholds_give_three_levels():
     # The distinction collapsing them lost. Three of the four inherited lines put error at total
     # failure, so a low-but-non-zero share warns and only a wholly failed one alerts.
-    line = DEFAULT_LINES["panelAssignedFraction"]
-    assert (line.warn, line.error) == (0.5, 0.0)
-    assert status_for("panelAssignedFraction", 0.6, DEFAULT_LINES) is Status.OK
-    assert status_for("panelAssignedFraction", 0.1, DEFAULT_LINES) is Status.WARN
-    assert status_for("panelAssignedFraction", 0.0, DEFAULT_LINES) is Status.ALERT
+    line = DEFAULT_LINES["undeclaredBarcodeShare"]
+    assert (line.warn, line.error) == (0.5, 1.0)
+    assert status_for("undeclaredBarcodeShare", 0.4, DEFAULT_LINES) is Status.OK
+    assert status_for("undeclaredBarcodeShare", 0.6, DEFAULT_LINES) is Status.WARN
+    assert status_for("undeclaredBarcodeShare", 1.0, DEFAULT_LINES) is Status.ALERT
 
 
 def test_error_is_tested_before_warn(monkeypatch):
@@ -635,17 +647,13 @@ def test_at_least_is_acceptable_exactly_at_the_line():
     # is acceptable. The named value satisfies the condition it names.
     assert status_for("readsPerCell", 5_000, DEFAULT_LINES) is Status.OK
     assert status_for("readsPerCell", 4_999, DEFAULT_LINES) is Status.WARN
-    assert status_for("panelAssignedFraction", 0.5, DEFAULT_LINES) is Status.OK
-    assert status_for("panelAssignedFraction", 0.49, DEFAULT_LINES) is Status.WARN
 
 
-def test_at_most_is_acceptable_exactly_at_the_line(monkeypatch):
-    # `aggregateBarcodeFraction` reads `at-most` now, but this exercises the branch directly
-    # against a registered stand-in rather than depending on that measurement's own thresholds.
-    monkeypatch.setitem(_COMPARISON, "syntheticUpperBound", ("at-most", None))
-    lines = {"syntheticUpperBound": Line(warn=0.1)}
-    assert status_for("syntheticUpperBound", 0.1, lines) is Status.OK
-    assert status_for("syntheticUpperBound", 0.11, lines) is Status.WARN
+def test_at_most_is_acceptable_exactly_at_the_line():
+    # `undeclaredBarcodeShare` reads `at-most`: the named value (the warn line itself)
+    # satisfies the condition it names, and only strictly above it warns.
+    assert status_for("undeclaredBarcodeShare", 0.5, DEFAULT_LINES) is Status.OK
+    assert status_for("undeclaredBarcodeShare", 0.51, DEFAULT_LINES) is Status.WARN
 
 
 def test_the_undeclared_barcode_fraction_ships_unjudged():

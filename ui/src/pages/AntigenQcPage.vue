@@ -35,6 +35,10 @@ const reagentSettings = usePlDataTableSettingsV2({
   model: () => app.model.outputs.reagentTable,
 });
 
+const undeclaredSettings = usePlDataTableSettingsV2({
+  model: () => app.model.outputs.undeclaredBarcodesTable,
+});
+
 // A missing V(D)J dataset is a legitimate state rather than a half-filled form: the block runs, and the
 // verdict stage alone is skipped, so neither table below has a source. Read from data rather than from an
 // output, because the point is what the user has chosen, including before the next run. Same device, and the
@@ -62,6 +66,11 @@ const mismatchAbsent = computed(() => {
 
 const reagentAbsent = computed(() => {
   const output = app.model.outputs.reagentTable;
+  return output === undefined || (output.ok && output.value === undefined);
+});
+
+const undeclaredAbsent = computed(() => {
+  const output = app.model.outputs.undeclaredBarcodesTable;
   return output === undefined || (output.ok && output.value === undefined);
 });
 
@@ -102,12 +111,13 @@ const VIEW_TABS = [
   { label: "Measurements", value: "measurements" as const },
   { label: "Reagents", value: "reagents" as const },
   { label: "Panel vs reads", value: "mismatch" as const },
+  { label: "Undeclared barcodes", value: "undeclared" as const },
   { label: "Scores", value: "score" as const },
   { label: "Reference readings", value: "reference" as const },
   { label: "Fitted background", value: "background" as const },
 ];
 const activeView = ref<
-  "measurements" | "reagents" | "mismatch" | "score" | "reference" | "background"
+  "measurements" | "reagents" | "mismatch" | "undeclared" | "score" | "reference" | "background"
 >("measurements");
 
 const DECILE_VALUE = "pl7.app/antigen/qcDecileValue";
@@ -220,7 +230,21 @@ const backgroundOptions = computed<PredefinedGraphOption<"scatterplot">[]>(() =>
           v-else
           v-model="app.model.data.runQualityMismatchTableState"
           :settings="mismatchSettings"
-          no-rows-text="Every barcode the panel declared was carried by reads, which is the outcome you want. The opposite direction is not reported here: barcode correction snaps each feature onto the panel before counting, so a barcode the panel never declared cannot reach this check."
+          no-rows-text="Every barcode the panel declared was carried by reads, which is the outcome you want. The opposite direction is not reported here: barcode correction snaps each feature onto the panel before counting, so a barcode the panel never declared cannot reach this check. See the Undeclared barcodes tab for that direction."
+          show-export-button
+        />
+      </template>
+
+      <template v-else-if="activeView === 'undeclared'">
+        <PlAlert v-if="undeclaredAbsent" type="info">
+          The undeclared-barcode table has not reported from this run yet. It is taken by the same
+          verdict stage as the measurements, so it arrives with them.
+        </PlAlert>
+        <PlAgDataTableV2
+          v-else
+          v-model="app.model.data.undeclaredBarcodesTableState"
+          :settings="undeclaredSettings"
+          no-rows-text="No row here for any sample: every barcode the pre-refine pass saw was on some sample's panel. That is the outcome to want, not a check that failed to run."
           show-export-button
         />
       </template>

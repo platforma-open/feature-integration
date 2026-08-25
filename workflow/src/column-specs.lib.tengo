@@ -1218,6 +1218,71 @@ panelMismatchImportSpec := func(panelAxisSpec, tagAxisSpec) {
 	}
 }
 
+// --- Undeclared barcodes: result_undeclared_barcodes.csv, keyed (sampleId, tag) ------------
+//
+// 330: barcodes the reads carried that no panel declares get their own table, keyed by sequence,
+// because they have no row above -- they are not in the panel. It is the one thing on this
+// surface that carries a status: the field publishes a line for the share of a sample's reads
+// landing in undeclared barcodes. 310 keeps that status the barcode's and never the sample's,
+// so it sits here rather than on any row of qcImportSpec's per-sample measurement list.
+//
+// Usually this table has no row for a sample at all, and that is the outcome the field wants --
+// the description below says so, since an empty grid otherwise reads as a check that never ran.
+undeclaredBarcodeImportSpec := func(sampleAxisSpec, tagAxisSpec) {
+	return {
+		axes: [
+			{ column: "sampleId", spec: sampleAxisSpec },
+			{ column: "tag", spec: tagAxisSpec }
+		],
+		columns: [
+			{
+				column: "totalWeight",
+				id: "undeclaredBarcodeWeight",
+				spec: {
+					name: "pl7.app/antigen/undeclaredBarcodeWeight",
+					valueType: "Int",
+					annotations: a(79000, true, {
+						"pl7.app/label": "Reads",
+						"pl7.app/min": "0",
+						"pl7.app/description": "Reads carrying this sequence, from the pre-refine pass -- before refine-tags would have snapped or dropped it."
+					})
+				}
+			},
+			{
+				column: "readShare",
+				id: "undeclaredBarcodeShare",
+				spec: {
+					name: "pl7.app/antigen/undeclaredBarcodeShare",
+					valueType: "Double",
+					annotations: a(78000, true, {
+						"pl7.app/label": "Share of the sample's reads",
+						"pl7.app/format": ".2p",
+						"pl7.app/min": "0",
+						"pl7.app/max": "1",
+						"pl7.app/description": "The share of this SAMPLE's reads landing in barcodes nobody declared, repeated on every one of that sample's rows here. Not this one sequence's own share."
+					})
+				}
+			},
+			{
+				column: "status",
+				id: "undeclaredBarcodeStatus",
+				spec: {
+					name: "pl7.app/antigen/undeclaredBarcodeStatus",
+					valueType: "String",
+					annotations: a(77000, true, {
+						"pl7.app/label": "Status",
+						"pl7.app/isDiscreteFilter": "true",
+						"pl7.app/discreteValues": QC_STATUSES,
+						"pl7.app/description": "Warns above a 0.50 share and alerts at 1.0 (inherited from the field). This status is the barcode's, never a sample's: it never rolls into any sample's own status. No row here is the outcome to want -- an empty table means every barcode the reads carried was declared."
+					})
+				}
+			}
+		],
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}
+}
+
 // --- Quality measurements: result_qc.csv, keyed (level, entity, measurement) ------------------
 //
 // Every declared measurement keeps its place whether or not this run could compute it. A measurement
@@ -1534,6 +1599,7 @@ export {
 	panelLabelsImportSpec: panelLabelsImportSpec,
 	samplePanelImportSpec: samplePanelImportSpec,
 	panelMismatchImportSpec: panelMismatchImportSpec,
+	undeclaredBarcodeImportSpec: undeclaredBarcodeImportSpec,
 	qcImportSpec: qcImportSpec,
 	qcDistributionAxis: qcDistributionAxis,
 	qcDecileAxis: qcDecileAxis,

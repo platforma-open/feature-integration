@@ -191,6 +191,7 @@ blockTest.skip(
         fittedBackgroundGraphState: { title: "Backgrounds", template: "dots" },
         runQualityMismatchTableState: createPlDataTableStateV2(),
         reagentTableState: createPlDataTableStateV2(),
+        undeclaredBarcodesTableState: createPlDataTableStateV2(),
       } satisfies BlockData,
     });
 
