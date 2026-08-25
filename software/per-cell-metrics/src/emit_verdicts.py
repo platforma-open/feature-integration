@@ -38,7 +38,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import math
 import sys
 from collections import Counter
 from collections.abc import Collection
@@ -73,6 +72,7 @@ from qc_measures import (
     Status,
     antigen_count_deciles,
     deciles_of,
+    is_computed,
     per_antigen_measures,
     reads_per_cell,
     roll_up,
@@ -172,12 +172,6 @@ ROLLUP_COUNTS = "The worst status among this level's measurements, and how much 
 ROLLUP_LABEL = "Worst status at this level"
 
 MEASUREMENT_BY_ID = {m.id: m for m in MEASUREMENTS}
-
-
-def _rolls_up(measurement: str) -> bool:
-    """Whether a measurement's status reaches its level's rollup. Unknown ids do, as before."""
-    declared = MEASUREMENT_BY_ID.get(measurement)
-    return True if declared is None else declared.rolls_up
 
 
 class QcRow(NamedTuple):
@@ -838,9 +832,10 @@ def _qc_frame(rows: list[QcRow]) -> pl.DataFrame:
                 "notEvaluated": row.coverage.not_evaluated,
                 "counts": ROLLUP_COUNTS if declared is None else declared.counts,
                 "implies": None if declared is None else declared.implies,
-                # Why this row has no number. A deferred measurement's reason is the same on
-                # every run and is declared once; any other row states its own.
-                "reason": row.reason or (None if declared is None else declared.deferred_reason),
+                # Why this row has no number. The declaration wins: a deferred measurement's
+                # reason is the same on every run, and a call site cannot restate it. Any other
+                # row carries its own. Same precedence as `sample_report_rows`.
+                "reason": (None if declared is None else declared.deferred_reason) or row.reason or None,
             }
         )
     return pl.DataFrame(
@@ -880,7 +875,8 @@ def _add(
     status, which is honest rather than a refusal: it was computed, no line stands behind it,
     so its number is shown and nothing is claimed.
 
-    `reason` belongs on a row whose `value` is None and is ignored on any other.
+    `reason` belongs on a row with no number and is ignored on any other. A value that is not
+    a finite number is not a number the caller's reason describes, so it takes its own.
     """
     rows.append(
         _leaf(
@@ -891,15 +887,20 @@ def _add(
             detail,
             panel_id,
             status_for(measurement, value, DEFAULT_LINES),
-            reason if value is None else "",
+            "" if is_computed(value) else (reason if value is None else NOT_A_NUMBER_REASON),
         )
     )
 
 
-# Stands in where a row reaches the report with no number and no reason. Every call site that
-# can produce a valueless sample measurement states its own, so this covers only a measurement
-# no run supplied at all.
+# The two standing reasons, for the cases no call site accounts for.
+#
+# A deferred measurement carries its declaration's reason and needs neither of these. Of the
+# rest, every call site that can go valueless states its own, so `UNSUPPLIED_REASON` covers only
+# a declared measurement with no call site at all.
 UNSUPPLIED_REASON = "nothing in this run supplied a value for this measurement"
+# A number arrived and was not finite. Distinct from the above, which is nothing arriving: the
+# caller's reason describes an input that is missing and would misname this.
+NOT_A_NUMBER_REASON = "this run computed a value for this measurement that is not a finite number"
 
 
 def sample_report_rows(sample: str, rows: list[QcRow]) -> tuple[list[dict], Coverage]:
@@ -908,8 +909,8 @@ def sample_report_rows(sample: str, rows: list[QcRow]) -> tuple[list[dict], Cove
     The walk is over `MEASUREMENTS` rather than over `rows`, so the report is the declared set:
     a measurement this run never reached takes its place carrying a reason.
 
-    A value that is not a finite number counts as no value, and the reason goes out in its
-    place. The entry's own account of itself and the coverage triple follow one rule.
+    A value that is not a finite number counts as no value, by `is_computed`, which is the rule
+    the coverage triple counts by. The entry's account of itself and the triple cannot disagree.
 
     A measurement declaring `rolls_up=False` is listed with its own status and left out of the
     rollup. The entry carries `rollsUp`, which is what separates a status shown here from the
@@ -922,12 +923,14 @@ def sample_report_rows(sample: str, rows: list[QcRow]) -> tuple[list[dict], Cove
         if m.level != "sample":
             continue
         row = by_id.get(m.id)
-        value = None if row is None else row.value
-        if value is not None and not math.isfinite(value):
-            value = None
+        raw = None if row is None else row.value
+        value = raw if is_computed(raw) else None
         status = None if row is None or value is None else row.status
         reason = None
         if value is None:
+            # Declaration first, so a call site cannot restate a deferred measurement's reason.
+            # Then the row's own, which `_add` has already replaced where a non-finite number
+            # arrived. `UNSUPPLIED_REASON` is left for a declared measurement with no call site.
             reason = m.deferred_reason or (row.reason if row is not None else "") or UNSUPPLIED_REASON
         entries.append(
             {
@@ -1693,8 +1696,8 @@ def main() -> None:
     # where the refine-tags report is absent or unreadable, carries no step for that tag, or the
     # step read no input. `readsTotal` comes from the parse report and is blank only when no
     # summary reached this run at all.
-    NO_READ_QC = "no per-sample read QC summary reached this run"
-    NO_REFINE_STEP = "the refine-tags report supplied no %s step with input reads, so nothing measured this"
+    NO_READ_QC = "no read QC summary row reached this sample"
+    NO_REFINE_STEP = "no refine-tags report was produced, or it supplied no %s step with input reads"
 
     rows: list[QcRow] = []
     sample_coverage: dict[str, Coverage] = {}
@@ -1734,9 +1737,14 @@ def main() -> None:
             else None
         )
         detail = f"cellsInList={len(listed_here)}" if listed_here is not None else "no cell list supplied"
+        # Three cases, not two. `reads_per_cell` returns no number for an EMPTY cell list as
+        # well as for an absent one, and a sample with no listed cell is the zero-cells finding
+        # rather than a missing read count -- which is the input a reader would otherwise go fix.
         depth_reason = (
             "no cell list supplied, so depth has no denominator"
             if listed_here is None
+            else "no cell of this sample is in the cell list, so depth has no denominator"
+            if not listed_here
             else "no read count reached this sample, so depth has no numerator"
         )
         _add(rows, "sample", sample, "readsPerCell", depth, detail, reason=depth_reason)
@@ -1782,7 +1790,14 @@ def main() -> None:
             "uniqueCountsPerCell",
             _median([float(v) for v in listed_totals]),
             f"cellsWithAReading={len(listed_totals)}",
-            reason="no listed cell in this sample holds a counted reading",
+            # `in_list` is empty whenever no list arrived, so the join yields nothing for every
+            # sample of such a run. Branching on the same fact `readsPerCell` branches on keeps
+            # the two rows from giving one run two incompatible accounts.
+            reason=(
+                "no cell list supplied, so no cell of this sample is listed"
+                if cell_list is None
+                else "no listed cell in this sample holds a counted reading"
+            ),
         )
 
         # Two forms, and the gate decides which. With a gate declared this counts the cells it

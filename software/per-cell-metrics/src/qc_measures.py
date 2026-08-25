@@ -400,7 +400,7 @@ _ORDINAL = {Status.OK: 0, Status.WARN: 1, Status.ALERT: 2}
 _DEFERRED: frozenset[str] = frozenset(m.id for m in MEASUREMENTS if m.deferred_reason)
 
 
-def _computed(value: float | None) -> bool:
+def is_computed(value: float | None) -> bool:
     """Whether a number came back at all.
 
     A non-finite value counts as absent. Every `<` and `>` against NaN is False, so treating
@@ -423,7 +423,7 @@ def status_for(measurement: str, value: float | None, lines: dict[str, Line]) ->
     value reaching here is a caller's mistake and must not be laundered into a judgement
     about the run.
     """
-    if measurement in _DEFERRED or not _computed(value):
+    if measurement in _DEFERRED or not is_computed(value):
         return None
     if measurement not in lines:
         return None
@@ -449,8 +449,8 @@ def roll_up(readings: list[Reading]) -> Coverage:
     checked, and given one of alert a scientist would chase a problem that does not exist.
     """
     judged = [r.status for r in readings if r.status is not None]
-    unjudged = sum(1 for r in readings if r.status is None and _computed(r.value))
-    not_evaluated = sum(1 for r in readings if r.status is None and not _computed(r.value))
+    unjudged = sum(1 for r in readings if r.status is None and is_computed(r.value))
+    not_evaluated = sum(1 for r in readings if r.status is None and not is_computed(r.value))
     status = max(judged, key=lambda s: _ORDINAL[s]) if judged else None
     return Coverage(status, len(judged), unjudged, not_evaluated)
 

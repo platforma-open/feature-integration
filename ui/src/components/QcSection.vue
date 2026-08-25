@@ -39,10 +39,12 @@ const notes = computed(() => {
   if (m.value === null && m.reason) lines.push(m.reason);
   if (m.value !== null && m.implies && m.status !== null && m.status !== "OK")
     lines.push(m.implies);
-  if (m.value !== null && !m.rollsUp)
+  // Not gated on having a value. The row is left out of the rollup either way, so a valueless one
+  // is still a row the coverage line beneath the status does not account for.
+  if (!m.rollsUp)
     lines.push(
-      "This measurement is about a reagent rather than about this sample, so its status stays off " +
-        "the sample's own. It is reported on the run quality page.",
+      "This measurement is about a reagent rather than about this sample, so it stays off the " +
+        "sample's own status and out of the coverage below. It is reported on the run quality page.",
     );
   return lines;
 });

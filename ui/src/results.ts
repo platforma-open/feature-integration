@@ -19,9 +19,6 @@ export type SampleResult = {
   // recovery columns. Absent while the sample is still running.
   quality?: QcStatus;
   recovery?: RecoveryBar;
-  // The raw per-sample read metrics behind the recovery bar, carried through so the funnel is not re-derived
-  // from a second source.
-  qc?: QcRow;
   // The sample's own quality report: every sample-level measurement the software declares, with its status,
   // its value and, where it has none, the reason in its place. The Quality tag above is this report's rollup,
   // so the tag and the report cannot disagree about one sample.
@@ -191,7 +188,7 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
       const qc = qcBySample[sampleId];
       const qcReport = reportBySample[sampleId];
       const qcFields = {
-        ...(qc ? { recovery: recoveryBar(qc), qc } : {}),
+        ...(qc ? { recovery: recoveryBar(qc) } : {}),
         // The tag IS the report's rollup. Nothing here recomputes it, so the grid and the sample's own
         // report state one status rather than two that can drift.
         ...(qcReport ? { quality: qcStatusTag(qcReport.status), qcReport } : {}),

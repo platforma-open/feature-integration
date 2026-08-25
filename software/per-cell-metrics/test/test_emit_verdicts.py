@@ -4,11 +4,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+import emit_verdicts
 import polars as pl
 import pytest
 from emit_verdicts import _build_grouping, _identity_properties, _linker_frame
 from panel import ANY_SAMPLE, consistent_properties, property_columns
-from qc_measures import MEASUREMENTS
+from qc_measures import MEASUREMENTS, Measurement
 from verdict import DEFAULT_PANEL_MIN_MEMBERS, ReferenceChoice
 
 SRC = Path(__file__).resolve().parents[1] / "src"
@@ -2784,12 +2785,29 @@ def _sample_report(bed, sample: str = "S1") -> dict:
 
 
 def test_the_sample_report_lists_every_sample_measurement(bed):
-    # 330: a measurement that did not run appears in the list rather than being omitted, so a
-    # reader meets it instead of noticing an absence. The set is the declaration order of every
-    # sample-level measurement, deferred ones included.
+    # A measurement that did not run takes a row rather than being omitted, so a reader meets it
+    # instead of noticing an absence. The set is the declaration order of every sample-level
+    # measurement, deferred ones included.
     _run(bed, *BASE)
-    listed = [m["id"] for m in _sample_report(bed)["measurements"]]
+    report = _sample_report(bed)
+    listed = [m["id"] for m in report["measurements"]]
     assert listed == [m.id for m in MEASUREMENTS if m.level == "sample"]
+
+    # The shape both the model and the UI are typed against. A field renamed on this side reaches
+    # them as an undefined, which renders as a blank rather than as an error.
+    assert set(report) == {"status", "judged", "unjudged", "notEvaluated", "measurements"}
+    for row in report["measurements"]:
+        assert set(row) == {
+            "id",
+            "label",
+            "value",
+            "detail",
+            "reason",
+            "status",
+            "counts",
+            "implies",
+            "rollsUp",
+        }
 
 
 def test_a_sample_measurement_with_no_value_states_why(bed):
@@ -2812,6 +2830,61 @@ def test_no_sample_measurement_is_blank_without_a_reason(bed):
         if row["value"] is None:
             assert row["reason"], f"{row['id']} has no value and no reason"
         assert row["label"] and row["counts"], row["id"]
+
+
+def test_a_valueless_measurement_names_the_input_that_is_actually_missing(bed):
+    # Truthiness is not the test. A measurement with more than one route to having no number has
+    # to name the one that happened, or the report sends a reader at the wrong input. This bed
+    # passes a linker, so a cell list exists and depth is missing its NUMERATOR, not its
+    # denominator -- and the row two above it says where the read counts were to come from.
+    _run(bed, *BASE)
+    rows = {m["id"]: m for m in _sample_report(bed)["measurements"]}
+
+    assert rows["readsTotal"]["reason"] == "no read QC summary row reached this sample"
+    assert rows["readsPerCell"]["reason"] == "no read count reached this sample, so depth has no numerator"
+    assert "cellsInList=3" in rows["readsPerCell"]["detail"]
+
+
+def test_a_run_with_no_cell_list_gives_its_two_cell_rows_one_account(tmp_path):
+    # `in_list` is empty both when no list arrived and when one arrived holding nothing, so these
+    # two rows are reachable together on every run without a linker or a cell file. They named
+    # different causes: one said the list was absent, the other said the sample's listed cells
+    # held no reading. A reader cannot act on two accounts of one fact.
+    (tmp_path / "counts.csv").write_text(
+        "sampleId,cellId,tag,umiCount\nS1,c1,AAAA,500\nS1,c1,CTRL,6\nS1,c2,AAAA,600\nS1,c2,CTRL,6\n"
+    )
+    (tmp_path / "panel.csv").write_text("Samples,Name,Sequence,Type\nS1,AgA,AAAA,Target\nS1,Ctrl,CTRL,Control\n")
+    args = [a for a in BASE if a not in ("--linker", "linker.csv")]
+    _run(tmp_path, *args)
+
+    rows = {m["id"]: m for m in _sample_report(tmp_path)["measurements"]}
+    assert rows["readsPerCell"]["reason"] == "no cell list supplied, so depth has no denominator"
+    assert rows["uniqueCountsPerCell"]["reason"] == "no cell list supplied, so no cell of this sample is listed"
+
+
+def test_an_empty_cell_list_is_the_zero_cells_finding_and_not_a_missing_read_count(tmp_path):
+    # A cell list that arrived and holds no cell of this sample is a different finding from no
+    # list at all, and `reads_per_cell` returns no number for both. Naming the read count would
+    # point a reader at an input that is present.
+    (tmp_path / "counts.csv").write_text(
+        "sampleId,cellId,tag,umiCount\nS1,c1,AAAA,500\nS1,c1,CTRL,6\nS2,c1,AAAA,500\nS2,c1,CTRL,6\n"
+    )
+    (tmp_path / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type\nS1,AgA,AAAA,Target\nS1,Ctrl,CTRL,Control\n"
+        "S2,AgA,AAAA,Target\nS2,Ctrl,CTRL,Control\n"
+    )
+    (tmp_path / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS2,c1,K2\n")
+    # The list covers S1 only, so S2 gets a list that answers "no cell here".
+    (tmp_path / "cells.csv").write_text("sampleId,cellId\nS1,c1\n")
+    (tmp_path / "read_qc.csv").write_text("sampleId,readsTotal,readsMatched\nS1,2000,1800\nS2,2000,1800\n")
+    _run(tmp_path, *BASE, "--cells", "cells.csv", "--qc-summary", "read_qc.csv")
+
+    report = json.loads((tmp_path / "result_qc_by_sample.json").read_text())
+    row = {m["id"]: m for m in report["S2"]["measurements"]}["readsPerCell"]
+    assert row["value"] is None
+    assert row["reason"] == "no cell of this sample is in the cell list, so depth has no denominator"
+    # The read count IS present, which is what makes the missing-numerator reason false here.
+    assert {m["id"]: m for m in report["S2"]["measurements"]}["readsTotal"]["value"] == 2000
 
 
 def test_the_sample_report_carries_the_rollup_the_qc_frame_carries(bed):
@@ -2844,3 +2917,47 @@ def test_a_deferred_sample_measurement_reaches_the_report_with_its_reason(bed):
     assert row["value"] is None
     assert row["status"] is None
     assert row["reason"] == next(m.deferred_reason for m in MEASUREMENTS if m.id == "aggregateBarcodeFraction")
+
+
+def test_a_declared_sample_measurement_nothing_computes_still_takes_a_row(monkeypatch):
+    # The walk is over the DECLARATION, not over the rows a run happened to emit. Every declared
+    # measurement has a call site today, so an implementation iterating the rows passes every
+    # other test in this file byte for byte. This is the one that separates them.
+    extra = Measurement("neverComputed", "Never computed", "sample", "nothing computes this")
+    monkeypatch.setattr(emit_verdicts, "MEASUREMENTS", MEASUREMENTS + (extra,))
+
+    rows = []
+    emit_verdicts._add(rows, "sample", "S1", "readsTotal", 10.0)
+    entries, coverage = emit_verdicts.sample_report_rows("S1", rows)
+
+    declared = [m for m in MEASUREMENTS if m.level == "sample"]
+    assert len(entries) == len(declared) + 1, "one row per declared measurement, not per emitted row"
+
+    row = {e["id"]: e for e in entries}["neverComputed"]
+    assert row["value"] is None
+    assert row["status"] is None
+    assert row["reason"] == emit_verdicts.UNSUPPLIED_REASON
+    # Nothing computed it, so it counts as unchecked rather than as checked and fine.
+    assert coverage.not_evaluated >= 1
+
+
+def test_a_value_that_is_not_a_finite_number_is_no_value_and_says_which(monkeypatch):
+    # A NaN is not the absence the caller's reason describes: that reason names a missing input,
+    # and here the input arrived. Reporting it would send a reader to fix something that is fine.
+    rows = []
+    emit_verdicts._add(
+        rows,
+        "sample",
+        "S1",
+        "readsPerCell",
+        float("nan"),
+        reason="no cell list supplied, so depth has no denominator",
+    )
+    entries, coverage = emit_verdicts.sample_report_rows("S1", rows)
+
+    row = {e["id"]: e for e in entries}["readsPerCell"]
+    assert row["value"] is None
+    assert row["reason"] == emit_verdicts.NOT_A_NUMBER_REASON
+    assert row["status"] is None
+    # Counted the way `is_computed` counts it, so the entry and the triple cannot disagree.
+    assert coverage.judged == 0
