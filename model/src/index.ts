@@ -615,6 +615,14 @@ const dataModel = new DataModelBuilder()
     ...data,
     undeclaredBarcodesTableState: createPlDataTableStateV2(),
   }))
+  // v7 -> v8: the fitted-background plot gains a sample facet. `:default-options` seeds a plot with
+  // no saved state and never overwrites one, so a reader who opened that tab before keeps the pooled
+  // single-panel chart. The fit runs per (tag, sample) and one panel reads every sample's fits as one
+  // population, so this resets that one plot's state. The other two are left alone.
+  .migrate<BlockData>("v8", (data) => ({
+    ...data,
+    fittedBackgroundGraphState: INITIAL_GRAPH_STATES.fittedBackgroundGraphState,
+  }))
   .init(() => ({
     runMode: "full" as const, // full run by default. "dry" = read-limited Preview
     // Default preset: the geometry the block shipped with, 10x 5' v2 BEAM (16 / 10 / 15).
