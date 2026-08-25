@@ -24,8 +24,8 @@ const qcSummarySettings = usePlDataTableSettingsV2({
       show-export-button
     />
     <PlAlert v-else type="info">
-      Per-sample QC metrics (reads parsed/matched, cells, features, UMIs) appear here once the block
-      has run.
+      One row per sample, carrying that sample's rolled-up status and every quality measurement,
+      appears here once a V(D)J dataset is chosen and the block has run.
     </PlAlert>
   </PlBlockPage>
 </template>

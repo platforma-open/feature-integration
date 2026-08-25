@@ -459,6 +459,7 @@ wf.body(func(args) {
 			samplePanel: verdictRun.output("samplePanel"),
 			panelMismatch: verdictRun.output("panelMismatch"),
 			qc: verdictRun.output("qc"),
+			qcSummary: verdictRun.output("qcSummary"),
 			qcDeciles: verdictRun.output("qcDeciles"),
 			qcBackgrounds: verdictRun.output("qcBackgrounds"),
 			reagents: verdictRun.output("reagents")
@@ -468,8 +469,6 @@ wf.body(func(args) {
 	blockOutputs := {
 		// Collapsed per-cell results table (one row per [sampleId, cellId]).
 		perCellTable: pframes.exportFrame(tablePf),
-		// Per-sample QC summary table (outputs-only): reads parsed/matched, cells/features, UMIs.
-		qcSummaryTable: pframes.exportFrame(qcSummaryResult.output("qcSummaryTable")),
 		// Per-sample QC metrics as JSON (fb-pipeline qcJson). The model builds the live "Analysis logs" from it:
 		// the completed-sample heartbeat and the run-level summary.
 		qcJson: perSampleResults.outputData("qcJson"),
@@ -537,6 +536,11 @@ wf.body(func(args) {
 		blockOutputs.antigenPunchcardTable = pframes.exportFrame(verdictImport.output("punchcard"))
 		// The run's own report. Outputs rather than exports: these are read by this block's model and UI.
 		blockOutputs.antigenQcTable = pframes.exportFrame(verdictImport.output("qcTable"))
+		// The across-samples table: one row per sample, one column per sample-level measurement,
+		// carrying that sample's rolled-up status. Replaces the earlier mitool-only qcSummaryTable,
+		// which is unavailable before a V(D)J dataset is chosen -- same as every other antigen
+		// output here, since there is no clonotype set for the verdict stage to run against.
+		blockOutputs.qcSummaryTable = pframes.exportFrame(verdictImport.output("qcSummaryTable"))
 		blockOutputs.antigenPanelMismatchTable = pframes.exportFrame(verdictImport.output("panelMismatchTable"))
 		// The three distributions the readout draws. Outputs rather than exports, like the report above:
 		// they are what this block says about its own run, and nothing downstream reads them.

@@ -68,6 +68,7 @@ from qc_measures import (
     DEFAULT_LINES,
     MEASUREMENTS,
     Coverage,
+    Measurement,
     Reading,
     Status,
     antigen_count_deciles,
@@ -1078,6 +1079,68 @@ def _median(values: list[float]) -> float | None:
     return float(pl.Series(values).median()) if values else None
 
 
+def _number(row: dict, column: str) -> float | None:
+    """One field of a read-QC row, as a float, or None where it is absent or blank."""
+    raw = row.get(column)
+    if raw is None or str(raw).strip() == "":
+        return None
+    return float(raw)
+
+
+# The sample-level measurements, in MEASUREMENTS' own declaration order -- the same walk
+# `sample_report_rows` makes, so the wide pivot below reads off one declared set.
+_SAMPLE_MEASUREMENTS: tuple[Measurement, ...] = tuple(m for m in MEASUREMENTS if m.level == "sample")
+
+# Read-QC figures with no declared measurement behind them. `readsTotal`, `panelAssignedFraction`
+# and `cellBarcodeValidFraction` are declared measurements already carrying these same mitool
+# figures (see `_add` calls above), so they are excluded here and read from the pivot instead --
+# one column per figure, not two agreeing ones under two names.
+_MITOOL_ONLY_COLUMNS: tuple[str, ...] = (
+    "readsMatched",
+    "matchedFraction",
+    "cellsDetected",
+    "featuresDetected",
+    "totalUniqueUmis",
+    "medianUmisPerCell",
+)
+
+
+def sample_summary_rows(
+    samples: list[str],
+    sample_report: dict[str, dict],
+    read_qc: dict[str, dict],
+) -> pl.DataFrame:
+    """The across-samples QC table: one row per sample, one column per sample-level measurement.
+
+    Pivots `sample_report` -- the same dict `main` writes to `result_qc_by_sample.json` -- rather
+    than walking `MEASUREMENTS` a second time, so this table and a sample's own report cannot
+    disagree about a value or a status. `status` is `sample_report`'s own rollup, from `roll_up`,
+    never recomputed here.
+
+    Every id in `samples` gets a row, a sample absent from `sample_report` included: its
+    measurement columns and its status come back null, which reads as nothing having rolled up
+    rather than as a passing sample.
+    """
+    built = []
+    for sample in samples:
+        report = sample_report.get(sample, {})
+        entries = {e["id"]: e["value"] for e in report.get("measurements", [])}
+        qc = read_qc.get(sample, {})
+        row = {"sampleId": sample, "status": report.get("status")}
+        for col in _MITOOL_ONLY_COLUMNS:
+            row[col] = _number(qc, col)
+        for m in _SAMPLE_MEASUREMENTS:
+            row[m.id] = entries.get(m.id)
+        built.append(row)
+    schema = {
+        "sampleId": pl.String,
+        "status": pl.String,
+        **{col: pl.Float64 for col in _MITOOL_ONLY_COLUMNS},
+        **{m.id: pl.Float64 for m in _SAMPLE_MEASUREMENTS},
+    }
+    return pl.DataFrame(built, schema=schema)
+
+
 # Long on purpose and not decomposed. This is one composition taken in the one order the
 # reading has, and splitting it into stages would put that order in the call sites rather
 # than in the code a reader follows top to bottom.
@@ -1705,12 +1768,6 @@ def main() -> None:
         for row in pl.read_csv(args.qc_summary, infer_schema_length=0).iter_rows(named=True):
             read_qc[str(row.get("sampleId", "")).strip()] = row
 
-    def _number(row: dict, column: str) -> float | None:
-        raw = row.get(column)
-        if raw is None or str(raw).strip() == "":
-            return None
-        return float(raw)
-
     # Why a read-level figure has no number, per source. The summary is one row per sample built
     # by `qc_report.py`: it leaves `panelAssignedFraction` and `cellBarcodeValidFraction` blank
     # where the refine-tags report is absent or unreadable, carries no step for that tag, or the
@@ -2084,6 +2141,12 @@ def main() -> None:
     # synchronously. The frame stays the artefact every other reader takes.
     with open(f"{prefix}_qc_by_sample.json", "w") as out:
         json.dump(sample_report, out, indent=2, sort_keys=True)
+
+    # The across-samples table `330-the-quality-readout` asks for: one row per sample, one column
+    # per sample-level measurement, carrying the sample's own rolled-up status. Pivoted from
+    # `sample_report` rather than walked a second time, so it cannot disagree with the sample's
+    # own report above.
+    _write_sorted(sample_summary_rows(samples, sample_report, read_qc), f"{prefix}_qc_summary.csv", ["sampleId"])
 
     # The three distributions `330-the-quality-readout` puts last, as plottable frames rather than
     # as detail strings on a measurement row. A reader settles the cutoff and the gate by looking at

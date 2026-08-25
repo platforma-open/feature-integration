@@ -2996,3 +2996,56 @@ def test_a_value_that_is_not_a_finite_number_is_no_value_and_says_which(monkeypa
     assert row["status"] is None
     # Counted the way `is_computed` counts it, so the entry and the triple cannot disagree.
     assert coverage.judged == 0
+
+
+def test_the_wide_summary_carries_every_sample_in_the_roster_including_one_with_nothing(tmp_path):
+    # S2 is declared on the panel and nowhere else: no counts row, no linker row, no cell-list
+    # entry. `main` still puts it in the sample roster (panel ∪ counts ∪ linker ∪ cell list), so
+    # the wide table must still carry its row rather than dropping the sample that has nothing.
+    (tmp_path / "counts.csv").write_text(
+        "sampleId,cellId,tag,umiCount\nS1,c1,AAAA,500\nS1,c1,CTRL,6\nS1,c2,AAAA,600\nS1,c2,CTRL,6\n"
+    )
+    (tmp_path / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type\n"
+        "S1,AgA,AAAA,Target\nS1,Ctrl,CTRL,Control\n"
+        "S2,AgA,AAAA,Target\nS2,Ctrl,CTRL,Control\n"
+    )
+    (tmp_path / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS1,c2,K1\n")
+    _run(tmp_path, *BASE)
+
+    summary = pl.read_csv(tmp_path / "result_qc_summary.csv")
+    assert sorted(summary["sampleId"].to_list()) == ["S1", "S2"]
+
+    s2 = summary.filter(pl.col("sampleId") == "S2")
+    assert s2.height == 1
+    # Nothing computed a value for S2, so its cells read null rather than 0 or "OK" -- a blank
+    # and a zero are opposite findings.
+    assert s2["readsTotal"].item() is None
+    assert s2["status"].item() is None
+
+
+def test_the_wide_summary_carries_every_sample_level_measurement_as_a_column(bed):
+    _run(bed, *BASE)
+    summary = pl.read_csv(bed / "result_qc_summary.csv")
+    declared = {m.id for m in MEASUREMENTS if m.level == "sample"}
+    missing = declared - set(summary.columns)
+    assert not missing, f"sample-level measurement(s) with no column: {missing}"
+    # The rename ban: these two ids are p-column names AND measurement-axis values elsewhere in
+    # the run, so they must survive under their own name rather than a fresh one.
+    assert "panelAssignedFraction" in summary.columns
+    assert "cellBarcodeValidFraction" in summary.columns
+
+
+def test_the_wide_summary_status_is_the_sample_rollup_and_is_not_recomputed(bed):
+    _run(bed, *BASE)
+    summary = pl.read_csv(bed / "result_qc_summary.csv")
+    by_sample = json.loads((bed / "result_qc_by_sample.json").read_text())
+
+    for sample_id, report in by_sample.items():
+        row = summary.filter(pl.col("sampleId") == sample_id)
+        assert row.height == 1
+        got = row["status"].item()
+        assert got == report["status"], (
+            f"wide table status {got!r} for {sample_id!r} disagrees with the sample's own report "
+            f"{report['status']!r}; the two must read off one rollup"
+        )

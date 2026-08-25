@@ -1426,6 +1426,79 @@ qcReagentImportSpec := func(panelAxisSpec, tagAxisSpec, identityAxisSpec) {
 	}
 }
 
+// qcSampleSummaryImportSpec: the xsv.importFile spec for result_qc_summary.csv (emit_verdicts.py
+// `sample_summary_rows`) -- one row per sample, one column per sample-level measurement, plus the
+// sample's own rolled-up status. 330-the-quality-readout's second surface: "the same measurements
+// as columns, one row per sample, carrying the sample's rolled-up status".
+//
+// `panelAssignedFraction` and `cellBarcodeValidFraction` keep the exact ids and column names the
+// pre-330 table shipped: both are measurement-axis values elsewhere in this run's own output
+// (result_qc.csv), and renaming the p-column here would split one measurement's rows across two
+// names. `readsTotal` keeps its id for the same reason. The other mitool read-QC figures
+// (`readsMatched`, `matchedFraction`, `cellsDetected`, `featuresDetected`, `totalUniqueUmis`,
+// `medianUmisPerCell`) carry no declared measurement and are unaffected by that rule.
+//
+// Every description below is copied verbatim from qc_measures.py `Measurement.counts` for the
+// matching id; the two are not read from one shared definition.
+qcSampleSummaryImportSpec := func(sampleAxisSpec) {
+	num := func(id, colName, label, order, fmt, description) {
+		spec := {
+			name: "pl7.app/qc/" + id,
+			valueType: "Double",
+			annotations: a(order, true, { "pl7.app/label": label, "pl7.app/description": description })
+		}
+		if !is_undefined(fmt) {
+			spec.annotations["pl7.app/format"] = fmt
+		}
+		return { column: colName, id: id, spec: spec }
+	}
+	return {
+		axes: [{ column: "sampleId", spec: sampleAxisSpec }],
+		columns: [
+			{
+				column: "status", id: "status",
+				spec: {
+					name: "pl7.app/qc/sampleStatus",
+					valueType: "String",
+					annotations: a(96000, true, {
+						"pl7.app/label": "Status",
+						"pl7.app/isDiscreteFilter": "true",
+						"pl7.app/discreteValues": QC_STATUSES,
+						"pl7.app/description": "The worst status among this sample's own measurements that carry one, from result_qc.csv's rollup row. Empty where nothing at this sample carried a status."
+					})
+				}
+			},
+			num("readsTotal", "readsTotal", "Reads parsed", 95000, undefined,
+				"Every read the parser saw, and the share matching the tag pattern."),
+			num("readsMatched", "readsMatched", "Reads matched", 94000, undefined, undefined),
+			num("matchedFraction", "matchedFraction", "Matched fraction", 93000, ".2p", undefined),
+			num("cellsDetected", "cellsDetected", "Cells detected", 92000, undefined, undefined),
+			num("featuresDetected", "featuresDetected", "Features detected", 91000, undefined, undefined),
+			num("totalUniqueUmis", "totalUniqueUmis", "Total distinct UMIs", 90000, undefined, undefined),
+			num("medianUmisPerCell", "medianUmisPerCell", "Median UMIs / cell", 89000, ".1f", undefined),
+			num("panelAssignedFraction", "panelAssignedFraction", "Panel-assigned fraction", 88000, ".2p",
+				"Reads whose corrected barcode is on the panel, over reads matched."),
+			num("cellBarcodeValidFraction", "cellBarcodeValidFraction", "Valid cell-barcode fraction", 87000, ".2p",
+				"Reads whose cell barcode corrects onto the chemistry's whitelist, over reads entering correction."),
+			num("usableReadFraction", "usableReadFraction", "Usable antigen-read fraction", 86000, ".2p",
+				"Reads matched that also carry a cell-associated barcode and a valid UMI, over reads matched."),
+			num("readsPerCell", "readsPerCell", "Reads per cell", 85000, ".1f",
+				"Reads matched, over cells in the cell list."),
+			num("antigenCountDistribution", "antigenCountDistribution", "Median antigen count per cell", 84000, ".1f",
+				"Deciles of the total antigen count per cell barcode."),
+			num("aggregateBarcodeFraction", "aggregateBarcodeFraction", "Aggregate-barcode read fraction", 83000, ".2p",
+				"Reads in barcodes flagged as aggregates, over reads matched."),
+			num("floorRemoved", "floorRemoved", "Counts removed by the minimum", 82000, undefined,
+				"Readings the minimum zeroed, and cells whose every non-reference reading was removed."),
+			num("uniqueCountsPerCell", "uniqueCountsPerCell", "Unique counts per cell", 81000, ".1f",
+				"Reads and distinct UMIs per cell barcode."),
+			num("highReferenceCells", "highReferenceCells", "Sticky reference cells", 80000, undefined,
+				"Cells whose reference reading reached the declared gate, or the spread of those readings.")
+		],
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}
+}
 
 export {
 	cellAxis: cellAxis,
@@ -1466,6 +1539,7 @@ export {
 	qcDecileImportSpec: qcDecileImportSpec,
 	qcBackgroundImportSpec: qcBackgroundImportSpec,
 	qcReagentImportSpec: qcReagentImportSpec,
+	qcSampleSummaryImportSpec: qcSampleSummaryImportSpec,
 	guardNoLegacyFeatureAxis: guardNoLegacyFeatureAxis,
 	usesLegacyFeatureAxis: usesLegacyFeatureAxis
 }
