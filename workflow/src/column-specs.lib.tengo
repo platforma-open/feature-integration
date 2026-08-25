@@ -1063,6 +1063,10 @@ tagIdentityLinkerImportSpec := func(tagAxisSpec, identityAxisSpec) {
 // that matter do not read the pl7.app/isLabel annotation, so it cannot stand in for the name. Two
 // identities must never share a label: where two tags carry the same consistent name, emit_verdicts.py
 // appends the tag. That is where the name map lives and the only place the collision is visible.
+//
+// A label column REPLACES its axis in a data table: PlAgDataTableV2 drops any axis that has one, whatever
+// the axis's own visibility says. A hidden label column therefore removes the axis from view as well, and
+// the rows keyed on it stop being distinguishable. Every label column below is visible for that reason.
 identityLabelsImportSpec := func(identityAxisSpec) {
 	return {
 		axes: [{ column: "identity", spec: identityAxisSpec }],
@@ -1072,7 +1076,7 @@ identityLabelsImportSpec := func(identityAxisSpec) {
 			spec: {
 				name: "pl7.app/label",
 				valueType: "String",
-				annotations: a(0, undefined, { "pl7.app/label": "Antigen" })
+				annotations: a(0, true, { "pl7.app/label": "Antigen" })
 			}
 		}],
 		storageFormat: "Parquet",
@@ -1136,7 +1140,7 @@ panelLabelsImportSpec := func(panelAxisSpec) {
 			spec: {
 				name: "pl7.app/label",
 				valueType: "String",
-				annotations: a(0, undefined, { "pl7.app/label": "Panel" })
+				annotations: a(0, true, { "pl7.app/label": "Panel" })
 			}
 		}],
 		storageFormat: "Parquet",
