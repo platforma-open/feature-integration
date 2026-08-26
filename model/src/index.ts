@@ -139,18 +139,20 @@ export type VerdictRunMeta = {
   setCount: number;
   cellsAnalysed: number;
   /**
-   * The two export gates, and the identity gate's own limit. `emit_verdicts.py` writes all three. The
-   * workflow reads the two flags and decides whether to build each frame.
+   * The two export gates, and each gate's own limit. `emit_verdicts.py` writes all six. The workflow reads
+   * the two flags and decides whether to build each frame.
+   *
+   * The identity limit bounds the pivot's WIDTH, at one p-column per identity. The cell limit bounds its
+   * ROWS. The two are different quantities and neither substitutes for the other.
    *
    * Optional: a run record written before these fields existed does not carry them. A page that has the
    * number states it. A page without the number states only that a limit exists.
-   *
-   * `cellPunchEmitted` has no matching limit here. The run record does not carry the cell gate's threshold.
    */
   identitySummaryEmitted?: boolean;
   identitySummaryLimit?: number;
   cellPunchEmitted?: boolean;
   cellPunchCells?: number;
+  cellPunchLimit?: number;
   /** Tags the grouping column said nothing about. Each stands as its own identity, under a bare barcode. */
   tagsWithoutGroupingValue: string[];
   /**

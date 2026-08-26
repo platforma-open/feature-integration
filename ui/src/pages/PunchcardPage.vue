@@ -329,11 +329,14 @@ const identityGate = computed(() => {
   return ` — this run declared ${meta.identityCount.toLocaleString("en-US")} against a limit of ${meta.identitySummaryLimit.toLocaleString("en-US")}`;
 });
 
-// Cell count only: the cell gate's threshold is not written to the run record, so the limit cannot be
-// named here the way the identity limit can.
 const cellGate = computed(() => {
-  const cells = runMeta.value?.cellPunchCells ?? runMeta.value?.cellsAnalysed;
-  return cells === undefined ? "" : ` — this run carried ${cells.toLocaleString("en-US")} cells`;
+  const meta = runMeta.value;
+  const cells = meta?.cellPunchCells ?? meta?.cellsAnalysed;
+  if (cells === undefined) return "";
+  const carried = ` — this run carried ${cells.toLocaleString("en-US")} cells`;
+  return meta?.cellPunchLimit === undefined
+    ? carried
+    : `${carried} against a limit of ${meta.cellPunchLimit.toLocaleString("en-US")}`;
 });
 
 // Headers carry the identity's full name, never a truncation: the identity a column holds is the one thing a

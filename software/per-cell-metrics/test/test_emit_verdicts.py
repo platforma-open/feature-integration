@@ -8,6 +8,7 @@ import polars as pl
 import pytest
 import qc_rows
 from emit_verdicts import _build_grouping, _identity_properties, _linker_frame, undeclared_feature_counts
+from identity_tables import CELL_PUNCH_MAX_CELLS, IDENTITY_SUMMARY_MAX_IDENTITIES
 from panel import ANY_SAMPLE, consistent_properties, property_columns
 from qc_measures import DEFAULT_LINES, MEASUREMENTS, Line, Measurement
 from verdict import DEFAULT_PANEL_MIN_MEMBERS, ReferenceChoice
@@ -2422,6 +2423,15 @@ def test_run_meta_says_whether_the_cell_punch_was_emitted(silent_position_bed):
     meta = json.loads((silent_position_bed / "result_run_meta.json").read_text())
     assert meta["cellPunchEmitted"] is True
     assert meta["cellPunchCells"] == 2
+
+
+def test_run_meta_carries_both_gate_limits(silent_position_bed):
+    # Each gate's count is only readable against its own limit. The identity limit bounds the pivot's
+    # width and the cell limit bounds its rows, so one never stands in for the other.
+    _run(silent_position_bed, *BASE)
+    meta = json.loads((silent_position_bed / "result_run_meta.json").read_text())
+    assert meta["identitySummaryLimit"] == IDENTITY_SUMMARY_MAX_IDENTITIES
+    assert meta["cellPunchLimit"] == CELL_PUNCH_MAX_CELLS
 
 
 def test_the_panel_comparator_is_built_from_raw_counts(tmp_path):

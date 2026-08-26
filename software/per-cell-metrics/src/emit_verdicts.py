@@ -59,6 +59,7 @@ from frame_io import (
     undeclared_feature_counts,
 )
 from identity_tables import (
+    CELL_PUNCH_MAX_CELLS,
     IDENTITY_KEY_COLUMN,
     IDENTITY_SUMMARY_MAX_IDENTITIES,
     CellKey,
@@ -1478,6 +1479,7 @@ def main() -> None:
         "cellPunchEmitted": cell_punch_emitted,
         "cellPunchCells": len(cell_punch),
         "identitySummaryLimit": IDENTITY_SUMMARY_MAX_IDENTITIES,
+        "cellPunchLimit": CELL_PUNCH_MAX_CELLS,
         "readingsFloored": readings_floored,
         "cellsEmptied": cells_emptied,
         "cellsHighReference": cells_high_reference,
