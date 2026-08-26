@@ -8,15 +8,17 @@ import type {
 import type { PColumnSpec, PlDataTableSheet } from "@platforma-sdk/model";
 import { getAxisId, PFrameImpl, pTableValue } from "@platforma-sdk/model";
 import {
+  PL_PLACEHOLDER_TEXTS,
   PlAgCellStatusTag,
   PlAgDataTableV2,
   PlAlert,
   PlBlockPage,
+  PlPlaceholder,
   PlTabs,
   usePlDataTableSettingsV2,
   useWatchFetch,
 } from "@platforma-sdk/ui-vue";
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useApp } from "../app";
 import QcEntityCell from "../components/QcEntityCell.vue";
 import { qcStatusTag } from "../results";
@@ -149,34 +151,15 @@ const undeclaredSettings = usePlDataTableSettingsV2({
 // same reason, as the explore readout's own empty state.
 const noDataset = computed(() => app.model.data.datasetRef === undefined);
 
-// An absent frame and an empty frame are different facts and get different words. Absent means the verdict
-// stage produced no report at all, so the frame is not there to read. Empty means it ran, imported its frame
-// and put no rows in it, which for the mismatch check is the wanted outcome and for the measurements is a
-// sign something went wrong upstream. So absence is answered here, by drawing no grid at all, and emptiness
-// inside the grid through `noRowsText`. Neither ends up as a bare empty table.
+// Every grid is drawn unconditionally, and the three states a frame can be in are answered inside it.
+// `usePlDataTableSettingsV2` reads the `withStatus` wrapper: while the run is in flight the model is not yet
+// stable, so the grid draws the processing placeholder every other loading table in the app draws. Once the
+// run settles with no frame, the grid draws `notReadyText`. A frame that arrived with no rows draws
+// `noRowsText`. An alert above the grid was a fourth surface saying what the grid says itself, and while the
+// run was in flight it said the report had not arrived, which reads as a finished run with nothing in it.
 //
-// `ok === false` is deliberately NOT treated as absence. An errored output belongs to the grid, which renders
-// the error it was handed. Swallowing it into "the stage did not run" would report a failure as a choice the
-// user made.
-const qcAbsent = computed(() => {
-  const output = app.model.outputs.runQualityTable;
-  return output === undefined || (output.ok && output.value === undefined);
-});
-
-const mismatchAbsent = computed(() => {
-  const output = app.model.outputs.runQualityMismatchTable;
-  return output === undefined || (output.ok && output.value === undefined);
-});
-
-const reagentAbsent = computed(() => {
-  const output = app.model.outputs.reagentTable;
-  return output === undefined || (output.ok && output.value === undefined);
-});
-
-const undeclaredAbsent = computed(() => {
-  const output = app.model.outputs.undeclaredBarcodesTable;
-  return output === undefined || (output.ok && output.value === undefined);
-});
+// `ok === false` reaches the grid too, which renders the error it was handed. Swallowing it would report a
+// failure as a choice the user made.
 
 // --- the distributions ---------------------------------------------------------------------------
 //
@@ -188,7 +171,25 @@ const undeclaredAbsent = computed(() => {
 //
 // All three read one p-frame. The two decile sets share a `distribution` axis and are told apart by
 // a filter GraphMaker applies from the default options below.
-const distributionsAbsent = computed(() => app.model.outputs.runQualityDistributions === undefined);
+//
+// Three states, and the grids' rule applies here too: while the run is in flight the plot shows the
+// processing placeholder, never a sentence saying the distributions have not arrived. That sentence
+// reads as a finished run that reported nothing. `PlPlaceholder` is the same component the grids draw
+// through their loading overlay, in its `graph` variant.
+const distributions = computed(() => app.model.outputs.runQualityDistributions);
+
+// Not settled yet. `stable` lives on the ok branch alone, so an errored output is not pending: it falls
+// through to GraphMaker, which renders the error it was handed.
+const distributionsPending = computed(() => {
+  const output = distributions.value;
+  return output === undefined || (output.ok && !output.stable);
+});
+
+// Settled, and the verdict stage produced no frame at all.
+const distributionsAbsent = computed(() => {
+  const output = distributions.value;
+  return output !== undefined && output.ok && output.stable && output.value === undefined;
+});
 
 // The rung that actually SERVED, not the one requested: a request the panel cannot honour degrades,
 // and the plots follow what happened rather than what was asked for. Undefined until the run reports
@@ -221,21 +222,45 @@ const noBackgrounds = computed(() => !rungUnknown.value && served.value !== "dis
 // rung and no per-cell reading exists to spread. The other two rungs read a comparator in the cell.
 const noReferenceReadings = computed(() => !rungUnknown.value && served.value === "distribution");
 
-// One tab per view. Five readings stacked put the one a reader wants below the fold, and the ones a
-// given run cannot draw pushed it further. A tab also lets each view own the full height a chart or a
-// grid needs. Local rather than stored: which tab is open is a glance, not a setting.
-const VIEW_TABS = [
+// One tab per view. Five readings stacked put the one a reader wants below the fold, and a tab lets each
+// view own the full height a chart or a grid needs. Local rather than stored: which tab is open is a
+// glance, not a setting.
+//
+// A plot the served baseline cannot produce gets NO tab. The four grids are always there. The three plots
+// each belong to one rung, so on any given run at most one of the last two pairs can be drawn, and a tab
+// that opens onto a statement of why it is empty is a tab a reader learns to stop opening. While the run
+// has not reported which rung served it, all three are offered and each says so when opened -- the rung is
+// unknown at that point, not known to be wrong.
+type ViewTab =
+  | "measurements"
+  | "reagents"
+  | "mismatch"
+  | "undeclared"
+  | "score"
+  | "reference"
+  | "background";
+
+const VIEW_TABS = computed(() => [
   { label: "Measurements", value: "measurements" as const },
   { label: "Reagents", value: "reagents" as const },
   { label: "Panel vs reads", value: "mismatch" as const },
   { label: "Undeclared barcodes", value: "undeclared" as const },
-  { label: "Scores", value: "score" as const },
-  { label: "Reference readings", value: "reference" as const },
-  { label: "Fitted background", value: "background" as const },
-];
-const activeView = ref<
-  "measurements" | "reagents" | "mismatch" | "undeclared" | "score" | "reference" | "background"
->("measurements");
+  ...(noScores.value ? [] : [{ label: "Scores", value: "score" as const }]),
+  ...(noReferenceReadings.value
+    ? []
+    : [{ label: "Reference readings", value: "reference" as const }]),
+  ...(noBackgrounds.value ? [] : [{ label: "Fitted background", value: "background" as const }]),
+]);
+
+const activeView = ref<ViewTab>("measurements");
+
+// The open tab can stop existing: the run reports its rung, and the plot that tab held cannot be drawn.
+// Falling back to Measurements keeps the page showing something rather than an empty body under a tab
+// strip that no longer offers the tab. Watching an output and writing a LOCAL ref is not a hairpin -- see
+// hairpin.md -- because nothing here reaches server-stored data.
+watch(VIEW_TABS, (tabs) => {
+  if (!tabs.some((t) => t.value === activeView.value)) activeView.value = "measurements";
+});
 
 const DECILE_VALUE = "pl7.app/antigen/qcDecileValue";
 const DECILE_AXIS = "pl7.app/antigen/qcDecile";
@@ -294,33 +319,9 @@ const backgroundOptions = computed<PredefinedGraphOption<"scatterplot">[]>(() =>
   { inputName: "facetBy", selectedSource: { name: SAMPLE_AXIS, type: "String" } },
 ]);
 
-// What this assay never measures, and why. Wording mirrors the three exclusion statements in
-// `qc_measures.py`; the two must not drift.
-//
-// These are properties of the method, true of every run. A measurement reading *not evaluated* is a
-// property of THIS run. `310` forbids collapsing the two, and `320` requires the absence to be
-// stated rather than left to be noticed. Not a status, not a rollup member, not a measurement row.
-const NOT_MEASURED: { what: string; why: string }[] = [
-  {
-    what: "Doublets, from cells positive on several antigens",
-    why: "The field does not read multi-antigen positivity as a doublet estimate, and one vendor states outright that it should not be.",
-  },
-  {
-    what: "A false-discovery rate",
-    why: "None exists for this assay. The bulk-readout relative has had one for a decade and the per-cell form has none, so no calibrated statement is available about how many positives in a run are spurious.",
-  },
-  {
-    what: "The share of counts landing in droplets that held no cell",
-    why: "It cannot be computed against a cell list derived from recovered receptors: cells whose receptor did not assemble are classified as empty and inflate the very quantity being measured.",
-  },
-];
-
-// Carried apart from the three above, and the difference is the reason. Saturation exists and the
-// vendor's own report gives it. The three above do not exist for this assay at all.
-const NOT_CARRIED = {
-  what: "Sequencing saturation",
-  why: "The vendor's own report carries it. Whether the run was deep enough is answered by reads per cell above.",
-};
+// The four exclusions this assay carries -- doublets, a false-discovery rate, the empty-droplet share and
+// sequencing saturation -- are stated in `qc_measures.py`, beside the measurement each one sits next to.
+// They are properties of the method rather than of any run, and no surface here repeats them.
 
 // Status is rendered as the plain string the workflow emitted, with the discrete filter its spec declares.
 // The vocabulary is now OK / warn / alert and nothing else, which IS a rank, so a status tag would fit the
@@ -347,90 +348,63 @@ const NOT_CARRIED = {
 
       <PlTabs v-model="activeView" :options="VIEW_TABS" />
 
-      <template v-if="activeView === 'measurements'">
-        <PlAlert v-if="qcAbsent" type="info">
-          No quality measurements have arrived from this run yet. Every measurement the verdict
-          stage declares keeps a row once the report imports, including one nothing could compute —
-          so this is a run still in flight or a verdict stage that did not finish, not a run that
-          was measured and found clean.
-        </PlAlert>
-        <PlAgDataTableV2
-          v-else
-          v-model="app.model.data.runQualityTableState"
-          :settings="qcSettings"
-          :cell-renderer-selector="qcCellRenderer"
-          no-rows-text="The report imported with no measurements in it. Every declared measurement should keep a row — a deferred one carries no status and gives its reason in place of a value — so an empty report means the measurements were lost on the way here, not that the run was clean."
-          show-export-button
-        />
-        <div :class="$style.notMeasured">
-          <div :class="$style.notMeasuredTitle">Not measured, and why</div>
-          <dl :class="$style.notMeasuredList">
-            <template v-for="item in NOT_MEASURED" :key="item.what">
-              <dt>{{ item.what }}</dt>
-              <dd>{{ item.why }}</dd>
-            </template>
-            <dt>{{ NOT_CARRIED.what }}</dt>
-            <dd>{{ NOT_CARRIED.why }}</dd>
-          </dl>
-        </div>
-      </template>
+      <PlAgDataTableV2
+        v-if="activeView === 'measurements'"
+        v-model="app.model.data.runQualityTableState"
+        :settings="qcSettings"
+        :cell-renderer-selector="qcCellRenderer"
+        not-ready-text="The verdict stage produced no quality report for this run."
+        no-rows-text="The report imported with no measurements in it. Every declared measurement should keep a row — a deferred one carries no status and gives its reason in place of a value — so an empty report means the measurements were lost on the way here, not that the run was clean."
+        show-export-button
+      />
 
-      <template v-else-if="activeView === 'reagents'">
-        <PlAlert v-if="reagentAbsent" type="info">
-          No reagent table has arrived from this run yet. It is taken by the same verdict stage as
-          the measurements, so it arrives with them.
-        </PlAlert>
-        <PlAgDataTableV2
-          v-else
-          v-model="app.model.data.reagentTableState"
-          :settings="reagentSettings"
-          no-rows-text="The table imported with no reagents in it. Every declared barcode keeps a row under every identity it carries — a dead one reads zero under Seen in — so an empty table means the panel reached this stage with nothing declared, not that the reagents were clean."
-          show-export-button
-        />
-      </template>
+      <PlAgDataTableV2
+        v-else-if="activeView === 'reagents'"
+        v-model="app.model.data.reagentTableState"
+        :settings="reagentSettings"
+        not-ready-text="The verdict stage produced no reagent table for this run."
+        no-rows-text="The table imported with no reagents in it. Every declared barcode keeps a row under every identity it carries — a dead one reads zero under Seen in — so an empty table means the panel reached this stage with nothing declared, not that the reagents were clean."
+        show-export-button
+      />
 
-      <template v-else-if="activeView === 'mismatch'">
-        <PlAlert v-if="mismatchAbsent" type="info">
-          The panel-versus-reads check has not reported from this run yet. It is taken by the same
-          verdict stage as the measurements, so it arrives with them.
-        </PlAlert>
-        <PlAgDataTableV2
-          v-else
-          v-model="app.model.data.runQualityMismatchTableState"
-          :settings="mismatchSettings"
-          no-rows-text="Every barcode the panel declared was carried by reads, which is the outcome you want. The opposite direction is not reported here: barcode correction snaps each feature onto the panel before counting, so a barcode the panel never declared cannot reach this check. See the Undeclared barcodes tab for that direction."
-          show-export-button
-        />
-      </template>
+      <PlAgDataTableV2
+        v-else-if="activeView === 'mismatch'"
+        v-model="app.model.data.runQualityMismatchTableState"
+        :settings="mismatchSettings"
+        not-ready-text="The verdict stage produced no panel-versus-reads check for this run."
+        no-rows-text="Every barcode the panel declared was carried by reads, which is the outcome you want. The opposite direction is not reported here: barcode correction snaps each feature onto the panel before counting, so a barcode the panel never declared cannot reach this check. See the Undeclared barcodes tab for that direction."
+        show-export-button
+      />
 
-      <template v-else-if="activeView === 'undeclared'">
-        <PlAlert v-if="undeclaredAbsent" type="info">
-          The undeclared-barcode table has not reported from this run yet. It is taken by the same
-          verdict stage as the measurements, so it arrives with them.
-        </PlAlert>
-        <PlAgDataTableV2
-          v-else
-          v-model="app.model.data.undeclaredBarcodesTableState"
-          :settings="undeclaredSettings"
-          :cell-renderer-selector="undeclaredCellRenderer"
-          no-rows-text="No row here for any sample: every barcode the pre-refine pass saw was on some sample's panel. That is the outcome to want, not a check that failed to run."
-          show-export-button
+      <PlAgDataTableV2
+        v-else-if="activeView === 'undeclared'"
+        v-model="app.model.data.undeclaredBarcodesTableState"
+        :settings="undeclaredSettings"
+        :cell-renderer-selector="undeclaredCellRenderer"
+        not-ready-text="The verdict stage produced no undeclared-barcode table for this run."
+        no-rows-text="No row here for any sample: every barcode the pre-refine pass saw was on some sample's panel. That is the outcome to want, not a check that failed to run."
+        show-export-button
+      />
+
+      <div v-else-if="distributionsPending" :class="$style.plot">
+        <PlPlaceholder
+          variant="graph"
+          :title="PL_PLACEHOLDER_TEXTS.RUNNING.title"
+          :subtitle="PL_PLACEHOLDER_TEXTS.RUNNING.subtitle"
         />
-      </template>
+      </div>
 
       <PlAlert v-else-if="distributionsAbsent" type="info">
-        No distributions have arrived from this run yet. They are taken by the same verdict stage as
-        the measurements, so they arrive with them.
+        The verdict stage produced no distributions for this run. They are taken by the same stage
+        as the measurements, so they arrive with them.
       </PlAlert>
 
+      <!-- No "wrong rung" alert in any of the three plot bodies. A rung that cannot produce the plot takes
+           its tab away, so the body is reachable only while the rung is unknown or while it is the one that
+           produces the plot. -->
       <div v-else-if="activeView === 'score'" :class="$style.plot">
         <PlAlert v-if="rungUnknown" type="info">
           This run has not reported which baseline served it yet.
-        </PlAlert>
-        <PlAlert v-else-if="noScores" type="info">
-          This run was read against each tag's own distribution, which yields a probability rather
-          than a score, so there are no scores to spread. This plot is drawn for a run read against
-          a declared baseline tag.
         </PlAlert>
         <GraphMaker
           v-else
@@ -446,11 +420,6 @@ const NOT_CARRIED = {
         <PlAlert v-if="rungUnknown" type="info">
           This run has not reported which baseline served it yet.
         </PlAlert>
-        <PlAlert v-else-if="noReferenceReadings" type="info">
-          This run was read against each tag's own distribution. That baseline belongs to a tag in a
-          sample rather than to a cell, so no cell carries a reference reading and there is nothing
-          to spread. This plot is drawn for a run read against a declared baseline tag.
-        </PlAlert>
         <GraphMaker
           v-else
           v-model="app.model.data.referenceReadingGraphState"
@@ -464,11 +433,6 @@ const NOT_CARRIED = {
       <div v-else :class="$style.plot">
         <PlAlert v-if="rungUnknown" type="info">
           This run has not reported which baseline served it yet.
-        </PlAlert>
-        <PlAlert v-else-if="noBackgrounds" type="info">
-          This run was read against a declared baseline tag, so no background was fitted and there
-          is nothing to draw here. The other two plots are unaffected. This plot is drawn for a run
-          read against each tag's own distribution.
         </PlAlert>
         <GraphMaker
           v-else
@@ -484,33 +448,8 @@ const NOT_CARRIED = {
 </template>
 
 <style module>
-/* GraphMaker fills its container, and a container with no height collapses to nothing. */
-.notMeasured {
-  padding: 16px 0 4px;
-}
-
-.notMeasuredTitle {
-  font-size: 13px;
-  font-weight: 600;
-  padding-bottom: 6px;
-}
-
-.notMeasuredList {
-  margin: 0;
-  font-size: 13px;
-  color: var(--color-txt-03);
-}
-
-.notMeasuredList dt {
-  font-weight: 600;
-  padding-top: 6px;
-}
-
-.notMeasuredList dd {
-  margin: 0;
-}
-
-/* PlBlockPage's body is a flex column in a `minmax(0, 1fr)` grid row, so `flex: 1` takes the
+/* GraphMaker fills its container, and a container with no height collapses to nothing.
+   PlBlockPage's body is a flex column in a `minmax(0, 1fr)` grid row, so `flex: 1` takes the
    height the tabs and alerts above leave. The floor holds room for a faceted grid, which needs
    more than one panel's worth. */
 .plot {

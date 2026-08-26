@@ -1901,12 +1901,12 @@ export const platforma = BlockModelV3.create(dataModel)
         value: "declared",
         label: "Declared baseline tag",
         description:
-          "The block judges each count against the tag your panel marks as the baseline, in the " +
+          "The block reads each count against the tag your panel marks as the baseline, in the " +
           "same cell. Verdicts read this way compare across runs.",
         needs:
           declaredTags.length > 0
             ? undefined
-            : "Name the panel column that declares each tag's role, then pick the value of it that " +
+            : "Select the panel column that declares each tag's role. Then select the value that " +
               "marks the baseline tag. Both fields are below.",
       },
       // No `needs`. Whether this rung can serve turns on the sample's cell count, and on whether each tag's
@@ -1916,12 +1916,12 @@ export const platforma = BlockModelV3.create(dataModel)
         value: "distribution",
         label: "Each tag's own distribution",
         description:
-          `The block splits each tag's counts across a sample's cells into two components and judges ` +
-          `counts against the lower one. It needs at least ${Math.round(ctx.data.distributionMinCells)} ` +
-          `cells in the sample. Nothing checks that a tag's two components stand apart: the run shows ` +
-          `each fit on the Run quality page and leaves that reading to you. Where no two-component fit ` +
-          `can be computed the tag gets no baseline, and only the antigens it carries read unreliable. ` +
-          `Pick this where your panel declares no baseline tag and is too small to stand in for one.`,
+          `The block splits each tag's counts across a sample's cells into two components. It reads ` +
+          `each count against the lower component. The sample needs at least ` +
+          `${Math.round(ctx.data.distributionMinCells)} cells. Nothing checks that the two ` +
+          `components stand apart. The run shows each fit on the Run quality page, and you judge it. ` +
+          `Where no two-component fit can be computed, that tag gets no baseline, and only the ` +
+          `antigens it carries read unreliable. Select this where your panel declares no baseline tag.`,
       },
     ];
 
