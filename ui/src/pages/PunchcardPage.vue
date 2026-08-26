@@ -321,6 +321,24 @@ const identityOptions = computed(() => app.model.outputs.punchcardIdentityOption
 // and it needs saying, because an empty grid looks the same either way.
 const nothingToOffer = computed(() => !noDataset.value && identityOptions.value.length === 0);
 
+// The figures behind each gate, where the run record carries them. A record written before these fields
+// existed yields an empty string, and the sentence around it reads as it did before.
+const identityGate = computed(() => {
+  const meta = runMeta.value;
+  if (meta?.identityCount === undefined || meta.identitySummaryLimit === undefined) return "";
+  return ` — this run declared ${meta.identityCount.toLocaleString("en-US")} against a limit of ${meta.identitySummaryLimit.toLocaleString("en-US")}`;
+});
+
+const cellGate = computed(() => {
+  const meta = runMeta.value;
+  const cells = meta?.cellPunchCells ?? meta?.cellsAnalysed;
+  if (cells === undefined) return "";
+  const carried = ` — this run carried ${cells.toLocaleString("en-US")} cells`;
+  return meta?.cellPunchLimit === undefined
+    ? carried
+    : `${carried} against a limit of ${meta.cellPunchLimit.toLocaleString("en-US")}`;
+});
+
 // Headers carry the identity's full name, never a truncation: the identity a column holds is the one thing a
 // reader needs from a header. The grid auto-sizes every column to its contents and exposes no width a block
 // can set, so a long label does make its column wide. Every column is resizable, and the hover below names
@@ -355,8 +373,8 @@ const nothingToOffer = computed(() => !noDataset.value && identityOptions.value.
 
     <PlAlert v-else-if="nothingToOffer" type="info">
       This run produced no per-identity columns to draw. The punchcard costs one column per antigen
-      identity, so it is emitted only for panels below the block's identity limit; a larger panel
-      still produced its verdicts, and they are still exported to downstream blocks.
+      identity, so it is emitted only for panels below the block's identity limit{{ identityGate }}.
+      A larger panel still produced its verdicts, and they are still exported to downstream blocks.
     </PlAlert>
 
     <template v-else>
@@ -398,7 +416,8 @@ const nothingToOffer = computed(() => !noDataset.value && identityOptions.value.
         <PlAlert v-if="app.model.outputs.cellExpansionTable === undefined" type="info">
           This run carries no per-cell card. The dense grid it needs is one row per cell against
           every identity, so the verdict stage skips it above its own limits on panel width and cell
-          count — and a run that skipped it says so here rather than showing an empty grid.
+          count{{ cellGate }} — and a run that skipped it says so here rather than showing an empty
+          grid.
         </PlAlert>
         <template v-else>
           <PunchLegend variant="cell" />

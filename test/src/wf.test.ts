@@ -189,7 +189,6 @@ blockTest.skip(
         scoreDistributionGraphState: { title: "Scores", template: "line" },
         referenceReadingGraphState: { title: "Reference readings", template: "line" },
         fittedBackgroundGraphState: { title: "Backgrounds", template: "dots" },
-        runQualityMismatchTableState: createPlDataTableStateV2(),
         reagentTableState: createPlDataTableStateV2(),
         undeclaredBarcodesTableState: createPlDataTableStateV2(),
       } satisfies BlockData,

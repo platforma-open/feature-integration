@@ -7,6 +7,7 @@ import {
   PlAgChartStackedBarCell,
   PlAgOverlayLoading,
   PlAgOverlayNoRows,
+  PlAgTextAndButtonCell,
   PlAlert,
   PlCheckbox,
   PlBlockPage,
@@ -82,9 +83,8 @@ const undeclaredBarcodeWarn = setting("undeclaredBarcodeWarn");
 const undeclaredBarcodeError = setting("undeclaredBarcodeError");
 const usableReadWarn = setting("usableReadWarn");
 const usableReadError = setting("usableReadError");
-const aggregateBarcodeIqrMultiplier = setting("aggregateBarcodeIqrMultiplier");
-const aggregateBarcodeMinUmiThreshold = setting("aggregateBarcodeMinUmiThreshold");
-const aggregateBarcodeTopN = setting("aggregateBarcodeTopN");
+// No binding for the three aggregate-detection knobs. They keep their entries in SETTING_DEFAULTS, because
+// the same defaults answer a stored project and the workflow, and only their controls are gone.
 // Auto-open Settings for a fresh block, with no FASTQ chosen yet. Stays closed once configured.
 const settingsOpen = ref(app.model.data.fbFastqRef === undefined);
 // Close the Settings drawer once a run starts. Watching an output and writing a local ref is not a hairpin,
@@ -101,26 +101,8 @@ watch(
 // slide-over as one text area. Detailed per-sample statistics live on the QC page.
 const analysisLog = computed(() => app.model.outputs.analysisLog ?? []);
 
-// One line for the whole run, above the per-sample grid. The grid has carried live per-step progress
-// all along, but a reader watching a single sample had to read it out of a cell, and a run that had
-// not produced its roster yet showed nothing at all while the parser was already most of the way
-// through. `analysisLog` says only "Processing..." in that window.
-//
-// The percent is the MEAN over samples rather than the minimum. A minimum reports the slowest sample,
-// which is a different question and makes a run of twenty look stalled whenever one lags.
-const runProgress = computed(() => {
-  const rows = sampleResults.value ?? [];
-  if (rows.length === 0) return undefined;
-  const done = rows.filter((r) => r.progress.status === "done").length;
-  if (done === rows.length) return undefined;
-  const pct = (r: SampleResult) => r.progress.percent ?? 0;
-  const percent = Math.round(rows.reduce((sum, r) => sum + pct(r), 0) / rows.length);
-  // The label of whichever sample is furthest along: it names the step the run is actually in, where
-  // the slowest sample's label lags a step behind and reads as if nothing had started.
-  const leader = rows.reduce((a, b) => (pct(b) > pct(a) ? b : a));
-  const detail = [leader.progress.text, leader.progress.suffix].filter(Boolean).join(" ");
-  return { percent, detail, done, total: rows.length };
-});
+// No run-level progress bar above the grid. The grid's own Progress column carries every sample's step and
+// percent, so a second reading of the same numbers competed with it for the reader's attention.
 // First line of the Analysis-logs drawer, pointing the user at the richer per-sample logs behind a
 // double-click on each sample row. The run-level analysisLog below is only a summary heartbeat.
 const LOGS_HINT =
@@ -214,22 +196,14 @@ const roleValueOptions = computed(() => {
 // Changing the role column drops the values chosen under the old one. They designate values of THIS column,
 // and left behind they would mark no tag while still reading as a configured comparator.
 //
-// Declaring a baseline is also what the baseline CHOICE was made against, so changing the declaration drops
-// the choice too. An override means "I want this rung given what I have declared", not a standing instruction
-// that outlives the declaration it answered. Left behind, marking a baseline tag could not move the field
-// onto it, which reads as the block ignoring what you just declared.
-//
-// The same rule the two settings either side of it follow: a setting does not outlive the thing it was chosen
-// against. Only on a GESTURE, never from a watcher -- a watcher on a model output writing back into data is
-// the hairpin, and two clients with the project open would race on it.
-function clearBaselineChoice() {
-  app.model.data.referenceSource = undefined;
-}
-
+// `referenceSource` is NOT cleared here, and must not be. The rung is chosen first and the form then asks for
+// what that rung needs, so the role column and the baseline value are the answers to a rung already picked.
+// Clearing the rung on either gesture unpicked it and hid both fields at the moment they were filled in.
+// Only on a GESTURE, never from a watcher -- a watcher on a model output writing back into data is the
+// hairpin, and two clients with the project open would race on it.
 function setRoleColumn(column: string | undefined) {
   app.model.data.roleColumn = column || undefined;
   app.model.data.referenceValues = undefined;
-  clearBaselineChoice();
   snapshotPanelColumns();
 }
 
@@ -245,7 +219,6 @@ function setRoleColumn(column: string | undefined) {
 // which is a panel fact this control cannot see.
 function setReferenceValue(value: string | undefined) {
   app.model.data.referenceValues = value ? [value] : undefined;
-  clearBaselineChoice();
 }
 
 // The comparator sources this panel can serve. Both the option list and the reasons come from a model output
@@ -303,18 +276,10 @@ const chosenSource = computed(() => app.model.data.referenceSource);
 const chosenNeeds = computed(
   () => allSources.value.find((o) => o.value === chosenSource.value)?.needs,
 );
-const shownSource = computed(() => app.model.outputs.effectiveReferenceSource);
-// Whether the scientist has actually chosen. Read from data rather than from the output above, which answers
-// "none" both for an explicit choice of no baseline and for no choice at all. The two look the same to a run
-// and are opposite things to say to a reader.
-const baselineUnchosen = computed(() => app.model.data.referenceSource === undefined);
-
 function setBaselineSource(value: string | undefined) {
   app.model.data.referenceSource = value === undefined ? undefined : (value as ReferenceSource);
 }
 
-// The identities the contending-groups editor picks from, live from the uploaded panel.
-const identityOptions = computed(() => app.model.outputs.identityOptions ?? []);
 // The panel-derived dropdowns have nothing to offer until the panel file is uploaded and staging has read
 // its columns. Disabled and dimmed, so their empty state reads as "waiting" rather than "nothing found".
 const panelUnread = computed(
@@ -660,6 +625,15 @@ const columnDefs: ColDef<SampleResult>[] = [
     lockPinned: true,
     sortable: true,
     flex: 1,
+    // The Open affordance, the same one the Explore readout puts on its clonotype column.
+    // `invokeRowsOnDoubleClick` makes the button fire the ROW's double-click, so it routes through the
+    // `onRowDoubleClicked` handler below: one path, and double-clicking anywhere on the row keeps working.
+    // Nothing else on the row says it can be opened, and the header tooltips that said so are read only by
+    // someone who already hovered a header.
+    cellRendererSelector: () => ({
+      component: PlAgTextAndButtonCell,
+      params: { invokeRowsOnDoubleClick: true },
+    }),
   }),
   createAgGridColDef<SampleResult, ProgressCell>({
     colId: "progress",
@@ -751,16 +725,6 @@ const gridOptions = {
          blocks/peptide-extraction, is always shown: the grid handles layout, its Progress cell, and the
          loading overlay for the pre-roster window. When the run finishes every row settles into its "Done"
          state, which results.ts sets from completedSamples. -->
-    <div v-if="runProgress" :class="$style.runProgress">
-      <div :class="$style.runProgressHead">
-        <span>{{ runProgress.detail }}</span>
-        <span>{{ runProgress.done }} of {{ runProgress.total }} samples done</span>
-      </div>
-      <div :class="$style.runProgressTrack">
-        <div :class="$style.runProgressFill" :style="{ width: runProgress.percent + '%' }" />
-      </div>
-    </div>
-
     <div :style="{ flex: 1 }">
       <AgGridVue
         :theme="AgGridTheme"
@@ -1012,69 +976,81 @@ const gridOptions = {
         </template>
       </PlNumberField>
 
-      <PlSectionSeparator compact> Threshold Parameters </PlSectionSeparator>
-      <!-- Paired on one line: both are minimums on how much evidence a reading needs, both are always
-           shown, and side by side a reader sets them as the one decision they are. -->
-      <PlRow>
-        <PlNumberField
-          :class="$style.half"
-          v-model="app.model.data.countFloor"
-          :min-value="0"
-          :step="1"
-          label="Minimum count"
-        >
-          <template #tooltip>
-            Counts below this are not evidence of binding. The block reads them as zero.<br /><br />
-            The minimum never applies to the baseline tag. A minimum there would push the whole run
-            toward bound.<br /><br />
-            The default of 4 is declared, not calibrated.
-          </template>
-        </PlNumberField>
-        <PlNumberField
-          :class="$style.half"
-          v-model="app.model.data.minVotingCells"
-          :min-value="1"
-          :step="1"
-          label="Minimum voting cells"
-        >
-          <template #tooltip>
-            How many cells must answer before their majority settles a verdict. Below this the
-            verdict reads unreliable.<br /><br />
-            At 1 a verdict may rest on one cell. The table carries the answering-cell count.
-          </template>
-        </PlNumberField>
-      </PlRow>
-      <PlNumberField
-        v-if="chosenSource === 'declared'"
-        v-model="app.model.data.boundCutoff"
-        :min-value="0"
-        :max-value="100"
-        :step="1"
-        label="Bound score cutoff"
-      >
-        <template #tooltip>
-          A cell reads bound where its score reaches this number, from 0 to 100. The score is how
-          certain it is that the antigen makes up more than 92.5% of the antigen and baseline
-          counts.<br /><br />
-          <b>Certainty, not strength</b> — two counts against zero score low. Cell Ranger says this
-          score does not measure binding strength.
-        </template>
-      </PlNumberField>
-      <PlNumberField
-        v-model="agreementPercent"
-        :min-value="50.001"
-        :max-value="100"
-        :step="1"
-        clearable
-        label="Minimum agreement (>50%)"
-      >
-        <template #tooltip>
-          <b>Empty means off</b>, which is the default. A narrow majority then stands, and the
-          verdict reports how narrow it was.<br /><br />
-          Set it and a verdict reads unreliable below this share of the answering cells.<br /><br />
-          The lowest value is 50.001%, because the verdict already takes the majority.
-        </template>
-      </PlNumberField>
+      <!-- Closable, and closed until opened. Every field inside ships a default a run is valid under, so
+           a reader meets the baseline choice above without four thresholds under it competing for the
+           same attention. The same treatment Compute resources and Quality lines already have. -->
+      <PlAccordionSection label="Threshold Parameters">
+        <!-- Paired on one line: both are minimums on how much evidence a reading needs, both are always
+             shown, and side by side a reader sets them as the one decision they are. -->
+        <PlRow>
+          <PlNumberField
+            :class="$style.half"
+            v-model="app.model.data.countFloor"
+            :min-value="0"
+            :step="1"
+            label="Min count"
+          >
+            <template #tooltip>
+              Counts below this are not evidence of binding. The block reads them as zero.<br /><br />
+              The minimum never applies to the baseline tag. A minimum there would push the whole
+              run toward bound.<br /><br />
+              The default of 4 is declared, not calibrated.
+            </template>
+          </PlNumberField>
+          <PlNumberField
+            :class="$style.half"
+            v-model="app.model.data.minVotingCells"
+            :min-value="1"
+            :step="1"
+            label="Min voting cells"
+          >
+            <template #tooltip>
+              How many cells must answer before their majority settles a verdict. Below this the
+              verdict reads unreliable.<br /><br />
+              At 1 a verdict may rest on one cell. The table carries the answering-cell count.
+            </template>
+          </PlNumberField>
+        </PlRow>
+        <!-- Both are conditions on the same verdict: the cutoff decides what one cell says, the agreement
+           limit decides how many cells must say it. Side by side under the declared rung, where both apply.
+           `half` on each splits the row; on the agreement field alone, once the cutoff is hidden, the same
+           `flex: 1 1 0` takes the whole width, so the lone field does not sit left with a gap beside it. -->
+        <PlRow>
+          <PlNumberField
+            v-if="chosenSource === 'declared'"
+            :class="$style.half"
+            v-model="app.model.data.boundCutoff"
+            :min-value="0"
+            :max-value="100"
+            :step="1"
+            label="Bound score cutoff"
+          >
+            <template #tooltip>
+              A cell reads bound where its score reaches this number, from 0 to 100. The score is
+              how certain it is that the antigen makes up more than 92.5% of the antigen and
+              baseline counts.<br /><br />
+              <b>Certainty, not strength</b> — two counts against zero score low. Cell Ranger says
+              this score does not measure binding strength.
+            </template>
+          </PlNumberField>
+          <PlNumberField
+            :class="$style.half"
+            v-model="agreementPercent"
+            :min-value="50.001"
+            :max-value="100"
+            :step="1"
+            clearable
+            label="Min agreement (>50%)"
+          >
+            <template #tooltip>
+              <b>Empty means off</b>, which is the default. A narrow majority then stands, and the
+              verdict reports how narrow it was.<br /><br />
+              Set it and a verdict reads unreliable below this share of the answering cells.<br /><br />
+              The lowest value is 50.001%, because the verdict already takes the majority.
+            </template>
+          </PlNumberField>
+        </PlRow>
+      </PlAccordionSection>
       <!-- The combine-mode column selector is not offered (MILAB-6496): with it unset, every antigen uses the
            default "sum" mode. The parameter itself is live -- combineColumn and minUmi still reach
            per_cell_metrics.py -- so a value carried in from an older project is still honoured, and the alert
@@ -1150,7 +1126,8 @@ const gridOptions = {
             times the read volume, between 16 and 256 GiB.<br /><br />
             Set a number only if a sample runs out of memory. That number becomes a fixed request
             for every sample, so a value chosen for your largest sample is demanded for the smallest
-            one too.
+            one too. It reaches the parse and refine-tags steps only. Tag-stat stays sized from its
+            own input.
           </template>
         </PlNumberField>
       </PlAccordionSection>
@@ -1167,13 +1144,13 @@ const gridOptions = {
             :max-value="1"
             :step="0.01"
             clearable
-            label="Barcode validity: warn below"
+            label="Barcode validity warn"
           >
             <template #tooltip>
-              Below this share of reads whose cell barcode corrects onto the chemistry's whitelist,
-              the measurement warns.<br /><br />
-              Default 0.75, inherited from the field rather than calibrated for this assay: it is a
-              round number, and no test asserts it.
+              The share of reads whose cell barcode corrects onto the chemistry's whitelist. The
+              measurement warns below this share.<br /><br />
+              Default 0.75. The field supplies this number. Nothing calibrates it for this assay,
+              and no test asserts it.
             </template>
           </PlNumberField>
           <PlNumberField
@@ -1183,12 +1160,12 @@ const gridOptions = {
             :max-value="1"
             :step="0.01"
             clearable
-            label="Barcode validity: alert below"
+            label="Barcode validity alert"
           >
             <template #tooltip>
-              Below this share the measurement alerts instead of warning.<br /><br />
-              Default 0.50, inherited from the field rather than calibrated for this assay: it is a
-              round number, and no test asserts it.
+              The same share. The measurement alerts below this share instead of warning.<br /><br />
+              Default 0.50. The field supplies this number. Nothing calibrates it for this assay,
+              and no test asserts it.
             </template>
           </PlNumberField>
         </PlRow>
@@ -1197,13 +1174,13 @@ const gridOptions = {
           :min-value="0"
           :step="100"
           clearable
-          label="Reads per cell: warn below"
+          label="Reads per cell warn"
         >
           <template #tooltip>
-            Below this many reads matched per cell in the cell list, the measurement warns. There is
-            no alert threshold: the vendor published one boundary.<br /><br />
-            Default 5000, the vendor's recommended minimum for this assay type -- not a number
-            calibrated against your own data, and no test asserts it.
+            Reads matched per cell in the cell list. The measurement warns below this count. It has
+            no alert line, because the vendor published one boundary.<br /><br />
+            Default 5000. The vendor recommends this minimum for this assay type. Nothing calibrates
+            it against your own data, and no test asserts it.
           </template>
         </PlNumberField>
         <PlRow>
@@ -1214,15 +1191,15 @@ const gridOptions = {
             :max-value="1"
             :step="0.01"
             clearable
-            label="Aggregate-barcode reads: warn above"
+            label="Aggregate reads warn"
           >
             <template #tooltip>
-              Above this share of reads sitting in barcodes flagged as aggregates, the measurement
-              warns.<br /><br />
-              Default 0.05, inherited from the field rather than calibrated for this assay: it is a
-              round number, and no test asserts it. Moving any of the three detection knobs below
-              changes what this line judges, since they decide which barcodes count as aggregates in
-              the first place.
+              The share of reads in barcodes flagged as aggregates. The measurement warns above this
+              share.<br /><br />
+              Default 0.05. The field supplies this number. Nothing calibrates it for this assay,
+              and no test asserts it.<br /><br />
+              The three detection settings below decide which barcodes count as aggregates, so each
+              one changes what this line judges.
             </template>
           </PlNumberField>
           <PlNumberField
@@ -1232,12 +1209,13 @@ const gridOptions = {
             :max-value="1"
             :step="0.01"
             clearable
-            label="Aggregate-barcode reads: alert at"
+            label="Aggregate reads alert"
           >
             <template #tooltip>
-              At this share the measurement alerts.<br /><br />
-              Default 1.0 (total failure), inherited from the field rather than calibrated for this
-              assay: it is a round number, and no test asserts it.
+              The same share. The measurement alerts where the share equals this value, and not
+              above it.<br /><br />
+              Default 1.0, which is total failure. The field supplies this number. Nothing
+              calibrates it for this assay, and no test asserts it.
             </template>
           </PlNumberField>
         </PlRow>
@@ -1249,13 +1227,13 @@ const gridOptions = {
             :max-value="1"
             :step="0.01"
             clearable
-            label="Undeclared-barcode reads: warn above"
+            label="Undeclared reads warn"
           >
             <template #tooltip>
-              Above this share of a sample's reads landing in barcodes the panel never declared, the
-              measurement warns.<br /><br />
-              Default 0.50, inherited from the field rather than calibrated for this assay: it is a
-              round number, and no test asserts it.
+              The share of a sample's reads in barcodes the panel never declared. The measurement
+              warns above this share.<br /><br />
+              Default 0.50. The field supplies this number. Nothing calibrates it for this assay,
+              and no test asserts it.
             </template>
           </PlNumberField>
           <PlNumberField
@@ -1265,12 +1243,13 @@ const gridOptions = {
             :max-value="1"
             :step="0.01"
             clearable
-            label="Undeclared-barcode reads: alert at"
+            label="Undeclared reads alert"
           >
             <template #tooltip>
-              At this share the measurement alerts.<br /><br />
-              Default 1.0 (total failure), inherited from the field rather than calibrated for this
-              assay: it is a round number, and no test asserts it.
+              The same share. The measurement alerts where the share equals this value, and not
+              above it.<br /><br />
+              Default 1.0, which is total failure. The field supplies this number. Nothing
+              calibrates it for this assay, and no test asserts it.
             </template>
           </PlNumberField>
         </PlRow>
@@ -1282,13 +1261,13 @@ const gridOptions = {
             :max-value="1"
             :step="0.01"
             clearable
-            label="Usable antigen-read fraction: warn below"
+            label="Usable reads warn"
           >
             <template #tooltip>
-              Below this share of the library's reads reaching a called cell with a panel-recognised
-              barcode, the measurement warns.<br /><br />
-              Default 0.20, inherited from the field rather than calibrated for this assay: it is a
-              round number, and no test asserts it.
+              The share of the library's reads that reach a called cell with a panel-recognised
+              barcode. The measurement warns below this share.<br /><br />
+              Default 0.20. The field supplies this number. Nothing calibrates it for this assay,
+              and no test asserts it.
             </template>
           </PlNumberField>
           <PlNumberField
@@ -1298,72 +1277,24 @@ const gridOptions = {
             :max-value="1"
             :step="0.01"
             clearable
-            label="Usable antigen-read fraction: alert below"
+            label="Usable reads alert"
           >
             <template #tooltip>
-              Below this share the measurement alerts instead of warning.<br /><br />
-              Default 0.0 (total failure), inherited from the field rather than calibrated for this
-              assay: it is a round number, and no test asserts it.
+              The same share. The measurement alerts where the share equals this value, and not
+              below it.<br /><br />
+              Default 0.0, which is total failure. At that default the alert fires only where no
+              read is usable. The field supplies this number. Nothing calibrates it for this assay,
+              and no test asserts it.
             </template>
           </PlNumberField>
         </PlRow>
       </PlAccordionSection>
 
-      <!-- Separate from Quality lines on purpose: these decide what a barcode has to look like to be
-           called an aggregate, not what to think of the resulting share. Moving one changes which reads
-           the aggregate-barcode line above is judging. -->
-      <PlAccordionSection label="Aggregate-barcode detection">
-        <PlAlert type="info">
-          These three settings decide which barcodes count as aggregates before the
-          aggregate-barcode line above ever reads a number. The 0.05 warn line was calibrated
-          against Cell Ranger's default setting of all three; moving any of them changes what that
-          line is judging.
-        </PlAlert>
-        <PlRow>
-          <PlNumberField
-            :class="$style.half"
-            v-model="aggregateBarcodeIqrMultiplier"
-            :min-value="0"
-            :step="0.5"
-            clearable
-            label="IQR multiplier"
-          >
-            <template #tooltip>
-              A barcode among the top cohort (below) is flagged once its antigen UMI count reaches
-              the third quartile plus this many interquartile ranges.<br /><br />
-              Default 3.0, Cell Ranger's own constant for the ANTIGEN branch of its outlier
-              detection.
-            </template>
-          </PlNumberField>
-          <PlNumberField
-            :class="$style.half"
-            v-model="aggregateBarcodeMinUmiThreshold"
-            :min-value="0"
-            :step="100"
-            clearable
-            label="Minimum UMI floor"
-          >
-            <template #tooltip>
-              Below this computed threshold, nothing is flagged -- a shallow library can sit
-              entirely under this floor while still carrying real aggregate reads.<br /><br />
-              Default 1000, Cell Ranger's own floor.
-            </template>
-          </PlNumberField>
-        </PlRow>
-        <PlNumberField
-          v-model="aggregateBarcodeTopN"
-          :min-value="1"
-          :step="10"
-          clearable
-          label="Barcode cohort size"
-        >
-          <template #tooltip>
-            How many of the highest-count observed barcodes enter the quantile calculation. A
-            barcode outside this cohort is never flagged, however large its count.<br /><br />
-            Default 100, Cell Ranger's own constant.
-          </template>
-        </PlNumberField>
-      </PlAccordionSection>
+      <!-- No Aggregate-barcode detection section. The three knobs behind it (IQR multiplier, minimum UMI
+           floor, barcode cohort size) stay in BlockData and in args, so a stored project keeps whatever it
+           set, and an unset one runs on Cell Ranger's own constants. They have no control because the 0.05
+           warn line was calibrated against those constants: moving one changes what the aggregate-barcode
+           line is judging, and no line in the field covers the moved position. -->
     </PlSlideModal>
 
     <PlSlideModal v-model="logsOpen" width="80%">
@@ -1379,35 +1310,6 @@ const gridOptions = {
 </template>
 
 <style module>
-/* The run-level progress bar. Deliberately plain: it reports, it is not a control. */
-.runProgress {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px 0 12px;
-}
-
-.runProgressHead {
-  display: flex;
-  justify-content: space-between;
-  font-size: 12px;
-  color: var(--txt-03, #6b7280);
-}
-
-.runProgressTrack {
-  height: 4px;
-  border-radius: 2px;
-  background: var(--bg-elevated-03, #e5e7eb);
-  overflow: hidden;
-}
-
-.runProgressFill {
-  height: 100%;
-  border-radius: 2px;
-  background: var(--border-color-focus, #49cc49);
-  transition: width 0.3s ease;
-}
-
 /* Two fields sharing a row split it evenly. Left to their natural width they sit left with a gap
    beside them, which reads as a field missing rather than as a pair. */
 .half {

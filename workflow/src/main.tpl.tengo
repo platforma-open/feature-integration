@@ -485,10 +485,10 @@ wf.body(func(args) {
 			offered: verdictRun.output("offered"),
 			tagIdentity: verdictRun.output("tagIdentity"),
 			identityLabels: verdictRun.output("identityLabels"),
+			tagLabels: verdictRun.output("tagLabels"),
 			identityProperties: verdictRun.output("identityProperties"),
 			panelLabels: verdictRun.output("panelLabels"),
 			samplePanel: verdictRun.output("samplePanel"),
-			panelMismatch: verdictRun.output("panelMismatch"),
 			undeclaredBarcodes: verdictRun.output("undeclaredBarcodes"),
 			qc: verdictRun.output("qc"),
 			qcSummary: verdictRun.output("qcSummary"),
@@ -576,7 +576,6 @@ wf.body(func(args) {
 		// every other antigen output here, since the rolled-up status comes from the verdict stage
 		// and that stage has no clonotype set to run against until a dataset is picked.
 		blockOutputs.qcSummaryTable = pframes.exportFrame(verdictImport.output("qcSummaryTable"))
-		blockOutputs.antigenPanelMismatchTable = pframes.exportFrame(verdictImport.output("panelMismatchTable"))
 		// 330's own table: barcodes the reads carried that no panel declares, keyed by sequence,
 		// carrying the one status this run's quality surface publishes outside the measurement
 		// list -- the share of a sample's reads landing in undeclared barcodes. Usually empty.
@@ -601,6 +600,11 @@ wf.body(func(args) {
 		// coverage. Read as content by the model. It is the only source for both the Main grid's Quality
 		// tag and the sample detail view's Quality Checks tab.
 		blockOutputs.antigenSampleQc = verdictRun.output("qcBySample")
+		// Binned count distributions per (sample, tag), taken from the raw counts, with the one edge list
+		// they share. The fitted-background grid and the per-sample antigen-count plots are drawn from
+		// these. Content rather than a p-frame: the chart takes its bins as values in the UI, so a frame
+		// handle would only have to be read back out again.
+		blockOutputs.antigenTagBins = verdictRun.output("qcTagBins")
 	}
 
 	return {

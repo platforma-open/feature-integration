@@ -15,9 +15,11 @@ from qc_measures import (
     Status,
     aggregate_barcode_fraction,
     antigen_count_deciles,
+    count_bin_edges,
     detect_aggregate_barcodes,
     measurement_rows,
     per_antigen_measures,
+    per_tag_count_bins,
     reads_per_cell,
     roll_up,
     sibling_disagreement,
@@ -1051,3 +1053,69 @@ def test_a_tag_holding_no_row_has_no_rate():
     out = sibling_disagreement(states, {"IDENT": ["AAAA", "BBBB", "CCCC"]})
     assert out["CCCC"] is None
     assert out["AAAA"] == 0.0
+
+
+# --- the binned count distributions the fitted-background grid is drawn from ------------------
+
+
+def _bin_counts(rows: list[tuple[str, str, str, int]]) -> pl.DataFrame:
+    return pl.DataFrame(
+        rows,
+        schema={"sampleId": pl.String, "cellId": pl.String, "tag": pl.String, "umiCount": pl.Int64},
+        orient="row",
+    )
+
+
+def test_one_edge_set_spans_the_whole_run():
+    # Per-tag edges would rescale every panel to its own range, and a grid of panels a reader
+    # compares side by side would then draw a tag spanning 1-4 and one spanning 1-4000 alike.
+    counts = _bin_counts([("S1", "c1", "AAAA", 2), ("S1", "c2", "BBBB", 4000)])
+    edges = count_bin_edges(counts)
+    assert edges[0] == 1.0
+    assert edges[-1] == 4000.0
+    # Log-spaced, so the ambient population does not collapse into one bar.
+    assert edges[2] - edges[1] > edges[1] - edges[0]
+
+
+def test_a_frame_with_no_counts_has_no_edges_and_no_bins():
+    empty = _bin_counts([])
+    assert count_bin_edges(empty) == []
+    assert per_tag_count_bins(empty, []) == {}
+
+
+def test_every_cell_lands_in_a_bin_including_the_largest_count():
+    # np.histogram closes the last bin on the right. Without that the run's maximum count falls
+    # outside every bucket, and the tag holding it reads one cell short.
+    counts = _bin_counts([("S1", f"c{i}", "AAAA", n) for i, n in enumerate([1, 1, 2, 5, 40, 4000])])
+    edges = count_bin_edges(counts)
+    weights = per_tag_count_bins(counts, edges)["S1"]["AAAA"]
+    assert len(weights) == len(edges) - 1
+    assert sum(weights) == 6
+
+
+def test_bins_are_kept_per_sample_and_tag():
+    # The fit runs per (sample, tag), so the plots drawn beside it are keyed the same way. Pooling
+    # two samples would read as one population.
+    counts = _bin_counts([("S1", "c1", "AAAA", 2), ("S2", "c1", "AAAA", 2), ("S1", "c1", "BBBB", 3)])
+    edges = count_bin_edges(counts)
+    out = per_tag_count_bins(counts, edges)
+    assert sorted(out) == ["S1", "S2"]
+    assert sorted(out["S1"]) == ["AAAA", "BBBB"]
+    assert sorted(out["S2"]) == ["AAAA"]
+
+
+def test_a_tag_absent_from_a_sample_gets_no_entry():
+    # An absent tag and a tag whose cells all read low are different findings. A list of zeros
+    # would state the second, so the absent one carries no list at all.
+    counts = _bin_counts([("S1", "c1", "AAAA", 2), ("S2", "c1", "BBBB", 2)])
+    out = per_tag_count_bins(counts, count_bin_edges(counts))
+    assert "BBBB" not in out["S1"]
+    assert "AAAA" not in out["S2"]
+
+
+def test_the_reference_tag_keeps_its_bins():
+    # The reference tag is the run's own ambient floor, which is what every other tag is judged
+    # against. It is held out of the verdict read, never out of this.
+    counts = _bin_counts([("S1", "c1", "CTRL", 6), ("S1", "c1", "AAAA", 500)])
+    out = per_tag_count_bins(counts, count_bin_edges(counts))
+    assert sorted(out["S1"]) == ["AAAA", "CTRL"]

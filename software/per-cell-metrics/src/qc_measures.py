@@ -321,11 +321,20 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # No line. Nothing published says what a background of any size means: it is read against
     # the signal mean beside it and against the other tags of the panel, which is a comparison
     # rather than a boundary.
+    # The FIT runs per (sample, tag); this row is keyed (tag, panel), so its value is the median over
+    # the panel's samples that fitted and the detail carries the spread and the unfitted count. The
+    # `counts` text says so, because a row reading "the background component's mean count" while
+    # holding a median across samples mis-states its own grain -- which is the correction
+    # `330-the-quality-readout`'s open items ask for. The per-(sample, tag) reading is not lost: it is
+    # the fitted-background GRID on the run-quality page, drawn from the binned counts.
     Measurement(
         "fittedBackground",
         "Fitted background, where a population baseline served",
         "tag",
-        "The background component's mean count, its share of cells, and the signal mean beside it.",
+        "The background component's mean count, its share of cells, and the signal mean beside it -- "
+        "each the median over this panel's samples that fitted, since the fit runs per sample. The "
+        "detail carries the spread and how many samples fitted; the run-quality grid draws each fit "
+        "on its own.",
     ),
     # Self-disagreement at an IDENTITY is deliberately not measured. Keeping the tag-level
     # figure while dropping this one rests on which confound cancels: marginal binding
@@ -889,6 +898,94 @@ def deciles_of(values: np.ndarray) -> pl.DataFrame:
     return pl.DataFrame(
         {"decile": list(DECILE_POINTS), "value": [float(np.quantile(values, p / 100)) for p in DECILE_POINTS]}
     )
+
+
+# How many log-spaced buckets a count distribution is drawn in. Enough bars for two humps to
+# read apart at thumbnail size, few enough that a sparse tag does not dissolve into single-cell
+# spikes.
+COUNT_BIN_COUNT = 24
+
+
+def count_bin_edges(counts: pl.DataFrame) -> list[float]:
+    """Log-spaced bin edges spanning every count in the frame, shared by every plot drawn from it.
+
+    The caller passes the counts of the CELL LIST where one arrived, so the domain ends at the
+    highest count among cells. Observed barcodes outnumber cells by one to two orders of magnitude.
+
+    ONE edge set for the whole run, not one per tag. The judgement these bins are drawn for is
+    whether a tag's counts fall into two separated humps, and a reader makes it by scanning a grid
+    of tags side by side. Per-tag edges would rescale every panel to its own range, so a tag whose
+    counts span 1-4 and one spanning 1-4000 would draw identical pictures.
+
+    Log-spaced because UMI counts per cell span orders of magnitude: on a linear axis the ambient
+    population occupies one bar and everything above it is empty.
+
+    Edges start at 1, the smallest count that exists -- a row is only written for an observed
+    reading, so zero never appears. `[]` where the frame holds no counts at all.
+    """
+    if counts.height == 0:
+        return []
+    top = float(counts["umiCount"].max() or 0)
+    if top < 1:
+        return []
+    # `top` lands on the last edge, so the largest count falls inside the last bin rather than
+    # outside every bin.
+    return [float(x) for x in np.geomspace(1.0, max(top, 2.0), COUNT_BIN_COUNT + 1)]
+
+
+def linear_bin_edges(values: np.ndarray, count: int = COUNT_BIN_COUNT) -> list[float]:
+    """Evenly spaced bin edges spanning `values`. `[]` where there are none.
+
+    Linear, unlike `count_bin_edges`: a specificity score is a 0-100 scale and a reference reading is
+    read against a gate a scientist types in the same units, so a log axis would put the number they
+    are choosing somewhere they cannot find it.
+    """
+    if values.size == 0:
+        return []
+    low, high = float(np.min(values)), float(np.max(values))
+    if high <= low:
+        # Every observation identical. One bin wide enough to hold it, rather than a zero-width
+        # range that renders as nothing.
+        high = low + 1.0
+    return [float(x) for x in np.linspace(low, high, count + 1)]
+
+
+def bin_values(values: np.ndarray, edges: list[float]) -> list[int]:
+    """How many observations fall in each bin, in edge order. `[]` where there is nothing to bin."""
+    if values.size == 0 or len(edges) < 2:
+        return []
+    weights, _ = np.histogram(values, bins=np.asarray(edges, dtype=float))
+    return [int(w) for w in weights]
+
+
+def per_tag_count_bins(counts: pl.DataFrame, edges: list[float]) -> dict[str, dict[str, list[int]]]:
+    """Per (sample, tag), how many cells hold each binned count. `{sampleId: {tag: weights}}`.
+
+    The caller passes the counts of the CELL LIST where one arrived. A run with no list yields
+    observed barcodes here, and its `cellListSource` says so.
+
+    Taken from the RAW counts, before the minimum and with reference tags kept. This is a plot a
+    scientist reads in order to SET the minimum, so binning after it would hide exactly the low
+    counts the decision is about, and stripping the reference tag would hide the run's own ambient
+    floor -- the thing every other tag is judged against.
+
+    One list of `len(edges) - 1` weights per tag, in edge order, so a caller pairs it with `edges`
+    rather than repeating a bucket's bounds on every row. A tag with no reading in a sample gets no
+    entry: an absent tag and a tag whose cells all read zero are different findings, and a list of
+    zeros would state the second.
+    """
+    if counts.height == 0 or len(edges) < 2:
+        return {}
+    bounds = np.asarray(edges, dtype=float)
+    out: dict[str, dict[str, list[int]]] = {}
+    for (sample, tag), frame in counts.group_by(["sampleId", "tag"]):
+        values = frame["umiCount"].cast(pl.Float64).to_numpy()
+        if values.size == 0:
+            continue
+        # `np.histogram` closes the last bin on the right, so the maximum count is counted.
+        weights, _ = np.histogram(values, bins=bounds)
+        out.setdefault(str(sample), {})[str(tag)] = [int(w) for w in weights]
+    return out
 
 
 def antigen_count_deciles(counts: pl.DataFrame) -> pl.DataFrame:

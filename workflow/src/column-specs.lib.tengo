@@ -320,12 +320,15 @@ qcSummaryColumnsSpec := func(sampleAxisSpec) {
 			numCol("readsTotal", "readsTotal", "Reads parsed", 90000, undefined),
 			numCol("readsMatched", "readsMatched", "Reads matched", 89000, undefined),
 			numCol("matchedFraction", "matchedFraction", "Matched fraction", 88000, ".2p"),
-			numCol("cellsDetected", "cellsDetected", "Cells detected", 87000, undefined),
+			numCol("cellsDetected", "cellsDetected", "Cell barcodes detected", 87000, undefined),
 			numCol("featuresDetected", "featuresDetected", "Features detected", 86000, undefined),
 			numCol("totalUniqueUmis", "totalUniqueUmis", "Total distinct UMIs", 85000, undefined),
 			numCol("medianUmisPerCell", "medianUmisPerCell", "Median UMIs / cell", 84000, ".1f"),
 			numCol("panelAssignedFraction", "panelAssignedFraction", "Panel-assigned fraction", 83000, ".2p", "Fraction of feature-barcode reads kept after correcting their barcode against the panel; reads too far from any panel entry are dropped. Its complement is the share landing in barcodes the panel never declared, which is where this measurement's line comes from. A low value flags a panel or read-geometry mismatch."),
-			numCol("cellBarcodeValidFraction", "cellBarcodeValidFraction", "Valid cell-barcode fraction", 82000, ".2p", "Fraction of reads whose cell barcode corrects onto the whitelist this chemistry produces. A low value points at the wrong whitelist or the wrong read geometry rather than at the panel.")
+			numCol("cellBarcodeValidFraction", "cellBarcodeValidFraction", "Valid cell-barcode fraction", 82000, ".2p", "Fraction of reads whose cell barcode corrects onto the whitelist this chemistry produces. A low value points at the wrong whitelist or the wrong read geometry rather than at the panel."),
+			numCol("aggregateBarcodeFraction", "aggregateBarcodeFraction", "Aggregate-barcode read fraction", 81000, ".2p", "Reads in barcodes flagged as aggregates, over reads matched."),
+			numCol("aggregateBarcodesFlagged", "aggregateBarcodesFlagged", "Aggregate barcodes flagged", 80000, undefined),
+			numCol("aggregateBarcodeThreshold", "aggregateBarcodeThreshold", "Aggregate-barcode UMI threshold", 79000, ".1f")
 		],
 		storageFormat: "Parquet",
 		partitionKeyLength: 0
@@ -569,37 +572,19 @@ verdictsImportSpec := func(setAxisSpec, identityAxisSpec, served) {
 					"pl7.app/min": "0"
 				})
 			}),
-			// How many of the set's cells read BOUND here. Neither of the two counts above, and not
-			// recoverable from `agreement`, which is the majority's share -- and the majority is not always
-			// bound. A position where three of ten read bound and the verdict is "not bound" still carries
-			// three, and `the-explore-readout` puts exactly that number in the expansion.
+			// How many of the set's cells read BOUND here. A position where three of ten read bound and the
+			// verdict is "not bound" still carries three.
+			//
+			// SETTLED holds only bound and not-bound, so this and cellsAnswered exhaust the split:
+			// cellsNotBound is `answered - bound`, agreement is `max(bound, answered - bound) / answered`.
+			// Neither crosses this boundary. Both are still emitted, and the punchcard's cell value carries
+			// them -- an output, not an export.
 			verdictCol("cellsBound", "cellsBound", {
 				name: "pl7.app/antigen/cellsBound",
 				valueType: "Int",
 				annotations: a(97500, true, {
 					"pl7.app/label": "Cells that read bound",
 					"pl7.app/min": "0"
-				})
-			}),
-			// The other half of the same pair. SETTLED holds only bound and not-bound, so the two together
-			// always exhaust cellsAnswered. Reported alongside cellsBound rather than left for a reader to
-			// derive, because a not-bound reading with no count beside it looks unsupported.
-			verdictCol("cellsNotBound", "cellsNotBound", {
-				name: "pl7.app/antigen/cellsNotBound",
-				valueType: "Int",
-				annotations: a(97250, true, {
-					"pl7.app/label": "Cells that read not bound",
-					"pl7.app/min": "0"
-				})
-			}),
-			verdictCol("agreement", "agreement", {
-				name: "pl7.app/antigen/agreement",
-				valueType: "Double",
-				annotations: a(97000, false, {
-					"pl7.app/label": "Cell agreement",
-					"pl7.app/format": ".2p",
-					"pl7.app/min": "0",
-					"pl7.app/max": "1"
 				})
 			}),
 			verdictCol("wasCompeted", "wasCompeted", {
@@ -1071,6 +1056,26 @@ tagIdentityLinkerImportSpec := func(tagAxisSpec, identityAxisSpec) {
 // A label column REPLACES its axis in a data table: PlAgDataTableV2 drops any axis that has one, whatever
 // the axis's own visibility says. A hidden label column therefore leaves nothing in the axis's place, and
 // the rows keyed on it stop being distinguishable. Every label column below is visible for that reason.
+// A readable name per tag, for the surfaces keyed by tag rather than by identity. A label column is
+// satisfied only by a column NAMED pl7.app/label carrying exactly one axis, so the tag axis needs its
+// own -- the identity label carries a GROUP's name under a property grouping, not the member tag's.
+tagLabelsImportSpec := func(tagAxisSpec) {
+	return {
+		axes: [{ column: "tag", spec: tagAxisSpec }],
+		columns: [{
+			column: "label",
+			id: "tagLabel",
+			spec: {
+				name: "pl7.app/label",
+				valueType: "String",
+				annotations: a(0, true, { "pl7.app/label": "Tag" })
+			}
+		}],
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}
+}
+
 identityLabelsImportSpec := func(identityAxisSpec) {
 	return {
 		axes: [{ column: "identity", spec: identityAxisSpec }],
@@ -1180,6 +1185,10 @@ samplePanelImportSpec := func(sampleAxisSpec) {
 }
 
 // --- Panel versus reads: result_panel_mismatch.csv ------------------------------------------
+//
+// POTENTIALLY DEAD. Nothing imports this frame any more: the check's one reachable direction -- a
+// declared barcode no read carried -- is the reagent table's `Seen in 0/N`. The spec is left in place
+// and exported so re-importing it is a one-line change, and so a reader following the CSV finds it.
 //
 // Keyed (panelId, tag), because a per-tag failure is a property of the declared tag set rather than of any
 // one sample carrying it. The samples that reported it travel in the row, so nothing about where it was
@@ -1489,6 +1498,12 @@ qcImportSpec := func(levelAxisSpec, entityAxisSpec, measurementAxisSpec, panelAx
 // One row per (panelId, tag, identity). A barcode reused for a different antigen takes a row under each
 // identity, so per-tag figures repeat across a tag's rows. No status column: every figure here is read
 // against the same figure on the tags beside it.
+//
+// Eight columns show by default -- tag, identity, seen in, cells with any count, cells called bound,
+// median count, disagrees with siblings, self-disagreement -- and that set is the quality view's own
+// table. Everything else is optional: the counts and rates the display strings are built from, the
+// named sample lists, and the absent-figure reasons. All of it stays in the frame, so a sort, a filter
+// or an export reaches a number wherever the shown column reaches a word.
 qcReagentImportSpec := func(panelAxisSpec, tagAxisSpec, identityAxisSpec) {
 	col := func(colName, name, valueType, label, order, visible, description) {
 		return {
@@ -1504,19 +1519,28 @@ qcReagentImportSpec := func(panelAxisSpec, tagAxisSpec, identityAxisSpec) {
 		}
 	}
 	return {
+		// The TAG leads, because its label column is the reagent's name and a reader scans this table by
+		// reagent. Axes render as the leading columns in this order, so reordering them here is the only
+		// way to move one. Axis order is part of p-column identity: this frame is an output no other block
+		// reads, and a stored `reagentTableState` pins the old order until a migration clears it.
 		axes: [
-			{ column: "panelId", spec: panelAxisSpec },
 			{ column: "tag", spec: tagAxisSpec },
-			{ column: "identity", spec: identityAxisSpec }
+			{ column: "identity", spec: identityAxisSpec },
+			{ column: "panelId", spec: panelAxisSpec }
 		],
 		columns: [
-			col("samplesSeenIn", "pl7.app/antigen/reagentSamplesSeenIn", "Int", "Seen in", 79000, true,
+			// Seen in prints the ratio, because the count alone does not say out of how many. The two
+			// counts it is built from stay as their own columns, optional, so the figure can be sorted
+			// and filtered as a number.
+			col("seenIn", "pl7.app/antigen/reagentSeenIn", "String", "Seen in", 79000, true,
+				"Samples of this panel carrying any count of the barcode, over the samples it declares. 0/4 means no read carried it."),
+			col("samplesSeenIn", "pl7.app/antigen/reagentSamplesSeenIn", "Int", "Seen in (count)", 78950, false,
 				"Samples of this panel carrying any count of the barcode. Zero means no read carried it."),
 			col("samplesInPanel", "pl7.app/antigen/reagentSamplesInPanel", "Int", "Samples in panel", 78500, false,
 				"The denominator for Seen in: the samples this panel declares."),
-			col("samplesSeenInNames", "pl7.app/antigen/reagentSamplesSeenInNames", "String", "Seen in (samples)", 78900, true,
+			col("samplesSeenInNames", "pl7.app/antigen/reagentSamplesSeenInNames", "String", "Seen in (samples)", 78900, false,
 				"Samples of this panel carrying any count of the barcode, named. Empty means none did."),
-			col("samplesInPanelNames", "pl7.app/antigen/reagentSamplesInPanelNames", "String", "Declared in (samples)", 78700, true,
+			col("samplesInPanelNames", "pl7.app/antigen/reagentSamplesInPanelNames", "String", "Declared in (samples)", 78700, false,
 				"The samples this panel declares the tag for, named. Reading it apart from Seen in (samples) tells a sample whose panel never declared the tag from one that declared it and saw nothing."),
 			col("cellsWithCount", "pl7.app/antigen/reagentCellsWithCount", "Int", "Cells with any count", 78000, true,
 				"Cells holding any count of the barcode, taken before the minimum."),
@@ -1524,11 +1548,18 @@ qcReagentImportSpec := func(panelAxisSpec, tagAxisSpec, identityAxisSpec) {
 				"Cells the verdict read called bound. Empty for a tag supplying the baseline; the reason column names that case."),
 			col("medianCountPerCell", "pl7.app/antigen/reagentMedianCount", "Double", "Median count per cell", 76000, true,
 				"Median count over the cells holding any count, taken before the minimum."),
-			col("siblingDisagreement", "pl7.app/antigen/reagentSiblingDisagreement", "Double", "Disagrees with siblings", 75000, true,
+			// The two disagreement rates print a rate or, where none exists, the words for why. A single-tag
+			// identity is the common case, so a blank here would be most of the column, and a blank cell
+			// reads as a figure that failed to load. The numeric pair beside them keeps the sort.
+			col("siblingDisagreementShown", "pl7.app/antigen/reagentSiblingDisagreementShown", "String", "Disagrees with siblings", 75000, true,
+				"Rate at which this tag disagrees with the other tags of its identity, or the reason there is no rate."),
+			col("siblingDisagreement", "pl7.app/antigen/reagentSiblingDisagreement", "Double", "Disagrees with siblings (rate)", 74950, false,
 				"Rate at which this tag disagrees with the other tags of its identity. Empty where no sibling comparison exists."),
-			col("selfDisagreement", "pl7.app/antigen/reagentSelfDisagreement", "Double", "Self-disagreement", 74500, true,
+			col("selfDisagreementShown", "pl7.app/antigen/reagentSelfDisagreementShown", "String", "Self-disagreement", 74500, true,
+				"Rate at which the cells of one set contradict each other on this tag, or the reason there is no rate."),
+			col("selfDisagreement", "pl7.app/antigen/reagentSelfDisagreement", "Double", "Self-disagreement (rate)", 74450, false,
 				"Rate at which the cells of one set contradict each other on this tag."),
-			col("reason", "pl7.app/antigen/reagentReason", "String", "Why a figure is absent", 74400, true,
+			col("reason", "pl7.app/antigen/reagentReason", "String", "Why a figure is absent", 74400, false,
 				"Names each figure with no value and why. Empty when every figure has one.")
 		],
 		storageFormat: "Parquet",
@@ -1582,7 +1613,7 @@ qcSampleSummaryImportSpec := func(sampleAxisSpec) {
 				"Every read the parser saw, and the share matching the tag pattern."),
 			num("readsMatched", "readsMatched", "Reads matched", 94000, undefined, undefined),
 			num("matchedFraction", "matchedFraction", "Matched fraction", 93000, ".2p", undefined),
-			num("cellsDetected", "cellsDetected", "Cells detected", 92000, undefined, undefined),
+			num("cellsDetected", "cellsDetected", "Cell barcodes detected", 92000, undefined, undefined),
 			num("featuresDetected", "featuresDetected", "Features detected", 91000, undefined, undefined),
 			num("totalUniqueUmis", "totalUniqueUmis", "Total distinct UMIs", 90000, undefined, undefined),
 			num("medianUmisPerCell", "medianUmisPerCell", "Median UMIs / cell", 89000, ".1f", undefined),
@@ -1639,6 +1670,7 @@ export {
 	offeredImportSpec: offeredImportSpec,
 	tagIdentityLinkerImportSpec: tagIdentityLinkerImportSpec,
 	identityLabelsImportSpec: identityLabelsImportSpec,
+	tagLabelsImportSpec: tagLabelsImportSpec,
 	identityPropertyImportSpec: identityPropertyImportSpec,
 	panelLabelsImportSpec: panelLabelsImportSpec,
 	samplePanelImportSpec: samplePanelImportSpec,

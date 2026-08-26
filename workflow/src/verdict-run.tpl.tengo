@@ -36,10 +36,10 @@ RESULT_TABLES := [
 	{ out: "offered", file: "result_offered.csv" },
 	{ out: "tagIdentity", file: "result_tag_identity.csv" },
 	{ out: "identityLabels", file: "result_identity_labels.csv" },
+	{ out: "tagLabels", file: "result_tag_labels.csv" },
 	{ out: "identityProperties", file: "result_identity_properties.csv" },
 	{ out: "panelLabels", file: "result_panel_labels.csv" },
 	{ out: "samplePanel", file: "result_sample_panel.csv" },
-	{ out: "panelMismatch", file: "result_panel_mismatch.csv" },
 	{ out: "undeclaredBarcodes", file: "result_undeclared_barcodes.csv" },
 	{ out: "qc", file: "result_qc.csv" },
 	{ out: "qcSummary", file: "result_qc_summary.csv" },
@@ -128,7 +128,10 @@ self.body(func(inputs) {
 	for table in RESULT_TABLES {
 		b = b.saveFile(table.file)
 	}
-	run := b.saveFileContent("result_run_meta.json").saveFileContent("result_qc_by_sample.json").run()
+	run := b.saveFileContent("result_run_meta.json").
+		saveFileContent("result_qc_by_sample.json").
+		saveFileContent("result_qc_tag_bins.json").
+		run()
 
 	// The run record and the per-sample quality report travel as content because the model reads each as a
 	// VALUE. The tables travel as files because the import template hands them to xsv.importFile. An exec
@@ -138,7 +141,10 @@ self.body(func(inputs) {
 		// The sample-level measurements keyed by sample, for the sample detail view's Quality Checks tab.
 		// That view holds one sample at a time and resolves it synchronously. result_qc.csv carries the
 		// same measurements for every other reader.
-		qcBySample: run.getFileContent("result_qc_by_sample.json")
+		qcBySample: run.getFileContent("result_qc_by_sample.json"),
+		// Binned count distributions per (sample, tag), and the one edge list they share. Content rather
+		// than a file, because the chart that draws them takes its bins as values in the UI.
+		qcTagBins: run.getFileContent("result_qc_tag_bins.json")
 	}
 	for table in RESULT_TABLES {
 		result[table.out] = run.getFile(table.file)

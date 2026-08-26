@@ -1,8 +1,10 @@
 """Rung 3: a tag's own count distribution across a sample's cells, split in two.
 
-The ladder in `what-plays-the-baseline` puts this third: *"that tag's own distribution
+The ladder in `what-plays-the-baseline` puts this third: that tag's own distribution
 across the sample's cells, split into two components, where the sample holds at least
-300 cells and the counts actually separate."* It is the only rung with orthogonal
+300 cells. Separation is NOT a condition: that atom carries no automatic check that the
+counts separated, and states that none exists to carry. The run shows the fit and leaves
+the judgement to the reader. It is the only rung with orthogonal
 validation behind it and the only one validated at these panel sizes, and it serves a
 run with no declared comparator once the panel rung's member condition rules that out.
 
@@ -86,7 +88,11 @@ class TagFit(NamedTuple):
 
 # The prose a reader sees. Nothing branches on these strings.
 TOO_FEW_CELLS = "the sample holds too few cells for a distribution to be fitted"
-NO_SEPARATION = "this tag's counts do not separate into two populations"
+# Reached only where no two-component fit exists to report: nothing survives the trim, the EM
+# returns one component, or the probabilities are incomputable. It is a statement about the fit,
+# never a finding that this tag's counts failed to separate -- no check for that is built, and
+# `what-plays-the-baseline` states that none should be.
+NO_FIT = "no two-component fit could be computed for this tag"
 
 
 # The share of the highest counts dropped before the fit. `what-plays-the-baseline` fixes it:
@@ -102,6 +108,12 @@ _UPPER_TRIM_PERCENTILE = 99.0
 # slightly less settled one.
 _EM_TOLERANCE = 1e-6
 _EM_MAX_ROUNDS = 200
+
+# Two component means this close are one component. A numerical guard on the EM, never a test of
+# whether a tag's counts separated -- `what-plays-the-baseline` states that no such test exists and
+# that none is invented here. Loose enough to catch a converged pair that float equality misses,
+# tight enough that two means a reader would call distinct always survive.
+_CONVERGED_COMPONENT_RTOL = 1e-9
 
 # The dispersion a component falls back to where its variance does not exceed its mean. The
 # negative binomial has no such shape -- that is the Poisson boundary -- so the fit uses a
@@ -227,8 +239,14 @@ def _fit_two_component_nb(counts: np.ndarray) -> _Mixture | None:
             variance = float((r * (x - means[k]) ** 2).sum() / mass[k])
             sizes[k] = _nb_size(means[k], variance)
 
-        # The two components have converged onto each other, so there is one population.
-        if means[0] == means[1]:
+        # The two components have converged onto each other, so there is one population. Compared
+        # to a relative tolerance, not by `==`: two floats from separate M-step reductions land on
+        # the same value only by luck, so exact equality let a converged pair through.
+        #
+        # The tolerance is numerical and NOT a separation criterion. `what-plays-the-baseline` states
+        # that no test for whether a tag's counts separated exists and that this corpus does not invent
+        # one. This catches an EM that ran two components onto one solution, and nothing else.
+        if np.isclose(means[0], means[1], rtol=_CONVERGED_COMPONENT_RTOL, atol=0.0):
             return None
 
         if abs(loglik - previous) < _EM_TOLERANCE:
@@ -281,14 +299,14 @@ def fit_tag_probabilities(
     ceiling = float(np.percentile(counts.astype(float), _UPPER_TRIM_PERCENTILE))
     fitted_on = counts[counts.astype(float) <= ceiling]
     if fitted_on.size == 0:
-        return TagFit(None, NO_SEPARATION, n)
+        return TagFit(None, NO_FIT, n)
 
     fit = _fit_two_component_nb(fitted_on)
     if fit is None:
-        return TagFit(None, NO_SEPARATION, n)
+        return TagFit(None, NO_FIT, n)
     probabilities = _signal_probability(counts, fit)
     if probabilities is None:
-        return TagFit(None, NO_SEPARATION, n)
+        return TagFit(None, NO_FIT, n)
     background_index = 1 - fit.signal
     background = Background(
         mean=float(fit.means[background_index]),
@@ -378,7 +396,7 @@ def fit_tag_probabilities_by_pair(
 
         fit = fit_tag_probabilities(dense["umiCount"].to_numpy(), min_cells)
         if fit.probabilities is None:
-            reasons[(sample, tag)] = fit.reason or NO_SEPARATION
+            reasons[(sample, tag)] = fit.reason or NO_FIT
             continue
         if fit.background is not None:
             backgrounds[(sample, tag)] = fit.background

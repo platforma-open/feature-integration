@@ -25,7 +25,7 @@ verdictLinker := import(":verdict-linker")
 json := import("json")
 
 // Returns five frames: antigenVerdicts (exported), and punchcard, cellReference, qcTable and
-// panelMismatchTable (this block's own). cellReference holds one row per cell, carrying the reference
+// cellReference holds one row per cell, carrying the reference
 // reading and the gate outcome, and deliberately not the per-cell per-tag counts. defineOutputs is
 // deliberately absent: an ephemeral template takes its output names from what the body returns and never
 // checks a declared list, so declaring one would be inert.
@@ -251,16 +251,28 @@ self.body(func(inputs) {
 	reagentFb := pframes.pFrameBuilder()
 	addTo(reagentFb, "reagents", inputs.reagents,
 		columnSpecs.qcReagentImportSpec(panelAxis, tagAxis, identityAxis))
+	// One label column per axis. A label column REPLACES its axis in the grid -- `table-source-v2.js`
+	// drops an axis that has one -- and every label column sorts leftmost. Without all three, an axis
+	// renders its raw id, and under the per-tag grouping an identity id IS a barcode sequence, so the
+	// table showed a name beside the same reagent's 15-mer.
+	//
+	// Added to THIS frame: a block's own exports are not in its own result pool, so the copies travelling
+	// with the verdicts are unreadable here. Added in reading order, which is the order they render in.
+	addTo(reagentFb, "tagLabels", inputs.tagLabels,
+		columnSpecs.tagLabelsImportSpec(tagAxis))
+	addTo(reagentFb, "reagentIdentityLabels", inputs.identityLabels,
+		columnSpecs.identityLabelsImportSpec(identityAxis))
+	addTo(reagentFb, "reagentPanelLabels", inputs.panelLabels,
+		columnSpecs.panelLabelsImportSpec(panelAxis))
 
-	// The panel-versus-reads check is emitted as a p-column rather than left as a file. A mismatch report the
-	// user cannot see defeats its purpose.
-	mismatchFb := pframes.pFrameBuilder()
-	addTo(mismatchFb, "panelMismatch", inputs.panelMismatch,
-		columnSpecs.panelMismatchImportSpec(panelAxis, tagAxis))
-
+	// The panel-versus-reads check is no longer imported. Its one reachable direction -- a declared barcode
+	// no read carried -- is the reagent table's `Seen in 0/N`, on the surface the quality readout designs for
+	// reagent findings. emit_verdicts.py still writes result_panel_mismatch.csv and panel.py still computes
+	// it: potentially dead, left for a separate pass.
+	//
 	// 330's own table: barcodes the reads carried that no panel declares, keyed by sequence. Its own
-	// frame, because it keys on (sampleId, tag) rather than any axis the tables above use, and because
-	// panelMismatch's "undeclared-in-panel" direction is structurally unreachable there -- refine-tags
+	// frame, because it keys on (sampleId, tag) rather than any axis the tables above use, and because the
+	// retired check's "undeclared-in-panel" direction was structurally unreachable there -- refine-tags
 	// has already snapped every barcode onto the panel before that check's counts are built, which is
 	// exactly why this table reads the pre-refine pass instead.
 	undeclaredFb := pframes.pFrameBuilder()
@@ -275,7 +287,6 @@ self.body(func(inputs) {
 		qcSummaryTable: qcSummaryFb.build(),
 		qcDistributions: distributionFb.build(),
 		reagentTable: reagentFb.build(),
-		panelMismatchTable: mismatchFb.build(),
 		undeclaredBarcodesTable: undeclaredFb.build()
 	}
 })

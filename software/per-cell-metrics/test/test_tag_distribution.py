@@ -25,7 +25,7 @@ import pytest
 from panel import ANY_SAMPLE
 from tag_distribution import (
     DEFAULT_DISTRIBUTION_MIN_CELLS,
-    NO_SEPARATION,
+    NO_FIT,
     TOO_FEW_CELLS,
     fit_tag_probabilities,
     fit_tag_probabilities_by_pair,
@@ -142,13 +142,13 @@ def test_a_tag_every_cell_read_identically_does_not_fit():
     # One value is one population by construction. That is the answer rather than an error.
     fit = fit_tag_probabilities(np.full(2000, 4, dtype=np.int64))
     assert fit.probabilities is None
-    assert fit.reason == NO_SEPARATION
+    assert fit.reason == NO_FIT
 
 
 def test_a_tag_no_cell_read_at_all_does_not_fit():
     fit = fit_tag_probabilities(np.zeros(2000, dtype=np.int64))
     assert fit.probabilities is None
-    assert fit.reason == NO_SEPARATION
+    assert fit.reason == NO_FIT
 
 
 def test_a_tag_nothing_bound_still_fits_and_calls_some_cells_bound():
@@ -223,7 +223,7 @@ def test_a_declared_tag_the_reads_never_showed_gets_no_fit():
     # Fitted over all zeros. One population, so no fit -- the honest answer, and the quality finding.
     counts, cells = _bed()
     fits = fit_tag_probabilities_by_pair(counts, cells, _panel([("AAAA", "S1"), ("DEAD", "S1")]))
-    assert fits.reasons == {("S1", "DEAD"): NO_SEPARATION}
+    assert fits.reasons == {("S1", "DEAD"): NO_FIT}
     assert set(fits.probabilities["tag"].unique().to_list()) == {"AAAA"}
 
 
@@ -324,3 +324,27 @@ def test_backgrounds_are_collected_per_sample_and_tag():
         assert key not in fits.reasons
     for key in fits.reasons:
         assert key not in fits.backgrounds
+
+
+def test_padding_the_universe_with_ambient_barcodes_collapses_the_fit():
+    # The defect this guards against: `what-plays-the-baseline` fits "across the sample's cells", and
+    # feeding the observed barcodes instead pads the population with ambient droplets. In droplet data
+    # they outnumber the cells by one to two orders of magnitude and each holds a count or two, so both
+    # components land on that mass and the fit reports a background sitting on top of its own signal.
+    counts, cells = _bed()
+    rng = np.random.default_rng(SEED + 1)
+    ambient_ids = [("S1", f"ambient{i}") for i in range(50 * len(cells))]
+    ambient_rows = [(s, c, "AAAA", 1) for s, c in ambient_ids if rng.random() < 0.35]
+
+    clean = fit_tag_probabilities_by_pair(counts, cells, _panel([("AAAA", "S1")]))
+    swamped = fit_tag_probabilities_by_pair(
+        pl.concat([counts, _counts_frame(ambient_rows)]), cells + ambient_ids, _panel([("AAAA", "S1")])
+    )
+
+    over_cells = clean.backgrounds[("S1", "AAAA")]
+    assert over_cells.signal_mean > over_cells.mean * 10
+
+    # Over the barcodes the rung either refuses outright or returns two components that do not stand
+    # apart. Both are unusable; neither is the reading the spec asks a scientist to judge.
+    over_barcodes = swamped.backgrounds.get(("S1", "AAAA"))
+    assert over_barcodes is None or over_barcodes.signal_mean < over_barcodes.mean * 2

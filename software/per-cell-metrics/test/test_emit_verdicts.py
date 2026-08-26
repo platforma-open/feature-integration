@@ -8,6 +8,7 @@ import polars as pl
 import pytest
 import qc_rows
 from emit_verdicts import _build_grouping, _identity_properties, _linker_frame, undeclared_feature_counts
+from identity_tables import CELL_PUNCH_MAX_CELLS, IDENTITY_SUMMARY_MAX_IDENTITIES
 from panel import ANY_SAMPLE, consistent_properties, property_columns
 from qc_measures import DEFAULT_LINES, MEASUREMENTS, Line, Measurement
 from verdict import DEFAULT_PANEL_MIN_MEMBERS, ReferenceChoice
@@ -88,12 +89,35 @@ def test_writes_every_artifact(bed):
         "result_cell_scalars.csv",
         "result_offered.csv",
         "result_identity_labels.csv",
+        "result_tag_labels.csv",
         "result_identity_properties.csv",
         "result_panel_mismatch.csv",
         "result_undeclared_barcodes.csv",
         "result_run_meta.json",
     ):
         assert (bed / name).exists(), name
+
+
+def test_tag_labels_name_every_tag_including_the_comparator(bed):
+    r = _run(bed, *BASE)
+    assert r.returncode == 0, r.stderr
+    labels = dict(pl.read_csv(bed / "result_tag_labels.csv", infer_schema_length=0).iter_rows())
+    panel = pl.read_csv(bed / "panel.csv", infer_schema_length=0)
+    assert set(labels) == set(panel["Sequence"].to_list()), "one row per declared tag"
+    # The reference tag has no identity of its own, so an identity-keyed label would miss it. It holds
+    # reagent figures, so the reagent table needs its name.
+    assert labels["CTRL"] == "Ctrl", f"the comparator kept its barcode: {labels}"
+    assert labels["AAAA"] == "AgA"
+
+
+def test_tag_labels_match_identity_labels_under_the_per_tag_grouping(bed):
+    _run(bed, *BASE)
+    tags = dict(pl.read_csv(bed / "result_tag_labels.csv", infer_schema_length=0).iter_rows())
+    identities = dict(pl.read_csv(bed / "result_identity_labels.csv", infer_schema_length=0).iter_rows())
+    # An identity IS a tag here, so one rule must give one answer. Two rules would read a tag under one
+    # name beside its verdict and another beside its reagent figures.
+    for identity, label in identities.items():
+        assert tags[identity] == label, f"{identity}: {tags[identity]!r} vs {label!r}"
 
 
 def test_a_silent_cell_votes_not_bound(bed):
@@ -2424,6 +2448,15 @@ def test_run_meta_says_whether_the_cell_punch_was_emitted(silent_position_bed):
     assert meta["cellPunchCells"] == 2
 
 
+def test_run_meta_carries_both_gate_limits(silent_position_bed):
+    # Each gate's count is only readable against its own limit. The identity limit bounds the pivot's
+    # width and the cell limit bounds its rows, so one never stands in for the other.
+    _run(silent_position_bed, *BASE)
+    meta = json.loads((silent_position_bed / "result_run_meta.json").read_text())
+    assert meta["identitySummaryLimit"] == IDENTITY_SUMMARY_MAX_IDENTITIES
+    assert meta["cellPunchLimit"] == CELL_PUNCH_MAX_CELLS
+
+
 def test_the_panel_comparator_is_built_from_raw_counts(tmp_path):
     """The production call site passes the raw frame, not the floored one.
 
@@ -2917,13 +2950,16 @@ REAGENT_COLUMNS = [
     "identity",
     "samplesSeenIn",
     "samplesInPanel",
+    "seenIn",
     "samplesSeenInNames",
     "samplesInPanelNames",
     "cellsWithCount",
     "cellsAboveTheLine",
     "medianCountPerCell",
     "siblingDisagreement",
+    "siblingDisagreementShown",
     "selfDisagreement",
+    "selfDisagreementShown",
     "reason",
 ]
 
@@ -2957,6 +2993,38 @@ def test_the_reagent_table_names_every_absent_figure(bed):
     # One tag under this identity, so no sibling comparison exists and the row says so.
     assert target["siblingDisagreement"] is None
     assert "siblingDisagreement=this identity carries one tag" in target["reason"]
+
+
+def test_the_reagent_table_prints_a_ratio_and_the_words_for_an_absent_rate(bed):
+    # The quality view's own table shows "1/4" under Seen in and "no sibling" under the sibling
+    # column. A blank there reads as a figure that failed to load, and a single-tag identity is the
+    # common case, so the shown column carries the words while the rate beside it stays numeric.
+    (bed / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type\nS1,AgA,AAAA,Target\nS1,AgD,DEAD,Target\nS1,Ctrl,CTRL,Control\n"
+    )
+    _run(bed, *BASE)
+    reagents = pl.read_csv(bed / "result_reagents.csv", infer_schema_length=0)
+    rows = {r["tag"]: r for r in reagents.iter_rows(named=True)}
+
+    # One sample in this panel, and the barcode is carried in it.
+    assert rows["AAAA"]["seenIn"] == "1/1"
+    # A tag no read carried keeps its row and reads zero over the same denominator.
+    assert rows["DEAD"]["seenIn"] == "0/1"
+
+    # Each identity carries one tag here, so every row says so in words rather than leaving a blank.
+    assert rows["AAAA"]["siblingDisagreementShown"] == "no sibling"
+    assert rows["DEAD"]["siblingDisagreementShown"] == "no sibling"
+    # The reference tag is held out of the verdict read, which is a different cause and says so.
+    assert rows["CTRL"]["siblingDisagreementShown"] == "held out of the read"
+
+    # A tag no cell set could be read on has nothing to compare against itself either.
+    assert rows["DEAD"]["selfDisagreementShown"] == "nothing to compare"
+
+    # Where a rate exists the shown column carries the number, to two places.
+    rates = [r for r in reagents.iter_rows(named=True) if r["selfDisagreement"] is not None]
+    assert rates, "at least one tag should carry a self-disagreement rate"
+    for row in rates:
+        assert row["selfDisagreementShown"] == f"{float(row['selfDisagreement']):.2f}"
 
 
 def test_a_barcode_reused_for_two_antigens_takes_a_row_under_each(tmp_path):
@@ -3415,15 +3483,25 @@ def test_the_wide_summary_status_is_the_sample_rollup_and_is_not_recomputed(bed)
         )
 
 
+def test_a_missing_read_qc_row_names_the_row_not_the_denominator(bed):
+    # No --qc-summary at all: no row reached this sample. Naming the denominator here would
+    # be false -- there is no row to read a denominator from.
+    r = _run(bed, *BASE)
+    assert r.returncode == 0, r.stderr
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    row = qc.filter(pl.col("measurement") == "aggregateBarcodeFraction").row(0, named=True)
+    assert row["value"] in ("", None)
+    assert "reached this sample" in row["reason"]
+
+
 def test_a_present_read_qc_row_with_no_reads_names_the_denominator_not_the_row(bed):
-    # Two conditions blank aggregateBarcodeFraction: no read-QC row at all, and a row whose
-    # readsTotal is zero. The second is reachable through parse_gate.py's empty-input path,
-    # where readsTotal is present and zero. Naming the row as missing would be false -- the
-    # row is here, and readsTotal on it reads 0.
+    # A row present with readsTotal zero, reachable through parse_gate.py's empty-input path.
+    # Naming the row as missing would be false -- the row is here, and readsTotal on it reads 0.
     (bed / "qc.csv").write_text(
         "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
-        "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction\n"
-        "S1,0,0,0.0,0,0,0,0,\n"
+        "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction,"
+        "aggregateBarcodeFraction,aggregateBarcodesFlagged,aggregateBarcodeThreshold\n"
+        "S1,0,0,0.0,0,0,0,0,,,,\n"
     )
     r = _run(bed, *BASE, "--qc-summary", "qc.csv")
     assert r.returncode == 0, r.stderr
@@ -3431,6 +3509,44 @@ def test_a_present_read_qc_row_with_no_reads_names_the_denominator_not_the_row(b
     row = qc.filter(pl.col("measurement") == "aggregateBarcodeFraction").row(0, named=True)
     assert row["value"] in ("", None)
     assert "no denominator" in row["reason"]
+    assert "reached this sample" not in row["reason"]
+
+
+def test_a_present_read_qc_row_with_reads_but_no_figure_names_neither_the_row_nor_the_denominator(bed):
+    # A row present with nonzero readsTotal, but the aggregate-barcode columns absent -- the
+    # carrier defect this measurement guards against: a real figure computed upstream that did
+    # not survive into the combined QC summary. Neither NO_READ_QC nor NO_READS_TO_DIVIDE is
+    # true of this row, so a third reason is required.
+    (bed / "qc.csv").write_text(
+        "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
+        "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction\n"
+        "S1,20000,18000,0.9,3,2,1200,300,0.82\n"
+    )
+    r = _run(bed, *BASE, "--qc-summary", "qc.csv")
+    assert r.returncode == 0, r.stderr
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    row = qc.filter(pl.col("measurement") == "aggregateBarcodeFraction").row(0, named=True)
+    assert row["value"] in ("", None)
+    assert "no denominator" not in row["reason"]
+    assert "reached this sample" not in row["reason"]
+
+
+def test_a_read_qc_row_with_no_read_count_names_the_missing_count(bed):
+    # A row present, the aggregate columns absent, and readsTotal blank. "reports nonzero reads" is
+    # false of this row and "reports no reads" states a count of zero it does not carry, so the
+    # fourth case names the absent count itself.
+    (bed / "qc.csv").write_text(
+        "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
+        "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction\n"
+        "S1,,18000,0.9,3,2,1200,300,0.82\n"
+    )
+    r = _run(bed, *BASE, "--qc-summary", "qc.csv")
+    assert r.returncode == 0, r.stderr
+    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    row = qc.filter(pl.col("measurement") == "aggregateBarcodeFraction").row(0, named=True)
+    assert row["value"] in ("", None)
+    assert "carries no read count" in row["reason"]
+    assert "nonzero reads" not in row["reason"]
     assert "reached this sample" not in row["reason"]
 
 
@@ -3449,3 +3565,29 @@ def test_a_valueless_usable_fraction_carries_its_reason_and_no_detail(bed):
     assert row["value"] in ("", None)
     assert row["reason"]
     assert row["detail"] in ("", None)
+
+
+def test_a_reused_barcode_reads_as_its_joined_names_not_its_sequence(tmp_path):
+    """A tag whose panels name it differently reads as both names, under any grouping.
+
+    The label rungs are: the agreed name, else the disagreeing names joined, else the barcode. A
+    property grouping labels its IDENTITIES from the grouped-on column, and reading the tag's name
+    from that scope dropped every reused barcode to the third rung.
+    """
+    (tmp_path / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type\n"
+        "S1,AgA,AAAA,Target\n"
+        "S2,AgA_alt,AAAA,Target\n"
+        "S1,Ctrl,CTRL,Control\n"
+        "S2,Ctrl,CTRL,Control\n"
+    )
+    (tmp_path / "counts.csv").write_text(
+        "sampleId,cellId,tag,umiCount\nS1,c1,AAAA,500\nS1,c1,CTRL,6\nS2,c2,AAAA,500\nS2,c2,CTRL,6\n"
+    )
+    (tmp_path / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS2,c2,K2\n")
+    r = _run(tmp_path, *BASE, "--grouping", json.dumps({"by": "property", "columns": ["Type"]}))
+    assert r.returncode == 0, r.stderr
+
+    labels = dict(pl.read_csv(tmp_path / "result_tag_labels.csv", infer_schema_length=0).iter_rows())
+    assert labels["AAAA"] == "AgA / AgA_alt", f"the reused barcode fell back to its sequence: {labels}"
+    assert labels["CTRL"] == "Ctrl", "a tag its panels agree on keeps its plain name"
