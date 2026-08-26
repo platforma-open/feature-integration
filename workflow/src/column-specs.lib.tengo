@@ -1562,7 +1562,7 @@ qcSampleSummaryImportSpec := func(sampleAxisSpec) {
 			num("uniqueCountsPerCell", "uniqueCountsPerCell", "Unique counts per cell", 81000, ".1f",
 				"Reads and distinct UMIs per cell barcode."),
 			num("highReferenceCells", "highReferenceCells", "Sticky reference cells", 80000, undefined,
-				"Cells whose reference reading reached the declared gate, or the spread of those readings.")
+				"Cells whose reference reading exceeded the declared gate, or the spread of those readings.")
 		],
 		storageFormat: "Parquet",
 		partitionKeyLength: 0

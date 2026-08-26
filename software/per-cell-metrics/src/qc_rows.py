@@ -326,13 +326,20 @@ def _sample_decile_rows(sample: str, deciles: pl.DataFrame) -> list[dict]:
 def _sticky_measure(readings: dict[tuple[str, str], int], gate: int | None) -> tuple[float | None, str]:
     """One sample's sticky exposure, in whichever form the gate allows.
 
-    A declared gate supplies a *high*, so the measurement is a count of the cells at or above it. With
-    no gate there is no high, and a count against a line nobody drew would assert a boundary; the
-    spread of the readings goes out instead. The value is then the median, matching the other spreads.
+    A declared gate supplies a *high*, so the measurement is a count of the cells above it. With no gate
+    there is no high, and a count against a line nobody drew would assert a boundary; the spread of the
+    readings goes out instead. The value is then the median, matching the other spreads.
+
+    Both forms are taken over the cells' own baseline readings, which only a declared baseline tag
+    supplies. Over none, a gated count is 0.0 and reports a sample as checked and clean on a question the
+    run never asked, while the run record reports None for the same condition. So neither form returns a
+    number there, and the caller's reason goes out in place of one.
     """
     comparator_detail = f"cellsWithAComparator={len(readings)}"
+    if not readings:
+        return None, comparator_detail
     if gate is not None:
-        return float(sum(1 for v in readings.values() if v >= gate)), f"{comparator_detail}|gate={gate}"
+        return float(sum(1 for v in readings.values() if v > gate)), f"{comparator_detail}|gate={gate}"
     deciles = deciles_of(np.asarray(list(readings.values()), dtype=float))
     points = "|".join(
         f"{d}:{'' if v is None else round(v, 3)}" for d, v in zip(deciles["decile"], deciles["value"], strict=True)

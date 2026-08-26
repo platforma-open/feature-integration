@@ -2410,6 +2410,24 @@ def test_the_tag_distribution_rung_serves_and_says_so(tmp_path):
     assert meta["distributionMinCells"] == 300
 
 
+def test_the_sticky_measurement_says_why_where_no_cell_carries_a_baseline_reading(tmp_path):
+    # Both forms of this measurement read a cell's own baseline reading, which only a declared baseline
+    # tag supplies. Under the tag-distribution rung no cell has one, so a gated count is taken over an
+    # empty population and comes out 0.0 -- reporting the sample as checked and clean on a question the
+    # run never asked. The run record already reports None for the same condition, so a zero here also
+    # makes the two artefacts disagree.
+    _distribution_bed(tmp_path)
+    _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv", "--gate-threshold", "50")
+
+    qc = pl.read_csv(tmp_path / "result_qc.csv", infer_schema_length=0)
+    rows = qc.filter(pl.col("measurement") == "highReferenceCells")
+    assert rows.height > 0, "the measurement keeps its row whether or not the run could compute it"
+    for row in rows.iter_rows(named=True):
+        assert not row["value"], "a zero would read as a sample carrying no sticky cells"
+        assert row["reason"] == "no cell in this sample carries a comparator reading"
+        assert row["detail"] == "cellsWithAComparator=0"
+
+
 def test_the_sticky_measurement_is_a_spread_when_no_gate_is_declared(bed):
     # The default, and therefore the first run every scientist sees. Where no threshold is declared there
     # is no *high* to count, and the measurement is the distribution of those readings instead -- which is

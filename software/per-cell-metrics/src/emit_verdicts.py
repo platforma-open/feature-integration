@@ -225,7 +225,7 @@ def main() -> None:
     )
     p.add_argument("--min-voters", type=int, default=DEFAULT_MIN_VOTERS)
     p.add_argument("--min-agreement", type=float, default=DEFAULT_MIN_AGREEMENT)
-    p.add_argument("--gate-threshold", type=int, default=None, help="set aside cells whose comparator reads this high")
+    p.add_argument("--gate-threshold", type=int, default=None, help="set aside cells whose comparator reads above this")
     p.add_argument("--grouping", default=None, help="JSON: {'by':'tag'} or {'by':'property','column':...}")
     p.add_argument("--contending", default=None, help="JSON: groups of identities that contend, as a list of lists")
     # Accepted and not yet read. The capture rollup was its only reader, and only the sample carries
@@ -1061,9 +1061,9 @@ def main() -> None:
         # aside. With none there is no *high* to count, so the measurement is the spread of the readings
         # themselves, which is what a scientist reads in order to declare a gate.
         #
-        # A gate makes the value a count, which is 0.0 over no readings rather than absent. The spread
-        # has no median over none, so only the gateless form can reach the report with no number, and it
-        # does so exactly when no cell of this sample carries a comparator.
+        # Either form reaches the report with no number exactly when no cell of this sample carries a
+        # comparator, and the reason below goes out in its place. A gated count over no readings is 0.0,
+        # which reads as a sample carrying no sticky cells rather than one the question was never put to.
         here = {key: value for key, value in reference.by_cell.items() if key[0] == sample}
         high_value, high_detail = _sticky_measure(here, args.gate_threshold)
         add(

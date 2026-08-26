@@ -227,9 +227,29 @@ def _fit_two_component_nb(counts: np.ndarray) -> _Mixture | None:
             break
         previous = loglik
 
-    # "Label the higher-median component the signal one." The medians of the fitted components are
-    # ordered by their means, which the negative binomial's shape guarantees.
-    return _Mixture(means.copy(), sizes.copy(), weights.copy(), int(np.argmax(means)))
+    return _Mixture(means.copy(), sizes.copy(), weights.copy(), _signal_component(means, sizes))
+
+
+def _signal_component(means: np.ndarray, sizes: np.ndarray) -> int:
+    """Which component is the signal one: the higher MEDIAN, the mean breaking a tie.
+
+    `what-plays-the-baseline` fixes the rule as the higher-median component, and a negative binomial's
+    median is not ordered by its mean. The median depends on the size as much as the mean: at mean 50
+    and size 0.05 it is 0, at mean 5 and size 1e6 it is 5. Sizes are re-estimated per component from
+    that component's own variance every round, so the two orderings are free to disagree -- and an
+    overdispersed component with a high mean is what ambient mass looks like.
+
+    Labelling the wrong one inverts every call for the tag, since `_signal_probability` then returns
+    the other component's responsibility: cells reading nothing score high and cells reading a lot
+    score low.
+
+    Two components fitted over mostly-zero counts both have a median of zero. The published rule does
+    not resolve that, and the mean is the only thing left separating them.
+    """
+    medians = [float(nbinom.median(sizes[k], sizes[k] / (sizes[k] + means[k]))) for k in (0, 1)]
+    if medians[0] != medians[1]:
+        return int(np.argmax(medians))
+    return int(np.argmax(means))
 
 
 def _signal_probability(counts: np.ndarray, fit: _Mixture) -> np.ndarray | None:

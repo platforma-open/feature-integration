@@ -121,6 +121,32 @@ def test_an_even_split_is_handled():
     assert _bound(fit.probabilities)[1000:].all()
 
 
+def test_a_cell_that_read_nothing_is_not_called_bound_beside_an_overdispersed_population():
+    """The signal component is the higher-MEDIAN one, and the median is not ordered by the mean.
+
+    An ambient population -- mostly zero with a few enormous counts -- fits a component whose mean sits
+    far above a real binder population's while its median sits far below. The Poisson-shaped binders
+    here are the higher-median component and the overdispersed ambient one is not, so ordering the two
+    by mean labels them the wrong way round.
+
+    Asserted at a count of zero because that is where the inversion is unmistakable: under the mean
+    ordering every cell that read nothing lands in the ambient component with probability 1 and is
+    called bound.
+    """
+    rng = np.random.default_rng(3)
+    ambient = rng.negative_binomial(0.15, 0.15 / (0.15 + 40), 1000)
+    binders = rng.poisson(12, 1000)
+    counts = np.concatenate([ambient, binders])
+
+    fit = fit_tag_probabilities(counts)
+    assert fit.reason is None
+    silent = fit.probabilities[counts == 0]
+    assert silent.size > 0, "the bed must hold cells that read nothing for this to say anything"
+    assert silent.max() < DISTRIBUTION_BOUND_PROBABILITY, "a cell holding no count of the tag cannot bind it"
+    # The direction holds over the two populations and not only at zero.
+    assert fit.probabilities[1000:].mean() > fit.probabilities[:1000].mean()
+
+
 def test_the_probability_is_a_probability():
     fit = fit_tag_probabilities(_mixture(1940, 2, 60, 300))
     assert fit.probabilities.min() >= 0.0

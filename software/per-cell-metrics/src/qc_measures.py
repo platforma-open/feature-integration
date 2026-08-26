@@ -248,7 +248,7 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "highReferenceCells",
         "Sticky cells, or the spread of the readings where no gate is declared",
         "sample",
-        "Cells whose reference reading reached the declared gate, or the spread of those readings.",
+        "Cells whose reference reading exceeded the declared gate, or the spread of those readings.",
     ),
     # The id is a value on the `measurement` axis, so renaming it does not break the column -- it
     # splits the rows, and a table holding old and new runs reads as two measurements.

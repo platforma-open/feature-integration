@@ -290,10 +290,15 @@ def gate_cells(
 
     A sticky cell left in returns as a confident *not bound*, the collapse the four-state
     model prevents, so the exposure is surfaced either way.
+
+    Strictly above the threshold, never at it. `reference-two-roles` says a cell *above* the
+    threshold is set aside and that a cell is set aside where a reading *exceeds* it, which is
+    the same direction the minimum takes from the other side -- a count of four survives a
+    minimum of four.
     """
     if threshold is None:
         return set(), None
-    gated = {k for k, v in reference.items() if v >= threshold}
+    gated = {k for k, v in reference.items() if v > threshold}
     return gated, len(gated)
 
 

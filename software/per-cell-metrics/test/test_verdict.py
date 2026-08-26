@@ -232,16 +232,17 @@ def test_panel_source_refuses_one_below_the_minimum():
         reference_by_cell(counts, set(), ReferenceChoice.PANEL, panel_size=4, min_members=5)
 
 
-def test_the_gate_boundary_includes_the_line_itself():
-    # A reading exactly at the threshold is high: the named value satisfies the condition it names. This
-    # matches the floor and the panel minimum, and both sides are pinned so changing the comparison is a
-    # deliberate act.
+def test_the_gate_boundary_excludes_the_line_itself():
+    # `reference-two-roles` sets aside a cell ABOVE the threshold, and where a reading EXCEEDS it. So a
+    # reading exactly at the line stays in and answers, the same direction the floor takes from the
+    # other side -- a count of four survives a minimum of four. Both sides are pinned, so changing the
+    # comparison is a deliberate act.
     at_line = {("S1", "c1"): 100}
-    just_below = {("S1", "c2"): 99}
+    just_above = {("S1", "c2"): 101}
     aside_at, high_at = gate_cells(at_line, threshold=100)
-    aside_below, high_below = gate_cells(just_below, threshold=100)
-    assert aside_at == {("S1", "c1")} and high_at == 1
-    assert aside_below == set() and high_below == 0
+    aside_above, high_above = gate_cells(just_above, threshold=100)
+    assert aside_at == set() and high_at == 0
+    assert aside_above == {("S1", "c2")} and high_above == 1
 
 
 def test_one_threshold_does_both_jobs():
