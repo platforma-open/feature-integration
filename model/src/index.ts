@@ -30,15 +30,25 @@ export type { BlockArgs, BlockData, CsvMeta, GroupingRule, ReferenceSource } fro
 export { createPlDataTableStateV2 } from "@platforma-sdk/model";
 export type { PTableKey } from "@platforma-sdk/model";
 
-// Mirror verdict.py DEFAULT_FLOOR and BOUND_CUTOFF, and combine.py DEFAULT_MIN_VOTERS.
-const DEFAULT_COUNT_FLOOR = 4;
-const DEFAULT_BOUND_CUTOFF = 75;
-const DEFAULT_MIN_VOTING_CELLS = 1;
-// Gates rather than tunes. Keep above the fifteen-tag cap of an antibody kit. A panel that small then
-// uses the tag-distribution rung.
-const DEFAULT_PANEL_REFERENCE_MIN_MEMBERS = 25;
-// Mirrors tag_distribution.py. The second value has no published figure and ships as a declared default.
-const DEFAULT_DISTRIBUTION_MIN_CELLS = 300;
+// The reading's own defaults, in one exported map. Exported so a test can compare it against the other
+// two copies: this map is what a workflow-driven run is actually answered under, because
+// verdict-args.lib.tengo emits every one of these flags UNCONDITIONALLY, substituting its own copy
+// wherever the stored value is undefined. The argparse defaults in the Python never govern such a run.
+// `test/src/qcDefaults.test.ts` asserts each value against verdict-args.lib.tengo and the Python module
+// that owns it, the same way it asserts the QC lines below.
+export const VERDICT_DEFAULTS = {
+  // verdict.py DEFAULT_FLOOR
+  countFloor: 4,
+  // verdict.py BOUND_CUTOFF
+  boundCutoff: 75,
+  // combine.py DEFAULT_MIN_VOTERS
+  minVotingCells: 1,
+  // verdict.py DEFAULT_PANEL_MIN_MEMBERS. Gates rather than tunes: keep above the fifteen-tag cap of an
+  // antibody kit, so a panel that small uses the tag-distribution rung.
+  panelReferenceMinMembers: 25,
+  // tag_distribution.py DEFAULT_DISTRIBUTION_MIN_CELLS
+  distributionMinCells: 300,
+} as const;
 
 // The two maps below are DISPLAY ONLY. They show the number already in force where the stored value is
 // undefined. args() never projects them, so a field that shows 0.75 and a field that holds 0.75 produce the
@@ -542,11 +552,7 @@ const dataModel = new DataModelBuilder()
     "v3",
     ({ dominanceThreshold: _d, offtargetProperty: _p, offtargetValues: _v, ...rest }) => ({
       ...rest,
-      countFloor: DEFAULT_COUNT_FLOOR,
-      boundCutoff: DEFAULT_BOUND_CUTOFF,
-      minVotingCells: DEFAULT_MIN_VOTING_CELLS,
-      panelReferenceMinMembers: DEFAULT_PANEL_REFERENCE_MIN_MEMBERS,
-      distributionMinCells: DEFAULT_DISTRIBUTION_MIN_CELLS,
+      ...VERDICT_DEFAULTS,
       verdictTableState: createPlDataTableStateV2(),
       antigenQcTableState: createPlDataTableStateV2(),
       panelMismatchTableState: createPlDataTableStateV2(),
@@ -599,11 +605,7 @@ const dataModel = new DataModelBuilder()
     cellWhitelist: "", // de-novo CELL correction by default
     defaultBlockLabel: "",
     // minAgreement and gateThreshold are absent by design. Off means absent rather than zero.
-    countFloor: DEFAULT_COUNT_FLOOR,
-    boundCutoff: DEFAULT_BOUND_CUTOFF,
-    minVotingCells: DEFAULT_MIN_VOTING_CELLS,
-    panelReferenceMinMembers: DEFAULT_PANEL_REFERENCE_MIN_MEMBERS,
-    distributionMinCells: DEFAULT_DISTRIBUTION_MIN_CELLS,
+    ...VERDICT_DEFAULTS,
     tableState: createPlDataTableStateV2(),
     qcSummaryTableState: createPlDataTableStateV2(),
     punchcardTableState: createPlDataTableStateV2(),

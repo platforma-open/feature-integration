@@ -80,6 +80,14 @@ BINDING = 500
 # settles *not bound*, as distinct from a cell that was asked and produced no row at all.
 BACKGROUND = 5
 
+# The cutoff bracket. Every other count in this file scores about 0 or about 100, so the cutoff has no
+# reachable neighbourhood here and a bed cannot tell 50 from 75 from 90. These two sit either side of it
+# against COMPARATOR: 126 scores 69.02 and 140 scores 79.36. Asserting one on each side pins the default
+# the ENTRYPOINT applies to the band (69.02, 79.36], which no other test in the repository does -- the
+# module constant is asserted directly elsewhere, and the argparse default is a second copy of it.
+JUST_BELOW_CUTOFF = 126
+JUST_ABOVE_CUTOFF = 140
+
 
 def _verdicts(bed):
     # Read without schema inference throughout. `unreliableReason` is null on a settled row, and polars
@@ -414,6 +422,50 @@ def test_a_set_whose_every_cell_was_gated_reads_unreliable_and_never_not_bound(g
     # over a bed with no signal in it.
     assert _run(gated_bed, *BASE).returncode == 0
     assert _row(gated_bed, "K1", "AGA")["state"] == "bound"
+
+
+@pytest.fixture
+def cutoff_bracket_bed(tmp_path):
+    """Two clonotypes differing only in count, one either side of the cutoff.
+
+    Three cells each, so neither reading turns on the vote limits. The comparator is the same in every
+    cell, so the only thing separating the two verdicts is where the cutoff sits.
+    """
+    (tmp_path / "panel.csv").write_text("Samples,Name,Sequence,Type\nS1,AgA,AGA,Target\nS1,Ctrl,CTRL,Control\n")
+    rows = ["sampleId,cellId,tag,umiCount"]
+    linker = ["sampleId,cellId,setId"]
+    for set_id, count in (("KBELOW", JUST_BELOW_CUTOFF), ("KABOVE", JUST_ABOVE_CUTOFF)):
+        for i in range(3):
+            cell = f"{set_id.lower()}{i}"
+            rows.append(f"S1,{cell},CTRL,{COMPARATOR}")
+            rows.append(f"S1,{cell},AGA,{count}")
+            linker.append(f"S1,{cell},{set_id}")
+    (tmp_path / "counts.csv").write_text("\n".join(rows) + "\n")
+    (tmp_path / "linker.csv").write_text("\n".join(linker) + "\n")
+    return tmp_path
+
+
+def test_the_cutoff_the_entrypoint_defaults_to_is_seventy_five(cutoff_bracket_bed):
+    """The default cutoff, asserted through the CLI rather than as a module constant.
+
+    `test_cutoff_is_seventy_five` pins `BOUND_CUTOFF`; this pins the number a run with no `--cutoff`
+    is actually answered under, which is a separate copy in the argparse declaration. Run with BASE,
+    which deliberately carries no `--cutoff`.
+    """
+    r = _run(cutoff_bracket_bed, *BASE)
+    assert r.returncode == 0, r.stderr
+
+    # Below the cutoff and above it, on the same comparator. A default anywhere outside
+    # (69.02, 79.36] flips one of these two.
+    assert _row(cutoff_bracket_bed, "KBELOW", "AGA")["state"] == "not bound"
+    assert _row(cutoff_bracket_bed, "KABOVE", "AGA")["state"] == "bound"
+
+    # The bracket only means something if the two counts really are on opposite sides of the shipped
+    # number rather than of whatever number happens to be in force. Stated once, here.
+    from verdict import BOUND_CUTOFF, specificity_score
+
+    assert specificity_score(JUST_BELOW_CUTOFF, COMPARATOR) < BOUND_CUTOFF
+    assert specificity_score(JUST_ABOVE_CUTOFF, COMPARATOR) >= BOUND_CUTOFF
 
 
 def test_420_an_unasked_off_target_is_reachable_only_because_the_panel_is_keyed_by_sample():
