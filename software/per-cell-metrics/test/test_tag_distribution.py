@@ -324,3 +324,27 @@ def test_backgrounds_are_collected_per_sample_and_tag():
         assert key not in fits.reasons
     for key in fits.reasons:
         assert key not in fits.backgrounds
+
+
+def test_padding_the_universe_with_ambient_barcodes_collapses_the_fit():
+    # The defect this guards against: `what-plays-the-baseline` fits "across the sample's cells", and
+    # feeding the observed barcodes instead pads the population with ambient droplets. In droplet data
+    # they outnumber the cells by one to two orders of magnitude and each holds a count or two, so both
+    # components land on that mass and the fit reports a background sitting on top of its own signal.
+    counts, cells = _bed()
+    rng = np.random.default_rng(SEED + 1)
+    ambient_ids = [("S1", f"ambient{i}") for i in range(50 * len(cells))]
+    ambient_rows = [(s, c, "AAAA", 1) for s, c in ambient_ids if rng.random() < 0.35]
+
+    clean = fit_tag_probabilities_by_pair(counts, cells, _panel([("AAAA", "S1")]))
+    swamped = fit_tag_probabilities_by_pair(
+        pl.concat([counts, _counts_frame(ambient_rows)]), cells + ambient_ids, _panel([("AAAA", "S1")])
+    )
+
+    over_cells = clean.backgrounds[("S1", "AAAA")]
+    assert over_cells.signal_mean > over_cells.mean * 10
+
+    # Over the barcodes the rung either refuses outright or returns two components that do not stand
+    # apart. Both are unusable; neither is the reading the spec asks a scientist to judge.
+    over_barcodes = swamped.backgrounds.get(("S1", "AAAA"))
+    assert over_barcodes is None or over_barcodes.signal_mean < over_barcodes.mean * 2

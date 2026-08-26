@@ -16,9 +16,14 @@ import CountHistogram from "./CountHistogram.vue";
 // No marker is drawn. The threshold slot means "the declared gate" on the reference-reading plot and "the
 // bound cutoff" on the scores plot, so a third meaning here would make one marker say three things.
 //
-// A panel carries its title and its plot, and no text below. A separated / does-not-separate label belongs
-// here, and no criterion for it exists yet: the fitter's only failure is NO_FIT, which is a fit that could
-// not be computed rather than one that computed and split a single population.
+// A panel carries its title, its plot, and the fit's own three numbers. No separated / does-not-separate
+// label: no criterion for it exists, and `what-plays-the-baseline` states that none is invented here. The
+// numbers are the fit's own output, not a verdict on it.
+//
+// `what-plays-the-baseline` makes this panel the substitute for the check nobody has built -- "the run
+// shows the fit instead of judging it" -- so withholding the fit leaves the rung with no safeguard at all.
+// A background sitting on top of its signal, or a background holding almost every cell, is what a reader
+// is here to catch.
 const props = defineProps<{
   bins: TagCountBins;
   /** Sample id -> the label a reader knows it by. A sample with no label renders as its own id. */
@@ -29,6 +34,8 @@ type Panel = {
   key: string;
   title: string;
   weights: number[];
+  /** The fit's own numbers, absent where nothing was fitted for this pair. */
+  fit?: { backgroundMean: number; signalMean: number; backgroundWeight: number };
 };
 
 // Sorted by tag then sample, so the grid's reading order is stable across runs: `Record` iteration order
@@ -53,11 +60,16 @@ const panels = computed<Panel[]>(() => {
         key: `${tag} ${sample}`,
         title: `${tagName(tag)} · ${props.sampleLabels[sample] ?? sample}`,
         weights,
+        fit: props.bins.fitsBySample?.[sample]?.[tag],
       });
     }
   }
   return out;
 });
+
+// Counts span orders of magnitude across a panel, so a fixed number of decimals prints either noise or
+// nothing. Three significant figures reads the same at 0.33 and at 930.
+const fmt = (value: number) => Number(value.toPrecision(3)).toLocaleString();
 
 const enlarged = ref<Panel | undefined>(undefined);
 const isOpen = computed({
@@ -87,6 +99,11 @@ const isOpen = computed({
       <!-- `compact`: bars only. The thumbnail is scanned for whether two humps stand apart, and the
            enlarged panel below is where a value gets read off an axis. -->
       <CountHistogram :edges="bins.edges" :weights="panel.weights" :total-height="140" compact />
+      <span v-if="panel.fit" :class="$style.fit">
+        bg {{ fmt(panel.fit.backgroundMean) }} · signal {{ fmt(panel.fit.signalMean) }} ·
+        {{ (panel.fit.backgroundWeight * 100).toFixed(0) }}% of cells background
+      </span>
+      <span v-else :class="$style.fit">no fit for this pair</span>
     </button>
   </div>
 
@@ -157,5 +174,11 @@ const isOpen = computed({
   color: var(--color-txt-03);
   opacity: 0;
   transition: opacity 0.1s;
+}
+
+.fit {
+  font-size: 12px;
+  color: var(--color-txt-03);
+  font-variant-numeric: tabular-nums;
 }
 </style>

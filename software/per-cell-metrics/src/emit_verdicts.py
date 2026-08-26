@@ -457,11 +457,21 @@ def main() -> None:
         # Keyed by (sample, identity) and never by cell: this rung fits one distribution per
         # tag across a sample's cells, so its answer is the same number for every cell of a
         # sample and a different one for every identity. `reference_by_cell` has nothing to
-        # return for it. Fitted over the RAW counts and the FULL cell universe -- the cells that
-        # read nothing, and the cells a gate will later set aside. That second part is
-        # `baseline-over-all-returned-cells`, which is also why the fit runs before
-        # `gate_cells` below.
-        tag_fits = fit_tag_probabilities_by_pair(counts, analysed_cells, panel, args.distribution_min_cells)
+        # return for it.
+        #
+        # Fitted over the RAW counts of the CELL LIST. `what-plays-the-baseline` states the rung as
+        # "that tag's own distribution across the sample's cells". Observed barcodes are not cells and
+        # outnumber them by one to two orders of magnitude, and a background fitted over them is fitted
+        # over ambient droplets.
+        #
+        # EVERY listed cell, including the ones `gate_cells` will set aside below, which is why the fit
+        # runs first. That is `baseline-over-all-returned-cells`: it forbids the gate narrowing this
+        # population, and it does not widen the population past the returned cells.
+        #
+        # A run with no cell list keeps the barcode union. Membership is unknown rather than false there,
+        # and `cellListSource` in the run record says which case the verdicts were read under.
+        fit_universe = sorted(cell_list) if cell_list is not None else analysed_cells
+        tag_fits = fit_tag_probabilities_by_pair(counts, fit_universe, panel, args.distribution_min_cells)
         probabilities = _identity_probabilities(tag_fits, grouping)
         # A run where no tag fitted anywhere established no baseline. This is the one refusal
         # that cannot be caught from the settings: whether a sample holds three hundred cells

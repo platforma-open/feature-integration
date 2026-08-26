@@ -109,6 +109,12 @@ _UPPER_TRIM_PERCENTILE = 99.0
 _EM_TOLERANCE = 1e-6
 _EM_MAX_ROUNDS = 200
 
+# Two component means this close are one component. A numerical guard on the EM, never a test of
+# whether a tag's counts separated -- `what-plays-the-baseline` states that no such test exists and
+# that none is invented here. Loose enough to catch a converged pair that float equality misses,
+# tight enough that two means a reader would call distinct always survive.
+_CONVERGED_COMPONENT_RTOL = 1e-9
+
 # The dispersion a component falls back to where its variance does not exceed its mean. The
 # negative binomial has no such shape -- that is the Poisson boundary -- so the fit uses a
 # large size, which IS Poisson in the limit, rather than failing.
@@ -233,8 +239,14 @@ def _fit_two_component_nb(counts: np.ndarray) -> _Mixture | None:
             variance = float((r * (x - means[k]) ** 2).sum() / mass[k])
             sizes[k] = _nb_size(means[k], variance)
 
-        # The two components have converged onto each other, so there is one population.
-        if means[0] == means[1]:
+        # The two components have converged onto each other, so there is one population. Compared
+        # to a relative tolerance, not by `==`: two floats from separate M-step reductions land on
+        # the same value only by luck, so exact equality let a converged pair through.
+        #
+        # The tolerance is numerical and NOT a separation criterion. `what-plays-the-baseline` states
+        # that no test for whether a tag's counts separated exists and that this corpus does not invent
+        # one. This catches an EM that ran two components onto one solution, and nothing else.
+        if np.isclose(means[0], means[1], rtol=_CONVERGED_COMPONENT_RTOL, atol=0.0):
             return None
 
         if abs(loglik - previous) < _EM_TOLERANCE:
