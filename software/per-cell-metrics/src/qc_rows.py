@@ -268,19 +268,29 @@ _BACKGROUND_SCHEMA = {
 # One row per (panelId, tag, identity). Per-tag figures repeat across a tag's identities: the frame
 # is not a summary. `reason` names each figure that has no value and why, pipe-separated, and is
 # empty when every figure has one.
+#
+# Three fields carry what the quality view prints, beside the figures they are printed from:
+# `seenIn` is the ratio the view shows in place of the two counts, and the two `...Shown` fields
+# carry a rate or, where none exists, the words for why. A rate whose absence is a blank cell reads
+# as a figure that failed to load, and single-tag identities are the common case, so the column
+# would be blank on most rows. The numeric fields stay, because sorting a rate against its
+# neighbours is the whole use of these two columns and a string does not sort.
 _REAGENT_SCHEMA = {
     "panelId": pl.String,
     "tag": pl.String,
     "identity": pl.String,
     "samplesSeenIn": pl.Int64,
     "samplesInPanel": pl.Int64,
+    "seenIn": pl.String,
     "samplesSeenInNames": pl.String,
     "samplesInPanelNames": pl.String,
     "cellsWithCount": pl.Int64,
     "cellsAboveTheLine": pl.Float64,
     "medianCountPerCell": pl.Float64,
     "siblingDisagreement": pl.Float64,
+    "siblingDisagreementShown": pl.String,
     "selfDisagreement": pl.Float64,
+    "selfDisagreementShown": pl.String,
     "reason": pl.String,
 }
 

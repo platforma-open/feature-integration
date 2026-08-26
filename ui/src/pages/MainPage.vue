@@ -7,6 +7,7 @@ import {
   PlAgChartStackedBarCell,
   PlAgOverlayLoading,
   PlAgOverlayNoRows,
+  PlAgTextAndButtonCell,
   PlAlert,
   PlCheckbox,
   PlBlockPage,
@@ -624,6 +625,15 @@ const columnDefs: ColDef<SampleResult>[] = [
     lockPinned: true,
     sortable: true,
     flex: 1,
+    // The Open affordance, the same one the Explore readout puts on its clonotype column.
+    // `invokeRowsOnDoubleClick` makes the button fire the ROW's double-click, so it routes through the
+    // `onRowDoubleClicked` handler below: one path, and double-clicking anywhere on the row keeps working.
+    // Nothing else on the row says it can be opened, and the header tooltips that said so are read only by
+    // someone who already hovered a header.
+    cellRendererSelector: () => ({
+      component: PlAgTextAndButtonCell,
+      params: { invokeRowsOnDoubleClick: true },
+    }),
   }),
   createAgGridColDef<SampleResult, ProgressCell>({
     colId: "progress",
@@ -966,77 +976,81 @@ const gridOptions = {
         </template>
       </PlNumberField>
 
-      <PlSectionSeparator compact> Threshold Parameters </PlSectionSeparator>
-      <!-- Paired on one line: both are minimums on how much evidence a reading needs, both are always
-           shown, and side by side a reader sets them as the one decision they are. -->
-      <PlRow>
-        <PlNumberField
-          :class="$style.half"
-          v-model="app.model.data.countFloor"
-          :min-value="0"
-          :step="1"
-          label="Min count"
-        >
-          <template #tooltip>
-            Counts below this are not evidence of binding. The block reads them as zero.<br /><br />
-            The minimum never applies to the baseline tag. A minimum there would push the whole run
-            toward bound.<br /><br />
-            The default of 4 is declared, not calibrated.
-          </template>
-        </PlNumberField>
-        <PlNumberField
-          :class="$style.half"
-          v-model="app.model.data.minVotingCells"
-          :min-value="1"
-          :step="1"
-          label="Min voting cells"
-        >
-          <template #tooltip>
-            How many cells must answer before their majority settles a verdict. Below this the
-            verdict reads unreliable.<br /><br />
-            At 1 a verdict may rest on one cell. The table carries the answering-cell count.
-          </template>
-        </PlNumberField>
-      </PlRow>
-      <!-- Both are conditions on the same verdict: the cutoff decides what one cell says, the agreement
+      <!-- Closable, and closed until opened. Every field inside ships a default a run is valid under, so
+           a reader meets the baseline choice above without four thresholds under it competing for the
+           same attention. The same treatment Compute resources and Quality lines already have. -->
+      <PlAccordionSection label="Threshold Parameters">
+        <!-- Paired on one line: both are minimums on how much evidence a reading needs, both are always
+             shown, and side by side a reader sets them as the one decision they are. -->
+        <PlRow>
+          <PlNumberField
+            :class="$style.half"
+            v-model="app.model.data.countFloor"
+            :min-value="0"
+            :step="1"
+            label="Min count"
+          >
+            <template #tooltip>
+              Counts below this are not evidence of binding. The block reads them as zero.<br /><br />
+              The minimum never applies to the baseline tag. A minimum there would push the whole
+              run toward bound.<br /><br />
+              The default of 4 is declared, not calibrated.
+            </template>
+          </PlNumberField>
+          <PlNumberField
+            :class="$style.half"
+            v-model="app.model.data.minVotingCells"
+            :min-value="1"
+            :step="1"
+            label="Min voting cells"
+          >
+            <template #tooltip>
+              How many cells must answer before their majority settles a verdict. Below this the
+              verdict reads unreliable.<br /><br />
+              At 1 a verdict may rest on one cell. The table carries the answering-cell count.
+            </template>
+          </PlNumberField>
+        </PlRow>
+        <!-- Both are conditions on the same verdict: the cutoff decides what one cell says, the agreement
            limit decides how many cells must say it. Side by side under the declared rung, where both apply.
            `half` on each splits the row; on the agreement field alone, once the cutoff is hidden, the same
            `flex: 1 1 0` takes the whole width, so the lone field does not sit left with a gap beside it. -->
-      <PlRow>
-        <PlNumberField
-          v-if="chosenSource === 'declared'"
-          :class="$style.half"
-          v-model="app.model.data.boundCutoff"
-          :min-value="0"
-          :max-value="100"
-          :step="1"
-          label="Bound score cutoff"
-        >
-          <template #tooltip>
-            A cell reads bound where its score reaches this number, from 0 to 100. The score is how
-            certain it is that the antigen makes up more than 92.5% of the antigen and baseline
-            counts.<br /><br />
-            <b>Certainty, not strength</b> — two counts against zero score low. Cell Ranger says
-            this score does not measure binding strength.
-          </template>
-        </PlNumberField>
-        <PlNumberField
-          :class="$style.half"
-          v-model="agreementPercent"
-          :min-value="50.001"
-          :max-value="100"
-          :step="1"
-          clearable
-          label="Min agreement (>50%)"
-        >
-          <template #tooltip>
-            <b>Empty means off</b>, which is the default. A narrow majority then stands, and the
-            verdict reports how narrow it was.<br /><br />
-            Set it and a verdict reads unreliable below this share of the answering cells.<br /><br />
-            The lowest value is 50.001%, because the verdict already takes the majority.
-          </template>
-        </PlNumberField>
-      </PlRow>
+        <PlRow>
+          <PlNumberField
+            v-if="chosenSource === 'declared'"
+            :class="$style.half"
+            v-model="app.model.data.boundCutoff"
+            :min-value="0"
+            :max-value="100"
+            :step="1"
+            label="Bound score cutoff"
+          >
+            <template #tooltip>
+              A cell reads bound where its score reaches this number, from 0 to 100. The score is
+              how certain it is that the antigen makes up more than 92.5% of the antigen and
+              baseline counts.<br /><br />
+              <b>Certainty, not strength</b> — two counts against zero score low. Cell Ranger says
+              this score does not measure binding strength.
+            </template>
+          </PlNumberField>
+          <PlNumberField
+            :class="$style.half"
+            v-model="agreementPercent"
+            :min-value="50.001"
+            :max-value="100"
+            :step="1"
+            clearable
+            label="Min agreement (>50%)"
+          >
+            <template #tooltip>
+              <b>Empty means off</b>, which is the default. A narrow majority then stands, and the
+              verdict reports how narrow it was.<br /><br />
+              Set it and a verdict reads unreliable below this share of the answering cells.<br /><br />
+              The lowest value is 50.001%, because the verdict already takes the majority.
+            </template>
+          </PlNumberField>
+        </PlRow>
+      </PlAccordionSection>
       <!-- The combine-mode column selector is not offered (MILAB-6496): with it unset, every antigen uses the
            default "sum" mode. The parameter itself is live -- combineColumn and minUmi still reach
            per_cell_metrics.py -- so a value carried in from an older project is still honoured, and the alert

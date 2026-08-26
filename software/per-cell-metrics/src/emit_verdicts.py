@@ -74,6 +74,7 @@ from identity_tables import (
     _pivot_cell_punch,
     _pivot_identity_summary,
     count_by_set,
+    tag_labels,
 )
 from panel import (
     ANY_SAMPLE,
@@ -90,8 +91,12 @@ from qc_measures import (
     Coverage,
     Line,
     antigen_count_deciles,
+    bin_values,
+    count_bin_edges,
     deciles_of,
+    linear_bin_edges,
     per_antigen_measures,
+    per_tag_count_bins,
     reads_per_cell,
     sibling_disagreement,
     status_for,
@@ -728,6 +733,33 @@ def main() -> None:
     )
     _write_sorted(identity_labels, f"{prefix}_identity_labels.csv", ["identity"])
 
+    # A readable name per TAG, for the surfaces keyed by tag rather than by identity. The reagent
+    # table's leading column is this name, and without it that column is a barcode sequence.
+    #
+    # Keyed by tag, not by identity. Under a property grouping an identity is a group of tags and
+    # its label is the group's name, so borrowing it would put the group's name on every member.
+    # `tag_labels` is the same rule `_identity_labels` uses for its per-tag branch, so a tag reads
+    # under one name everywhere. Reference tags included: they hold reagent figures too.
+    # The FEATURE column's disagreements, never `label_disagreements`. That dict is scoped to whatever
+    # column labels an IDENTITY, which under a property grouping is the grouped-on column -- so a reused
+    # barcode fell past the joined-names rung and read as its own 15-mer beside reagents that read as
+    # names. A tag's name comes from the feature column under every grouping.
+    tag_names = tag_labels(
+        set(panel["tag"].to_list()),
+        properties,
+        args.feature_col,
+        disagreed_by_column.get(args.feature_col, {}),
+    )
+    _write_sorted(
+        pl.DataFrame(
+            [(tag, tag_names[tag]) for tag in sorted(tag_names)],
+            orient="row",
+            schema={"tag": pl.String, "label": pl.String},
+        ),
+        f"{prefix}_tag_labels.csv",
+        ["tag"],
+    )
+
     # The declarations, keyed the same way the verdicts are. Wide -- one column per property --
     # because the workflow turns each into its own p-column with the property name in the DOMAIN,
     # which is what makes two properties two distinct columns rather than one a reader unstacks.
@@ -790,6 +822,13 @@ def main() -> None:
     )
     _write_sorted(sample_panel, f"{prefix}_sample_panel.csv", ["sampleId"])
 
+    # POTENTIALLY DEAD CODE, left for a separate pass. No p-column import reads
+    # result_panel_mismatch.csv any more and no view renders it: the check's one reachable direction --
+    # a declared barcode no read carried -- is the reagent table's `Seen in 0/N`, on the surface the
+    # quality readout designs for reagent findings. Deleting this, `panel_read_mismatch` in panel.py and
+    # their tests is a Python-only cleanup, deliberately not folded into the UI change that retired the
+    # view.
+    #
     # Both directions of the panel-versus-reads check, re-keyed onto the panel: a per-tag failure
     # is a property of the declared tag set rather than of any one sample carrying it. The samples
     # reporting it travel in the row.
@@ -1269,15 +1308,23 @@ def main() -> None:
                     absences.append("cellsAboveTheLine=none asked, this tag supplies the baseline")
                 if median is None:
                     absences.append("medianCountPerCell=no cell holds a count of this tag")
+                # The words the sibling column prints where no rate exists, one per cause, kept short
+                # enough to read in a cell. `reason` carries the same four causes in full.
+                sibling_shown = f"{sibling:.2f}" if sibling is not None else ""
                 if sibling is None:
                     if tag in reference_here:
                         absences.append("siblingDisagreement=this tag is held out of the verdict read")
+                        sibling_shown = "held out of the read"
                     elif len(members) < 2:
                         absences.append("siblingDisagreement=this identity carries one tag, so it has no sibling")
+                        sibling_shown = "no sibling"
                     elif tag not in scope_held_a_cell:
                         absences.append("siblingDisagreement=this tag holds no cell beside a sibling")
+                        sibling_shown = "no cell beside a sibling"
                     else:
                         absences.append("siblingDisagreement=no cell gave this tag's siblings a majority")
+                        sibling_shown = "no sibling majority"
+                own_shown = f"{own:.2f}" if own is not None else "nothing to compare"
                 if own is None:
                     absences.append("selfDisagreement=no cell set held this tag under an evaluable read")
                 # Named beside the counts above rather than replacing them: samplesSeenIn and
@@ -1291,6 +1338,10 @@ def main() -> None:
                         "identity": identity,
                         "samplesSeenIn": int(measure.get("samplesSeenIn") or 0),
                         "samplesInPanel": int(measure.get("samplesInPanel") or 0),
+                        # The ratio the quality view prints in place of the two counts beside it.
+                        "seenIn": (
+                            f"{int(measure.get('samplesSeenIn') or 0)}/{int(measure.get('samplesInPanel') or 0)}"
+                        ),
                         "samplesSeenInNames": ", ".join(
                             label_of_sample.get(s, s) for s in measure.get("samplesSeenInNames") or []
                         ),
@@ -1301,7 +1352,9 @@ def main() -> None:
                         "cellsAboveTheLine": float(above) if above is not None else None,
                         "medianCountPerCell": float(median) if median is not None else None,
                         "siblingDisagreement": float(sibling) if sibling is not None else None,
+                        "siblingDisagreementShown": sibling_shown,
                         "selfDisagreement": float(own) if own is not None else None,
+                        "selfDisagreementShown": own_shown,
                         "reason": "|".join(absences),
                     }
                 )
@@ -1350,6 +1403,11 @@ def main() -> None:
     # so is the gate, so a plot must show every cell the number will act on. `330` says exactly that
     # of the reference reading, and pooling over samples is deliberate rather than a simplification.
     decile_rows: list[dict] = []
+    # Binned beside the deciles, and for a different reader. Eleven decile points suggest a shape;
+    # they cannot show WHERE a distribution separates, which is the one thing both plots are read
+    # for. `330` asks the reference-reading plot to show every cell, and binning every cell is how
+    # it does that without shipping one row per cell.
+    spread_bins: dict[str, dict[str, object]] = {}
     if reference.served is ReferenceChoice.DECLARED:
         scored = states.filter(pl.col("unreliableReason").is_null())
         if scored.height > 0:
@@ -1357,10 +1415,18 @@ def main() -> None:
                 scored["umiCount"].to_numpy(),
                 np.nan_to_num(scored["referenceCount"].cast(pl.Float64).to_numpy(), nan=0.0),
             )
-            decile_rows += _decile_rows("score", deciles_of(np.asarray(values, dtype=float)))
+            scores = np.asarray(values, dtype=float)
+            decile_rows += _decile_rows("score", deciles_of(scores))
+            score_edges = linear_bin_edges(scores)
+            spread_bins["score"] = {"edges": score_edges, "weights": bin_values(scores, score_edges)}
     if reference.by_cell:
         readings = np.asarray(list(reference.by_cell.values()), dtype=float)
         decile_rows += _decile_rows("referenceReading", deciles_of(readings))
+        reading_edges = linear_bin_edges(readings)
+        spread_bins["referenceReading"] = {
+            "edges": reading_edges,
+            "weights": bin_values(readings, reading_edges),
+        }
     _write_sorted(
         pl.DataFrame(decile_rows, schema=_DECILE_SCHEMA),
         f"{prefix}_qc_deciles.csv",
@@ -1375,6 +1441,41 @@ def main() -> None:
         f"{prefix}_qc_sample_deciles.csv",
         ["sampleId", "decile"],
     )
+
+    # Binned count distributions, per (sample, tag), for the plots that ask a reader to judge
+    # whether a tag's counts fall into two separated humps. JSON rather than a p-frame: the chart
+    # these feed takes its bins as values in the UI, so a frame handle would have to be read back
+    # out again. Weights only, with one shared edge list beside them, keeps it small -- a run of
+    # 24 samples over a 64-tag panel is 24 x 64 lists of 24 integers.
+    #
+    # Taken from the RAW counts. The floor and the reference hold-out both happen later, and a plot
+    # read in order to SET the floor cannot have the floor already applied to it.
+    bin_edges = count_bin_edges(counts)
+    # The fit's two means travel WITH the bins, at the same (sample, tag) grain. They are what a reader
+    # judges the humps against, so reaching them through the p-frame beside this would mean a driver
+    # query per panel of the grid. Absent under a declared baseline, which fits nothing.
+    fits_by_sample: dict[str, dict[str, dict[str, float]]] = {}
+    for (sample, tag), b in (tag_fits.backgrounds if tag_fits is not None else {}).items():
+        fits_by_sample.setdefault(str(sample), {})[str(tag)] = {
+            "backgroundMean": float(b.mean),
+            "signalMean": float(b.signal_mean),
+            "backgroundWeight": float(b.weight),
+        }
+    with open(f"{prefix}_qc_tag_bins.json", "w") as out:
+        json.dump(
+            {
+                "edges": bin_edges,
+                "bySample": per_tag_count_bins(counts, bin_edges),
+                "fitsBySample": fits_by_sample,
+                # The run's score spread and its reference readings, on their own linear edges. Each
+                # is one distribution for the whole run, because the cutoff and the gate are each one
+                # number for the run, so a plot must show every cell the number will act on.
+                "spreads": spread_bins,
+            },
+            out,
+            indent=2,
+            sort_keys=True,
+        )
 
     # One row per (sample, tag) the fit scored, at the fit's own grain. Aggregating to the tag would
     # hide a reagent that separated in one sample and not in another, which is the comparison a

@@ -1,10 +1,8 @@
 <script setup lang="ts">
-import type { GraphMakerState, PredefinedGraphOption } from "@milaboratories/graph-maker";
-import { GraphMaker } from "@milaboratories/graph-maker";
-import type { PColumnSpec } from "@platforma-sdk/model";
 import { PlAlert, PlChartStackedBar } from "@platforma-sdk/ui-vue";
-import { computed, ref } from "vue";
+import { computed } from "vue";
 import { useApp } from "../app";
+import CountHistogram from "../components/CountHistogram.vue";
 import type { SampleResult } from "../results";
 
 // The Visual Report tab: where this sample's reads went, and the shape of this sample's own antigen
@@ -50,59 +48,29 @@ const segments = computed(() => {
   }));
 });
 
-// --- the antigen-count distribution: this sample alone -------------------------------------------
+// --- this sample's antigen counts, one plot per tag ----------------------------------------------
 //
-// 330-the-quality-readout: the shape of antigen counts per barcode is a plot about one sample and
-// belongs with that sample. emit_verdicts.py writes its deciles into result_qc_sample_deciles.csv,
-// keyed (sampleId, decile), imported as its own column (`qcSampleDecileValue`) so it carries no
-// identity in common with the run-level score and reference-reading deciles.
-const SAMPLE_DECILE_VALUE = "pl7.app/antigen/qcSampleDecileValue";
-const DECILE_AXIS = "pl7.app/antigen/qcDecile";
-const SAMPLE_AXIS = "pl7.app/sampleId";
+// `330-the-quality-readout` asks for the shape of the antigen counts as a plot about ONE sample, so it
+// belongs with that sample rather than on the run's own page. Per TAG, because a total pools a tag that
+// bound nothing with one that bound everything and draws one hump from the two.
+//
+// Drawn with PlChartHistogram from precomputed bins, never the chart builder: a reader here is asked what
+// this sample's counts look like, and every axis picker is a way to stop answering that. The bins come off
+// the RAW counts, before the minimum, which is what makes this readable on a first run -- the minimum is
+// one of the things it is read in order to set.
+const tagBins = computed(() => app.model.outputs.tagCountBins);
 
-function col(name: string, valueType: "Double" | "Int"): PColumnSpec {
-  return { kind: "PColumn", name, valueType, axesSpec: [] };
-}
-
-// A discrete chart has no `x`: its categorical input is `primaryGrouping`, filtered to this sample
-// through the sample axis GraphMaker reaches because `qcSampleDecileValue` carries it.
-const antigenCountOptions = computed<PredefinedGraphOption<"discrete">[]>(() => [
-  { inputName: "y", selectedSource: col(SAMPLE_DECILE_VALUE, "Double") },
-  { inputName: "primaryGrouping", selectedSource: { name: DECILE_AXIS, type: "Int" } },
-  {
-    inputName: "filters",
-    selectedSource: { name: SAMPLE_AXIS, type: "String" },
-    filterType: "equals",
-    selectedFilterValues: props.sampleData ? [props.sampleData.sampleId] : [],
-  },
-]);
-
-const antigenCountColumns = (spec: PColumnSpec) => spec.name === SAMPLE_DECILE_VALUE;
-
-// One chart config, reused across samples: the component is re-keyed on sampleId below, so each
-// sample's view mounts fresh and reads `antigenCountOptions` for its own filter.
-const antigenGraphState = ref<GraphMakerState>({
-  title: "Antigen count per cell barcode",
-  template: "line",
+const panels = computed(() => {
+  const bins = tagBins.value;
+  const sampleId = props.sampleData?.sampleId;
+  if (bins === undefined || sampleId === undefined) return undefined;
+  const byTag = bins.bySample[sampleId];
+  if (byTag === undefined) return [];
+  // Sorted, so the reading order does not follow whatever key order the JSON was written in.
+  return Object.keys(byTag)
+    .sort()
+    .map((tag) => ({ tag, weights: byTag[tag]! }));
 });
-
-// Absent means the verdict stage has not reported this run's distributions at all yet. Distinct from
-// a reported run whose deciles carry no row for this sample, which is the "no counts" case below.
-const antigenDistributionsAbsent = computed(
-  () => app.model.outputs.runQualityDistributions === undefined,
-);
-
-// The sample's own antigenCountDistribution measurement, read from the same report the Quality
-// Checks tab shows. `value === null` there means no barcode in this sample held a counted reading,
-// and the measurement's `reason` states that -- the wording this plot shows in its place.
-const antigenMeasurement = computed(() =>
-  props.sampleData?.qcReport?.measurements.find((m) => m.id === "antigenCountDistribution"),
-);
-const antigenNoCountsReason = computed(() =>
-  antigenMeasurement.value?.value === null
-    ? (antigenMeasurement.value.reason ?? undefined)
-    : undefined,
-);
 </script>
 
 <template>
@@ -126,22 +94,21 @@ const antigenNoCountsReason = computed(() =>
     </div>
 
     <div class="visual-report__block">
-      <div class="visual-report__title">Antigen count per cell barcode</div>
-      <PlAlert v-if="antigenDistributionsAbsent" type="info">
-        No antigen-count distribution has arrived from this run yet. It is taken by the same verdict
-        stage as the read-recovery breakdown, so it arrives once the run reports.
+      <div class="visual-report__title">Antigen count per cell, by barcode</div>
+      <PlAlert v-if="panels === undefined" type="info">
+        No count distributions have arrived from this run yet. They are taken by the same verdict
+        stage as the read-recovery breakdown, so they arrive once the run reports.
       </PlAlert>
-      <PlAlert v-else-if="antigenNoCountsReason" type="info">
-        {{ antigenNoCountsReason }}
+      <!-- Reported, and this sample holds no counted reading on any barcode. Distinct from the case
+           above, where the run has not said anything yet. -->
+      <PlAlert v-else-if="panels.length === 0" type="info">
+        No barcode in this sample held a counted reading, so there is no distribution to draw.
       </PlAlert>
-      <div v-else-if="sampleData" :key="sampleData.sampleId" class="visual-report__plot">
-        <GraphMaker
-          v-model="antigenGraphState"
-          chart-type="discrete"
-          :p-frame="app.model.outputs.runQualityDistributions"
-          :default-options="antigenCountOptions"
-          :data-column-predicate="antigenCountColumns"
-        />
+      <div v-else class="visual-report__tagGrid">
+        <div v-for="panel in panels" :key="panel.tag" class="visual-report__tagPanel">
+          <div class="visual-report__tagTitle">{{ panel.tag }}</div>
+          <CountHistogram :edges="tagBins!.edges" :weights="panel.weights" :total-height="140" />
+        </div>
       </div>
     </div>
   </div>
@@ -158,16 +125,6 @@ const antigenNoCountsReason = computed(() =>
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-
-.visual-report__title {
-  font-weight: 500;
-  font-size: 14px;
-  color: var(--color-txt-01);
-}
-
-.visual-report__plot {
-  height: 360px;
 }
 
 .visual-report__segments {
@@ -208,6 +165,32 @@ const antigenNoCountsReason = computed(() =>
   font-size: 14px;
   line-height: 20px;
   color: var(--color-txt-03);
+}
+
+/* Small multiples, one per barcode: as many per row as fit, each wide enough to read a shape. */
+.visual-report__tagGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 20px 16px;
+}
+
+.visual-report__tagPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.visual-report__tagTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-txt-01);
+}
+
+.visual-report__title {
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--color-txt-01);
 }
 
 .visual-report__pending {

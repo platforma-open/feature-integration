@@ -299,7 +299,6 @@ export type BlockData = {
   scoreDistributionGraphState: GraphMakerState;
   referenceReadingGraphState: GraphMakerState;
   fittedBackgroundGraphState: GraphMakerState;
-  runQualityMismatchTableState: PlDataTableStateV2; // panel-versus-reads mismatch grid state
   reagentTableState: PlDataTableStateV2; // per (tag, identity) reagent grid state
   // 330's own table: barcodes the reads carried that no panel declares, keyed by sequence.
   undeclaredBarcodesTableState: PlDataTableStateV2;

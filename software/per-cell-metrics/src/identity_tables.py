@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import sys
 from collections import Counter
+from collections.abc import Iterable
 
 import polars as pl
 from panel import (
@@ -219,17 +220,30 @@ def _identity_labels(
             identity: (f"{label} ({identity})" if repeated[label] > 1 else label)
             for identity, label in by_identity.items()
         }
-    # Three rungs, in this order: the name the samples agreed on, else the names they
-    # disagreed about joined, else the bare barcode for a tag the panel named nowhere. The
-    # collision rule below already covers the joined strings.
-    joined = {tag: " / ".join(values) for tag, values in (disagreed or {}).items() if values}
     # Over the IDENTITIES, never the grouping's keys. Under the per-tag grouping an identity
     # is a tag, but the grouping is keyed by (tag, sample), so its keys are pairs. Iterating
     # them looks up a tuple in `properties`, finds nothing, and drops every label back to the
     # bare barcode this function exists to avoid.
-    names = {
-        tag: (properties.get(tag, {}).get(feature_col) or joined.get(tag) or tag) for tag in set(grouping.values())
-    }
+    return tag_labels(set(grouping.values()), properties, feature_col, disagreed)
+
+
+def tag_labels(
+    tags: Iterable[str],
+    properties: dict[str, dict[str, str]],
+    feature_col: str,
+    disagreed: dict[str, list[str]] | None = None,
+) -> dict[str, str]:
+    """A readable name per tag, never two tags under one name.
+
+    Three rungs, in this order: the name the samples agreed on, else the names they disagreed
+    about joined, else the bare barcode for a tag the panel named nowhere. The collision rule
+    covers the joined strings too.
+
+    Also the per-tag branch of `_identity_labels`, where an identity IS a tag. One rule, so a
+    tag cannot read under one name beside its verdict and another beside its reagent figures.
+    """
+    joined = {tag: " / ".join(values) for tag, values in (disagreed or {}).items() if values}
+    names = {tag: (properties.get(tag, {}).get(feature_col) or joined.get(tag) or tag) for tag in tags}
     collisions = Counter(names.values())
     return {tag: (f"{name} ({tag})" if collisions[name] > 1 else name) for tag, name in names.items()}
 

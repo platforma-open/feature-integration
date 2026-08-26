@@ -236,6 +236,49 @@ export type SampleQcReport = {
   measurements: SampleQcMeasurement[];
 };
 
+/**
+ * Binned count distributions, per sample and tag, and the one edge list every one of them shares.
+ *
+ * The bins are what a reader judges "do these two humps stand apart" from, so they are drawn from the RAW
+ * counts: before the minimum, and with the reference tag kept. A plot read in order to SET the minimum
+ * cannot have the minimum already applied to it, and the reference tag is the run's own ambient floor.
+ *
+ * `edges` holds `weights.length + 1` boundaries, log-spaced, shared across the whole run so a grid of tags
+ * can be scanned side by side. Empty where the run carried no counts at all.
+ *
+ * A tag with no reading in a sample carries NO entry, rather than a list of zeros: an absent tag and a tag
+ * whose cells all read low are different findings.
+ */
+export type TagCountBins = {
+  edges: number[];
+  bySample: Record<string, Record<string, number[]>>;
+  /**
+   * The fit's two means and the background's share of cells, at the same (sample, tag) grain as the bins.
+   * They travel here rather than through the p-frame beside them, so drawing a grid of panels costs no
+   * driver query per panel.
+   *
+   * Absent for a run read against a declared baseline tag, which fits nothing. Absent for a (sample, tag)
+   * the fit could not score, which is a different thing from a fit whose components sit on top of each
+   * other -- and the block draws no verdict on either, because no published test separates them.
+   */
+  fitsBySample: Record<
+    string,
+    Record<string, { backgroundMean: number; signalMean: number; backgroundWeight: number }>
+  >;
+  /**
+   * The run's own two spreads, each on its own LINEAR edges: `score` and `referenceReading`.
+   *
+   * Linear, unlike the count bins: a score is a 0-100 scale and a reference reading is read against a gate
+   * typed in the same units, so a log axis puts the number being chosen somewhere the reader cannot find.
+   *
+   * One distribution for the whole run, never per sample, because the cutoff and the gate are each one
+   * number for the run — so the plot must show every cell the number will act on. A key is absent where the
+   * served rung produces no such quantity: a population baseline yields no score, and a baseline belonging
+   * to a tag in a sample gives no cell a reference reading.
+   */
+  spreads: Record<string, { edges: number[]; weights: number[] }>;
+};
+
 // What the software resolves an unset reference source to, restated so the dropdown can say it. Mirrors
 // verdict.py resolve_default_source: a declared reagent, else the panel's own readings where the panel is
 // big enough, else nothing.
@@ -507,9 +550,13 @@ const INITIAL_GRAPH_STATES = {
   "scoreDistributionGraphState" | "referenceReadingGraphState" | "fittedBackgroundGraphState"
 >;
 
-// v6 data shape: the current shape without the undeclared-barcode grid's state, which arrived with that
-// table.
-type BlockDataV6 = Omit<BlockData, "undeclaredBarcodesTableState">;
+// v8 data shape: the current shape with the panel-versus-reads grid's state, which v9 strips.
+type BlockDataV8 = BlockData & { runQualityMismatchTableState: PlDataTableStateV2 };
+
+// v6 data shape: the v8 shape without the undeclared-barcode grid's state, which arrived with that
+// table. Every shape below hangs off V8 rather than off BlockData: they all predate v9, so they all still
+// carry the panel-versus-reads grid state that v9 strips.
+type BlockDataV6 = Omit<BlockDataV8, "undeclaredBarcodesTableState">;
 
 // v5 data shape: v6 without the reagent grid's state, which arrived with the reagent table.
 type BlockDataV5 = Omit<BlockDataV6, "reagentTableState">;
@@ -611,9 +658,9 @@ const dataModel = new DataModelBuilder()
   // The block still EMITS what the removed pages showed. The verdicts and the run's measurements are both
   // artifacts this block must produce. A dropped view does not release it from producing them.
   //
-  // The Run quality page's two grid states are `runQualityTableState` and `runQualityMismatchTableState`.
-  // They are NOT the two keys this migration strips. Never reuse a stripped key. A saved column set and
-  // filter from a removed view would reappear under a new grid. They were never saved against that grid.
+  // The Run quality page's own grid state is `runQualityTableState`. It is NOT one of the two keys this
+  // migration strips. Never reuse a stripped key. A saved column set and filter from a removed view would
+  // reappear under a new grid. They were never saved against that grid.
   .migrate<BlockDataV4>(
     "v4",
     ({ verdictTableState: _v, antigenQcTableState: _q, panelMismatchTableState: _m, ...rest }) => ({
@@ -636,7 +683,7 @@ const dataModel = new DataModelBuilder()
   }))
   // v6 -> v7: the undeclared-barcode grid's state arrives, for the same reason the reagent grid's state
   // arrived one version earlier.
-  .migrate<BlockData>("v7", (data) => ({
+  .migrate<BlockDataV8>("v7", (data) => ({
     ...data,
     undeclaredBarcodesTableState: createPlDataTableStateV2(),
   }))
@@ -644,10 +691,24 @@ const dataModel = new DataModelBuilder()
   // saved state. It never overwrites one. A reader who opened that tab keeps the pooled single-panel chart.
   // The fit runs per (tag, sample), and one panel reads every sample's fits as one population. This migration
   // resets that one plot's state. It leaves the other two alone.
-  .migrate<BlockData>("v8", (data) => ({
+  .migrate<BlockDataV8>("v8", (data) => ({
     ...data,
     fittedBackgroundGraphState: INITIAL_GRAPH_STATES.fittedBackgroundGraphState,
   }))
+  // v8 -> v9: the panel-versus-reads view is gone, and its grid state goes with it rather than being
+  // carried. The check reported one direction only -- a declared barcode no read carried -- and the reagent
+  // table now reads that as `Seen in 0/N`, on the surface the quality view designs for reagent findings.
+  // The other direction was structurally unreachable there and has always been the undeclared-barcode
+  // table's.
+  //
+  // Never reuse the stripped key. A saved column set and filter means something only against the frame it
+  // was saved on, and that frame no longer exists.
+  .migrate<BlockData>("v9", ({ runQualityMismatchTableState: _m, ...rest }) => ({ ...rest }))
+  // The reagent frame's axes were reordered to put the tag first, so its leading column is the reagent's
+  // name. A stored `columnOrder.orderedColIds` is an explicit list and beats anything the model asks for,
+  // so a project saved under the old order would keep showing the panel id first. Reset rather than
+  // rewritten: the saved filters and column set were saved against axes that no longer exist in that order.
+  .migrate<BlockData>("v10", (data) => ({ ...data, reagentTableState: createPlDataTableStateV2() }))
   .init(() => ({
     runMode: "full" as const, // full run by default. "dry" = read-limited Preview
     // Default preset: the geometry the block shipped with, 10x 5' v2 BEAM (16 / 10 / 15).
@@ -668,7 +729,6 @@ const dataModel = new DataModelBuilder()
     // project was created, so no migration carries them.
     runQualityTableState: createPlDataTableStateV2(),
     ...INITIAL_GRAPH_STATES,
-    runQualityMismatchTableState: createPlDataTableStateV2(),
     reagentTableState: createPlDataTableStateV2(),
     undeclaredBarcodesTableState: createPlDataTableStateV2(),
   }));
@@ -1621,9 +1681,8 @@ export const platforma = BlockModelV3.create(dataModel)
       // Absent reads as one panel. A run record written before the field existed has no opinion, and one
       // panel is the ordinary case.
       const panelsDiffer = (runMeta?.samplePanelCount ?? 1) > 1;
-      // Not-bound is absent by design. A cell's vote is exactly one of bound or not-bound. A third column is
-      // `answered - bound` printed out. It stays in the EXPORT, which has its own readers. This panel alone
-      // drops it.
+      // Not-bound is absent by design. A cell's vote is exactly one of bound or not-bound, so a third column
+      // is `answered - bound` printed out. It is not in the export either.
       const WANTED = [
         "pl7.app/label",
         "pl7.app/antigen/verdict",
@@ -1826,21 +1885,6 @@ export const platforma = BlockModelV3.create(dataModel)
     },
     { retentive: true, withStatus: true },
   )
-  // The panel-versus-reads check. It lists every barcode the panel declared that no read carried. It lists
-  // every barcode the reads carried that the panel never declared. Both directions sit in one frame, told
-  // apart by the direction column. That column carries a discrete filter, so either half is reachable on its
-  // own. The workflow emits it into `outputs`, and not only into the exports.
-  .output(
-    "runQualityMismatchTable",
-    (ctx) => {
-      const pCols = ctx.outputs
-        ?.resolve({ field: "antigenPanelMismatchTable", allowPermanentAbsence: true })
-        ?.getPColumns();
-      if (pCols === undefined) return undefined;
-      return createPlDataTableV2(ctx, pCols, ctx.data.runQualityMismatchTableState);
-    },
-    { retentive: true, withStatus: true },
-  )
   // Barcodes the reads carried that no panel declares, keyed by sequence. It carries the one status this
   // run's quality surface publishes outside the measurement list. That status is the share of a sample's
   // reads that land in undeclared barcodes. That status is the barcode's, and never rolled into any sample's
@@ -1873,6 +1917,15 @@ export const platforma = BlockModelV3.create(dataModel)
     ctx.outputs
       ?.resolve({ field: "antigenSampleQc", allowPermanentAbsence: true })
       ?.getDataAsJsonOrUndefined<Record<string, SampleQcReport>>(),
+  )
+  // The binned count distributions every count plot is drawn from: the fitted-background grid on Run
+  // quality, and one sample's own antigen counts per tag on its Visual Report. Read as content, because the
+  // chart takes its bins as values. `allowPermanentAbsence` for the same reason the tables need it: a
+  // chosen V(D)J dataset gates the whole verdict stage, so on a run without one this field never appears.
+  .output("tagCountBins", (ctx): TagCountBins | undefined =>
+    ctx.outputs
+      ?.resolve({ field: "antigenTagBins", allowPermanentAbsence: true })
+      ?.getDataAsJsonOrUndefined<TagCountBins>(),
   )
   // The rung the run WILL be answered under, for the settings field to show. The same call `args()` projects,
   // so the field cannot show one rule while the workflow receives another. Keep it that way. Nothing writes

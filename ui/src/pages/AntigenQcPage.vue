@@ -1,11 +1,6 @@
 <script setup lang="ts">
-import type { PredefinedGraphOption } from "@milaboratories/graph-maker";
-import { GraphMaker } from "@milaboratories/graph-maker";
-import type {
-  CellListSource,
-  QcMeasurementStatus,
-} from "@platforma-open/milaboratories.feature-integration.model";
-import type { PColumnSpec, PlDataTableSheet } from "@platforma-sdk/model";
+import type { QcMeasurementStatus } from "@platforma-open/milaboratories.feature-integration.model";
+import type { PlDataTableSheet } from "@platforma-sdk/model";
 import { getAxisId, PFrameImpl, pTableValue } from "@platforma-sdk/model";
 import {
   PL_PLACEHOLDER_TEXTS,
@@ -20,6 +15,8 @@ import {
 } from "@platforma-sdk/ui-vue";
 import { computed, ref, watch } from "vue";
 import { useApp } from "../app";
+import CountHistogram from "../components/CountHistogram.vue";
+import FittedBackgroundGrid from "../components/FittedBackgroundGrid.vue";
 import QcEntityCell from "../components/QcEntityCell.vue";
 import { qcStatusTag } from "../results";
 
@@ -133,10 +130,6 @@ const qcSettings = usePlDataTableSettingsV2({
   sheets: () => qcLevelSheetsFetch.value,
 });
 
-const mismatchSettings = usePlDataTableSettingsV2({
-  model: () => app.model.outputs.runQualityMismatchTable,
-});
-
 const reagentSettings = usePlDataTableSettingsV2({
   model: () => app.model.outputs.reagentTable,
 });
@@ -169,8 +162,9 @@ const noDataset = computed(() => app.model.data.datasetRef === undefined);
 // third, the reference reading across cells, informs the gate. Each is drawn on the rungs that
 // produce it, and says so on the rungs that do not.
 //
-// All three read one p-frame. The two decile sets share a `distribution` axis and are told apart by
-// a filter GraphMaker applies from the default options below.
+// All three are drawn from `tagCountBins`, one JSON output: the two run-level spreads binned over
+// every cell, and the per-(sample, tag) count bins the background grid is built from. Values rather
+// than a p-frame handle, because PlChartHistogram takes its bins as values.
 //
 // Three states, and the grids' rule applies here too: while the run is in flight the plot shows the
 // processing placeholder, never a sentence saying the distributions have not arrived. That sentence
@@ -179,7 +173,7 @@ const noDataset = computed(() => app.model.data.datasetRef === undefined);
 const distributions = computed(() => app.model.outputs.runQualityDistributions);
 
 // Not settled yet. `stable` lives on the ok branch alone, so an errored output is not pending: it falls
-// through to GraphMaker, which renders the error it was handed.
+// through to the grid, which renders the error it was handed.
 const distributionsPending = computed(() => {
   const output = distributions.value;
   return output === undefined || (output.ok && !output.stable);
@@ -198,18 +192,6 @@ const distributionsAbsent = computed(() => {
 // run, since a run is served by exactly one rung.
 const served = computed(() => app.model.outputs.verdictRunMeta?.referenceChoice);
 
-// Which cell list every fraction of cells was computed against. Two runs whose lists came from
-// different sources do not share a denominator. "none" means no list arrived, which is not the same
-// as an empty one: the measurements needing a list read *not evaluated* rather than zero.
-const CELL_LIST_WORDING: Record<CellListSource, string> = {
-  "cell list": "Cell figures are counted against the supplied cell list.",
-  "clonotype linker": "Cell figures are counted against the cells the clonotype linker returned.",
-  none: "No cell list reached this run, so every figure needing one reads as not evaluated.",
-};
-const cellListSource = computed(() => {
-  const source = app.model.outputs.verdictRunMeta?.cellListSource;
-  return source === undefined ? undefined : CELL_LIST_WORDING[source];
-});
 const rungUnknown = computed(() => served.value === undefined);
 
 // Only the declared rung produces a score: the others yield a probability, which is not on the same
@@ -231,19 +213,25 @@ const noReferenceReadings = computed(() => !rungUnknown.value && served.value ==
 // that opens onto a statement of why it is empty is a tab a reader learns to stop opening. While the run
 // has not reported which rung served it, all three are offered and each says so when opened -- the rung is
 // unknown at that point, not known to be wrong.
-type ViewTab =
-  | "measurements"
-  | "reagents"
-  | "mismatch"
-  | "undeclared"
-  | "score"
-  | "reference"
-  | "background";
+type ViewTab = "measurements" | "reagents" | "undeclared" | "score" | "reference" | "background";
 
 const VIEW_TABS = computed(() => [
-  { label: "Measurements", value: "measurements" as const },
+  // DEFERRED, potentially to be deleted. The measurement table is not one of the three blocks the
+  // quality readout puts on this page, and every measurement it holds now has a purpose-built surface:
+  // the sample level on Per-sample QC and in each sample's own Quality Checks, the tag level on
+  // Reagents and Undeclared barcodes, the fitted background on the grid below, and the run's score
+  // spread on the Scores plot.
+  //
+  // What only it carries is the reason it is deferred rather than deleted: a row for a measurement
+  // NOTHING computed, the coverage triple, and the rollup rows. `320-qc-measurement-set` and
+  // `310-qc-status-and-rollup` require a declared measurement to keep its place whether or not a run
+  // could compute it, and no other surface honours that. Whether it narrows, moves or goes is the spec
+  // author's call.
+  //
+  // The model output, the workflow emission and the p-column spec are all untouched, so re-enabling is
+  // this entry plus the grid below.
+  // { label: "Measurements", value: "measurements" as const },
   { label: "Reagents", value: "reagents" as const },
-  { label: "Panel vs reads", value: "mismatch" as const },
   { label: "Undeclared barcodes", value: "undeclared" as const },
   ...(noScores.value ? [] : [{ label: "Scores", value: "score" as const }]),
   ...(noReferenceReadings.value
@@ -252,58 +240,21 @@ const VIEW_TABS = computed(() => [
   ...(noBackgrounds.value ? [] : [{ label: "Fitted background", value: "background" as const }]),
 ]);
 
-const activeView = ref<ViewTab>("measurements");
+const activeView = ref<ViewTab>("reagents");
 
 // The open tab can stop existing: the run reports its rung, and the plot that tab held cannot be drawn.
 // Falling back to Measurements keeps the page showing something rather than an empty body under a tab
 // strip that no longer offers the tab. Watching an output and writing a LOCAL ref is not a hairpin -- see
 // hairpin.md -- because nothing here reaches server-stored data.
 watch(VIEW_TABS, (tabs) => {
-  if (!tabs.some((t) => t.value === activeView.value)) activeView.value = "measurements";
+  if (!tabs.some((t) => t.value === activeView.value)) activeView.value = "reagents";
 });
 
-const DECILE_VALUE = "pl7.app/antigen/qcDecileValue";
-const DECILE_AXIS = "pl7.app/antigen/qcDecile";
-const DISTRIBUTION_AXIS = "pl7.app/antigen/qcDistribution";
-const BACKGROUND_MEAN = "pl7.app/antigen/fittedBackgroundMean";
-const SIGNAL_MEAN = "pl7.app/antigen/fittedSignalMean";
-const BACKGROUND_WEIGHT = "pl7.app/antigen/fittedBackgroundWeight";
-const SAMPLE_AXIS = "pl7.app/sampleId";
-
-// GraphMaker resolves a source by name, value type, annotations and domain only, so `axesSpec` is
-// required by the type and unread. Building the source through a typed helper keeps `inputName`
-// checked against the chart type's component list: a name absent from that list indexes an undefined
-// component inside GraphMaker and throws.
-function col(name: string, valueType: "Double" | "Int"): PColumnSpec {
-  return { kind: "PColumn", name, valueType, axesSpec: [] };
-}
-
-// Both decile plots read the same column and differ only in which distribution they filter to, so
-// the options are built once and the caller names the slice.
-//
-// A discrete chart has no `x`: its categorical input is `primaryGrouping`, and the axis reaches the
-// filter only because `qcDecileValue` carries it. The filter value field is `selectedFilterValues`.
-function decileOptions(distribution: string): PredefinedGraphOption<"discrete">[] {
-  return [
-    { inputName: "y", selectedSource: col(DECILE_VALUE, "Double") },
-    { inputName: "primaryGrouping", selectedSource: { name: DECILE_AXIS, type: "Int" } },
-    {
-      inputName: "filters",
-      selectedSource: { name: DISTRIBUTION_AXIS, type: "String" },
-      filterType: "equals",
-      selectedFilterValues: [distribution],
-    },
-  ];
-}
-
-// The frame is the whole-run graph frame and carries every verdict, clonotype and feature column
-// beside the four these plots read. Narrowing the column list is what keeps the pickers usable.
-const decileColumns = (spec: PColumnSpec) => spec.name === DECILE_VALUE;
-const backgroundColumns = (spec: PColumnSpec) =>
-  spec.name === BACKGROUND_MEAN || spec.name === SIGNAL_MEAN || spec.name === BACKGROUND_WEIGHT;
-
-const scoreOptions = computed(() => decileOptions("score"));
-const referenceOptions = computed(() => decileOptions("referenceReading"));
+// The run's two spreads, each binned over every cell rather than reduced to eleven decile points.
+// Eleven points suggest a shape; they cannot show WHERE a distribution separates, which is the one
+// thing both plots are read for. A key is absent where the served rung produces no such quantity.
+const scoreSpread = computed(() => tagBins.value?.spreads?.score);
+const referenceSpread = computed(() => tagBins.value?.spreads?.referenceReading);
 
 // The two means side by side, which is the whole reading: a background alone says nothing about
 // whether the counts separated, and a tag that bound nothing shows as two means almost on top of
@@ -313,11 +264,11 @@ const referenceOptions = computed(() => decileOptions("referenceReading"));
 // reads as one population. `330` asks for one plot per tag per sample. This is a panel per sample
 // with a point per tag, which is not that grid — the frame carries the two fitted means, and two
 // means cannot draw the two humps the atom asks a reader to judge.
-const backgroundOptions = computed<PredefinedGraphOption<"scatterplot">[]>(() => [
-  { inputName: "x", selectedSource: col(BACKGROUND_MEAN, "Double") },
-  { inputName: "y", selectedSource: col(SIGNAL_MEAN, "Double") },
-  { inputName: "facetBy", selectedSource: { name: SAMPLE_AXIS, type: "String" } },
-]);
+// The fitted background is a GRID of small multiples, one panel per (sample, tag), drawn from the
+// binned counts rather than from the frame's two fitted means. Two means cannot draw the two humps
+// the atom asks a reader to judge; the bins can, and they carry the means alongside for the reading.
+// The grid holds no chart configuration, because it asks one question and offers no axes to pick.
+const tagBins = computed(() => app.model.outputs.tagCountBins);
 
 // The four exclusions this assay carries -- doublets, a false-discovery rate, the empty-droplet share and
 // sequencing saturation -- are stated in `qc_measures.py`, beside the measurement each one sits next to.
@@ -344,10 +295,11 @@ const backgroundOptions = computed<PredefinedGraphOption<"scatterplot">[]>(() =>
     <template v-else>
       <!-- 320 requires every figure to say which cell list it was computed against. One list serves the
            whole run, so it is stated once here rather than repeated on each measurement. -->
-      <div v-if="cellListSource" class="qc-cell-list">{{ cellListSource }}</div>
 
       <PlTabs v-model="activeView" :options="VIEW_TABS" />
 
+      <!-- DEFERRED with its tab above, potentially to be deleted. Uncomment both together; `qcSettings`,
+           `qcCellRenderer` and the sheet fetch behind them are all still live.
       <PlAgDataTableV2
         v-if="activeView === 'measurements'"
         v-model="app.model.data.runQualityTableState"
@@ -357,22 +309,14 @@ const backgroundOptions = computed<PredefinedGraphOption<"scatterplot">[]>(() =>
         no-rows-text="The report imported with no measurements in it. Every declared measurement should keep a row — a deferred one carries no status and gives its reason in place of a value — so an empty report means the measurements were lost on the way here, not that the run was clean."
         show-export-button
       />
+      -->
 
       <PlAgDataTableV2
-        v-else-if="activeView === 'reagents'"
+        v-if="activeView === 'reagents'"
         v-model="app.model.data.reagentTableState"
         :settings="reagentSettings"
         not-ready-text="The verdict stage produced no reagent table for this run."
         no-rows-text="The table imported with no reagents in it. Every declared barcode keeps a row under every identity it carries — a dead one reads zero under Seen in — so an empty table means the panel reached this stage with nothing declared, not that the reagents were clean."
-        show-export-button
-      />
-
-      <PlAgDataTableV2
-        v-else-if="activeView === 'mismatch'"
-        v-model="app.model.data.runQualityMismatchTableState"
-        :settings="mismatchSettings"
-        not-ready-text="The verdict stage produced no panel-versus-reads check for this run."
-        no-rows-text="Every barcode the panel declared was carried by reads, which is the outcome you want. The opposite direction is not reported here: barcode correction snaps each feature onto the panel before counting, so a barcode the panel never declared cannot reach this check. See the Undeclared barcodes tab for that direction."
         show-export-button
       />
 
@@ -406,13 +350,16 @@ const backgroundOptions = computed<PredefinedGraphOption<"scatterplot">[]>(() =>
         <PlAlert v-if="rungUnknown" type="info">
           This run has not reported which baseline served it yet.
         </PlAlert>
-        <GraphMaker
+        <PlAlert v-else-if="scoreSpread === undefined" type="info">
+          No score spread has arrived from this run yet. It is taken by the same verdict stage as
+          the measurements, so it arrives with them.
+        </PlAlert>
+        <CountHistogram
           v-else
-          v-model="app.model.data.scoreDistributionGraphState"
-          chart-type="discrete"
-          :p-frame="app.model.outputs.runQualityDistributions"
-          :default-options="scoreOptions"
-          :data-column-predicate="decileColumns"
+          :edges="scoreSpread.edges"
+          :weights="scoreSpread.weights"
+          :threshold="app.model.data.boundCutoff"
+          x-axis-label="Specificity score"
         />
       </div>
 
@@ -420,13 +367,19 @@ const backgroundOptions = computed<PredefinedGraphOption<"scatterplot">[]>(() =>
         <PlAlert v-if="rungUnknown" type="info">
           This run has not reported which baseline served it yet.
         </PlAlert>
-        <GraphMaker
+        <PlAlert v-else-if="referenceSpread === undefined" type="info">
+          No reference readings have arrived from this run yet. They are taken by the same verdict
+          stage as the measurements, so they arrive with them.
+        </PlAlert>
+        <!-- `threshold` is the declared gate, and undefined where none is declared. No marker is then
+             drawn, and its absence is the statement that there is no gate: it needs no vocabulary to
+             say so, and a note saying it would be a second voice on one fact. -->
+        <CountHistogram
           v-else
-          v-model="app.model.data.referenceReadingGraphState"
-          chart-type="discrete"
-          :p-frame="app.model.outputs.runQualityDistributions"
-          :default-options="referenceOptions"
-          :data-column-predicate="decileColumns"
+          :edges="referenceSpread.edges"
+          :weights="referenceSpread.weights"
+          :threshold="app.model.data.gateThreshold"
+          x-axis-label="Reference reading (counts)"
         />
       </div>
 
@@ -434,13 +387,14 @@ const backgroundOptions = computed<PredefinedGraphOption<"scatterplot">[]>(() =>
         <PlAlert v-if="rungUnknown" type="info">
           This run has not reported which baseline served it yet.
         </PlAlert>
-        <GraphMaker
+        <PlAlert v-else-if="tagBins === undefined" type="info">
+          No binned count distributions have arrived from this run yet. They are taken by the same
+          verdict stage as the measurements, so they arrive with them.
+        </PlAlert>
+        <FittedBackgroundGrid
           v-else
-          v-model="app.model.data.fittedBackgroundGraphState"
-          chart-type="scatterplot"
-          :p-frame="app.model.outputs.runQualityDistributions"
-          :default-options="backgroundOptions"
-          :data-column-predicate="backgroundColumns"
+          :bins="tagBins"
+          :sample-labels="app.model.outputs.sampleLabels ?? {}"
         />
       </div>
     </template>
@@ -448,18 +402,12 @@ const backgroundOptions = computed<PredefinedGraphOption<"scatterplot">[]>(() =>
 </template>
 
 <style module>
-/* GraphMaker fills its container, and a container with no height collapses to nothing.
+/* A plot fills its container, and a container with no height collapses to nothing.
    PlBlockPage's body is a flex column in a `minmax(0, 1fr)` grid row, so `flex: 1` takes the
    height the tabs and alerts above leave. The floor holds room for a faceted grid, which needs
    more than one panel's worth. */
 .plot {
   flex: 1;
   min-height: 480px;
-}
-
-.qc-cell-list {
-  padding: 4px 0 12px;
-  font-size: 13px;
-  color: var(--color-txt-03);
 }
 </style>

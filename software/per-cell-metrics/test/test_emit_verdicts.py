@@ -89,12 +89,35 @@ def test_writes_every_artifact(bed):
         "result_cell_scalars.csv",
         "result_offered.csv",
         "result_identity_labels.csv",
+        "result_tag_labels.csv",
         "result_identity_properties.csv",
         "result_panel_mismatch.csv",
         "result_undeclared_barcodes.csv",
         "result_run_meta.json",
     ):
         assert (bed / name).exists(), name
+
+
+def test_tag_labels_name_every_tag_including_the_comparator(bed):
+    r = _run(bed, *BASE)
+    assert r.returncode == 0, r.stderr
+    labels = dict(pl.read_csv(bed / "result_tag_labels.csv", infer_schema_length=0).iter_rows())
+    panel = pl.read_csv(bed / "panel.csv", infer_schema_length=0)
+    assert set(labels) == set(panel["Sequence"].to_list()), "one row per declared tag"
+    # The reference tag has no identity of its own, so an identity-keyed label would miss it. It holds
+    # reagent figures, so the reagent table needs its name.
+    assert labels["CTRL"] == "Ctrl", f"the comparator kept its barcode: {labels}"
+    assert labels["AAAA"] == "AgA"
+
+
+def test_tag_labels_match_identity_labels_under_the_per_tag_grouping(bed):
+    _run(bed, *BASE)
+    tags = dict(pl.read_csv(bed / "result_tag_labels.csv", infer_schema_length=0).iter_rows())
+    identities = dict(pl.read_csv(bed / "result_identity_labels.csv", infer_schema_length=0).iter_rows())
+    # An identity IS a tag here, so one rule must give one answer. Two rules would read a tag under one
+    # name beside its verdict and another beside its reagent figures.
+    for identity, label in identities.items():
+        assert tags[identity] == label, f"{identity}: {tags[identity]!r} vs {label!r}"
 
 
 def test_a_silent_cell_votes_not_bound(bed):
@@ -2927,13 +2950,16 @@ REAGENT_COLUMNS = [
     "identity",
     "samplesSeenIn",
     "samplesInPanel",
+    "seenIn",
     "samplesSeenInNames",
     "samplesInPanelNames",
     "cellsWithCount",
     "cellsAboveTheLine",
     "medianCountPerCell",
     "siblingDisagreement",
+    "siblingDisagreementShown",
     "selfDisagreement",
+    "selfDisagreementShown",
     "reason",
 ]
 
@@ -2967,6 +2993,38 @@ def test_the_reagent_table_names_every_absent_figure(bed):
     # One tag under this identity, so no sibling comparison exists and the row says so.
     assert target["siblingDisagreement"] is None
     assert "siblingDisagreement=this identity carries one tag" in target["reason"]
+
+
+def test_the_reagent_table_prints_a_ratio_and_the_words_for_an_absent_rate(bed):
+    # The quality view's own table shows "1/4" under Seen in and "no sibling" under the sibling
+    # column. A blank there reads as a figure that failed to load, and a single-tag identity is the
+    # common case, so the shown column carries the words while the rate beside it stays numeric.
+    (bed / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type\nS1,AgA,AAAA,Target\nS1,AgD,DEAD,Target\nS1,Ctrl,CTRL,Control\n"
+    )
+    _run(bed, *BASE)
+    reagents = pl.read_csv(bed / "result_reagents.csv", infer_schema_length=0)
+    rows = {r["tag"]: r for r in reagents.iter_rows(named=True)}
+
+    # One sample in this panel, and the barcode is carried in it.
+    assert rows["AAAA"]["seenIn"] == "1/1"
+    # A tag no read carried keeps its row and reads zero over the same denominator.
+    assert rows["DEAD"]["seenIn"] == "0/1"
+
+    # Each identity carries one tag here, so every row says so in words rather than leaving a blank.
+    assert rows["AAAA"]["siblingDisagreementShown"] == "no sibling"
+    assert rows["DEAD"]["siblingDisagreementShown"] == "no sibling"
+    # The reference tag is held out of the verdict read, which is a different cause and says so.
+    assert rows["CTRL"]["siblingDisagreementShown"] == "held out of the read"
+
+    # A tag no cell set could be read on has nothing to compare against itself either.
+    assert rows["DEAD"]["selfDisagreementShown"] == "nothing to compare"
+
+    # Where a rate exists the shown column carries the number, to two places.
+    rates = [r for r in reagents.iter_rows(named=True) if r["selfDisagreement"] is not None]
+    assert rates, "at least one tag should carry a self-disagreement rate"
+    for row in rates:
+        assert row["selfDisagreementShown"] == f"{float(row['selfDisagreement']):.2f}"
 
 
 def test_a_barcode_reused_for_two_antigens_takes_a_row_under_each(tmp_path):
@@ -3507,3 +3565,29 @@ def test_a_valueless_usable_fraction_carries_its_reason_and_no_detail(bed):
     assert row["value"] in ("", None)
     assert row["reason"]
     assert row["detail"] in ("", None)
+
+
+def test_a_reused_barcode_reads_as_its_joined_names_not_its_sequence(tmp_path):
+    """A tag whose panels name it differently reads as both names, under any grouping.
+
+    The label rungs are: the agreed name, else the disagreeing names joined, else the barcode. A
+    property grouping labels its IDENTITIES from the grouped-on column, and reading the tag's name
+    from that scope dropped every reused barcode to the third rung.
+    """
+    (tmp_path / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type\n"
+        "S1,AgA,AAAA,Target\n"
+        "S2,AgA_alt,AAAA,Target\n"
+        "S1,Ctrl,CTRL,Control\n"
+        "S2,Ctrl,CTRL,Control\n"
+    )
+    (tmp_path / "counts.csv").write_text(
+        "sampleId,cellId,tag,umiCount\nS1,c1,AAAA,500\nS1,c1,CTRL,6\nS2,c2,AAAA,500\nS2,c2,CTRL,6\n"
+    )
+    (tmp_path / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS2,c2,K2\n")
+    r = _run(tmp_path, *BASE, "--grouping", json.dumps({"by": "property", "columns": ["Type"]}))
+    assert r.returncode == 0, r.stderr
+
+    labels = dict(pl.read_csv(tmp_path / "result_tag_labels.csv", infer_schema_length=0).iter_rows())
+    assert labels["AAAA"] == "AgA / AgA_alt", f"the reused barcode fell back to its sequence: {labels}"
+    assert labels["CTRL"] == "Ctrl", "a tag its panels agree on keeps its plain name"
