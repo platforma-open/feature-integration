@@ -42,8 +42,8 @@ def test_combine_all_both_fire_emits_summed():
 
 
 def test_combine_all_one_missing_omits_feature():
-    # Only one BG505 barcode fired, so under AND the antigen is NOT called. The cell has no BG505
-    # entry at all -- omitted, not zero -- so it never takes a fraction of that cell's signal.
+    # Only one BG505 barcode fired, so under AND the antigen is NOT called. The cell has no BG505 entry
+    # at all -- omitted, not zero -- so it never takes a fraction of that cell's signal.
     assert combine_barcode_counts({"b1": 5}, _B2F, _FB, {"BG505": "all"}) == {}
 
 
@@ -166,8 +166,8 @@ def test_cli_writes_outputs(tagstat_tsv, tags_csv, tmp_path):
 
 @pytest.mark.slow
 def test_cli_abundance_uses_unique_umi(tagstat_tsv, tags_csv, tmp_path):
-    # DP-2: the matrix must use mitool's deduplicated `unique_UMI` (cell1/AGX = 3 distinct UMIs),
-    # NOT the raw read `count` (which is 7 in the bed). Guards against reading the wrong column.
+    # The matrix must use mitool's deduplicated `unique_UMI` (cell1/AGX = 3 distinct UMIs), NOT the raw
+    # read `count` (7 in the bed).
     subprocess.run(
         [
             sys.executable,
@@ -191,10 +191,9 @@ def test_cli_abundance_uses_unique_umi(tagstat_tsv, tags_csv, tmp_path):
 
 @pytest.mark.slow
 def test_cli_with_renamed_csv_columns(tagstat_tsv, tmp_path):
-    # D4: the CSV's barcode/feature columns can be named anything -- --csv-barcode-col /
-    # --csv-feature-col map them to the join key and output "feature" column. Barcode values
-    # (AAAA, CCCC) match the committed tagstat_main.tsv bed. Mapped to the same AGX/BGX names the
-    # golden test expects, just via a differently-named CSV.
+    # The CSV's barcode/feature columns can be named anything -- --csv-barcode-col / --csv-feature-col
+    # map them to the join key and output "feature" column. Barcode values match the committed
+    # tagstat_main.tsv bed, mapped to the same AGX/BGX names the golden test expects.
     renamed_csv = tmp_path / "renamed_tags.csv"
     renamed_csv.write_text("barcode,antigen\nAAAA,AGX\nCCCC,BGX\n")
 
@@ -225,8 +224,8 @@ def test_cli_with_renamed_csv_columns(tagstat_tsv, tmp_path):
 
 @pytest.mark.slow
 def test_cli_rejects_colliding_feature_col(tagstat_tsv, tmp_path):
-    # D4 guard: mapping --csv-feature-col onto a tag-stat column name (e.g. `count`) would otherwise
-    # silently corrupt the output `feature` column with the wrong data. It must exit non-zero instead.
+    # Mapping --csv-feature-col onto a tag-stat column name (e.g. `count`) would otherwise silently
+    # corrupt the output `feature` column with the wrong data. It must exit non-zero instead.
     renamed_csv = tmp_path / "renamed_tags.csv"
     renamed_csv.write_text("barcode,count\nAAAA,AGX\nCCCC,BGX\n")
 
@@ -260,10 +259,8 @@ def test_cli_rejects_colliding_feature_col(tagstat_tsv, tmp_path):
     ids=["off-panel-rows", "header-only"],
 )
 def test_cli_empty_join_writes_header_only_not_crash(tags_csv, tmp_path, tagstat_body):
-    # Regression: when no (cell, feature) pair survives the tag->feature join -- a wrong read geometry,
-    # or a sample with no on-panel reads -- the run must still emit both CSVs header-only, never crash.
-    # abundance and fractions are pure-polars transforms that carry their schema through the empty
-    # case, and this guards that they stay header-only.
+    # Regression: when no (cell, feature) pair survives the tag->feature join -- a wrong read geometry, or
+    # a sample with no on-panel reads -- the run must still emit both CSVs header-only, never crash.
     tagstat = tmp_path / "tagstat.tsv"
     tagstat.write_text("CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\n" + tagstat_body)
 
@@ -295,9 +292,8 @@ def test_cli_empty_join_writes_header_only_not_crash(tags_csv, tmp_path, tagstat
 
 @pytest.mark.slow
 def test_cli_per_cell_summary_maxima_match_exported_columns(tagstat_tsv, tags_csv, tmp_path):
-    # The per-cell summary's maxUmiCount and maxFraction are a collapse of the exported
-    # (cell x feature) columns. They must equal the per-cell max of those exported CSVs, not a
-    # separately-recomputed value. This guards the with_fraction single-compute reuse.
+    # The per-cell summary's maxUmiCount and maxFraction are a collapse of the exported (cell x feature)
+    # columns. They must equal the per-cell max of those exported CSVs, not a separately-recomputed value.
     subprocess.run(
         [
             sys.executable,
@@ -337,7 +333,7 @@ def test_cli_per_cell_summary_maxima_match_exported_columns(tagstat_tsv, tags_cs
 def test_cli_combine_all_gates_dual_barcode_antigen(tmp_path):
     # End-to-end: a dual-barcode antigen (BG505 = b1 + b2) in "all" (AND) mode is called only in cells
     # where BOTH barcodes fired. A single-barcode antigen (OTHER = cx) stays OR. Mirrors the LIBRA-seq
-    # dual-probe design (a cell is BG505-specific only when both probe barcodes are present).
+    # dual-probe design.
     tags = tmp_path / "tags.csv"
     tags.write_text("tag,feature,combine\nb1,BG505,all\nb2,BG505,all\ncx,OTHER,sum\n")
     tagstat = tmp_path / "tagstat.tsv"
@@ -398,10 +394,9 @@ def test_cli_rejects_conflicting_combine_mode(tmp_path):
 
 
 def test_a_cell_whose_every_count_is_zero_gets_a_zero_share_not_a_nan():
-    # 0/0 is NaN, and the NaN does not stay put. It reaches the exported fractions CSV as a float
-    # nothing downstream expects, and in per_cell_summary it slips past the "<1%" guard, which requires
-    # umiCount > 0, into a cast to Int64 that raises and takes the whole CLI down with a raw traceback.
-    # Real tag-stat cannot emit such a row, but this CLI is driven by hand during verification.
+    # 0/0 is NaN, and the NaN does not stay put. It reaches the exported fractions CSV as a float nothing
+    # downstream expects, and in per_cell_summary it slips past the "<1%" guard into a cast to Int64 that
+    # raises. Real tag-stat cannot emit such a row, but this CLI is driven by hand during verification.
     frame = pl.DataFrame(
         {
             "sampleId": ["S1", "S1"],
@@ -413,8 +408,8 @@ def test_a_cell_whose_every_count_is_zero_gets_a_zero_share_not_a_nan():
     fractions = with_fraction(frame)
     assert fractions["fraction"].to_list() == [0.0, 0.0]
 
-    # And the collapse runs rather than dying. A cell with no signal still gets its row: dropping it
-    # would make a cell that was measured and read nothing indistinguishable from one never measured.
+    # And the collapse runs rather than dying. A cell with no signal still gets its row: dropping it would
+    # make a cell that was measured and read nothing indistinguishable from one never measured.
     summary = per_cell_summary(fractions)
     assert summary.height == 1
     assert summary["maxUmiCount"].to_list() == [0]

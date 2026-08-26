@@ -7,8 +7,8 @@ import {
 } from "@platforma-open/milaboratories.feature-integration.model";
 
 // The settings fields display these numbers where the stored value is undefined, and the workflow
-// substitutes its own copy on the command line. Two copies that disagree put a number on screen that no
-// run was scored against, and nothing else in the block compares them.
+// substitutes its own copy on the command line. Two copies that disagree put a number on screen that no run
+// was scored against, and nothing else in the block compares them.
 //
 // Read as text rather than imported: one source is Tengo and the other Python.
 const root = join(__dirname, "..", "..");

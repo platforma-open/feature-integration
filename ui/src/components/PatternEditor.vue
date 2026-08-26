@@ -81,14 +81,13 @@ const patternParseError = computed(() => {
   if (!isUserConfigurable.value) return null;
   const p = app.model.data.pattern;
   if (!p) return null;
-  // Loose check, the same rule as the model's args. mitool does the real parsing, and only the CELL/UMI/FEATURE
-  // tags and the R2 capture are required here. An extra flank, spacer or anchor is allowed through the string
-  // field.
+  // Loose check, the same rule as the model's args. mitool does the real parsing, and only the CELL/UMI/
+  // FEATURE tags and the R2 capture are required here.
   return validatePattern(p);
 });
 
-// ── Bidirectional sync (data.pattern <-> builder fields). Hairpin-safe: both directions read and write
-//    data.pattern, which is persisted data, and local refs. Never a model output. ──
+// Bidirectional sync (data.pattern <-> builder fields). Hairpin-safe: both directions read and write
+// data.pattern, which is persisted data, and local refs. Never a model output.
 const lastAssembled = ref<string | undefined>(undefined);
 
 // data.pattern -> fields. Skips this component's own write, and leaves the fields untouched on an
@@ -145,11 +144,10 @@ watch(editorMode, (mode) => {
     </template>
   </PlDropdown>
 
-  <!-- User-configurable preset: unlock the Add/Build editor (same shape as blocks/peptide-extraction). -->
+  <!-- User-configurable preset: unlock the Add/Build editor. -->
   <template v-if="isUserConfigurable">
     <PlBtnGroup v-model="editorMode" :options="editorModeOptions" class="fullWidthGroup" />
 
-    <!-- Add mode: raw mitool tag-pattern text -->
     <template v-if="editorMode === 'write'">
       <PlTextField
         v-model="app.model.data.pattern"
@@ -167,7 +165,6 @@ watch(editorMode, (mode) => {
       </PlTextField>
     </template>
 
-    <!-- Build mode: field-based editor with a live preview and Read 1 / Read 2 tabs -->
     <template v-if="editorMode === 'build'">
       <div class="preview">{{ preview }}</div>
 

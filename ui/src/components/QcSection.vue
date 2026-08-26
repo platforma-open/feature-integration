@@ -54,8 +54,8 @@ const notes = computed(() => {
   <div class="qc-section" :class="{ expanded: data.expanded }">
     <div class="qc-section__status" @click.stop="data.expanded = !data.expanded">
       <PlStatusTag v-if="tag" :type="tag" />
-      <!-- No line stands behind this measurement, so it carries no status, and there is no fourth word for
-           that. The em-dash marks the absence; the value or the reason beside it says which case it is. -->
+      <!-- No line stands behind this measurement, so it carries no status. The em-dash marks the absence;
+                 the value or the reason beside it says which case it is. -->
       <span v-else class="qc-section__no-status">—</span>
     </div>
     <div class="qc-section__text">

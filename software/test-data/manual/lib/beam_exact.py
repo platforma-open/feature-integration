@@ -2,25 +2,20 @@
 libraries, so the full Feature Barcode Profiling -> VDJ Multiomic Integration -> Lead Selection chain
 can be exercised FAST on a local backend instead of multi-GB reference FASTQs.
 
-Two things distinguish this from the generic `realistic`/`multisample` presets, both modelled on
-production BEAM libraries:
+Two things distinguish this from the generic `realistic`/`multisample` presets:
 
   1. R2 read geometry has a 10 bp OFFSET before the feature barcode:
          R1 = CELL(16) + UMI(10)
          R2 = OFFSET(10) + FEATURE(15) + tail        (real pattern: ^N{10}(FEATURE:N{15})(R2:*))
-     The generic generators put the feature at R2 position 0. The real BEAM libraries carry a 10 bp
-     lead-in, which is why the block runs with the `generic-fb-umi` preset and not `tenx-beam`.
+     The generic generators put the feature at R2 position 0. Real BEAM libraries carry a 10 bp lead-in,
+     which is why the block runs with the `generic-fb-umi` preset and not `tenx-beam`.
 
   2. A genuinely SAMPLE-AWARE panel CSV (Sample,Sequence,Protein): each sample has its own antigen
      panel, and a couple of barcode SEQUENCES are REUSED across samples mapped to DIFFERENT proteins.
-     That mirrors real multi-sample BEAM panels, where the same 15-mer means one antigen in one
-     sample's panel and a different one in another's. Without the Sample column the tag CSV then has
-     one barcode on two rows with different proteins, which trips Feature Barcode Profiling's
-     duplicate-barcode guard. WITH the Sample column the workflow filters the CSV per sample and each
-     barcode is unique again.
+     Without the Sample column the tag CSV has one barcode on two rows with different proteins, which
+     trips the duplicate-barcode guard. WITH it the workflow filters the CSV per sample.
 
-Colocated with a coherent AIRR single-cell VDJ arm, reusing lib.vdj, so clonotypes bind their sample's
-antigens and the convergence [sampleId, cellId] join lines up. Deterministic, standard-library only.
+Colocated with a coherent AIRR single-cell VDJ arm, reusing lib.vdj. Deterministic, stdlib only.
 """
 
 import csv
@@ -46,10 +41,10 @@ R2_TAIL = "TTAATTAATT"  # neutral remainder after the feature barcode (captured 
 
 def build_sample_panels(rng, per_sample_size, n_shared_collisions):
     """Two per-sample antigen panels that SHARE `n_shared_collisions` barcode sequences under DIFFERENT
-    protein names (the sample-aware twist), plus a control barcode common to both.
+        protein names, plus a control barcode common to both.
 
-    Returns (panels, control_bc) where panels = {sample: [(protein, barcode), ...]} (control included).
-    """
+        Returns (panels, control_bc) where panels = {sample: [(protein, barcode), ...]} (control included).
+        """
     total = per_sample_size * 2  # distinct barcodes across both panels before collisions are folded in
     seqs = gen_distinct(rng, total, FEAT_LEN, min_dist=3)
     control_bc = gen_distinct(rng, 1, FEAT_LEN, min_dist=3, avoid=seqs)[0]
@@ -61,8 +56,8 @@ def build_sample_panels(rng, per_sample_size, n_shared_collisions):
     s1 = [(f"Panel A Antigen {i + 1}", bc) for i, bc in enumerate(s1_seqs)]
     s2 = [(f"Panel B Antigen {i + 1}", bc) for i, bc in enumerate(s2_seqs)]
 
-    # Fold in the collisions: reuse the FIRST `n_shared_collisions` barcodes of sample1 in sample2, but
-    # keep sample2's own protein name for them -> same 15-mer, two different proteins across samples.
+    # Fold in the collisions: reuse the FIRST `n_shared_collisions` barcodes of sample1 in sample2, but keep
+    # sample2's own protein name -> same 15-mer, two different proteins across samples.
     for i in range(n_shared_collisions):
         proto_name, _ = s2[i]
         s2[i] = (proto_name, s1_seqs[i])  # sample2 protein, sample1's barcode
@@ -73,8 +68,8 @@ def build_sample_panels(rng, per_sample_size, n_shared_collisions):
 
 def assign_features(rng, antigens, control_name):
     """Plant per-antigen distinct-UMI counts for one cell: one dominant antigen (high), an optional
-    ambiguous second, 0-2 low-count ambient antigens, light control background. Same magnitude shape as
-    lib.antigen (calibrated to a typical 5k-cell BEAM library). Returns (per_feature, consensus_label)."""
+        ambiguous second, 0-2 low-count ambient antigens, light control background. Same magnitude shape as
+        lib.antigen. Returns (per_feature, consensus_label)."""
     dominant = rng.choice(antigens)
     dom_umis = rng.randint(10, 60) if rng.random() < 0.1 else rng.randint(300, 1100)
     per_feature = {dominant: dom_umis}
@@ -104,36 +99,31 @@ def build(
     offtarget_count=0,
     multibarcode=False,
 ):
-    """Generate the BEAM-exact run under run_dir: antigen FASTQs (offset-10 R2), a sample-aware tag CSV,
-    the coherent AIRR VDJ arm, and truth tables.
+    """Generate the BEAM-exact run under run_dir: antigen FASTQs (offset-10 R2), a sample-aware tag CSV, the
+        coherent AIRR VDJ arm, and truth tables.
 
-    The tag CSV also carries the Type/Species columns a real panel declares. The control becomes Decoy.
-    The first `offtarget_count` antigens of each sample's panel become Off-Target, and the rest become
-    Target. Species alternate Human/Cyno.
+        The tag CSV also carries the Type/Species columns a real panel declares. The control becomes Decoy.
+        The first `offtarget_count` antigens of each sample's panel become Off-Target, the rest Target.
 
-    With `multibarcode=True` the first non-control antigen of each sample gets a 2nd barcode under
-    combine="all" (AND) and the second a 2nd barcode under combine="sum". The tag CSV gains a `combine`
-    column and emits one row per member barcode. The extra barcodes are drawn ONLY in this branch, so a
-    default beam run is byte-identical to before."""
+        With `multibarcode=True` the first non-control antigen of each sample gets a 2nd barcode under
+        combine="all" (AND) and the second a 2nd barcode under combine="sum". The extra barcodes are drawn
+        ONLY in this branch, so a default beam run is byte-identical to before."""
     rng = new_rng(BEAM_SEED)
     panels, _control_bc = build_sample_panels(rng, panel_size, n_shared_collisions)
     samples = ["donor01", "donor02"]
 
-    # Per-antigen Type/Species from the shared classifier — which also VALIDATES offtarget_count, so the
-    # --beam path rejects out-of-range counts exactly like the full-run path. Computed up front, before
-    # any output dir is created, so a bad count errors cleanly. Class is intentionally OMITTED from the
-    # beam-exact panel CSV: these antigens are all synthetic (uniform class), and the task only requires
-    # Type/Species here.
+    # Per-antigen Type/Species from the shared classifier, which also VALIDATES offtarget_count. Computed up
+    # front, before any output dir is created, so a bad count errors cleanly. Class is OMITTED from the
+    # beam-exact panel CSV: these antigens are all synthetic.
     meta_by_sample = {}
     for sample in samples:
         non_control = [name for name, _ in panels[sample] if name != CONTROL_NAME]
         types, species, _classes = classify_antigens(non_control, offtarget_count)
         meta_by_sample[sample] = (types, species)
 
-    # Group each sample's flat [(protein, barcode)] panel into protein -> [barcodes] (order-preserving)
-    # plus a combine map. With --multibarcode, give the first non-control antigen a 2nd barcode under
-    # combine="all" and the second a 2nd barcode under combine="sum". The extra barcodes come from `rng`
-    # ONLY inside this branch, so the default (single-barcode) beam stream is untouched / byte-identical.
+    # Group each sample's flat [(protein, barcode)] panel into protein -> [barcodes] (order-preserving) plus
+    # a combine map. The extra barcodes come from `rng` ONLY inside the multibarcode branch, so the default
+    # single-barcode beam stream is byte-identical.
     extra_iter = None
     if multibarcode:
         existing = [bc for s in samples for _, bc in panels[s]]
@@ -206,8 +196,8 @@ def build(
                             r2 = R2_FILLER + bc + R2_TAIL
                             reads.append([f"{sample}_read{read_no}", cell + umi, r2, 1])
                 else:
-                    # Multi-barcode antigen (only in a --multibarcode run): combine="all" fires EVERY
-                    # member at ~k (AND). Combine="sum" splits k across the members. Same UMI/dup shape.
+                    # Multi-barcode antigen (only in a --multibarcode run): combine="all" fires EVERY member at ~k
+                    # (AND). combine="sum" splits k across the members.
                     if combine.get(feat, "sum") == "all":
                         shares = [k] * len(member_bcs)
                     else:
@@ -235,9 +225,9 @@ def build(
     tags_csv = os.path.join(run_dir, "tags.csv")
     with open(tags_csv, "w", newline="") as f:
         w = csv.writer(f)
-        # Type/Species mirror a real panel; Class is intentionally omitted here (beam-exact
-        # antigens are all synthetic -> uniform class), so the full-run tags.csv is the Class exemplar.
-        # --multibarcode inserts a `combine` column after Protein (one row per member barcode).
+        # Type/Species mirror a real panel; Class is omitted here (beam-exact antigens are all synthetic),
+        # so the full-run tags.csv is the Class exemplar. --multibarcode inserts a `combine` column after
+        # Protein (one row per member barcode).
         if multibarcode:
             w.writerow(["Sample", "Sequence", "Protein", "combine", "Type", "Species"])
         else:

@@ -1,17 +1,13 @@
 // Downstream per-sample QC + per-cell metrics sub-template (render.create boundary).
 //
-// The final consumers of the mitool chain: the QC-report exec, giving parsed and matched reads plus the
-// cell, feature and UMI metrics and the panel-assigned fraction, and the per-cell-metrics Python, which
+// The final consumers of the mitool chain: the QC-report exec, and the per-cell-metrics Python that
 // collapses to the per-cell (cell x feature) outputs. Both consume tagstat.tsv from fb-tagstat plus the
 // parse and refine JSON reports. Running them inside this render.create boundary returns their per-sample
-// outputs as render outputs that flatten cleanly. Mirrors blocks/peptide-extraction
-// downstream-pipeline.tpl.tengo.
+// outputs as render outputs that flatten cleanly.
 //
-// Nothing here knows about the binding verdicts. The verdict stage reads the run as a whole, because a panel
-// is a property of a declared tag set rather than of one sample and the quality rollup spans samples, so it
-// runs once after this fan-out on the gathered counts. Keeping every one of its parameters out of this
-// template is what lets a change to the reading recover each per-sample body from cache instead of
-// re-running parse, refine-tags and tag-stat.
+// Nothing here knows about the binding verdicts. The verdict stage reads the run as a whole and runs once
+// after this fan-out on the gathered counts. Keeping every one of its parameters out of this template is
+// what lets a change to the reading recover each per-sample body from cache.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
@@ -31,8 +27,8 @@ self.body(func(inputs) {
 	barcodeSeqColumn := inputs.barcodeSeqColumn
 	featureNameColumn := inputs.featureNameColumn
 	// Optional multi-barcode antigen combine mode. "" = off, and per_cell_metrics then defaults every feature
-	// to OR/sum. Where set, it names the tag-CSV column giving each feature's mode, sum or all. minUmi is the
-	// AND per-barcode "fired" floor.
+	// to OR/sum. Where set, it names the tag-CSV column giving each feature's mode. minUmi is the AND
+	// per-barcode "fired" floor.
 	combineColumn := is_undefined(inputs.combineColumn) ? "" : inputs.combineColumn
 	minUmi := is_undefined(inputs.minUmi) ? 1 : inputs.minUmi
 
@@ -101,18 +97,17 @@ self.body(func(inputs) {
 		saveFile("result_fractions.csv").
 		saveFile("result_per_cell_summary.csv")
 	// Multi-barcode antigen combine mode (optional). Pass --combine-col only where a column is configured.
-	// Otherwise per_cell_metrics defaults every feature to OR/sum. --min-umi is the AND per-barcode "fired"
-	// floor, and is harmless where no combine column is set.
+	// --min-umi is the AND per-barcode "fired" floor, and is harmless where no combine column is set.
 	if combineColumn != "" {
 		metrics = metrics.arg("--combine-col").arg(combineColumn).arg("--min-umi").arg(string(minUmi))
 	}
 	metrics = metrics.run()
 
 	// No consensus (dominant-feature) or Cell Ranger specificity table. per_cell_metrics.py writes neither and
-	// takes none of the four flags that drove them (--control, --dominance-threshold, --offtarget-col,
-	// --offtarget-values). The verdict stage asks the binding question of every antigen independently, so a
-	// cell that bound three antigens carries three verdicts rather than one winner and two absences. The
-	// negative-control designation survives as a per-feature marker column, emitted outside this fan-out.
+	// takes none of the four flags that drove them. The verdict stage asks the binding question of every
+	// antigen independently, so a cell that bound three antigens carries three verdicts rather than one winner
+	// and two absences. The negative-control designation survives as a per-feature marker column, emitted
+	// outside this fan-out.
 	return {
 		abundance: metrics.getFile("result_abundance.csv"),
 		fractions: metrics.getFile("result_fractions.csv"),
@@ -122,8 +117,8 @@ self.body(func(inputs) {
 		// per-cell-metrics (Python) stdout: the "4-metrics" step log. Surfaced separately rather than in the
 		// mitool stepLogs map, which fb-refine-tagstat builds before this step runs. Capturing it here is
 		// CID-safe through the content-hash persist of these metrics intermediates in main.tpl.tengo. The File
-		// outputs above ARE resolved downstream, so that persist loop, and not any avoidance of resolution, is
-		// what keeps this stdout capture from re-triggering CIDConflictError.
+		// outputs above ARE resolved downstream, so that persist loop is what keeps this stdout capture from
+		// re-triggering CIDConflictError.
 		metricsLogStream: metrics.getStdoutStream()
 	}
 })

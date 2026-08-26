@@ -124,8 +124,7 @@ def test_no_control_feature_marker_header_only(tmp_path):
 
 def test_several_controls_are_all_marked(tmp_path):
     # A panel may carry several controls: being a control is a property of the tag, where supplying the
-    # baseline is a job given to exactly one of them. This file marks controls and nominates nothing, so
-    # every one given is marked. Repeated flags, in the order given.
+    # baseline is a job given to exactly one of them. This file marks controls and nominates nothing.
     _run(
         tmp_path,
         "tag,feature\nAAAA,AGX\nGGGG,CTRL1\nCCCC,CTRL2\n",
@@ -145,8 +144,8 @@ def test_a_control_name_may_contain_a_comma(tmp_path):
 
 
 def test_a_repeated_control_is_marked_once(tmp_path):
-    # The marker is a set. A duplicate would emit two rows for one feature, and the import would then carry
-    # the same feature twice on an axis that keys on it.
+    # The marker is a set. A duplicate would emit two rows for one feature, and the import would then
+    # carry the same feature twice on an axis that keys on it.
     _run(
         tmp_path,
         "tag,feature\nAAAA,AGX\nGGGG,CTRL\n",

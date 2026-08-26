@@ -4,29 +4,25 @@
     python3 reshape_panel.py runs/tiny
 
 Writes `tags_narrow.csv` and `tags_wide.csv` beside `tags.csv`, both carrying **the same barcodes**, so
-either can be uploaded to the block against the same FASTQs. A reshaped panel with a changed barcode
-joins to nothing, which is why nothing here touches the `tag` column.
+either can be uploaded to the block against the same FASTQs. Nothing here touches the `tag` column.
 
-Why this exists. `generate.py` emits one panel shape: `tag,feature,Type,Species,Class`, one panel for
-every sample, with the control carrying its own `Decoy` role. Two other shapes were observed in use at
-one account at the same time, on two of its projects, and neither looks like that:
+`generate.py` emits one panel shape: `tag,feature,Type,Species,Class`, one panel for every sample, with
+the control carrying its own `Decoy` role. Two other shapes were observed in use at one account at the
+same time, on two of its projects:
 
   narrow  sample, barcode, antigen name -- and no fourth column. Nothing declares a role, so nothing can
           be named as the comparator and the panel's own readings have to serve.
-  wide    sample, name, catalogue id, barcode, channel, a constant, role. The role column declares what
-          a member is TO THE QUESTION (target, off-target) and carries **no** comparator value.
+  wide    sample, name, catalogue id, barcode, channel, a constant, role. The role column declares what a
+          member is TO THE QUESTION and carries **no** comparator value.
 
-In both, the negative control is one antigen the scientist points at by name in the interface. So
-neither shape can reach the declared-comparator path, for two different reasons. That is the thing these
-files exist to make visible in the app rather than only in a CSV.
+In both, the negative control is one antigen the scientist points at by name in the interface, so neither
+shape can reach the declared-comparator path.
 
 Both shapes rename a barcode between samples: the same sequence carries a different antigen name in
-different samples, which is the tag-inventory reuse the per-sample keying of the panel exists for. Under
-the per-tag grouping the identity is the barcode, so those identities lose their label and a reader
-meets a raw 15-mer where every other row shows an antigen.
+different samples. Under the per-tag grouping the identity is the barcode, so those identities lose their
+label and a reader meets a raw 15-mer where every other row shows an antigen.
 
-Deterministic: every choice below is positional, so a rerun over the same tags.csv is byte-identical.
-Stdlib only, like the rest of this bed.
+Deterministic: every choice below is positional. Stdlib only.
 """
 
 import argparse
@@ -34,7 +30,7 @@ import csv
 import os
 import sys
 
-# Four values that are three channels — one of them spelled two ways, so grouping on this column splits
+# Four values that are three channels -- one of them spelled two ways, so grouping on this column splits
 # one channel in two. Assigned by position, cycling.
 CHANNELS = ["PE", "PE", "APC", "APC", "PE Dazzle", "PE Dazzle", "PE-Dazzle 5120", "PE-Dazzle 5120"]
 
@@ -42,13 +38,13 @@ CHANNELS = ["PE", "PE", "APC", "APC", "PE Dazzle", "PE Dazzle", "PE-Dazzle 5120"
 # lands in one identity, which is legal and useless.
 RESIDUES = "ECD protein"
 
-# The control's own role is folded into the off-target set on purpose. The observed wide file had no
-# value meaning "comparator" anywhere in its role column, and that is the whole point of the shape.
+# The control's own role is folded into the off-target set on purpose. The observed wide file had no value
+# meaning "comparator" anywhere in its role column.
 ROLE_OF = {"Target": "Target (Primary)", "Off-Target": "Off-Target", "Decoy": "Off-Target"}
 
 
 def _lowercased(role: str) -> str:
-    """The role as the observed file also spelled it — the qualifier or the word after the hyphen."""
+    """The role as the observed file also spelled it -- the qualifier or the word after the hyphen."""
     return role.replace("(P", "(p").replace("(S", "(s").replace("-Target", "-target")
 
 
@@ -86,8 +82,8 @@ def write_narrow(path: str, tags: list[dict], samples: list[str], rename: int, d
         w.writerow(["Sample", "Sequence", "Antigen"])
         rows = 0
         for s_i, sample in enumerate(samples):
-            # A later sample may declare fewer tags, which is what makes *never asked* reachable: a set
-            # whose cells sit only in that sample was never offered the dropped identities.
+            # A later sample may declare fewer tags, which is what makes *never asked* reachable: a set whose
+            # cells sit only in that sample was never offered the dropped identities.
             offered = tags[: len(tags) - drop] if s_i else tags
             for t_i, tag in enumerate(offered):
                 name = _renamed(tag["feature"], s_i) if (s_i and t_i < rename) else tag["feature"]
@@ -106,11 +102,10 @@ def write_wide(path: str, tags: list[dict], samples: list[str], rename: int, dro
             for t_i, tag in enumerate(offered):
                 name = _renamed(tag["feature"], s_i) if (s_i and t_i < rename) else tag["feature"]
                 role = ROLE_OF.get(tag.get("Type", "Target"), "Target (Primary)")
-                # Two case-variant failure modes, kept apart so each can be told from the other. Tag 0
-                # reads one spelling in the first sample and another in the rest, so it carries two
-                # values, the property is dropped for it, and it ends up with no role at all. Tag 1
-                # reads the other spelling everywhere, so it keeps its role but no longer matches the
-                # same role written normally elsewhere.
+                # Two case-variant failure modes, kept apart. Tag 0 reads one spelling in the first sample and
+                # another in the rest, so it carries two values and the property is dropped for it. Tag 1 reads the
+                # other spelling everywhere, so it keeps its role but no longer matches the same role written
+                # normally elsewhere.
                 if (t_i == 0 and s_i) or t_i == 1:
                     role = _lowercased(role)
                 w.writerow(

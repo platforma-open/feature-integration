@@ -1,24 +1,18 @@
 """Per-cell categorical annotation arm.
 
 Emits a synthetic cell-type / cluster annotation keyed by the shared bare-16nt cell barcode, so
-vdj-multiomic-integration's ANNOTATION-integration path has a deterministic input that does NOT depend
-on running CellTypist over the GEX arm. It is an alternative to GEX -> cell-type-annotation, not a
-replacement: the same cells, labelled directly.
+vdj-multiomic-integration's ANNOTATION-integration path has a deterministic input that does NOT depend on
+running CellTypist over the GEX arm.
 
-Source of cells: the antigen arm's ground truth (`truth/expected-consensus.tsv`, columns `sample`,
-`cellId`, `planted_consensus`). Reading cell ids from there guarantees the annotation's `cell_id` values
-are exactly the arm-shared bare 16-mers, so the annotation joins the other arms on
-`[sampleId, cellId]` with no barcode drift.
+Source of cells: the antigen arm's ground truth (`truth/expected-consensus.tsv`). Reading cell ids from
+there guarantees the annotation's `cell_id` values are exactly the arm-shared bare 16-mers.
 
 Coherence with the GEX program map (lib/gex.py PROGRAMS): a cell's `planted_consensus` biases its cell
-type. A binder, where planted_consensus is an antigen name, or a cross-reactive cell gets a plasma-like
-type. An ambiguous or non-binder cell, where planted_consensus == "ambiguous", gets a naive-B type. A
-fixed share of cells is reassigned to a memory-B type so the small vocabulary has all three terms. The
-integer `cluster` (0-4) is coherent with the cell type. Everything is deterministic under
-ANNOTATION_SEED.
+type. A binder or a cross-reactive cell gets a plasma-like type; an ambiguous or non-binder cell gets a
+naive-B type. A fixed share of cells is reassigned to a memory-B type so the small vocabulary has all
+three terms. The integer `cluster` (0-4) is coherent with the cell type.
 
-Output -- genes-in-rows is irrelevant here, because this is a plain per-cell table:
-  annotations/<donor>.tsv   columns: cell_id  cell_type  cluster    (one file per donor/sample)
+Output:  annotations/<donor>.tsv   columns: cell_id  cell_type  cluster
 
 Canonical downstream axis order is [pl7.app/sampleId, pl7.app/sc/cellId] (see README).
 """
@@ -34,8 +28,8 @@ PLASMA = "plasma"
 NAIVE_B = "naive_b"
 MEMORY_B = "memory_b"
 
-# planted_consensus == "ambiguous" is the naive / non-binder class (antigen arm folds non-binders into
-# "ambiguous"); any other value is an antigen name (a binder) or "crossreactive" -> plasma-like.
+# planted_consensus == "ambiguous" is the naive / non-binder class; any other value is an antigen name
+# (a binder) or "crossreactive" -> plasma-like.
 NAIVE_CONSENSUS = {"ambiguous"}
 
 # Fraction of cells reassigned to memory-B regardless of their planted class, so the vocabulary and the
@@ -70,8 +64,8 @@ def _assign(rng, planted_consensus):
 def write_annotations(run_dir, seed=ANNOTATION_SEED):
     """Emit annotations/<donor>.tsv (cell_id, cell_type, cluster) from run_dir/truth/expected-consensus.tsv.
 
-    Cell ids are the arm-shared bare 16-mers copied verbatim from the antigen truth, so the annotation
-    joins the other arms on [sampleId, cellId]. Requires the antigen arm to have run first."""
+        Cell ids are the arm-shared bare 16-mers copied verbatim from the antigen truth. Requires the antigen
+        arm to have run first."""
     consensus_tsv = os.path.join(run_dir, "truth", "expected-consensus.tsv")
     if not os.path.exists(consensus_tsv):
         raise SystemExit(

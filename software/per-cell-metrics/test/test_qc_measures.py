@@ -27,9 +27,8 @@ from qc_measures import (
     usable_read_fraction,
 )
 
-# Every row maps one to one. This is the expected per-id level, built from the
-# spec's own table rather than copied from this module, so a level typo on any id
-# changes the multiset below.
+# Every row maps one to one. Built from the spec's own table rather than copied from this module, so
+# a level typo on any id changes the multiset below.
 EXPECTED_LEVEL_BY_ID = {
     "readsTotal": "sample",
     "cellsDetected": "sample",
@@ -59,24 +58,21 @@ def test_every_declared_id_is_expected_and_every_expected_id_is_declared():
 
 
 def test_a_comparison_is_not_a_line():
-    # A comparison against siblings yields no boundary: nothing separates OK from alerting, so nothing
-    # can be computed. A status derived from it would need a multiplier -- a
-    # median-absolute-deviation cut, an interquartile multiple -- that nobody has published for this
-    # measurement. The invention would move up a level rather than disappear.
+    # A comparison against siblings yields no boundary, so nothing can be computed. A status derived from
+    # it would need a multiplier nobody has published, which moves the invention up a level.
     assert LINE_ROUTES == {"inherited", "categorical", "recommended-and-observed"}
     assert {m.line for m in MEASUREMENTS if m.line} <= LINE_ROUTES
 
 
 def test_tag_disagreement_reads_unjudged():
-    # Such measurements read unjudged and are shown where the comparison is free
-    # to make: a column beside its siblings. The value still travels.
+    # Such measurements read unjudged and are shown where the comparison is free to make: a column beside
+    # their siblings. The value still travels.
     assert status_for("tagDisagreement", 0.24, DEFAULT_LINES) is None
 
 
 def test_no_measurement_is_refused_by_status_for():
-    # The against-the-run route was the only case `status_for` raised on. With it
-    # gone, every declared measurement gets an answer rather than an exception. None is
-    # an answer: it says no line stands behind this one.
+    # The against-the-run route was the only case `status_for` raised on. With it gone, every declared
+    # measurement gets an answer. None is an answer: it says no line stands behind this one.
     for m in MEASUREMENTS:
         answer = status_for(m.id, 0.5, DEFAULT_LINES)
         assert answer is None or isinstance(answer, Status), m.id
@@ -84,19 +80,17 @@ def test_no_measurement_is_refused_by_status_for():
 
 def test_self_disagreement_is_measured_at_the_tag_and_nowhere_else():
     # The identity-level figure has nothing to compare against, so it cannot separate a faulty reagent
-    # from a panel full of weak binders. It measures how many clonotypes sit near the line, which is a
-    # fact about the panel rather than a fault to fix. The tag-level figure is read against the other
-    # tags in the same panel, under the same cells and the same line.
+    # from a panel full of weak binders. The tag-level figure is read against the other tags in the same
+    # panel, under the same cells and the same line.
     ids = {m.id for m in MEASUREMENTS}
     assert "tagDisagreement" in ids
     assert "identityDisagreement" not in ids
 
 
 def test_saturation_and_known_answer_are_not_measured():
-    # Both are stated exclusions rather than gaps. Saturation is a number nobody
-    # can act on for the run already collected, and depth is answered by reads
-    # per cell against a stated recommendation. The known-answer check needs a
-    # declaration no surface asks for, so building it means building that first.
+    # Both are stated exclusions rather than gaps. Saturation is a number nobody can act on for the run
+    # already collected, and depth is answered by reads per cell. The known-answer check needs a
+    # declaration no surface asks for.
     ids = {m.id for m in MEASUREMENTS}
     assert "sequencingSaturation" not in ids
     assert "knownAnswerRecovered" not in ids
@@ -104,17 +98,16 @@ def test_saturation_and_known_answer_are_not_measured():
 
 
 def test_declared_levels_match_the_spec_as_a_multiset():
-    # A multiset comparison, not a per-id comparison: swapping any one
-    # measurement's level changes how many times that level appears overall,
-    # so a typo trips this even without knowing which id was mistyped.
+    # A multiset comparison, not a per-id comparison: swapping any one measurement's level changes how
+    # many times that level appears overall, so a typo trips this even without knowing which id.
     declared = sorted(m.level for m in MEASUREMENTS)
     expected = sorted(EXPECTED_LEVEL_BY_ID.values())
     assert declared == expected
 
 
 def test_every_measurement_declares_a_known_level():
-    # `run` is a grain of one. 320 puts the score spread there because the cutoff is one number
-    # for the run, so a per-sample figure would answer a question nobody asked.
+    # `run` is a grain of one: the cutoff is one number for the run, so a per-sample score spread would
+    # answer a question nobody asked.
     assert {m.level for m in MEASUREMENTS} <= {"sample", "tag", "identity", "run"}
 
 
@@ -123,9 +116,8 @@ def test_every_measurement_says_what_it_counts():
 
 
 def test_measurement_has_no_produced_today_field():
-    # produced_today would answer whether the superseded tool produced this
-    # measurement, which reads backwards from what a reader of this block
-    # needs: deferred_reason is None already answers whether THIS build does.
+    # produced_today would answer whether the superseded tool produced this measurement, which reads
+    # backwards: deferred_reason is None already answers whether THIS build does.
     field_names = {f.name for f in dataclasses.fields(Measurement)}
     assert "produced_today" not in field_names
 
@@ -159,10 +151,8 @@ BANNED_ADVICE_PHRASES = (
 )
 
 # A sentence opening with one of these reads as an instruction regardless of what follows. Compare
-# "Replace the reagent." against "A reagent that produced nothing did not work". So this catches advice
-# phrased as an imperative, which the substring list above does not: none of these words are banned
-# outright, and several appear as ordinary nouns or adjectives elsewhere in the set, such as "the
-# vendor's recommended minimum".
+# "Replace the reagent." against "A reagent that produced nothing did not work". None of these words
+# are banned outright, and several appear as ordinary nouns or adjectives elsewhere in the set.
 IMPERATIVE_OPENERS = {
     "check",
     "verify",
@@ -192,8 +182,8 @@ def test_no_measurement_carries_advice():
     for m in MEASUREMENTS:
         text = f"{m.counts} {m.implies or ''}"
         lowered = text.lower()
-        # Word boundaries, not bare substrings. "try " matched inside "chemistry does", which
-        # would have rejected honest prose -- "industry", "poultry", "symmetry" all carry it.
+        # Word boundaries, not bare substrings. "try " matched inside "chemistry does", which would
+        # have rejected honest prose.
         assert not any(re.search(rf"\b{re.escape(phrase.strip())}\b", lowered) for phrase in BANNED_ADVICE_PHRASES), (
             m.id
         )
@@ -223,8 +213,8 @@ def test_deferred_measurement_produces_a_row_with_its_reason_and_no_status():
     by_id = {r["id"]: r for r in rows}
     for deferred_id in DEFERRED_IDS:
         row = by_id[deferred_id]
-        # A declaration is not a reading, so no row here carries a status. The reason is what
-        # tells a reader nothing computed this one.
+        # A declaration is not a reading, so no row here carries a status. The reason is what tells a
+        # reader nothing computed this one.
         assert row["status"] is None
         assert row["reason"]
 
@@ -303,8 +293,8 @@ def _states(
     sample: list[str] | None = None,
     cell: list[str] | None = None,
 ) -> pl.DataFrame:
-    # One cell by default. Sibling disagreement is judged within one cell, so tags spread
-    # across cells never meet.
+    # One cell by default. Sibling disagreement is judged within one cell, so tags spread across cells
+    # never meet.
     return pl.DataFrame(
         {
             "sampleId": sample or ["S1"] * len(tag),
@@ -316,9 +306,9 @@ def _states(
 
 
 def test_per_antigen_measures_separates_delivered_from_bound():
-    # The reagent 330-the-quality-readout names: two counts into every cell. Counted after the
-    # minimum it delivered nothing, which is the reading that must not come back. Counted before
-    # it, it delivered into every cell and none of them cleared the line.
+    # Two counts into every cell. Counted after the minimum the reagent delivered nothing, which is the
+    # reading that must not come back. Counted before it, it delivered into every cell and none cleared
+    # the line.
     counts = _counts(["T1"] * 3, [2, 2, 2])
     states = _states(["T1"] * 3, ["not bound"] * 3)
 
@@ -331,9 +321,9 @@ def test_per_antigen_measures_separates_delivered_from_bound():
 
 
 def test_per_antigen_measures_medians_over_every_cell_holding_a_count():
-    # The regression this guards. Over the bound cells alone the median is 50, which is a healthy
-    # figure for a half-degraded reagent, computed from the two cells that scraped over. Over every
-    # cell holding a count it is 22, which moves with the reagent.
+    # The regression this guards. Over the bound cells alone the median is 50, a healthy figure for a
+    # half-degraded reagent computed from the two cells that scraped over. Over every cell holding a count
+    # it is 22, which moves with the reagent.
     counts = _counts(["T1"] * 4, [2, 4, 40, 60])
     states = _states(["T1"] * 4, ["not bound", "not bound", "bound", "bound"])
 
@@ -346,8 +336,8 @@ def test_per_antigen_measures_medians_over_every_cell_holding_a_count():
 
 
 def test_per_antigen_measures_keeps_a_row_for_a_tag_the_reads_never_show():
-    # A dead reagent reads as a zero under cells-with-count. Grouping the observed frame gave it no
-    # row at all, and a row that is not there cannot be scanned against its neighbours.
+    # A dead reagent reads as a zero under cells-with-count. Grouping the observed frame gave it no row at
+    # all, and a row that is not there cannot be scanned against its neighbours.
     counts = _counts(["T1", "T1"], [10, 20])
     states = _states(["T1", "T1"], ["bound", "bound"])
 
@@ -362,9 +352,9 @@ def test_per_antigen_measures_keeps_a_row_for_a_tag_the_reads_never_show():
 
 
 def test_per_antigen_measures_gives_the_reference_tag_no_bound_count():
-    # The reference is held out of the verdict read, so no cell was ever asked about it. A zero
-    # here would read as "asked and never bound", which is the opposite finding. Its median stays,
-    # because that is the run's ambient floor and the reason it belongs in this table.
+    # The reference is held out of the verdict read, so no cell was ever asked about it. A zero here would
+    # read as "asked and never bound", the opposite finding. Its median stays: that is the run's ambient
+    # floor.
     counts = _counts(["T1", "T1", "REF", "REF"], [10, 20, 3, 5])
     states = _states(["T1", "T1"], ["bound", "bound"])
 
@@ -377,9 +367,8 @@ def test_per_antigen_measures_gives_the_reference_tag_no_bound_count():
 
 
 def test_per_antigen_measures_differs_between_tag_and_identity_grain():
-    # T1 and T2 both feed one identity. As tags, T1 shows one weak cell (one
-    # bound of two). As the combined identity, the same cells collapse to one
-    # row and T1's weak showing is no longer visible on its own.
+    # T1 and T2 both feed one identity. As tags, T1 shows one weak cell. As the combined identity, the
+    # same cells collapse to one row and T1's weak showing is no longer visible on its own.
     tag_counts = _counts(["T1", "T1", "T2", "T2"], [8, 1, 20, 15])
     tag_states = _states(["T1", "T1", "T2", "T2"], ["bound", "not bound", "bound", "bound"])
     # The identity each cell's highest tag reading combined into.
@@ -409,8 +398,8 @@ def test_reads_per_cell_empty_cell_list_does_not_divide_by_zero():
 # --- aggregate-barcode detection --------------------------------------------
 #
 # Ports `detect_outlier_umis_bcs` from Cell Ranger `main`,
-# `lib/python/cellranger/feature/antibody/analysis.py`, called for the ANTIGEN library type
-# from `cell_calling_helpers.py::remove_antibody_antigen_aggregates`.
+# `lib/python/cellranger/feature/antibody/analysis.py`, called for the ANTIGEN library type from
+# `cell_calling_helpers.py::remove_antibody_antigen_aggregates`.
 
 
 def _per_barcode(umi: list[int], read: list[int] | None = None, barcode: list[str] | None = None) -> pl.DataFrame:
@@ -435,8 +424,8 @@ def test_detect_aggregate_barcodes_flags_a_clear_outlier():
 
 
 def test_detect_aggregate_barcodes_below_the_floor_flags_nothing():
-    # q1=12, q3=20, threshold=20+(20-12)*3=44 -- well under the 1000-UMI floor. The source refuses
-    # to flag anything under that floor, so nothing is flagged even though 400 clears 44 on its own.
+    # q1=12, q3=20, threshold=20+(20-12)*3=44 -- well under the 1000-UMI floor, so nothing is flagged even
+    # though 400 clears 44 on its own.
     per_barcode = _per_barcode([10, 12, 15, 20, 400])
     flagged, threshold = detect_aggregate_barcodes(per_barcode.select("barcode", "umiCount"))
     assert flagged == frozenset()
@@ -444,8 +433,8 @@ def test_detect_aggregate_barcodes_below_the_floor_flags_nothing():
 
 
 def test_detect_aggregate_barcodes_works_under_a_hundred_barcodes():
-    # Same rule, five barcodes. q1=650, q3=750, threshold=1050, clears the floor, and the one
-    # barcode at 9000 is the only one at or above it.
+    # Same rule, five barcodes. q1=650, q3=750, threshold=1050, clears the floor, and the one barcode at
+    # 9000 is the only one at or above it.
     per_barcode = _per_barcode([600, 650, 700, 750, 9000], barcode=["b0", "b1", "b2", "b3", "AGG"])
     flagged, threshold = detect_aggregate_barcodes(per_barcode.select("barcode", "umiCount"))
     assert flagged == frozenset({"AGG"})
@@ -453,8 +442,8 @@ def test_detect_aggregate_barcodes_works_under_a_hundred_barcodes():
 
 
 def test_detect_aggregate_barcodes_top_n_narrows_the_quantile_slice():
-    # top_n=10 admits only the ten barcodes at 5000 into the quantile calc: q1 == q3 == 5000, so
-    # the threshold sits at 5000 and all ten meet it. The 90 barcodes at 700 never enter the slice.
+    # top_n=10 admits only the ten barcodes at 5000 into the quantile calc: q1 == q3 == 5000, so the
+    # threshold sits at 5000 and all ten meet it.
     per_barcode = _per_barcode([5000] * 10 + [700] * 90)
     flagged, threshold = detect_aggregate_barcodes(per_barcode.select("barcode", "umiCount"), top_n=10)
     assert threshold == pytest.approx(5000.0)
@@ -537,8 +526,7 @@ def _cell_counts(totals: dict[str, int], sample_id: str = "S1") -> pl.DataFrame:
 
 def test_antigen_count_deciles_on_a_known_distribution():
     # 11 cells with totals 0, 10, ..., 100. With linear interpolation over 11 sorted points, the p-th
-    # percentile lands exactly on index p/10, so every decile equals its own cell's total. That is a
-    # fixture an off-by-one position error cannot pass unnoticed on.
+    # percentile lands exactly on index p/10, so every decile equals its own cell's total.
     counts = _cell_counts({f"c{i}": i * 10 for i in range(11)})
     out = antigen_count_deciles(counts)
     assert out["decile"].to_list() == list(range(0, 101, 10))
@@ -561,8 +549,8 @@ def test_antigen_count_deciles_empty_sample():
 
 
 def test_three_statuses_and_no_fourth():
-    # Atom 310 refuses a fourth and a fifth: a reader meeting five words in one column reads
-    # them as a scale. The two cases a fourth word covered are read from the value instead.
+    # Three values and no fourth: a reader meeting five words in one column reads them as a scale. The two
+    # cases a fourth word covered are read from the value instead.
     assert {s.value for s in Status} == {"OK", "warn", "alert"}
 
 
@@ -572,9 +560,8 @@ def test_a_measurement_with_no_line_carries_no_status_rather_than_a_fourth_word(
 
 
 # --- the route is the single authority -------------------------------------
-# Both directions, so neither table can grow an entry the other does not know
-# about. This is what stops `DEFAULT_LINES` becoming a second declaration of
-# which measurements carry a line.
+# Both directions, so neither table can grow an entry the other does not know about. This is what stops
+# `DEFAULT_LINES` becoming a second declaration of which measurements carry a line.
 
 
 def test_every_declared_route_is_one_of_the_three():
@@ -582,13 +569,12 @@ def test_every_declared_route_is_one_of_the_three():
 
 
 def test_a_numeric_route_has_a_line_and_a_comparison_and_nothing_else_does():
-    # The two threshold routes -- inherited, recommended-and-observed -- put an absolute
-    # number on the measurement, so their id set is exactly DEFAULT_LINES' and _COMPARISON's.
-    # The categorical route publishes no threshold at all, so its member is absent from both;
-    # see test_the_categorical_route_now_has_one_member below.
+    # The two threshold routes -- inherited, recommended-and-observed -- put an absolute number on the
+    # measurement, so their id set is exactly DEFAULT_LINES' and _COMPARISON's. The categorical route
+    # publishes no threshold, so its member is absent from both.
     #
-    # `undeclaredBarcodeShare` is the one entry in those tables with no `Measurement` behind
-    # it: it backs the undeclared-barcode table's own row (310), not a declared measurement.
+    # `undeclaredBarcodeShare` is the one entry in those tables with no `Measurement` behind it: it backs
+    # the undeclared-barcode table's own row.
     numeric_routed = {m.id for m in MEASUREMENTS if m.line in {"inherited", "recommended-and-observed"}}
     assert set(DEFAULT_LINES) - {"undeclaredBarcodeShare"} == numeric_routed
     assert set(_COMPARISON) - {"undeclaredBarcodeShare"} == numeric_routed
@@ -599,15 +585,15 @@ def test_a_numeric_route_has_a_line_and_a_comparison_and_nothing_else_does():
 def test_the_categorical_route_now_has_one_member():
     categorical_routed = {m.id for m in MEASUREMENTS if m.line == "categorical"}
     assert categorical_routed == {"cellsDetected"}
-    # Both directions again, this time for the categorical route: a fact carries no numeric
-    # threshold, so it must appear in neither table.
+    # Both directions again, this time for the categorical route: a fact carries no numeric threshold, so
+    # it must appear in neither table.
     assert categorical_routed.isdisjoint(DEFAULT_LINES)
     assert categorical_routed.isdisjoint(_COMPARISON)
 
 
 def test_the_undeclared_barcode_line_is_read_direct_not_as_a_complement():
-    # 315 publishes this line on the undeclared share itself: warn above 0.50, error at 1.0.
-    # The barcode table measures that share directly, so the thresholds are not mirrored.
+    # The line is published on the undeclared share itself: warn above 0.50, error at 1.0. The barcode
+    # table measures that share directly, so the thresholds are not mirrored.
     line = DEFAULT_LINES["undeclaredBarcodeShare"]
     assert (line.warn, line.error) == (0.50, 1.0)
     assert status_for("undeclaredBarcodeShare", 0.60, DEFAULT_LINES) is Status.WARN
@@ -616,16 +602,16 @@ def test_the_undeclared_barcode_line_is_read_direct_not_as_a_complement():
 
 
 def test_panel_assigned_fraction_carries_no_line_any_more():
-    # The line moved to the barcode's own row (310: "its status is the barcode's, and it does
-    # not become a sample's"). This measurement keeps its value and is never judged.
+    # The line moved to the barcode's own row, because that status is the barcode's and does not become a
+    # sample's. This measurement keeps its value and is never judged.
     assert "panelAssignedFraction" not in DEFAULT_LINES
     assert "panelAssignedFraction" not in _COMPARISON
     assert status_for("panelAssignedFraction", 0.1, DEFAULT_LINES) is None
 
 
 def test_barcode_validity_is_the_line_with_a_gradient_at_both_ends():
-    # The one inherited line whose thresholds step the same way twice, and the reason 310 admits
-    # a third status level at all. The other three put error at total failure.
+    # The one inherited line whose thresholds step the same way twice, and the reason a third status level
+    # exists at all. The other three put error at total failure.
     line = DEFAULT_LINES["cellBarcodeValidFraction"]
     assert (line.warn, line.error) == (0.75, 0.50)
     assert _COMPARISON["cellBarcodeValidFraction"] == ("at-least", "at-least")
@@ -636,23 +622,21 @@ def test_barcode_validity_is_the_line_with_a_gradient_at_both_ends():
 
 
 def test_no_measurement_declares_rolls_up_false():
-    # The undeclared-barcode line no longer sits on a sample measurement at all -- it moved to
-    # the barcode's own row in the undeclared-barcode table -- so no declared measurement needs
-    # the rollup exemption `rolls_up=False` exists for.
+    # The undeclared-barcode line no longer sits on a sample measurement at all, so no declared measurement
+    # needs the rollup exemption `rolls_up=False` exists for.
     assert [m.id for m in MEASUREMENTS if not m.rolls_up] == []
 
 
 def test_a_line_without_an_error_threshold_declares_no_error_comparison():
-    # Two places say "this line has no error threshold" and they must agree, or a line would
-    # carry a direction for a boundary it does not have.
+    # Two places say "this line has no error threshold" and they must agree, or a line would carry a
+    # direction for a boundary it does not have.
     for measurement, line in DEFAULT_LINES.items():
         _, error_comparison = _COMPARISON[measurement]
         assert (line.error is None) == (error_comparison is None), measurement
 
 
 def test_an_unjudged_measurement_claims_nothing_about_a_bad_value():
-    # Atom 315: where no line can be defended, nothing is said about what a bad
-    # value would mean, because nothing is known.
+    # Where no line can be defended, nothing is said about what a bad value would mean.
     for m in MEASUREMENTS:
         if m.line is None and m.deferred_reason is None:
             assert m.implies is None, m.id
@@ -680,16 +664,15 @@ def test_depth_line_is_a_parameter_not_a_literal():
 
 
 def test_a_stated_recommendation_warns_and_never_alerts():
-    # Atom 315: "One number gives one boundary, so it warns and never alerts." Depth has no
-    # published error threshold, so no value of it can reach alert -- not even zero.
+    # One number gives one boundary, so depth warns and never alerts -- not even at zero.
     assert DEFAULT_LINES["readsPerCell"].error is None
     assert status_for("readsPerCell", 0, DEFAULT_LINES) is Status.WARN
     assert status_for("readsPerCell", -1_000_000, DEFAULT_LINES) is Status.WARN
 
 
 def test_two_thresholds_give_three_levels():
-    # The distinction collapsing them lost. Three of the four inherited lines put error at total
-    # failure, so a low-but-non-zero share warns and only a wholly failed one alerts.
+    # The distinction collapsing them lost. Three of the four inherited lines put error at total failure,
+    # so a low-but-non-zero share warns and only a wholly failed one alerts.
     line = DEFAULT_LINES["undeclaredBarcodeShare"]
     assert (line.warn, line.error) == (0.5, 1.0)
     assert status_for("undeclaredBarcodeShare", 0.4, DEFAULT_LINES) is Status.OK
@@ -698,10 +681,9 @@ def test_two_thresholds_give_three_levels():
 
 
 def test_error_is_tested_before_warn(monkeypatch):
-    # A value past both boundaries reads alert. Tested warn-first it would read warn, and the
-    # worse finding would be the one that never showed. Barcode validity is the shipped line
-    # that steps the same way twice -- warn below 0.75, error below 0.50 -- and it is not
-    # computed here yet, so the case is exercised against a registered stand-in.
+    # A value past both boundaries reads alert. Tested warn-first it would read warn, and the worse finding
+    # would be the one that never showed. Barcode validity is the shipped line that steps the same way
+    # twice and is not computed here yet, so the case runs against a registered stand-in.
     monkeypatch.setitem(_COMPARISON, "syntheticTwoStep", ("at-least", "at-least"))
     lines = {"syntheticTwoStep": Line(warn=0.75, error=0.50)}
     assert status_for("syntheticTwoStep", 0.80, lines) is Status.OK
@@ -710,25 +692,23 @@ def test_error_is_tested_before_warn(monkeypatch):
 
 
 def test_at_least_is_acceptable_exactly_at_the_line():
-    # Atom 315 alerts *below* the recommendation, so the recommendation itself
-    # is acceptable. The named value satisfies the condition it names.
+    # Alerting is *below* the recommendation, so the recommendation itself is acceptable: the named value
+    # satisfies the condition it names.
     assert status_for("readsPerCell", 5_000, DEFAULT_LINES) is Status.OK
     assert status_for("readsPerCell", 4_999, DEFAULT_LINES) is Status.WARN
 
 
 def test_at_most_is_acceptable_exactly_at_the_line():
-    # `undeclaredBarcodeShare` reads `at-most`: the named value (the warn line itself)
-    # satisfies the condition it names, and only strictly above it warns.
+    # `undeclaredBarcodeShare` reads `at-most`: the warn line itself satisfies the condition it names, and
+    # only strictly above it warns.
     assert status_for("undeclaredBarcodeShare", 0.5, DEFAULT_LINES) is Status.OK
     assert status_for("undeclaredBarcodeShare", 0.51, DEFAULT_LINES) is Status.WARN
 
 
 def test_the_undeclared_barcode_fraction_ships_unjudged():
-    # Atom 315 lists it among the four inherited numbers and the field does
-    # publish 0.50 -- but for one aggregate library fraction, while this
-    # measurement is per sequence at tag level. A fraction's line does not
-    # transfer to a list of sequences, and given a count any upper bound
-    # collapses into "alerting if a single undeclared barcode exists".
+    # The field publishes 0.50, but for one aggregate library fraction, while this measurement is per
+    # sequence at tag level. A fraction's line does not transfer to a list of sequences, and given a count
+    # any upper bound collapses into "alerting if a single undeclared barcode exists".
     by_id = {m.id: m for m in MEASUREMENTS}
     assert by_id["undeclaredBarcodes"].line is None
     assert by_id["undeclaredBarcodes"].implies is None
@@ -738,17 +718,16 @@ def test_the_undeclared_barcode_fraction_ships_unjudged():
 
 def test_a_tag_the_reads_never_show_carries_no_status():
     # The verdict took this job: a tag with no reads removes its cells from what could answer, so the
-    # position reads *never asked* rather than a confident negative. The measurement is a fact on the
-    # tag's row, kept for the reagent's sake, and warning a reader off an answer that already says so
-    # would be a second voice on one fact.
+    # position reads *never asked* rather than a confident negative. Warning a reader off an answer that
+    # already says so would be a second voice on one fact.
     assert status_for("declaredNeverSeen", 0, DEFAULT_LINES) is None
     assert status_for("declaredNeverSeen", 1, DEFAULT_LINES) is None
     assert "declaredNeverSeen" not in DEFAULT_LINES
 
 
 def test_cells_detected_is_the_categorical_route():
-    # `cellsDetected` is the categorical route's first member: the alerting condition is a
-    # fact (no cells at all) rather than a quantity with a published threshold.
+    # `cellsDetected` is the categorical route's first member: the alerting condition is a fact (no cells
+    # at all) rather than a quantity with a published threshold.
     by_id = {m.id: m for m in MEASUREMENTS}
     m = by_id["cellsDetected"]
     assert m.line == "categorical"
@@ -762,8 +741,8 @@ def test_cells_detected_alerts_at_zero_and_reads_ok_above_it():
 
 
 def test_cells_detected_claims_nothing_about_yield():
-    # The judgement stays narrow: zero cells means nothing downstream can be computed. Above
-    # zero, nothing here says the yield was good -- that number is not published anywhere.
+    # The judgement stays narrow: zero cells means nothing downstream can be computed. Above zero, nothing
+    # here says the yield was good.
     by_id = {m.id: m for m in MEASUREMENTS}
     m = by_id["cellsDetected"]
     assert "yield" not in (m.implies or "").lower()
@@ -797,8 +776,8 @@ def test_coverage_never_enters_the_ordinal():
 
 def test_coverage_is_reported_beside_the_status():
     # Two unjudged against one not-evaluated, deliberately unequal. With one of each, a counter that
-    # reported the other's total would read correctly, and the two questions "was a line defensible"
-    # and "did anybody look" would be silently interchangeable.
+    # reported the other's total would read correctly, and the two questions "was a line defensible" and
+    # "did anybody look" would be silently interchangeable.
     r = roll_up(
         [
             Reading(Status.OK, 1.0),
@@ -814,8 +793,8 @@ def test_coverage_is_reported_beside_the_status():
 
 
 def test_the_two_no_status_cases_are_told_apart_by_the_value():
-    # Both return None from `status_for`, so the coverage triple is the only thing keeping
-    # "no line to judge it against" apart from "nothing computed it".
+    # Both return None from `status_for`, so the coverage triple is the only thing keeping "no line to
+    # judge it against" apart from "nothing computed it".
     assert roll_up([Reading(None, 0.0)]).unjudged == 1
     assert roll_up([Reading(None, 0.0)]).not_evaluated == 0
     assert roll_up([Reading(None, float("nan"))]).not_evaluated == 1
@@ -832,9 +811,8 @@ def test_a_level_with_no_measurements_at_all_is_not_evaluated():
 
 
 def test_only_one_aggregation_rule_remains():
-    # A panel status overestimated what could be judged categorically, and a
-    # capture status became the worst of every sample -- which the samples
-    # already say. `roll_up` over a sample's own measurements is what is left.
+    # A panel status overestimated what could be judged categorically, and a capture status became the
+    # worst of every sample -- which the samples already say.
     import qc_measures
 
     assert not hasattr(qc_measures, "roll_up_panel")
@@ -842,10 +820,9 @@ def test_only_one_aggregation_rule_remains():
 
 
 def test_a_dead_reagent_does_not_mark_every_sample_alerting():
-    # A per-tag failure is usually a property of the reagent across the whole run
-    # rather than of any one sample. Fed into a sample status, one dead reagent in
-    # a panel of twenty tags would mark every sample alerting, which makes that
-    # status noise within one run. The sample rolls up its OWN measurements only.
+    # A per-tag failure is usually a property of the reagent across the whole run rather than of any one
+    # sample. Fed into a sample status, one dead reagent in a panel of twenty tags would mark every sample
+    # alerting. The sample rolls up its OWN measurements only.
     samples = [roll_up([Reading(Status.OK, 1.0)]).status for _ in range(3)]
     assert samples == [Status.OK] * 3
 
@@ -853,8 +830,7 @@ def test_a_dead_reagent_does_not_mark_every_sample_alerting():
 # --- corrupt numbers must never read green -------------------------------------------
 #
 # Every `<` and `>` comparison against NaN is False, so an unguarded NaN value falls through to
-# `bad = False` and the measurement reads ACCEPTABLE. For QC code, corrupt-input-reads-green is the
-# worst available failure mode: it is the one state a reader will not investigate.
+# `bad = False` and the measurement reads ACCEPTABLE -- the one state a reader will not investigate.
 
 
 def test_a_nan_value_is_not_evaluated_rather_than_acceptable():
@@ -862,9 +838,9 @@ def test_a_nan_value_is_not_evaluated_rather_than_acceptable():
 
 
 def test_infinite_values_are_not_evaluated_rather_than_judged():
-    # +inf would have read ACCEPTABLE against an at-least line, which is the green reading again. -inf
-    # happens to alert, so only one direction was dangerous. But neither is a measurement, and one rule
-    # for "not a finite number" is easier to defend than a rule that depends on the sign.
+    # +inf would have read ACCEPTABLE against an at-least line. -inf happens to alert, so only one
+    # direction was dangerous. Neither is a measurement, and one rule for "not a finite number" is easier
+    # to defend than a rule that depends on the sign.
     assert status_for("readsPerCell", float("inf"), DEFAULT_LINES) is None
     assert status_for("readsPerCell", float("-inf"), DEFAULT_LINES) is None
 
@@ -880,8 +856,8 @@ def test_seen_in_counts_distinct_samples_not_cells():
 
 
 def test_seen_in_is_zero_for_a_dead_tag():
-    # A declared tag with no counts anywhere. Zero, never null: a blank and a zero are opposite
-    # findings on this table.
+    # A declared tag with no counts anywhere. Zero, never null: a blank and a zero are opposite findings on
+    # this table.
     counts = _counts(["T1"], [5])
     states = _states(["T1"], ["bound"])
 
@@ -904,8 +880,8 @@ def test_seen_in_reports_the_panel_size_beside_it():
 
 
 def test_a_reference_tag_reports_its_own_seen_in():
-    # Held out of the verdict read, so cellsAboveTheLine is None. The reagent still delivered it,
-    # and seen-in says so.
+    # Held out of the verdict read, so cellsAboveTheLine is None. The reagent still delivered it, and
+    # seen-in says so.
     counts = _counts(["REF", "REF"], [9, 9], ["S1", "S2"])
     states = _states(["T1"], ["bound"])
 
@@ -931,16 +907,15 @@ def test_the_denominator_is_the_declared_roster_not_the_observed_samples():
 
 # --- seen-in names its samples, so a staged panel reads apart from a dead reagent -----------
 #
-# samplesSeenIn/samplesInPanel stay as counts (ADD, do not rename). These name the same two
-# groups so a reader tells "not declared here" from "declared, zero reads" without a second
-# table. All three tests share a four-sample roster so the three readings sit side by side.
+# samplesSeenIn/samplesInPanel stay as counts. These name the same two groups so a reader tells "not
+# declared here" from "declared, zero reads" without a second table. All three tests share a
+# four-sample roster so the three readings sit side by side.
 
 FOUR_SAMPLES = ["S1", "S2", "S3", "S4"]
 
 
 def test_declared_and_seen_names_every_sample_for_a_working_tag():
-    # Declared on every sample's panel, seen on all of them: the two named lists match the
-    # full roster.
+    # Declared on every sample's panel, seen on all of them: the two named lists match the full roster.
     counts = _counts(["T1"] * 4, [5, 5, 5, 5], FOUR_SAMPLES)
     states = _states(["T1"], ["bound"])
 
@@ -951,8 +926,8 @@ def test_declared_and_seen_names_every_sample_for_a_working_tag():
 
 
 def test_a_dead_tag_is_declared_everywhere_and_seen_nowhere():
-    # Declared on the full roster, seen on none. samplesSeenInNames is an empty list -- a
-    # zero, not an absence -- while samplesInPanelNames still names the full roster.
+    # Declared on the full roster, seen on none. samplesSeenInNames is an empty list -- a zero, not an
+    # absence -- while samplesInPanelNames still names the full roster.
     counts = _counts(["T1"], [5], ["S1"])
     states = _states(["T1"], ["bound"])
 
@@ -964,11 +939,9 @@ def test_a_dead_tag_is_declared_everywhere_and_seen_nowhere():
 
 
 def test_a_staged_tag_reads_apart_from_a_dead_one():
-    # Declared on only two of the four-sample roster and seen on both of those -- the case
-    # this exists to distinguish. samplesInPanelNames names the narrower roster the caller
-    # declared it against, not the full one, and samplesSeenInNames matches it exactly:
-    # neither list is empty, which is what keeps this from reading like the dead tag above
-    # (declared on the full roster, seen on none).
+    # Declared on only two of the four-sample roster and seen on both of those -- the case this exists to
+    # distinguish. samplesInPanelNames names the narrower roster the caller declared it against, and
+    # samplesSeenInNames matches it exactly: neither list is empty.
     counts = _counts(["T1", "T1"], [5, 5], ["S1", "S2"])
     states = _states(["T1"], ["bound"])
 
@@ -1003,11 +976,9 @@ def test_a_tag_contradicting_its_siblings_reports_one():
 
 
 def test_a_tag_whose_siblings_tie_is_not_judged_in_that_cell():
-    # One cell, three tags on the identity, and each tag is judged against the other two.
-    # AAAA's siblings both say bound and convict it. BBBB's siblings are AAAA (not bound)
-    # and CCCC (bound), and CCCC's are AAAA (not bound) and BBBB (bound) -- both tie, so
-    # the only cell there is judges neither. A tie is a two-sibling case and needs three
-    # tags: on a two-tag identity the single sibling is the majority.
+    # One cell, three tags on the identity, and each tag is judged against the other two. AAAA's siblings
+    # both say bound and convict it. BBBB's and CCCC's siblings each tie, so the only cell there is judges
+    # neither. A tie is a two-sibling case and needs three tags.
     states = _states(["AAAA", "BBBB", "CCCC"], ["not bound", "bound", "bound"])
     out = sibling_disagreement(states, {"IDENT": ["AAAA", "BBBB", "CCCC"]})
     assert out["AAAA"] == 1.0
@@ -1024,8 +995,8 @@ def test_a_lone_sibling_is_its_own_majority():
 
 
 def test_disagreement_is_judged_within_one_cell():
-    # The same two readings in two cells. Neither tag ever meets a sibling, so neither
-    # has a comparison to report.
+    # The same two readings in two cells. Neither tag ever meets a sibling, so neither has a comparison to
+    # report.
     states = _states(
         ["AAAA", "BBBB"],
         ["not bound", "bound"],
@@ -1047,8 +1018,8 @@ def test_the_rate_is_the_share_of_cells_that_contradict():
 
 
 def test_a_tag_holding_no_row_has_no_rate():
-    # CCCC is on the identity and holds no cell. Its siblings agree everywhere, so the
-    # absent rate is about CCCC being missing rather than about them failing to agree.
+    # CCCC is on the identity and holds no cell. Its siblings agree everywhere, so the absent rate is about
+    # CCCC being missing rather than about them failing to agree.
     states = _states(["AAAA", "BBBB"], ["bound", "bound"])
     out = sibling_disagreement(states, {"IDENT": ["AAAA", "BBBB", "CCCC"]})
     assert out["CCCC"] is None
@@ -1067,8 +1038,8 @@ def _bin_counts(rows: list[tuple[str, str, str, int]]) -> pl.DataFrame:
 
 
 def test_one_edge_set_spans_the_whole_run():
-    # Per-tag edges would rescale every panel to its own range, and a grid of panels a reader
-    # compares side by side would then draw a tag spanning 1-4 and one spanning 1-4000 alike.
+    # Per-tag edges would rescale every panel to its own range, so a tag spanning 1-4 and one spanning
+    # 1-4000 would draw alike in a grid a reader compares side by side.
     counts = _bin_counts([("S1", "c1", "AAAA", 2), ("S1", "c2", "BBBB", 4000)])
     edges = count_bin_edges(counts)
     assert edges[0] == 1.0
@@ -1084,8 +1055,8 @@ def test_a_frame_with_no_counts_has_no_edges_and_no_bins():
 
 
 def test_every_cell_lands_in_a_bin_including_the_largest_count():
-    # np.histogram closes the last bin on the right. Without that the run's maximum count falls
-    # outside every bucket, and the tag holding it reads one cell short.
+    # np.histogram closes the last bin on the right. Without that the run's maximum count falls outside
+    # every bucket, and the tag holding it reads one cell short.
     counts = _bin_counts([("S1", f"c{i}", "AAAA", n) for i, n in enumerate([1, 1, 2, 5, 40, 4000])])
     edges = count_bin_edges(counts)
     weights = per_tag_count_bins(counts, edges)["S1"]["AAAA"]
@@ -1094,8 +1065,8 @@ def test_every_cell_lands_in_a_bin_including_the_largest_count():
 
 
 def test_bins_are_kept_per_sample_and_tag():
-    # The fit runs per (sample, tag), so the plots drawn beside it are keyed the same way. Pooling
-    # two samples would read as one population.
+    # The fit runs per (sample, tag), so the plots drawn beside it are keyed the same way. Pooling two
+    # samples would read as one population.
     counts = _bin_counts([("S1", "c1", "AAAA", 2), ("S2", "c1", "AAAA", 2), ("S1", "c1", "BBBB", 3)])
     edges = count_bin_edges(counts)
     out = per_tag_count_bins(counts, edges)
@@ -1105,8 +1076,8 @@ def test_bins_are_kept_per_sample_and_tag():
 
 
 def test_a_tag_absent_from_a_sample_gets_no_entry():
-    # An absent tag and a tag whose cells all read low are different findings. A list of zeros
-    # would state the second, so the absent one carries no list at all.
+    # An absent tag and a tag whose cells all read low are different findings. A list of zeros would state
+    # the second, so the absent one carries no list at all.
     counts = _bin_counts([("S1", "c1", "AAAA", 2), ("S2", "c1", "BBBB", 2)])
     out = per_tag_count_bins(counts, count_bin_edges(counts))
     assert "BBBB" not in out["S1"]
@@ -1114,8 +1085,8 @@ def test_a_tag_absent_from_a_sample_gets_no_entry():
 
 
 def test_the_reference_tag_keeps_its_bins():
-    # The reference tag is the run's own ambient floor, which is what every other tag is judged
-    # against. It is held out of the verdict read, never out of this.
+    # The reference tag is the run's own ambient floor, which is what every other tag is judged against.
+    # It is held out of the verdict read, never out of this.
     counts = _bin_counts([("S1", "c1", "CTRL", 6), ("S1", "c1", "AAAA", 500)])
     out = per_tag_count_bins(counts, count_bin_edges(counts))
     assert sorted(out["S1"]) == ["AAAA", "CTRL"]

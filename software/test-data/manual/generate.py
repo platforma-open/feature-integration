@@ -431,9 +431,8 @@ def main():
             panel_shape=args.panel_shape,
             control_feature=args.control_feature,
         )
-        # A V(D)J-only rebuild leaves the reads, the panel and the tiers exactly as they were, so the
-        # report still describes the run. Rewriting it from a partial build would only replace its read
-        # count with a zero.
+        # A V(D)J-only rebuild leaves the reads, the panel and the tiers exactly as they were, so the report
+        # still describes the run. Rewriting it from a partial build would replace its read count with a zero.
         if args.arm == "all":
             realpanel.write_run_report(run_dir, info, args.real_panel, args.library_quality,
                                        baseline_tag=args.baseline_tag)

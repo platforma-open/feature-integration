@@ -7,34 +7,24 @@ import type { ImportFileHandle, PlDataTableStateV2, PlRef } from "@platforma-sdk
  * happened.
  *
  * There is no "none". A baseline is required and a run without one does not happen, so an unselected
- * choice is undefined here and `args()` refuses it -- rather than a fourth value meaning "answer every
- * position unreliable", which costs what a real run costs and looks like a result at a glance.
- */
-/**
- * `"panel"` is RETIRED and no longer offered. `292-what-plays-the-baseline@8.2.1` names it "a fourth
- * possibility ... named and not built", and the reason it gives is not panel size: the one tool that
- * implements it decides at the CLONOTYPE, pooling a clone's cells into one vector before anything is
- * tested, so no cell ever holds a state and there is nothing to vote on. Adopting it would carve a
- * clonotype-level exception through the middle of the verdict model. `060-parameter-set@2.0.0` drops the
- * 25-tag parameter with it.
+ * choice is undefined here and `args()` refuses it.
  *
- * The member stays in the union so a project stored under it still parses. `args()` refuses such a run and
- * names the replacement, rather than moving the choice itself -- a baseline nobody chose is a methodology
- * nobody knows they used.
+ * `"panel"` is RETIRED and no longer offered. The one tool that implements it decides at the CLONOTYPE,
+ * pooling a clone's cells into one vector before anything is tested, so no cell ever holds a state and
+ * there is nothing to vote on. The member stays in the union so a project stored under it still parses,
+ * and `args()` refuses such a run and names the replacement.
  */
 export type ReferenceSource = "declared" | "panel" | "distribution";
 
 /**
  * How tags become identities. A RULE over declared properties, never a tag->identity map: a map is keyed
  * by tags, which are known only after the block runs, so any editor for it writes an output back into
- * data. Property column names are knowable at prerun, from the panel header the block already enumerates.
- * Absent means one identity per tag.
+ * data. Property column names are knowable at prerun. Absent means one identity per tag.
  *
- * Several columns may be named, and the identity is the distinct combination of their values. Name
- * antigen and concentration together, and the same antigen at two concentrations is two identities.
+ * Several columns may be named, and the identity is the distinct combination of their values.
  *
- * `column` is the shape this rule had before it took a list. It stays readable because a project stored
- * under it must keep running, and `groupingColumns()` is the one place that reads either. Never write it.
+ * `column` is the shape this rule had before it took a list. It stays readable so a project stored under
+ * it keeps running, and `groupingColumns()` is the one place that reads either. Never write it.
  */
 export type GroupingRule =
   | { by: "tag" }
@@ -50,8 +40,8 @@ export type BlockArgs = {
   pattern: string; // Mitool tag pattern
   // mitool tag names baked into `pattern`
   tags: { cell: string; umi: string; feature: string };
-  // Sample-aware tag->feature mapping (optional). When set, the same feature barcode may map to different
-  // features per sample.
+  // Sample-aware tag->feature mapping (optional). The same feature barcode may map to different features
+  // per sample.
   sampleColumn?: string; // the CSV column holding the (user-friendly) sample name
   sampleLabels?: Record<string, string>; // a snapshot of sampleId->name
   // Cell-barcode whitelist for refine-tags CELL correction. "" = de-novo, the default for non-10x and
@@ -59,50 +49,44 @@ export type BlockArgs = {
   // construction.
   cellWhitelist: string;
   // Optional mitool resource overrides (Advanced Settings). Undefined means workflow defaults: 8 CPUs, and
-  // RAM sized by the input-blob formula. When set, perProcessMemGB is a fixed RAM request per sample.
+  // RAM sized by the input-blob formula.
   perProcessCPUs?: number;
   perProcessMemGB?: number;
-  // Preview (dry-run): when set, mitool parse processes only the first `limitInput` reads per sample, so
-  // the user can check settings before the full run. Omitted means a full run, every read. Mirrors
-  // mixcr-clonotyping / demultiplex-fastq "Preview" mode.
+  // Preview (dry-run): mitool parse processes only the first `limitInput` reads per sample. Omitted means a
+  // full run. Mirrors mixcr-clonotyping / demultiplex-fastq "Preview" mode.
   limitInput?: number;
-  // Optional multi-barcode antigen combine mode. combineColumn names a tag-CSV column giving each
-  // feature's mode: "sum" = OR, the default, and "all" = AND, where a feature is called only when every
-  // member barcode fires. minUmi is the AND per-barcode "fired" floor, an integer >= 1 defaulting to 1 in
-  // the workflow.
+  // Optional multi-barcode antigen combine mode. combineColumn names a tag-CSV column giving each feature's
+  // mode: "sum" = OR, the default, and "all" = AND, where a feature is called only when every member barcode
+  // fires. minUmi is the AND per-barcode "fired" floor, defaulting to 1 in the workflow.
   combineColumn?: string;
   minUmi?: number;
-  // The aggregate-barcode detection knobs (qc_measures.py AGGREGATE_BARCODE_*). Undefined means the
-  // shipped default. These run inside qc_report.py, which is part of the per-sample mitool fan-out, so
-  // they belong here rather than beside the reading's own parameters below: moving one re-runs that
-  // sample's parse/refine-tags/tag-stat chain, the same cost combineColumn or minUmi already carry.
+  // The aggregate-barcode detection knobs (qc_measures.py AGGREGATE_BARCODE_*). Undefined means the shipped
+  // default. They run inside qc_report.py, part of the per-sample mitool fan-out, so moving one re-runs that
+  // sample's parse/refine-tags/tag-stat chain.
   aggregateBarcodeIqrMultiplier?: number;
   aggregateBarcodeMinUmiThreshold?: number;
   aggregateBarcodeTopN?: number;
 
   // --- the binding reading -------------------------------------------------------------------------
-  // Everything below reaches emit_verdicts.py through verdict-args.lib.tengo, and nothing below reaches
-  // the per-sample mitool fan-out. A change to how the counts are READ therefore recovers every per-sample
-  // body from cache and re-runs the verdict stage alone.
+  // Everything below reaches emit_verdicts.py through verdict-args.lib.tengo, and nothing below reaches the
+  // per-sample mitool fan-out. A change to how the counts are READ therefore recovers every per-sample body
+  // from cache and re-runs the verdict stage alone.
 
   // The single-cell V(D)J dataset ANCHOR (axes [pl7.app/sampleId, pl7.app/vdj/scClonotypeKey],
   // pl7.app/isAnchor). Not a linker ref: the cell linker carries pl7.app/isLinkerColumn and is hidden in
-  // tables, so no user can pick it, and the workflow resolves it from this anchor by name. The anchor is
-  // receptor-scoped, so choosing the dataset is choosing the receptor, which is what lets a BCR + TCR run
-  // bring two linkers without a panic. REQUIRED: `args()` refuses a run without one. It stays optional in
-  // this type because the workflow still carries its no-dataset branch, which is now unreachable and left
-  // as a guard rather than deleted.
+  // tables, so the workflow resolves it from this anchor by name. The anchor is receptor-scoped, which is
+  // what lets a BCR + TCR run bring two linkers without a panic. REQUIRED: `args()` refuses a run without
+  // one. Optional in this type only because the workflow keeps its now-unreachable no-dataset branch.
   datasetRef?: PlRef;
   // The panel column declaring each tag's role, and the values of it that mark a tag as the comparator.
   roleColumn?: string;
   referenceValues?: string[];
   referenceSource?: ReferenceSource;
   panelReferenceMinMembers: number; // members the panel needs before its own readings can serve
-  // The one condition on reading a count against that tag's own distribution across the sample's cells.
-  // It GATES rather than tunes: below it the baseline the rung would produce is wrong rather than
-  // conservative, which is why it has no "off". There is no separation condition -- the rung's own atom
-  // refuses one, because no published test tells a real split from a dent and inventing one here would be
-  // this block deciding what the method leaves to the eye.
+  // The one condition on reading a count against that tag's own distribution across the sample's cells. It
+  // GATES rather than tunes: below it the baseline the rung would produce is wrong rather than conservative,
+  // which is why it has no "off". There is no separation condition, because no published test tells a real
+  // split from a dent.
   distributionMinCells: number; // cells a sample needs before the rung may serve
   countFloor: number; // counts below this are not evidence of binding
   boundCutoff: number; // specificity score (0-100) at or above which a cell binds
@@ -118,9 +102,9 @@ export type BlockArgs = {
   // sorted, groups sorted, groups of fewer than two members dropped.
   contendingGroups?: string[][];
 
-  // The four inherited lines (`315-where-the-lines-come-from`), each undefined meaning the shipped
-  // default. All four are round numbers carried over from the field rather than calibrated for this
-  // assay; error is absent for readsPerCellWarn because the field published one boundary.
+  // The four inherited lines, each undefined meaning the shipped default. All four are round numbers carried
+  // over from the field rather than calibrated for this assay. There is no error line for readsPerCellWarn,
+  // because the field published one boundary.
   cellBarcodeValidWarn?: number;
   cellBarcodeValidError?: number;
   readsPerCellWarn?: number;
@@ -134,10 +118,9 @@ export type BlockArgs = {
 
 /**
  * What the block knows about the tag->feature CSV without running anything: the panel's headers, the
- * distinct values of each header, and how many non-blank data rows there were.
- *
- * Parsed in the UI, from the file itself. `rowCount` stays optional because a project stored before the
- * count existed must keep opening, and the duplicate-mapping gate skips where it is absent.
+ * distinct values of each header, and how many non-blank data rows there were. Parsed in the UI, from the
+ * file itself. `rowCount` stays optional so a project stored before the count existed keeps opening, and
+ * the duplicate-mapping gate skips where it is absent.
  */
 export type CsvMeta = {
   columns: string[];
@@ -150,37 +133,32 @@ export type BlockData = {
   fbFastqRef?: PlRef;
   tagFeatureCsvHandle?: ImportFileHandle;
   /**
-   * The panel CSV's metadata, parsed in the UI, tagged with the handle it was read from.
+   * The panel CSV's metadata, tagged with the handle it was read from. That tag is what makes it safe to
+   * persist: a snapshot is read only while it matches the CSV currently picked, so a stale one left by a
+   * failed clear can never be read against a different file.
    *
-   * The handle tag is what makes it safe to persist: a snapshot is read only while it matches the CSV
-   * currently picked, so a stale one left by a failed clear can never be read against a different file.
-   *
-   * This is the ONLY source of the metadata -- no workflow step parses the panel. The UI fills it from the
-   * user's disk on a local pick, and from the prerun-imported blob for a remote pick. Absent means the
-   * bytes have not arrived yet, which the "Reading columns..." alert reports.
+   * The ONLY source of the metadata -- no workflow step parses the panel. Filled from the user's disk on a
+   * local pick, and from the prerun-imported blob on a remote pick. Absent means the bytes have not
+   * arrived yet.
    */
   csvMetaSnapshot?: { handle: ImportFileHandle; meta: CsvMeta };
   /**
-   * Why the panel CSV could not be read, or undefined where it could. Shown to the user rather than
-   * logged: with no workflow-side parser to fall back on, a discarded parse error leaves empty dropdowns
-   * and nothing that says why.
+   * Why the panel CSV could not be read. Shown to the user rather than logged: with no workflow-side
+   * parser to fall back on, a discarded parse error leaves empty dropdowns and nothing that says why.
    */
   csvImportError?: string;
   barcodeSeqColumn?: string;
   featureNameColumn?: string;
   sampleColumn?: string;
   sampleLabelSnapshot?: Record<string, string>;
-  // Distinct values of the chosen sample column at pick time, snapshotted alongside the label map so
-  // args() can gate Run purely from data. Run is blocked when a dataset sample has no rows in the CSV.
+  // Distinct values of the chosen sample column at pick time, snapshotted alongside the label map so args()
+  // can gate Run purely from data.
   sampleColumnValues?: string[];
   // Preview (dry-run) mode. "full", the default, processes every read. "dry" caps mitool parse to
-  // `limitInput` reads per sample so the user can check settings first. Mirrors mixcr-clonotyping and
-  // demultiplex-fastq.
+  // `limitInput` reads per sample.
   runMode?: "dry" | "full";
   limitInput?: number;
-  // Optional multi-barcode antigen combine mode. combineColumn names a tag-CSV column giving each
-  // feature's mode: "sum" = OR, the default, and "all" = AND, where a feature is called only when every
-  // member barcode fires. minUmi is the AND per-barcode "fired" floor, an integer >= 1 defaulting to 1.
+  // Optional multi-barcode antigen combine mode. See BlockArgs for what each means to the reading.
   combineColumn?: string;
   minUmi?: number;
   // The aggregate-barcode detection knobs. See BlockArgs for what each means to the reading.
@@ -192,18 +170,16 @@ export type BlockData = {
   // See BlockArgs for what each one means to the reading. The notes here are about the DATA layer only.
 
   /**
-   * The single-cell V(D)J dataset anchor, and the block's one optional input. A missing dataset narrows
-   * what the block can answer, since no clonotype set means no verdict, and stops nothing. The args lambda
-   * never throws on its absence.
+   * The single-cell V(D)J dataset anchor, and the block's one optional input. A missing dataset means no
+   * clonotype set and so no verdict, and stops nothing.
    */
   datasetRef?: PlRef;
   roleColumn?: string;
   /**
-   * The panel's headers as they stood when the role column or the grouping column was picked. Both of
-   * those name a panel column, and emit_verdicts.py exits the whole run when the panel does not carry the
-   * one it was given. The user meets that as a dead run, not as a message about the setting that caused
-   * it. args() validates from data alone, so the headers have to BE in data. They are snapshotted on the
-   * pick gesture, exactly as sampleColumnValues is.
+   * The panel's headers as they stood when the role column or the grouping column was picked.
+   * emit_verdicts.py exits the whole run when the panel does not carry the column it was given, and args()
+   * validates from data alone, so the headers have to BE in data. Snapshotted on the pick gesture, exactly
+   * as sampleColumnValues is.
    */
   panelColumnSnapshot?: string[];
   referenceValues?: string[];
@@ -227,55 +203,44 @@ export type BlockData = {
   usableReadWarn?: number;
   usableReadError?: number;
   /**
-   * Written on a user gesture only. The identities to choose from come from the identityOptions model
-   * output, and a watcher that copied that output into data would make the model output depend on the data
-   * it feeds -- a write-on-read loop, and a write race between two open clients.
+   * Written on a user gesture only. A watcher that copied the identityOptions model output into data would
+   * make that output depend on the data it feeds, and two open clients would race.
    */
   contendingGroups?: string[][];
   punchcardTableState: PlDataTableStateV2; // punchcard grid state (UI-only, never projected to args)
   /**
-   * The clonotype whose expansion is open, as the readout grid's own row key, or undefined when none is.
-   * UI-only, never projected to args: opening an expansion must not re-run anything.
+   * The clonotype whose expansion is open, as the readout grid's own row key. UI-only, never projected to
+   * args: opening an expansion must not re-run anything.
    *
    * A whole key rather than a bare string, because the grid hands back a `PTableKey` and `expansionTable`
-   * turns it straight into an axis filter. Undefined is load-bearing rather than an empty state: the
-   * output returns no table while it holds, because a table built with no filter would be every
-   * clonotype's rows at once, the one outcome the expansion exists to avoid.
+   * turns it straight into an axis filter. Undefined is load-bearing: the output returns no table while it
+   * holds, because a table built with no filter would be every clonotype's rows at once.
    */
   expandedSet?: (string | number)[];
   /**
-   * Grid state for the expansion table. UI-only, never projected to args.
-   *
-   * Optional, unlike the card's own state beside it. A required field would need every stored project
-   * migrated to carry it, and `createPlDataTableV3` already takes `tableState` as optional. A project that
-   * predates the expansion opens with a default grid instead of failing to open.
+   * Grid state for the expansion table. UI-only, never projected to args. Optional, unlike the card's own
+   * state beside it: a required field would need every stored project migrated, and `createPlDataTableV3`
+   * already takes `tableState` as optional.
    */
   expansionTableState?: PlDataTableStateV2;
   /**
-   * Grid state for the expansion's BY-CELL face. It has to be separate from the state beside it: the two
-   * tabs are different tables over different axes, one row per identity against one row per cell, so a
-   * shared state would carry one tab's column order and filters into the other, where none of the column
-   * ids resolve. Optional for the same reason as above.
+   * Grid state for the expansion's BY-CELL face. Separate from the state beside it: the two tabs are
+   * different tables over different axes, one row per identity against one row per cell, so a shared state
+   * would carry one tab's column order and filters into the other, where none of the column ids resolve.
    */
   cellExpansionTableState?: PlDataTableStateV2;
-  // No field narrows which identity columns the punchcard shows, and none should be added.
-  // PlAgDataTableV2 ships a columns panel and a filters panel, so such a field re-implements in block state
-  // what the grid already does, and two narrowing mechanisms can disagree where the grid's own cannot
-  // disagree with itself. Every identity column is rendered.
+  // No field narrows which identity columns the punchcard shows, and none should be added. PlAgDataTableV2
+  // ships a columns panel and a filters panel, so such a field re-implements in block state what the grid
+  // already does, and two narrowing mechanisms can disagree. Every identity column is rendered.
   //
-  // No field truncates the punch headers either. A cut header hides which identity a column is, which is
-  // what a reader needs from it most. Every column is resizable, and the punch hover carries the name. A
-  // `punchcardIdentities` list or a `punchcardFullLabels` flag stored by an older project is ignored.
+  // No field truncates the punch headers either. A `punchcardIdentities` list or a `punchcardFullLabels`
+  // flag stored by an older project is ignored.
 
-  // Snapshotted on the gesture that picks the barcode column, so args() can refuse a mapping that is
-  // certain to fail without reading an output. args is data-only, and these are read from the
-  // csvValuesByColumn / csvRowCount OUTPUTS, which lag a gesture by one round trip even though the metadata
-  // they derive from is now in data. Same device as sampleColumnValues, for the same reason. Absent where
-  // the metadata had not arrived at pick time, or predates rowCount. The gate then does not fire, and the
-  // Python guard catches it at the end of the run.
-  //
-  // Both could be dropped now that csvMetaSnapshot puts the same numbers in data, where args() could read
-  // them directly. That is a migration and a change to the gate, so it is deliberately left alone here.
+  // Snapshotted on the gesture that picks the barcode column, so args() can refuse a mapping that is certain
+  // to fail without reading an output. args is data-only, and the csvValuesByColumn / csvRowCount OUTPUTS lag
+  // a gesture by one round trip. Same device as sampleColumnValues. Absent where the metadata had not arrived
+  // at pick time, or predates rowCount: the gate then does not fire, and the Python guard catches it at the
+  // end of the run.
   panelRowCount?: number;
   panelBarcodeDistinct?: number;
 
@@ -289,17 +254,15 @@ export type BlockData = {
   tableState: PlDataTableStateV2; // per-cell results grid state (UI-only, never projected to args)
   qcSummaryTableState: PlDataTableStateV2; // per-sample QC summary grid state (UI-only)
   // The Run quality page's two grids (UI-only). Deliberately NOT named `antigenQcTableState` /
-  // `panelMismatchTableState`: the v3 -> v4 migration strips those two keys. Reusing them would either
-  // fight that strip or resurrect a column set and filter saved against a frame nobody has looked at
-  // since. A stored grid state means something only against the frame it was saved on.
+  // `panelMismatchTableState`: the v3 -> v4 migration strips those two keys. A stored grid state means
+  // something only against the frame it was saved on.
   runQualityTableState: PlDataTableStateV2; // run-level quality measurements grid state
-  // GraphMaker's own chart configuration, one per plot. Opaque to this block: the widget owns the
-  // shape and reads it back. Separate rather than shared, because picking an axis on one chart must
-  // not move another.
+  // GraphMaker's own chart configuration, one per plot. Opaque to this block: the widget owns the shape and
+  // reads it back. Separate rather than shared, so picking an axis on one chart does not move another.
   scoreDistributionGraphState: GraphMakerState;
   referenceReadingGraphState: GraphMakerState;
   fittedBackgroundGraphState: GraphMakerState;
   reagentTableState: PlDataTableStateV2; // per (tag, identity) reagent grid state
-  // 330's own table: barcodes the reads carried that no panel declares, keyed by sequence.
+  // Barcodes the reads carried that no panel declares, keyed by sequence.
   undeclaredBarcodesTableState: PlDataTableStateV2;
 };

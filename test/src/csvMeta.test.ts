@@ -5,9 +5,8 @@ import { parseTagCsvMeta } from "../../ui/src/csvMeta";
 const bytes = (s: string) => new TextEncoder().encode(s);
 const parse = (s: string) => parseTagCsvMeta(bytes(s));
 
-// These cases were the acceptance tests for the emit_csv_meta.py entrypoint that used to do this job in
-// the workflow. They are kept because they describe behaviour the block's dropdowns and its
-// duplicate-mapping gate already depend on, not because two parsers now have to agree — there is only one.
+// These cases describe behaviour the block's dropdowns and its duplicate-mapping gate depend on. There is
+// only one parser, so they are not an agreement check between two.
 describe("parseTagCsvMeta — headers", () => {
   it("keeps the file's header order", () => {
     const m = parse("Barcode,Name,Type\nAAA,Ag1,Target\n");

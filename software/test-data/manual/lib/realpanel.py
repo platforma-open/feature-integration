@@ -2,35 +2,30 @@
 reading quality.
 
 Everything the other presets synthesize -- sample names, antigen names, feature barcodes, per-antigen
-roles -- this path READS from a panel CSV whose path is given on the command line. Nothing about that
-panel is baked in here: this module carries column-name defaults for the wide panel shape and nothing
-else, so a real and possibly confidential panel can drive a run without any of it entering the
-repository. The panel is copied verbatim into the run directory, which is gitignored like every other
-generated artefact.
+roles -- this path READS from a panel CSV whose path is given on the command line. This module carries
+column-name defaults for the wide panel shape and nothing else, so a real and possibly confidential
+panel can drive a run without any of it entering the repository. The panel is copied verbatim into the
+run directory, which is gitignored.
 
 Three things this path does that no other preset does:
 
-  1. **Per-sample panels.** A wide panel declares, per row, which sample offers which antigen, so each
-     sample has its own panel and a barcode SEQUENCE may carry a different antigen name in a different
-     sample. That is not a defect to be normalised away -- it is tag-inventory reuse, and the block's
-     `sampleColumn` exists for it. Reads are generated per sample against that sample's own panel, so
-     the reuse is real in the data and not only in the CSV.
+  1. **Per-sample panels.** A wide panel declares, per row, which sample offers which antigen, so a
+     barcode SEQUENCE may carry a different antigen name in a different sample. Reads are generated per
+     sample against that sample's own panel, so the reuse is real in the data and not only in the CSV.
 
-  2. **No declared comparator.** A real panel's role column names what a member is TO THE QUESTION
-     (target, off-target) and carries no value meaning "negative control". So this path plants NO
-     control feature. Background lives on the panel's own members, which is what forces the run down
-     the panel-reference or no-reference path rather than the declared-reference one.
+  2. **No declared comparator.** A real panel's role column names what a member is TO THE QUESTION and
+     carries no value meaning "negative control", so this path plants NO control feature. Background
+     lives on the panel's own members, which forces the run down the panel-reference or no-reference
+     path.
 
   3. **A reading-quality mix.** Every cell is planted at one of eight named tiers, from a clean strong
-     binder down to pure noise, chosen so each tier lands in a KNOWN verdict state -- bound, not bound
-     or unreliable -- and the tier is written to the truth table. A run therefore carries good, medium
-     and bad readings together, in stated proportions, instead of one uniform signal strength.
+     binder down to pure noise, chosen so each tier lands in a KNOWN verdict state, and the tier is
+     written to the truth table.
 
-Read geometry is the real BEAM one -- R2 = 10 bp lead-in + 15 bp feature + tail -- because these are
-antigen-capture barcodes read out by that chemistry. `--offset 0` puts the feature at position 0 for the
-generic geometry instead.
+Read geometry is the real BEAM one -- R2 = 10 bp lead-in + 15 bp feature + tail. `--offset 0` puts the
+feature at position 0 for the generic geometry instead.
 
-Deterministic and standard-library only, like the rest of this bed.
+Deterministic and standard-library only.
 """
 
 import csv
@@ -59,8 +54,7 @@ SEQ_ERROR_FRAC = 0.015
 R2_TAIL = "TTAATTAATT"  # neutral remainder after the feature barcode (captured by R2:* and ignored)
 
 # Default column names for the wide panel shape: sample, antigen name, catalogue id, barcode sequence,
-# detection channel, a constant, role. Generic headers for a generic shape -- override any of them on the
-# command line when a panel spells them differently.
+# detection channel, a constant, role. Override any of them on the command line.
 DEFAULT_COLUMNS = {
     "sample": "Samples",
     "name": "Name",
@@ -68,26 +62,24 @@ DEFAULT_COLUMNS = {
     "role": "Type",
 }
 
-# Which role values mean "this member is the question" against "this member is the comparator the question
-# is read against". Matched case-insensitively on the leading word, so `Target (Primary)`,
-# `Target (Secondary)` and a bare `Target` all read as on-target. A panel using other words needs
-# --target-roles / --offtarget-roles.
+# Which role values mean "this member is the question" against "this member is the comparator". Matched
+# case-insensitively on the leading word, so `Target (Primary)` and a bare `Target` both read as
+# on-target. A panel using other words needs --target-roles / --offtarget-roles.
 DEFAULT_TARGET_ROLES = ("target",)
 DEFAULT_OFFTARGET_ROLES = ("off-target", "offtarget", "off target")
 
 # The NARROW panel shape: sample, antigen name, barcode sequence, and no role column at all. This is the
-# shape the production in-vivo project actually uploads, so it is not an edge case. Role is carried in the
-# antigen NAME instead, and the comparator is chosen by naming one member.
+# shape the production in-vivo project uploads. Role is carried in the antigen NAME instead, and the
+# comparator is chosen by naming one member.
 NARROW_COLUMNS = {
     "sample": "Sample",
     "name": "Antigen",
     "sequence": "Sequence",
 }
 
-# Generic role words looked for in an antigen NAME when the panel declares no role column. These are
-# industry words, not any panel's own vocabulary: nothing from a real panel belongs in this file. Matched
-# case-insensitively as substrings, because a name carries them mid-string ("... (high OT risk)") rather
-# than as a leading token the way a role COLUMN does.
+# Generic role words looked for in an antigen NAME when the panel declares no role column. Industry
+# words, not any panel's own vocabulary. Matched case-insensitively as substrings, because a name carries
+# them mid-string ("... (high OT risk)") rather than as a leading token.
 NAME_OFFTARGET_HINTS = (
     "off-target", "off target", "offtarget", "ot risk", "high ot",
     "homology", "decoy", "irrelevant", "unrelated", "negative control", "neg ctrl",
@@ -98,9 +90,9 @@ NAME_OFFTARGET_HINTS = (
 #
 # (name, weight, doc). The weights are the shares of a sample's cells. Magnitudes are the real 5k-cell
 # BEAM library's: dominant ~600 distinct UMIs (p10 ~18, p90 ~1490), near-mono dominance (median ~1.0,
-# p10 ~0.79), background ~3 UMIs/cell. Each tier is chosen to land in a known verdict state given the
-# block's defaults (count floor 4, a specificity cutoff in the 90s), so the truth table's `tier` column
-# is an expectation and not a label.
+# p10 ~0.79), background ~3 UMIs/cell. Each tier lands in a known verdict state given the block's
+# defaults (count floor 4, a specificity cutoff in the 90s), so the truth table's `tier` column is an
+# expectation and not a label.
 TIERS = [
     ("strong", 0.28, "a clean high-count binder on one target; background at the floor -> bound"),
     ("good", 0.20, "a solid binder, an order less signal than strong -> bound"),
@@ -116,21 +108,19 @@ TIER_NAMES = [t[0] for t in TIERS]
 
 # --- the two measured regimes --------------------------------------------------------------------
 #
-# Two calibrations exist, both measured, and they disagree by more than an order of magnitude. Which one a
-# bed should carry is a question about which library it stands in for.
+# Two calibrations exist, both measured, and they disagree by more than an order of magnitude.
 #
 #   deep    - the public 10x BEAM runs. Antigen libraries sequenced to ~97% saturation: ~33 reads per
 #             recovered UMI, a median of 200 antigen UMIs per called cell, near-mono dominance
 #             (median 0.995), and cell CALLING applied before anything is reported.
-#   shallow - real in-vivo BEAM libraries, measured from a production in-vivo deployment on 2026-08-21:
+#   shallow - real in-vivo BEAM libraries, measured from a production deployment on 2026-08-21:
 #             2.7-5.8 reads per distinct UMI, a median of 7 UMIs across the barcodes clearing a floor of
-#             4, dominance around 0.44, no cell calling and no whitelist, so the raw barcode universe is
-#             what the block sees, and unfiltered antigen aggregates holding most of the library.
+#             4, dominance around 0.44, no cell calling and no whitelist, and unfiltered antigen
+#             aggregates holding most of the library.
 #
-# `deep` is kept because it reproduces every run made before 2026-08-21 byte for byte. `shallow` stands in
-# for real production data. Neither is right on its own: a bed carrying only `deep` tests a regime real
-# in-vivo data never occupies, and one carrying only `shallow` cannot show the block reaching a confident
-# answer at all.
+# `deep` reproduces every run made before 2026-08-21 byte for byte. `shallow` stands in for real
+# production data. A bed carrying only `deep` tests a regime real in-vivo data never occupies, and one
+# carrying only `shallow` cannot show the block reaching a confident answer at all.
 #
 # MAGNITUDES entries are the inclusive (lo, hi) UMI range a tier plants on its dominant member.
 MAGNITUDES_DEEP = {
@@ -146,17 +136,16 @@ MAGNITUDES_DEEP = {
 }
 # Scaled to the measured shallow distribution: among barcodes clearing a floor of 4 the per-barcode totals
 # run p25 5, median 7, p75 11, p90 17, p99 201. So every tier but the top sits in single or low double
-# digits, and `strong` carries the p99 tail rather than the bulk.
+# digits, and `strong` carries the p99 tail.
 #
 # Recalibrated 2026-08-21 against the CURRENT rule, where the comparator is a single declared baseline tag
 # rather than the highest of several off-targets. That baseline usually reads 0, and against 0 the cutoff
-# is reached at a count of 49 (against 5 it was ~120). So the line moved DOWN in comparator terms and UP
-# relative to this regime's depth: with per-cell totals whose median is 7, only the top few percent of
-# cells can reach it at all. That is not a defect to tune away -- it is why real in-vivo runs report 1.4%
-# and 2.9% of cells bound, and the weights below are set so this bed lands in that band.
+# is reached at a count of 49 (against 5 it was ~120). With per-cell totals whose median is 7, only the
+# top few percent of cells can reach it. That is why real in-vivo runs report 1.4% and 2.9% of cells
+# bound, and the weights below are set so this bed lands in that band.
 #
-# Each tier's range is placed relative to the line at 49, so the tier NAMES describe outcomes again:
-# strong clears it outright, good straddles it, and everything below it reads not bound.
+# Each tier's range is placed relative to the line at 49: strong clears it outright, good straddles it,
+# and everything below reads not bound.
 MAGNITUDES_SHALLOW = {
     "strong": (60, 250),
     "good": (30, 70),
@@ -171,9 +160,8 @@ MAGNITUDES_SHALLOW = {
 
 # Tier weights. `deep` makes a clean binder the common case. `shallow` makes a sub-floor reading the
 # common case, which is what 63-80% of real barcodes measured as. Weights chosen so the share of CELLS
-# reaching a bound identity lands in the 1.4-2.9% band real in-vivo runs report. Only `strong` and
-# `crossreactive` clear the line outright and `good` straddles it, so the bound share is roughly
-# strong + half of good + crossreactive.
+# reaching a bound identity lands in the 1.4-2.9% band. Only `strong` and `crossreactive` clear the line
+# outright and `good` straddles it.
 TIERS_SHALLOW = [
     ("strong", 0.010, "clears the line outright -> bound"),
     ("good", 0.030, "straddles the line -> mostly not bound, since the baseline's own background "
@@ -188,8 +176,7 @@ TIERS_SHALLOW = [
 
 # _background() parameters. At shallow depth background is not a floor UNDER the signal, it is COMPARABLE
 # TO it: a dominant of 7 with one UMI on each of five other members gives a dominance fraction of 0.44,
-# which is the measured median. That is counting noise rather than promiscuity, and reproducing it is the
-# whole point of the regime.
+# the measured median. That is counting noise rather than promiscuity.
 BACKGROUND_DEEP = {"offtarget_hi": 6, "target_hi": 3, "offtarget_p": 0.85, "target_p": 0.35}
 BACKGROUND_SHALLOW = {"offtarget_hi": 3, "target_hi": 3, "offtarget_p": 0.70, "target_p": 0.65}
 
@@ -199,11 +186,10 @@ REGIMES = {
         "magnitudes": MAGNITUDES_DEEP,
         "background": BACKGROUND_DEEP,
         # None selects the original three-branch duplication draw (mean ~1.3 reads/UMI). Kept as its own
-        # branch, not a special case of the geometric one, so the RNG call sequence is unchanged and
-        # pre-2026-08-21 runs still reproduce byte for byte.
+        # branch so the RNG call sequence is unchanged and pre-2026-08-21 runs still reproduce byte for byte.
         "dup_mean": None,
         "ambient_frac": 0.18,
-        # 0 leaves the ambient barcode COUNT following from the read share alone, as it always did.
+        # 0 leaves the ambient barcode COUNT following from the read share alone.
         "ambient_barcode_ratio": 0.0,
         "aggregates": 0,
         "aggregate_umi_share": 0.0,
@@ -218,13 +204,13 @@ REGIMES = {
         "tiers": TIERS_SHALLOW,
         "magnitudes": MAGNITUDES_SHALLOW,
         "background": BACKGROUND_SHALLOW,
-        # 2.7 and 5.8 reads per distinct UMI measured across the two measured libraries, so 4 sits
-        # between them. Drawn geometrically, which the capped three-branch draw cannot reach.
+        # 2.7 and 5.8 reads per distinct UMI measured across the two libraries, so 4 sits between them.
+        # Drawn geometrically, which the capped three-branch draw cannot reach.
         "dup_mean": 4.0,
         "ambient_frac": 0.25,
-        # ~700k raw barcodes against a few thousand real cells. This is the single largest divergence from
-        # the old bed: the block reports "cells detected" off the raw universe, so the universe IS the QC
-        # number a user reads.
+        # ~700k raw barcodes against a few thousand real cells. The single largest divergence from the old
+        # bed: the block reports "cells detected" off the raw universe, so the universe IS the QC number a
+        # user reads.
         "ambient_barcode_ratio": 100.0,
         # Five barcodes held 58.9% of one library's antigen UMIs, and the largest held 18.3% alone.
         "aggregates": 5,
@@ -248,9 +234,9 @@ REGIMES = {
 class SamplePanel:
     """One sample's panel: ordered member names, name -> 15 bp barcode, and each member's role.
 
-    `targets` / `offtargets` split the members by the role column. Both may be empty -- a panel is
-    whatever the file says it is -- and every planter below degrades to the next-best tier rather than
-    failing when a sample cannot support the one it was asked for."""
+        `targets` / `offtargets` split the members by the role column. Both may be empty, and every planter
+        below degrades to the next-best tier rather than failing when a sample cannot support the one it was
+        asked for."""
 
     def __init__(self, sample, members, target_roles, offtarget_roles):
         self.sample = sample
@@ -268,8 +254,8 @@ class SamplePanel:
 
 def _role_in(value, words):
     """True when a role value starts with one of `words`, case- and space-insensitively. Matching on the
-    leading word is what lets `Target (Primary)` and `Target (Secondary)` both read as on-target while
-    staying two distinct values in the panel -- which is what they are, and what the block groups on."""
+        leading word is what lets `Target (Primary)` and `Target (Secondary)` both read as on-target while
+        staying two distinct values in the panel, which is what the block groups on."""
     v = " ".join((value or "").split()).lower()
     return any(v == w or v.startswith(w) for w in words)
 
@@ -277,13 +263,12 @@ def _role_in(value, words):
 def _infer_role_from_name(name, control_feature=None):
     """Role for a member the panel gave no role column for.
 
-    A narrow panel still carries role information, in the antigen name. `control_feature`, when given,
-    names the one member serving as the comparator and wins outright. That mirrors the block, where the
-    user picks a control by name from a dropdown of antigen names. Otherwise the name is searched for the
-    generic off-target words in NAME_OFFTARGET_HINTS.
+        A narrow panel still carries role information, in the antigen name. `control_feature`, when given,
+        names the one member serving as the comparator and wins outright, mirroring the block's dropdown.
+        Otherwise the name is searched for the generic off-target words in NAME_OFFTARGET_HINTS.
 
-    A member matching nothing comes back on-target, which is the safe default: mistaking a target for a
-    comparator would silently move the line every reading is judged against."""
+        A member matching nothing comes back on-target: mistaking a target for a comparator would silently
+        move the line every reading is judged against."""
     if control_feature and name.strip().lower() == control_feature.strip().lower():
         return "Off-Target"
     low = name.lower()
@@ -305,15 +290,13 @@ def load_panel(csv_path, columns=None, target_roles=DEFAULT_TARGET_ROLES,
                offtarget_roles=DEFAULT_OFFTARGET_ROLES, shape="auto", control_feature=None):
     """Read a panel CSV into {sample: SamplePanel}, in file order. Handles both shapes seen in use.
 
-    WIDE declares a role column and this reads it. NARROW declares none -- sample, antigen, sequence and
-    nothing else -- and role is then inferred from the antigen name, or from `control_feature` where one
-    is named. Both shapes are live in production on different projects, so neither is the exception: a
-    loader that only reads a role column models the wrong half of real production work.
+        WIDE declares a role column and this reads it. NARROW declares none, and role is then inferred from
+        the antigen name, or from `control_feature` where one is named. Both shapes are live in production on
+        different projects.
 
-    Validates only what generation cannot proceed without: the named columns exist, every sequence is
-    15 bp, and no sequence appears twice within one sample, which would be a genuine duplicate the
-    block's own guard rejects. Sequence reuse ACROSS samples is left alone -- it is the point of the
-    per-sample keying, not an error."""
+        Validates only what generation cannot proceed without: the named columns exist, every sequence is
+        15 bp, and no sequence appears twice within one sample. Sequence reuse ACROSS samples is left alone --
+        it is the point of the per-sample keying."""
     if shape == "auto":
         shape = detect_panel_shape(csv_path, columns)
     if shape not in ("wide", "narrow"):
@@ -384,19 +367,15 @@ def pick_tier(rng, tiers=None):
 def _background(rng, panel, exclude, offtarget_hi=6, target_hi=3, offtarget_p=0.85, target_p=0.35):
     """Background readings on the members that are not the cell's dominant one.
 
-    OFF-TARGET members are treated differently from other targets, and the difference is load-bearing. A
-    panel with no declared negative control is read against its off-target members, so an off-target
-    reading is this cell's COMPARATOR -- and a comparator below the reference thin line (2 by default)
-    makes the position *unreliable*, not *not bound*: the comparison could not be made. Plant the
-    off-targets sparsely and almost every cell in the run comes back unreliable, which says nothing about
-    binding and is an artefact of the bed, not a finding.
+        OFF-TARGET members are treated differently from other targets, and the difference is load-bearing. A
+        panel with no declared negative control is read against its off-target members, so an off-target
+        reading is this cell's COMPARATOR. Plant the off-targets sparsely and almost every cell in the run
+        comes back unreliable, which is an artefact of the bed rather than a finding.
 
-    So off-targets read in ~85% of cells at 2-`offtarget_hi` UMIs -- a comparator that can be compared
-    against -- while the remaining on-target members stay at true background, present in ~35% of cells at
-    1-`target_hi`. The real library measured ~3 members read per cell and a background median of ~3 UMIs,
-    which both of these sit inside. The ~15% of cells with no off-target reading are left alone on
-    purpose: *unreliable for want of a comparator* is a state the block has to be able to show, and a run
-    with none of it cannot show it."""
+        So off-targets read in ~85% of cells at 2-`offtarget_hi` UMIs, while the remaining on-target members
+        stay at true background, present in ~35% of cells at 1-`target_hi`. The real library measured ~3
+        members read per cell and a background median of ~3 UMIs. The ~15% of cells with no off-target reading
+        are left alone on purpose: *unreliable for want of a comparator* is a state the block has to show."""
     out = {}
     for name in panel.names:
         if name in exclude:
@@ -412,18 +391,16 @@ def _background(rng, panel, exclude, offtarget_hi=6, target_hi=3, offtarget_p=0.
 def plant_cell(rng, panel, tier, primary_bias=0.0, mag=None, bg=None):
     """Plant one cell's per-member distinct-UMI counts at `tier`.
 
-    Returns (per_member, consensus, tier_actually_used). `consensus` is what the VDJ arm groups clonotypes
-    on: a member NAME when the cell has one clear dominant, else the tier word. A tier a sample's panel
-    cannot support -- no off-target member, fewer than two targets -- degrades to `good`, and the returned
-    tier says so, so the truth table never claims a tier the data does not hold.
+        Returns (per_member, consensus, tier_actually_used). `consensus` is what the VDJ arm groups clonotypes
+        on: a member NAME when the cell has one clear dominant, else the tier word. A tier a sample's panel
+        cannot support degrades to `good`, and the returned tier says so.
 
-    `primary_bias` tilts the dominant choice toward the panel's FIRST target: an antigen-sorted library is
-    not a uniform draw over its panel, and a real one had a single antigen at 90% of the library.
+        `primary_bias` tilts the dominant choice toward the panel's FIRST target: an antigen-sorted library is
+        not a uniform draw over its panel, and a real one had a single antigen at 90% of the library.
 
-    `mag` and `bg` come from the regime (see REGIMES). They carry only MAGNITUDES. Every relative decision
-    -- which member is dominant, how a tier degrades, how the second reading relates to the first -- is
-    regime-independent and stays here. Defaulting them to the deep tables keeps the RNG call sequence
-    identical to what this function did before regimes existed."""
+        `mag` and `bg` come from the regime and carry only MAGNITUDES. Every relative decision stays here.
+        Defaulting them to the deep tables keeps the RNG call sequence identical to what this function did
+        before regimes existed."""
     mag = mag or MAGNITUDES_DEEP
     bg = bg or BACKGROUND_DEEP
     targets = panel.targets or panel.names
@@ -436,8 +413,7 @@ def plant_cell(rng, panel, tier, primary_bias=0.0, mag=None, bg=None):
 
     if tier == "noise":
         # Deliberately thin, off-targets included: nothing here clears the count floor, and a cell whose
-        # off-target reading lands at 0 or 1 has no comparator at all. Both outcomes are real and this is
-        # the tier they come from, so the rest of the run does not have to carry them.
+        # off-target reading lands at 0 or 1 has no comparator at all. Both outcomes are real.
         per = {n: rng.randint(*mag["noise"]) for n in panel.names if rng.random() < 0.6}
         if not per:
             per = {rng.choice(panel.names): rng.randint(*mag["noise"])}
@@ -481,14 +457,13 @@ def plant_cell(rng, panel, tier, primary_bias=0.0, mag=None, bg=None):
         per.update(_background(rng, panel, {tgt}, **bg))
     elif tier == "medium":
         # Straddles the line on purpose. With the off-target members serving as the comparator, a cell's
-        # reference reading is the MAX over them -- about 5 UMIs at this background -- and the antigen
-        # count that reaches a specificity of 75 against a reference of 5 is about 120. 60-200 therefore
-        # lands on both sides of the line, which is the only way to see where the line is.
+        # reference reading is the MAX over them -- about 5 UMIs at this background -- and the antigen count
+        # that reaches a specificity of 75 against a reference of 5 is about 120.
         dom = rng.randint(*mag["medium"])
         per = {tgt: dom}
-        # The second reading goes on another TARGET where the panel has one. On an off-target it would
-        # raise this cell's own comparator and turn a near-the-line cell into a comparator-dominated one,
-        # which is what the `offtarget` tier is for, and mixing the two makes neither legible.
+        # The second reading goes on another TARGET where the panel has one. On an off-target it would raise
+        # this cell's own comparator and turn a near-the-line cell into a comparator-dominated one, which is
+        # what the `offtarget` tier is for.
         rest = [n for n in (panel.targets or panel.names) if n != tgt]
         if rest:
             per[rng.choice(rest)] = max(1, int(dom * rng.uniform(0.35, 0.65)))
@@ -496,8 +471,8 @@ def plant_cell(rng, panel, tier, primary_bias=0.0, mag=None, bg=None):
                                **dict(bg, offtarget_hi=bg["offtarget_hi"] + 2,
                                       target_hi=bg["target_hi"] + 3)))
     elif tier == "weak":
-        # Clear of the count floor of 4, so every reading here is a reading and answers *not bound* -- not
-        # the same thing as the floored readings the `noise` tier produces, which answer nothing.
+        # Clear of the count floor of 4, so every reading here answers *not bound* -- not the same thing as
+        # the floored readings the `noise` tier produces, which answer nothing.
         dom = rng.randint(*mag["weak"])
         per = {tgt: dom}
         per.update(_background(rng, panel, {tgt},
@@ -511,20 +486,18 @@ def plant_cell(rng, panel, tier, primary_bias=0.0, mag=None, bg=None):
 
 def _r2(barcode, offset):
     """R2 for one read. offset=10 is the real BEAM geometry, with a 10 bp lead-in before the feature.
-    offset=0 puts the feature at position 0, the generic feature-barcode geometry."""
+        offset=0 puts the feature at position 0, the generic feature-barcode geometry."""
     return (R2_FILLER[:offset] if offset else "") + barcode + R2_TAIL
 
 
 def _dup_count(rng, dup_mean):
     """How many reads one distinct UMI produces.
 
-    `dup_mean is None` keeps the original capped three-branch draw (mean ~1.3 reads/UMI). It is left as
-    its own branch rather than a special case of the geometric one so the RNG call sequence is unchanged
-    and pre-regime runs reproduce byte for byte.
+        `dup_mean is None` keeps the original capped three-branch draw (mean ~1.3 reads/UMI), left as its own
+        branch so the RNG call sequence is unchanged and pre-regime runs reproduce byte for byte.
 
-    Otherwise a geometric draw with mean `dup_mean`. The capped draw tops out at 3 and so cannot reach the
-    2.7-5.8 reads per distinct UMI real in-vivo libraries measure. This can. Capped at 64 so a
-    pathological tail cannot dominate a run."""
+        Otherwise a geometric draw with mean `dup_mean`. The capped draw tops out at 3 and cannot reach the
+        2.7-5.8 reads per distinct UMI real in-vivo libraries measure. Capped at 64."""
     if dup_mean is None:
         return 1 if rng.random() < 0.75 else (2 if rng.random() < 0.8 else 3)
     p = 1.0 / max(1.0, dup_mean)
@@ -544,8 +517,8 @@ def emit_cell_reads(rng, reads, sample, panel, cell, per_member, offset, seq_err
         umis = set()
         while len(umis) < k:
             umis.add(rand_seq(rng, UMI_LEN))
-        # sorted(): set iteration order of strings varies per process (PYTHONHASHSEED), which would make
-        # the emitted read order non-reproducible.
+        # sorted(): set iteration order of strings varies per process (PYTHONHASHSEED), which would make the
+        # emitted read order non-reproducible.
         for umi in sorted(umis):
             dups = _dup_count(rng, dup_mean)
             for _ in range(dups):
@@ -558,23 +531,19 @@ def emit_cell_reads(rng, reads, sample, panel, cell, per_member, offset, seq_err
 def add_ambient(rng, panel, reads, offset, frac, n_cells=0, barcode_ratio=0.0, dup_mean=None):
     """Append ambient reads on OFF-cell barcodes: random 16-mers carrying on-panel features.
 
-    Two modes, and the difference is the largest single divergence between this bed and the measured real
-    data.
+        `barcode_ratio == 0` (the original): the ambient READ SHARE is `frac`, and the barcode count falls out
+        of it -- one barcode per ambient read pair.
 
-    `barcode_ratio == 0` (the original): the ambient READ SHARE is `frac`, and the barcode count falls out
-    of it -- one barcode per ambient read pair, so ~18% of reads become a modest phantom population.
+        `barcode_ratio > 0`: the barcode UNIVERSE is sized directly, at `n_cells * barcode_ratio` distinct
+        barcodes. The block applies no cell calling and the live configuration sets no whitelist, so what it
+        reports as "cells detected" is the raw barcode universe: 1,374,025 of them across two samples, with a
+        MEDIAN of one UMI each. A bed whose barcodes are all real cells cannot reproduce those numbers.
 
-    `barcode_ratio > 0`: the barcode UNIVERSE is sized directly, at `n_cells * barcode_ratio` distinct
-    barcodes. This is the mode that matters. The block applies no cell calling and the live configuration
-    sets no whitelist, so what it reports as "cells detected" is the raw barcode universe: 1,374,025 of
-    them across two samples, with a MEDIAN of one UMI each. Every QC number downstream inherits that. A
-    bed whose barcodes are all real cells cannot reproduce a single one of those numbers.
+        The per-barcode UMI shape is drawn to match: ~85% carry exactly one UMI, the rest a decaying tail. The
+        measured whole-table distribution was p50 1, p75 1, p90 16, p99 61.
 
-    The per-barcode UMI shape is drawn to match: ~85% carry exactly one UMI, the rest a decaying tail. The
-    measured whole-table distribution was p50 1, p75 1, p90 16, p99 61.
-
-    Ambient barcodes stay out of the truth tables. A whitelist drops them, de-novo correction keeps them
-    as phantom low-count cells, and both behaviours are worth having data for."""
+        Ambient barcodes stay out of the truth tables. A whitelist drops them, de-novo correction keeps them as
+        phantom low-count cells, and both behaviours are worth having data for."""
     if frac <= 0 and barcode_ratio <= 0:
         return 0
     bcs = panel.barcodes
@@ -584,9 +553,9 @@ def add_ambient(rng, panel, reads, offset, frac, n_cells=0, barcode_ratio=0.0, d
         planted_umis = 0
         for i in range(n_bc):
             cell = rand_seq(rng, CELL_LEN)
-            # Median one UMI with a long tail. The measured whole-table shape was p50 1, p75 1-6, p90
-            # 10-16, p99 53-61, so a majority of singletons is not enough on its own: the tail has to
-            # reach the tens or the panel median a comparator rests on comes out too clean.
+            # Median one UMI with a long tail. The measured whole-table shape was p50 1, p75 1-6, p90 10-16,
+            # p99 53-61, so a majority of singletons is not enough: the tail has to reach the tens or the panel
+            # median a comparator rests on comes out too clean.
             k = 1 if rng.random() < 0.62 else 1 + int(rng.expovariate(1 / 9.0))
             k = min(k, 400)
             planted_umis += k
@@ -615,23 +584,19 @@ AGGREGATE_PROFILE = (0.311, 0.266, 0.183, 0.168, 0.072)
 def add_aggregates(rng, panel, reads, offset, n_aggregates, umi_share, other_umis, dup_mean=None):
     """Append antigen-aggregate barcodes: a handful of droplets holding most of the library.
 
-    Proteins clump nonspecifically during sample prep and the resulting GEMs carry enormous UMI counts.
-    Cell Ranger detects and removes exactly this population BEFORE cell calling. This block does not, and
-    until now this bed contained none -- so nothing in the bed exercised what an aggregate does to a panel
-    median, a comparator, or a "cells detected" count.
+        Proteins clump nonspecifically during sample prep and the resulting GEMs carry enormous UMI counts.
+        Cell Ranger detects and removes exactly this population BEFORE cell calling. This block does not.
 
-    `umi_share` is the share of the FINISHED library's UMIs these barcodes hold, so the count planted is
-    `other_umis * share / (1 - share)` where `other_umis` is every non-aggregate UMI already in the
-    library, signal AND ambient. Sizing it against signal alone under-plants badly once the barcode
-    universe is large, because the universe holds most of the non-aggregate UMIs.
+        `umi_share` is the share of the FINISHED library's UMIs these barcodes hold, so the count planted is
+        `other_umis * share / (1 - share)` where `other_umis` is every non-aggregate UMI already in the
+        library, signal AND ambient. Sizing it against signal alone under-plants badly once the barcode
+        universe is large.
 
-    At the measured 0.59 the aggregates outnumber everything else about 1.4 to 1, which is why the
-    measured per-cell depth is starved even though those libraries are large. Most of the sequencing went
-    into five droplets.
+        At the measured 0.59 the aggregates outnumber everything else about 1.4 to 1, which is why the measured
+        per-cell depth is starved even though those libraries are large.
 
-    UMIs are spread over several panel features per barcode, because an aggregate is nonspecific: a clump
-    binds whatever is nearby, and a single-feature aggregate would read as an extremely confident binder
-    rather than as junk."""
+        UMIs are spread over several panel features per barcode, because an aggregate is nonspecific: a
+        single-feature aggregate would read as an extremely confident binder rather than as junk."""
     if n_aggregates <= 0 or umi_share <= 0 or other_umis <= 0:
         return []
     total = int(other_umis * umi_share / max(1e-9, 1.0 - umi_share))
@@ -656,8 +621,8 @@ def add_aggregates(rng, panel, reads, offset, n_aggregates, umi_share, other_umi
 
 def convert_offpanel(rng, reads, off_bcs, off_frac, offset):
     """Rewrite `off_frac` of reads onto barcodes NOT in any sample's panel (Hamming >= 5 from every panel
-    member, so refinement drops rather than corrects them). Drives the panel-assigned fraction the block's
-    QC reports, and with it the Quality tag."""
+        member, so refinement drops rather than corrects them). Drives the panel-assigned fraction the block's
+        QC reports, and with it the Quality tag."""
     if off_frac <= 0 or not off_bcs:
         return
     k = min(len(reads), int(len(reads) * off_frac))
@@ -684,9 +649,8 @@ def add_malformed(rng, reads, matched_frac):
 #
 # What reaches the block as a library, before any per-cell reading is read. (matched fraction,
 # panel-assigned fraction) drive the block's Read-recovery bar and Quality tag: matched < 80% or
-# panel-assigned < 50% -> WARN, panel-assigned < 25% -> ALERT. These are LIBRARY defects -- a bad prep, a
-# panel that does not match the reads -- and they are a different axis from the per-cell reading tiers,
-# which are about a cell's binding signal in a library that read out fine.
+# panel-assigned < 50% -> WARN, panel-assigned < 25% -> ALERT. These are LIBRARY defects, a different axis
+# from the per-cell reading tiers.
 LIBRARY_TIERS = {
     "clean": (1.00, 0.98, "OK"),
     "good": (0.96, 0.94, "OK"),
@@ -706,8 +670,7 @@ QUALITY_PROFILES = {
 #
 # The shallow table is what each tier should come back as under the CURRENT rule, at shallow depth,
 # against a single declared baseline. The line is a count of 49 when the baseline reads 0 and climbs
-# toward 90 as the baseline's own background rises, so `good` straddles a MOVING line and lands mostly not
-# bound.
+# toward 90 as the baseline's own background rises, so `good` straddles a MOVING line.
 EXPECTED_STATE_SHALLOW = {
     "strong": "bound — clears the line even where the baseline's own background has pushed it up",
     "good": "on the line: bound where the baseline read 0, not bound where it read a few",
@@ -785,20 +748,17 @@ def build(
 ):
     """Generate a cohort-scale run against the panel at `panel_csv`, into `run_dir`.
 
-    Cell barcodes are drawn per sample INDEPENDENTLY from the whitelist, so samples share some barcodes --
-    which is what real GEM wells do, and what makes (sampleId, cellId) the load-bearing key rather than
-    cellId alone. `cell_jitter` varies each sample's cell count so no two libraries are the same size.
+        Cell barcodes are drawn per sample INDEPENDENTLY from the whitelist, so samples share some barcodes,
+        which is what real GEM wells do and what makes (sampleId, cellId) the load-bearing key.
 
-    The panel file is copied into the run directory verbatim: that copy is the one the block uploads, so
-    what the block reads is the panel as it actually arrived, not a re-serialisation of it.
+        The panel file is copied into the run directory verbatim: that copy is the one the block uploads.
 
-    `arm="vdj"` rebuilds ONLY the V(D)J arm, from the antigen arm's existing ground truth. The antigen arm
-    is the expensive half -- hundreds of megabytes of FASTQ against a few of TSV -- and the repertoire
-    shape is the half worth iterating on, so reshaping it should not cost a regeneration of the reads.
+        `arm="vdj"` rebuilds ONLY the V(D)J arm, from the antigen arm's existing ground truth. The antigen arm
+        is the expensive half -- hundreds of megabytes of FASTQ against a few of TSV.
 
-    `regime` selects a measured calibration (see REGIMES). Every regime-owned argument defaults to None,
-    meaning "take the regime's value", and passing one explicitly overrides it. `regime="deep"` with
-    nothing overridden reproduces every run made before regimes existed, byte for byte."""
+        `regime` selects a measured calibration (see REGIMES). Every regime-owned argument defaults to None,
+        meaning "take the regime's value". `regime="deep"` with nothing overridden reproduces every run made
+        before regimes existed, byte for byte."""
     if regime not in REGIMES:
         raise SystemExit(f"unknown regime {regime!r}; expected one of {', '.join(REGIMES)}")
     R = REGIMES[regime]
@@ -879,10 +839,9 @@ def build(
 
         signal_reads = len(reads)
         matched, panel_assigned, tag = LIBRARY_TIERS[lib_tier_of[sample]]
-        # Ambient first, then aggregates sized against everything else already in the library. The
-        # aggregate share is a share of the FINISHED library, and once the barcode universe is large it
-        # holds most of the non-aggregate UMIs -- sizing against signal alone under-plants by an order of
-        # magnitude.
+        # Ambient first, then aggregates sized against everything else already in the library. The aggregate
+        # share is a share of the FINISHED library, and once the barcode universe is large it holds most of
+        # the non-aggregate UMIs.
         ambient_umis = add_ambient(rng, panel, reads, offset, ambient_frac, n_cells=len(cells),
                                    barcode_ratio=ambient_barcode_ratio, dup_mean=dup_mean) or 0
         planted_agg = add_aggregates(rng, panel, reads, offset, aggregates, aggregate_umi_share,
@@ -904,9 +863,8 @@ def build(
         if ambient_barcode_ratio > 0:
             extra += f", ~{int(len(cells) * ambient_barcode_ratio)} ambient barcodes"
         # `offtargets` holds whatever --offtarget-roles selected, which is the BASELINE, not necessarily a
-        # member named off-target. Printing it as "off-target" made a run whose baseline is its Decoy read
-        # as though the decoy had vanished and the off-targets had become the comparator -- exactly
-        # backwards. Members matching neither role are counted too rather than silently dropped.
+        # member named off-target. Printing it as "off-target" made a run whose baseline is its Decoy read as
+        # though the decoy had vanished. Members matching neither role are counted too.
         n_other = len(panel.names) - len(panel.targets) - len(panel.offtargets)
         split = f"{len(panel.targets)} target / {len(panel.offtargets)} baseline"
         if n_other:
@@ -942,8 +900,7 @@ def build(
         _write_tsv(os.path.join(truth_dir, "aggregates.tsv"),
                    ("sample", "rank", "cellId", "umis"), agg_rows)
     # The regime decides what the tier table should COME BACK as, so a later --validate-only has to be able
-    # to recover it. Without this, revalidating a shallow run applies the deep expectations and reports
-    # five failures on a run that is behaving exactly as intended.
+    # to recover it. Without this, revalidating a shallow run applies the deep expectations.
     with open(os.path.join(truth_dir, "regime.txt"), "w") as fh:
         fh.write(regime + "\n")
     return {"samples": samples, "cells": n_cells_total, "reads": total_reads, "tiers": tier_counts,
@@ -954,9 +911,8 @@ def build(
 
 def _rebuild_vdj_only(run_dir, panels, samples, clonal_profile, mean_size, singleton_cell_frac,
                       offset, columns, unpaired_frac=0.0, tail_cycle=None):
-    """Rebuild the V(D)J arm alone, over the antigen arm already on disk. Returns the same info dict
-    `build` does, read back from the truth tables rather than recomputed, so the run report stays accurate
-    without the reads being touched."""
+    """Rebuild the V(D)J arm alone, over the antigen arm already on disk. Returns the same info dict `build`
+        does, read back from the truth tables rather than recomputed."""
     truth_dir = os.path.join(run_dir, "truth")
     consensus = os.path.join(truth_dir, "expected-consensus.tsv")
     if not os.path.exists(consensus):
@@ -975,8 +931,8 @@ def _rebuild_vdj_only(run_dir, panels, samples, clonal_profile, mean_size, singl
         unpaired_frac=unpaired_frac,
         tail_cycle=tail_cycle,
     )
-    # Keyed off whatever tiers the truth table actually holds, not a fixed list: an --arm vdj rebuild runs
-    # over an antigen arm that may have been generated under a different regime's tier table.
+    # Keyed off whatever tiers the truth table actually holds: an --arm vdj rebuild runs over an antigen arm
+    # that may have been generated under a different regime's tier table.
     tiers, cells = {}, 0
     with open(os.path.join(truth_dir, "expected-readings.tsv"), newline="") as fh:
         for r in csv.DictReader(fh, delimiter="\t"):
@@ -997,19 +953,16 @@ def _write_tsv(path, header, rows):
 
 def _write_sample_metadata(run_dir, samples, panels, lib_tier_of):
     """samples-metadata.tsv -- the per-sample table Samples & Data imports as metadata, keyed by the sample
-    name so it joins to the same sampleId the three arms share.
+        name so it joins to the same sampleId the three arms share.
 
-    The panel names its samples and says nothing else about them, so Donor and Condition are invented
-    here: they exist to give downstream grouping something to split on, and a two-arm condition is the
-    smallest thing that does. The other two columns are NOT invented and are the reason this file is worth
-    having in this bed:
+        The panel names its samples and says nothing else about them, so Donor and Condition are invented here
+        to give downstream grouping something to split on. The other two columns are not invented:
 
-      LibraryQuality  the tier this sample's library was degraded to. Group the QC report on it and the
-                      Quality tag should track it, which is the one claim the library axis makes.
-      PanelTargets    how many on-target members this sample's panel declares. It varies per sample in a
-                      real per-sample panel, and it is what makes *never asked* reachable -- a sample that
-                      never offered an identity cannot have answered about it.
-    """
+          LibraryQuality  the tier this sample's library was degraded to. Group the QC report on it and the
+                          Quality tag should track it.
+          PanelTargets    how many on-target members this sample's panel declares. It varies per sample in a
+                          real per-sample panel, and it is what makes *never asked* reachable.
+        """
     path = os.path.join(run_dir, "samples-metadata.tsv")
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh, delimiter="\t")
@@ -1049,8 +1002,8 @@ def _write_truth(truth_dir, ab_rows, con_rows, read_rows, lib_rows, panels):
         w.writerow(["sample", "cells", "panelMembers", "targets", "offTargets", "signalReads",
                     "totalReads", "libraryTier", "matchedFrac", "panelAssignedFrac", "expectedQualityTag"])
         w.writerows(lib_rows)
-    # The flat (tag, feature) view the VDJ arm's clear-antigen lookup reads. Not a block upload -- the
-    # block gets the panel file verbatim -- so it lives under truth/ with the rest of the derived state.
+    # The flat (tag, feature) view the VDJ arm's clear-antigen lookup reads. Not a block upload -- the block
+    # gets the panel file verbatim -- so it lives under truth/ with the rest of the derived state.
     with open(os.path.join(truth_dir, "panel-canonical.csv"), "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["Sample", "tag", "feature", "role"])
@@ -1061,13 +1014,13 @@ def _write_truth(truth_dir, ab_rows, con_rows, read_rows, lib_rows, panels):
 
 def write_run_report(run_dir, info, panel_csv, quality_profile, gate_hint=True, baseline_tag=None):
     """Write RUN.md inside the run: the settings this run expects, worked out from the panel that actually
-    drove it. It lives in the run directory, which is gitignored, and not in the tracked README, because it
-    names the panel's own samples and columns and the panel is the user's, not this repository's."""
+        drove it. It lives in the gitignored run directory rather than the tracked README, because it names the
+        panel's own samples and columns and the panel is the user's."""
     cols = info["columns"]
     panels = info["panels"]
     offset = info["offset"]
     # Exactly what model/src/pattern.ts assembles from the builder fields below, so the report can be
-    # compared against the pattern the block shows rather than paraphrasing it.
+    # compared against the pattern the block shows.
     skip = "N{%d}" % offset if offset else ""
     pattern = "^(CELL:N{16})(UMI:N{10})*\\^" + skip + "(FEATURE:N{15})(R2:*)"
     role_values = sorted({p.role[n] for p in panels.values() for n in p.names})
@@ -1076,8 +1029,8 @@ def write_run_report(run_dir, info, panel_csv, quality_profile, gate_hint=True, 
     # (`emit_verdicts.py` reads `panel["tag"].n_unique()`), not rows and not per-sample members.
     bstate = baseline_state(panels, baseline_tag)
     # What the PANEL declares on its own. `--baseline-tag` narrows the simulation to one member, but the
-    # block's declared rung is reached by a column value, so a run read against a named tag needs the
-    # panel edited before the block can be pointed at it the same way.
+    # block's declared rung is reached by a column value, so a run read against a named tag needs the panel
+    # edited before the block can be pointed at it the same way.
     declared = baseline_state(panels) if baseline_tag else bstate
     panel_tag_count = bstate["panel_tags"]
     n_baseline = len(bstate["seqs"])
@@ -1135,8 +1088,8 @@ def write_run_report(run_dir, info, panel_csv, quality_profile, gate_hint=True, 
         declared_bullet = ("- **Declared baseline tag** — reads every count against the one member named "
                            "in **Values that mark the baseline tag**. Nothing in this panel carries that "
                            "role, so it cannot serve.")
-    # What the reader is left with, and the one lever that changes it. Stating the rung without stating
-    # the consequence is what let the old report read as though a run were configurable when it was not.
+    # What the reader is left with, and the one lever that changes it. Stating the rung without stating the
+    # consequence let the old report read as though a run were configurable when it was not.
     closing = []
     if served == "none":
         closing = [
@@ -1182,8 +1135,8 @@ def write_run_report(run_dir, info, panel_csv, quality_profile, gate_hint=True, 
         "## Feature Barcode Profiling",
         "",
         # Named as the block shows them, and ORDERED as the settings drawer shows them, top to bottom. A
-        # reader configures the block by walking the drawer. A table in any other order makes them hunt for
-        # each control, and a control named by its internal argument cannot be found at all.
+        # reader configures the block by walking the drawer, and a control named by its internal argument
+        # cannot be found at all.
         "Named and ordered as they appear in the settings drawer, top to bottom. Rows marked *default* "
         "need no change — they are listed so the drawer can be read straight through.",
         "",
@@ -1312,12 +1265,12 @@ def write_run_report(run_dir, info, panel_csv, quality_profile, gate_hint=True, 
 def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=None, baseline_tag=None,
              target_roles=DEFAULT_TARGET_ROLES, offtarget_roles=DEFAULT_OFFTARGET_ROLES):
     """Check a generated run without a backend. Re-derives each checked sample's per-(cell, member)
-    distinct-UMI counts straight from the FASTQ pair and compares them to the planted truth -- the one
-    test that proves the reads say what the truth table claims. Also checks read geometry, per-sample
-    barcode uniqueness, the tier mix, and that the VDJ arm's cell ids are the antigen arm's.
+        distinct-UMI counts straight from the FASTQ pair and compares them to the planted truth -- the one test
+        that proves the reads say what the truth table claims. Also checks read geometry, per-sample barcode
+        uniqueness, the tier mix, and that the VDJ arm's cell ids are the antigen arm's.
 
-    `sample_check` limits the FASTQ re-derivation to one sample. The pass is linear in reads, so on a
-    cohort-scale run checking every sample is slow for no extra coverage. Returns True on a clean pass."""
+        `sample_check` limits the FASTQ re-derivation to one sample: the pass is linear in reads. Returns True
+        on a clean pass."""
     import gzip
 
     # Prefer what the run RECORDS over what the caller guessed: a --validate-only invocation carries
@@ -1336,19 +1289,17 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
             failures.append(label)
 
     panel_path = panel_csv or os.path.join(run_dir, "panel.csv")
-    # Shape-aware AND role-aware: a run generated from a narrow panel must validate against a narrow read
-    # of it, and one generated with custom role words must use the SAME words here. Re-reading with the
-    # defaults silently reclassifies every member -- a panel whose comparator is its `Decoy` row comes back
-    # with five off-target baselines instead of one, and the declared rung then reports itself refused on a
-    # run where it serves.
+    # Shape-aware AND role-aware: a run generated from a narrow panel must validate against a narrow read of
+    # it, and one generated with custom role words must use the SAME words here. Re-reading with the defaults
+    # silently reclassifies every member.
     panels = load_panel(panel_path, columns, target_roles, offtarget_roles, shape="auto")
     truth = os.path.join(run_dir, "truth")
 
     for sample, panel in panels.items():
         ok(len(set(panel.barcodes)) == len(panel.barcodes), f"{sample}: barcodes unique within the sample")
         ok(all(len(b) == FEAT_LEN for b in panel.barcodes), f"{sample}: every barcode is {FEAT_LEN} bp")
-        # A 1 bp read error must not turn one member into another, or the planted counts and the
-        # recoverable counts are different numbers and no per-cell reading can be checked at all.
+        # A 1 bp read error must not turn one member into another, or the planted counts and the recoverable
+        # counts are different numbers and no per-cell reading can be checked at all.
         bcs = panel.barcodes
         closest = min(
             (sum(1 for x, y in zip(a, b) if x != y) for i, a in enumerate(bcs) for b in bcs[i + 1:]),
@@ -1362,11 +1313,9 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
         rows = list(csv.DictReader(fh, delimiter="\t"))
     for r in rows:
         tiers[r["tier"]] = tiers.get(r["tier"], 0) + 1
-    # `offtarget` and `gated` both need a COMPARATOR member to plant a dominant on, and `plant_cell`
-    # degrades them when the sample offers none. A panel that declares no baseline at all -- every member
-    # either a target or an off-target, with no negative control -- therefore cannot carry them, and
-    # requiring them would fail a run that is faithfully reproducing that panel. Every other tier is
-    # unconditional.
+    # `offtarget` and `gated` both need a COMPARATOR member to plant a dominant on, and `plant_cell` degrades
+    # them when the sample offers none. A panel that declares no baseline at all cannot carry them, and
+    # requiring them would fail a run that is faithfully reproducing that panel.
     needs_comparator = {"offtarget", "gated"}
     any_comparator = any(pnl.offtargets for pnl in panels.values())
     for tier in TIER_NAMES:
@@ -1375,9 +1324,9 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
         ok(tiers.get(tier, 0) > 0, f"tier {tier} is present ({tiers.get(tier, 0)} cells)")
     ok(len(rows) > 0, "readings truth is non-empty")
 
-    # Each sample's panel-assigned fraction. It is the recovery bound: a degraded library has a share of
-    # its reads deliberately rewritten onto off-panel barcodes, so its planted UMIs are NOT all recoverable
-    # and a fixed bar would fail every sample the profile degrades on purpose.
+    # Each sample's panel-assigned fraction. It is the recovery bound: a degraded library has a share of its
+    # reads deliberately rewritten onto off-panel barcodes, so a fixed bar would fail every sample the profile
+    # degrades on purpose.
     panel_assigned = {}
     lq = os.path.join(truth, "library-quality.tsv")
     if os.path.exists(lq):
@@ -1402,8 +1351,8 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
         ok(os.path.exists(r1p) and os.path.exists(r2p), f"{sample}: FASTQ pair exists")
         if not (os.path.exists(r1p) and os.path.exists(r2p)):
             continue
-        # offset is whatever position the panel barcodes actually sit at. Read it off the first
-        # structurally valid read rather than trusting an argument.
+        # offset is whatever position the panel barcodes actually sit at. Read it off the first structurally
+        # valid read rather than trusting an argument.
         seen = {}
         n_reads = 0
         offsets = set()
@@ -1428,24 +1377,20 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
                         break
         ok(n_reads > 0, f"{sample}: FASTQ is non-empty ({n_reads} reads)")
         ok(len(offsets) == 1, f"{sample}: one feature offset in the file (found {sorted(offsets)})")
-        # Every planted (cell, member) must be recoverable from the reads, and NOTHING must be recoverable
-        # that was not planted. Two claims, because they fail for different reasons and only one tolerates
-        # slack:
+        # Every planted (cell, member) must be recoverable from the reads, and NOTHING must be recoverable that
+        # was not planted. Two claims, because they fail for different reasons and only one tolerates slack:
         #
-        #   over-recovery is bounded near zero. A member reading MORE distinct UMIs than were planted is
-        #   either a panel whose members are close enough that a 1 bp error turns one into another, which
-        #   the >= 3 bp check above rules out, or an AMBIENT read whose random 16-mer cell barcode happened
-        #   to equal a real one. The second is real and unavoidable: at ~1M ambient reads against ~7k cells
-        #   it lands about twice per sample (n_ambient * n_cells / 4^16), as a real library does. So the bar
-        #   is a rate rather than zero, and a rate this small can only be met by ambient collision.
+        #   over-recovery is bounded near zero. A member reading MORE distinct UMIs than were planted is either a
+        #   panel whose members are close enough that a 1 bp error turns one into another, which the >= 3 bp check
+        #   above rules out, or an AMBIENT read whose random 16-mer cell barcode happened to equal a real one. The
+        #   second is unavoidable: at ~1M ambient reads against ~7k cells it lands about twice per sample
+        #   (n_ambient * n_cells / 4^16). So the bar is a rate rather than zero.
         #
-        #   under-recovery is expected, and how much depends on the sample's LIBRARY tier. A UMI is lost
-        #   when every one of its reads is unrecoverable, whether it took a feature-barcode error (1.5% of
-        #   reads) or was rewritten onto an off-panel barcode (whatever the tier's panel-assigned fraction
-        #   leaves). Multi-read UMIs survive better than reads do, so recovery sits ABOVE the panel-assigned
-        #   fraction, never below it and never above 1. Those two are the bound. Checked in aggregate rather
-        #   than per pair: per pair the loss is a coin toss, and in aggregate it is the rate worth
-        #   asserting.
+        #   under-recovery is expected, and how much depends on the sample's LIBRARY tier. A UMI is lost when every
+        #   one of its reads is unrecoverable, whether it took a feature-barcode error (1.5% of reads) or was
+        #   rewritten onto an off-panel barcode. Multi-read UMIs survive better than reads do, so recovery sits
+        #   ABOVE the panel-assigned fraction, never below it and never above 1. Checked in aggregate rather than
+        #   per pair: per pair the loss is a coin toss.
         n_pairs = sum(1 for key in planted if key[0] == sample)
         over = [key for key, k in planted.items()
                 if key[0] == sample and len(seen.get((key[1], key[2]), ())) > k]
@@ -1455,17 +1400,16 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
         tot_planted = sum(k for key, k in planted.items() if key[0] == sample)
         tot_got = sum(len(seen.get((key[1], key[2]), ())) for key in planted if key[0] == sample)
         frac = tot_got / max(1, tot_planted)
-        # The floor is the per-READ survival probability: a read survives when it was neither rewritten
-        # off-panel (the library tier) nor hit by a feature-barcode error (SEQ_ERROR_FRAC). A UMI can only
-        # do BETTER than one of its reads, because losing it needs every one of its reads to fail, so
-        # per-read survival is a true lower bound on UMI recovery, and a tight one.
+        # The floor is the per-READ survival probability: a read survives when it was neither rewritten off-panel
+        # (the library tier) nor hit by a feature-barcode error (SEQ_ERROR_FRAC). A UMI can only do BETTER than
+        # one of its reads, so per-read survival is a true lower bound on UMI recovery, and a tight one.
         floor_frac = panel_assigned.get(sample, 1.0) * (1 - SEQ_ERROR_FRAC)
         ok(floor_frac <= frac <= 1.0,
            f"{sample}: planted UMIs recovered from the FASTQs ({tot_got}/{tot_planted} = {frac:.2%}, "
            f"expected between this library's per-read survival {floor_frac:.2%} and 100%)")
 
-    # metadata must name exactly the samples the arms carry, or a grouping column silently covers only part
-    # of the run
+    # metadata must name exactly the samples the arms carry, or a grouping column silently covers only part of
+    # the run
     meta_path = os.path.join(run_dir, "samples-metadata.tsv")
     ok(os.path.exists(meta_path), "samples-metadata.tsv exists")
     if os.path.exists(meta_path):
@@ -1493,12 +1437,12 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
                f"{sample}: every VDJ cell_id is an antigen cell of the same sample ({len(cells)} cells)")
 
     # --- the reading, simulated -------------------------------------------------------------------
-    # The tiers are promises about verdicts. Predict every verdict from the truth with the block's own rule
-    # and check the promises, so a magnitude that drifts out of its tier fails here rather than surfacing
-    # as a puzzling run.
+    # The tiers are promises about verdicts. Predict every verdict from the truth with the block's own rule and
+    # check the promises, so a magnitude that drifts out of its tier fails here rather than surfacing as a
+    # puzzling run.
     #
     # Which rungs this panel can even be read on, under the CURRENT rule. A bed whose panel cannot serve a
-    # comparator is a fact about the panel, not a failure of the bed, and the report has to say which.
+    # comparator is a fact about the panel, not a failure of the bed.
     rungs = {}
     for src in ("declared", "panel", "none"):
         try:
@@ -1527,10 +1471,9 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
 
     def share(table, tier, state):
         """`state` as a share of the tier's cells. For bound / not bound the denominator is the cells whose
-        comparison could be MADE -- a cell with no off-target reading has no comparator and reads
-        unreliable, and folding those into the denominator makes a claim about binding depend on how many
-        off-target members the sample happens to declare. `unreliable` keeps the full denominator, because
-        that is the number being asked about."""
+                comparison could be MADE -- a cell with no off-target reading has no comparator -- so a claim about
+                binding does not depend on how many off-target members the sample happens to declare. `unreliable`
+                keeps the full denominator, because that is the number being asked about."""
         full = sum(table[tier].values())
         if not full:
             return 0.0
@@ -1546,8 +1489,8 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
         if isinstance(r, BaselineRefused):
             note = f"REFUSED — {r}"
         elif r[3] != src:
-            # The two rungs degrade for different reasons and saying so matters: one is fixed by naming a
-            # baseline in the panel, the other cannot be fixed by a panel this size at all.
+            # The two rungs degrade for different reasons: one is fixed by naming a baseline in the panel, the
+            # other cannot be fixed by a panel this size at all.
             why = ("no tag carries the baseline role" if src == "declared"
                    else f"panel holds fewer than {PANEL_MIN_MEMBERS} tags "
                         f"({len({p.barcode[n] for p in panels.values() for n in p.names})})")
@@ -1572,14 +1515,12 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
 
     grid_bound = totals.get("bound", 0) / max(1, grid)
     if chosen == "none":
-        # No rung could serve, so EVERY reading is unreliable for want of a comparator. The correct answer
-        # for this panel under the current rule rather than a defect in the bed, so asserting the regime's
-        # bound share here would fail a run behaving exactly as the block would.
+        # No rung could serve, so EVERY reading is unreliable for want of a comparator. The correct answer for
+        # this panel under the current rule rather than a defect in the bed.
         #
         # It happens because the baseline is global BY TAG while a per-sample panel's comparators are per
-        # sample: `declared` refuses several tags, `panel` needs PANEL_MIN_MEMBERS, and a small per-sample
-        # panel satisfies neither. Name one tag with --baseline-tag to read on `declared`, accepting that
-        # cells in samples not offering that tag still have no comparator.
+        # sample: `declared` refuses several tags, `panel` needs PANEL_MIN_MEMBERS, and a small per-sample panel
+        # satisfies neither. Name one tag with --baseline-tag to read on `declared`.
         ok(totals.get("unreliable", 0) == grid,
            f"no rung serves this panel, so every reading is unreliable ({totals.get('unreliable', 0)}"
            f"/{grid})")
@@ -1607,25 +1548,21 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
         ok(share(gated_tier, "gated", "unreliable") >= 0.95,
            f"gated is set aside with the gate at 300 ({share(gated_tier, 'gated', 'unreliable'):.0%})")
     else:
-        # SHALLOW asserts something different, because at this depth the block's line is not reachable from
-        # most cells and asserting that it is would assert a fiction. Two things are checked instead, both
-        # properties of real measured output rather than of the bed.
+        # SHALLOW asserts something different, because at this depth the block's line is not reachable from most
+        # cells. Two things are checked instead, both properties of real measured output:
         #
-        # 1. The bound share of the whole grid stays in the band a real pipeline produces: 1.4% and 2.9%
-        #    across the two measured libraries. A shallow run coming back with 20% bound has lost the
-        #    regime, and one coming back with 0% has nothing to test against.
+        # 1. The bound share of the whole grid stays in the band a real pipeline produces: 1.4% and 2.9% across
+        #    the two measured libraries.
         # 2. Signal ORDERING holds. Absolute rates are all low, so the invariant that carries meaning is
-        #    monotonicity: a tier planted with more signal must never read bound LESS often than one planted
-        #    with less. That catches a broken comparator or an inverted score without pretending to know
-        #    where the line sits.
+        #    monotonicity: a tier planted with more signal must never read bound LESS often than one planted with
+        #    less.
         ok(all(totals.get(k, 0) > 0 for k in ("bound", "not bound")),
            "both settled states occur in the run")
         cell_bound = cells_bound / max(1, n_cells_sim)
         ok(0.008 <= cell_bound <= 0.05,
            f"cells reaching bound match the 1.4-2.9% real in-vivo runs report ({cell_bound:.2%})")
-        # A sparse comparator no longer produces *unreliable* -- that was the thin-reference line, and the
-        # block removed it. With a comparator serving and the gate off, nothing is unreliable, and a run
-        # that still shows some has either lost its comparator for part of the panel or been gated.
+        # A sparse comparator no longer produces *unreliable* -- that was the thin-reference line, and the block
+        # removed it. With a comparator serving and the gate off, nothing is unreliable.
         ok(totals.get("unreliable", 0) == 0,
            f"a served comparator leaves nothing unreliable ({totals.get('unreliable', 0)} of {grid})")
         ladder = [(t, share(per_tier, t, "bound")) for t in ("strong", "good", "medium", "weak", "noise")]
@@ -1646,44 +1583,39 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
 # --- verdict simulation --------------------------------------------------------------------------
 #
 # The block's own reading rule, re-implemented over the truth tables so a run can be checked BEFORE it
-# reaches a backend. Its whole value is that it fails when the planted magnitudes do not land where the
-# tier names claim: a tier is a promise about a verdict, and a promise nothing checks drifts.
+# reaches a backend. It fails when the planted magnitudes do not land where the tier names claim.
 #
 # The rule, from software/per-cell-metrics/src/verdict.py:
 #   1. counts below the floor read as zero, except a comparator's;
 #   2. the cell's comparator reading is the MAX over its reference tags;
 #   3. score = (1 - I_0.925(count + 1, reference + 3)) * 100;
-#   4. no comparator -> unreliable; comparator below the thin line -> unreliable; comparator at or above
-#      the gate -> unreliable; else score >= cutoff -> bound, otherwise not bound.
+#   4. no comparator -> unreliable; comparator at or above the gate -> unreliable; else score >= cutoff ->
+#      bound, otherwise not bound.
 
 FLOOR = 4
 CUTOFF = 75
-# There is no thin-reference line in the block, and this must not simulate one. A low comparator is not a
-# reason to call a reading unreliable: the comparison runs, and a comparator of 0 is a real comparison that
-# any count clearing the floor beats. Simulating such a line models a rule the block does not have, and
-# hides the failure that matters, which is the opposite one: a run that looks broken reads as
-# spectacularly successful.
+# There is no thin-reference line in the block, and this must not simulate one. A comparator of 0 is a real
+# comparison that any count clearing the floor beats. Simulating such a line models a rule the block does
+# not have, and hides the opposite failure: a run that looks broken reads as spectacularly successful.
 #
 # The panel rung GATES on how many members the panel holds instead. Below the minimum, comparing a count
-# against a handful of other antigens is not a background estimate, so the rung refuses to serve.
+# against a handful of other antigens is not a background estimate.
 PANEL_MIN_MEMBERS = 25
 
 
 class BaselineRefused(Exception):
     """The panel declares more than one baseline tag, which the block refuses rather than combines.
 
-    Not a simulation limitation -- it is a hard exit in `verdict.py`, because reading against several
-    baselines needs a panel column saying which antigens each one belongs to, and the panel format has no
-    such column. Raised here so a bed whose panel cannot be read that way says so, rather than quietly
-    reporting a grid the block would never produce."""
+        Not a simulation limitation -- it is a hard exit in `verdict.py`, because reading against several
+        baselines needs a panel column saying which antigens each one belongs to, and the panel format has no
+        such column."""
 
 
 def baseline_sequences(panels, baseline_tag=None):
     """The distinct baseline TAGS the panel declares, as sequences.
 
-    Keyed on the sequence, not the antigen name: one sequence can carry different names in different
-    samples, and the block keys on the tag. `baseline_tag` names one member outright, mirroring the
-    block's dropdown."""
+        Keyed on the sequence, not the antigen name: one sequence can carry different names in different
+        samples, and the block keys on the tag. `baseline_tag` names one member outright."""
     if baseline_tag:
         return {p.barcode[n] for p in panels.values() for n in p.names
                 if n == baseline_tag or p.barcode[n] == baseline_tag}
@@ -1693,13 +1625,12 @@ def baseline_sequences(panels, baseline_tag=None):
 def baseline_state(panels, baseline_tag=None, min_members=PANEL_MIN_MEMBERS):
     """Which comparator rung this panel can be read on, and why.
 
-    Resolved once so the run report and the verdict simulation cannot disagree. The block counts distinct
-    baseline TAGS, not distinct role VALUES: one role value spread over five sequences is five baseline
-    tags, and `verdict.py` refuses more than one. Keying the report on role values instead told the reader
-    a panel had a declared comparator where the block would exit.
+        Resolved once so the run report and the verdict simulation cannot disagree. The block counts distinct
+        baseline TAGS, not distinct role VALUES: one role value spread over five sequences is five baseline
+        tags, and `verdict.py` refuses more than one.
 
-    `served` is the best rung reachable after the reader changes the dropdown, which is what `validate`
-    reports on -- the declared rung refusing does not fall back on its own."""
+        `served` is the best rung reachable after the reader changes the dropdown -- the declared rung refusing
+        does not fall back on its own."""
     seqs = baseline_sequences(panels, baseline_tag)
     panel_tags = len({p.barcode[n] for p in panels.values() for n in p.names})
     if len(seqs) == 1:
@@ -1717,8 +1648,8 @@ BETA_X, BETA_A_OFFSET, BETA_B_OFFSET = 0.925, 1, 3
 
 
 def _betacf(a, b, x, maxit=300, eps=3e-16, fpmin=1e-300):
-    """Continued fraction for the incomplete beta function (modified Lentz). Standard formulation. The
-    block itself calls scipy, which this bed does not depend on."""
+    """Continued fraction for the incomplete beta function (modified Lentz). The block itself calls scipy,
+        which this bed does not depend on."""
     import math
 
     qab, qap, qam = a + b, a + 1.0, a - 1.0
@@ -1777,22 +1708,20 @@ def simulate_verdicts(run_dir, panels, floor=FLOOR, cutoff=CUTOFF, gate=None,
                       source="declared", baseline_tag=None, min_members=PANEL_MIN_MEMBERS):
     """Predict every (cell, identity) state from the truth tables under the block's CURRENT rule.
 
-    Returns (per_tier, totals, per_tier_multi, served). `per_tier` maps tier -> {state: n} counted over
-    each cell's DOMINANT identity. `totals` counts every position in the grid, including the silent ones,
-    since an identity a cell was offered and did not read answers *not bound* rather than nothing.
-    `served` is the rung that actually served -- never the one asked for unless it could serve.
+        Returns (per_tier, totals, per_tier_multi, served). `per_tier` maps tier -> {state: n} counted over each
+        cell's DOMINANT identity. `totals` counts every position in the grid, including the silent ones, since
+        an identity a cell was offered and did not read answers *not bound* rather than nothing. `served` is the
+        rung that actually served.
 
-    The rule, as `verdict.py` now has it:
+        The rule, as `verdict.py` now has it:
 
-    * The floor zeroes a non-baseline reading below it. The baseline is EXEMPT, because the floor removes
-      what is not evidence of binding and the baseline is not evidence of binding.
-    * `declared` reads against exactly ONE baseline tag. A panel declaring several is REFUSED, not
-      combined -- the block used to take the highest across them and no longer does.
-    * `panel` reads against the median of the cell's own readings, and only serves at all when the panel
-      holds `min_members` tags. Below that it degrades to no comparator.
-    * There is no thin-reference line. A comparator of 0 is a real comparison.
-    * A reading is unreliable only where there is NO comparator, or where the gate set the cell aside.
-    """
+        * The floor zeroes a non-baseline reading below it. The baseline is EXEMPT.
+        * `declared` reads against exactly ONE baseline tag. A panel declaring several is REFUSED.
+        * `panel` reads against the median of the cell's own readings, and only serves when the panel holds
+          `min_members` tags.
+        * There is no thin-reference line. A comparator of 0 is a real comparison.
+        * A reading is unreliable only where there is NO comparator, or where the gate set the cell aside.
+        """
     truth = os.path.join(run_dir, "truth")
     counts = {}
     with open(os.path.join(truth, "expected-abundance.tsv"), newline="") as fh:
@@ -1805,8 +1734,7 @@ def simulate_verdicts(run_dir, panels, floor=FLOOR, cutoff=CUTOFF, gate=None,
             dominant_of[(r["sample"], r["cellId"])] = r["dominantFeature"]
 
     # panel_size the way the block computes it: distinct TAGS across the whole panel, not per sample
-    # (`emit_verdicts.py` reads `panel["tag"].n_unique()`), so a per-sample panel does not clear the gate
-    # by being counted several times.
+    # (`emit_verdicts.py` reads `panel["tag"].n_unique()`).
     panel_size = len({p.barcode[n] for p in panels.values() for n in p.names})
 
     # Baseline tags are global: a tag is the comparator in every sample or in none.
@@ -1837,8 +1765,8 @@ def simulate_verdicts(run_dir, panels, floor=FLOOR, cutoff=CUTOFF, gate=None,
         if served == "none":
             reference = None
         elif served == "declared":
-            # Offered but unread is a reading of zero. Not offered at all is no comparator. The block
-            # tests membership rather than defaulting to 0 for exactly this reason.
+            # Offered but unread is a reading of zero. Not offered at all is no comparator. The block tests
+            # membership rather than defaulting to 0 for exactly this reason.
             reference = max((per.get(n, 0) for n in local_baseline), default=None) if local_baseline else None
         else:  # panel
             observed = [v for v in per.values()]
@@ -1866,6 +1794,5 @@ def simulate_verdicts(run_dir, panels, floor=FLOOR, cutoff=CUTOFF, gate=None,
             per_tier_multi[tier] = per_tier_multi.get(tier, 0) + 1
     # cells_bound is the metric a real run publishes: its per-cell table carries ONE row per cell with that
     # cell's MAX specificity, so a reported "1.4% above the cutoff" is 1.4% of CELLS, not of the
-    # (cell x identity) grid. Asserting the grid share instead compares against the wrong denominator and
-    # moves with panel width rather than with the reading.
+    # (cell x identity) grid. Asserting the grid share instead moves with panel width.
     return per_tier, totals, per_tier_multi, served, cells_bound, len(counts)

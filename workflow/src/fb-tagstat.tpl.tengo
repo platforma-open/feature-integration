@@ -1,9 +1,9 @@
 // tag-stat sub-template (render.create boundary).
 //
 // tag-stat -u computes per-(cell, feature-barcode) distinct-UMI counts and returns tagstat.tsv and a live
-// stdout stream (tagstatLogStream) to the caller. Capturing stdout is safe only because main.tpl
-// content-hash-persists the mitool intermediates, which is what prevents CIDConflictError (see the
-// fb-parse.tpl.tengo header). Output columns: CELL FEATURE count totalWeight unique_UMI.
+// stdout stream (tagstatLogStream). Capturing stdout is safe only because main.tpl content-hash-persists
+// the mitool intermediates, which is what prevents CIDConflictError. Output columns: CELL FEATURE count
+// totalWeight unique_UMI.
 //
 // --use-local-temp puts the count-unique on-disk sort in the exec work dir rather than the shared system
 // /tmp. Team convention for heavy on-disk-sort mitool steps: peptide-extraction, mixcr-shm-trees and
@@ -26,15 +26,14 @@ self.body(func(inputs) {
 	mitoolCPUs := inputs.mitoolCPUs
 
 	// tag-stat's distinct-UMI sort parallelizes to about 5 cores, benchmarked, with no gain beyond that. Cap
-	// there and never exceed the granted CPUs. Ties to the same perProcessCPUs knob as parse and refine,
-	// which main.tpl.tengo defaults to 8.
+	// there and never exceed the granted CPUs. Ties to the same perProcessCPUs knob as parse and refine.
 	TAGSTAT_CPU_CAP := 5
 	tagStatCPU := mitoolCPUs < TAGSTAT_CPU_CAP ? mitoolCPUs : TAGSTAT_CPU_CAP
 
 	// The distinct-UMI on-disk sort scales with input volume, so size RAM from the refined.mic blob of
-	// molecules on a floor rather than as a fixed request. Same mixcr-style formula as parse and refine.
+	// molecules on a floor rather than as a fixed request.
 	tagStatBaseGB := 16
-	// workflow-tengo 6.7.0 fluent formula API, fed through .resources({ onCPU }). See the fb-parse note.
+	// workflow-tengo 6.7.0 fluent formula API, fed through .resources({ onCPU }).
 	formula := exec.formula
 	memFormula := formula.gib(tagStatBaseGB).
 		plus(formula.size("mic").times(4)).

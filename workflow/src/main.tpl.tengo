@@ -3,11 +3,10 @@
 // FASTQ (feature-barcode) -> per-sample mitool (parse/refine/tag-stat -u) + per-cell-metrics Python
 // (processColumn -> fb-pipeline.tpl.tengo) -> import the per-cell result CSVs as the per-cell contract
 // p-columns keyed [pl7.app/sampleId, pl7.app/sc/cellId, pl7.app/feature/featureId], exported to the result
-// pool (consumed by VDJ Multiomic Integration) and surfaced as a results table.
+// pool and surfaced as a results table.
 //
 // processColumn's `Xsv` outputs import each per-sample CSV and prepend the sample axis from the iteration
-// key, so the per-sample CSVs need only cell and feature columns. Modeled on blocks/peptide-extraction
-// main.tpl.tengo and blocks/cell-ranger process.tpl.tengo. Column and axis specs live in
+// key, so the per-sample CSVs need only cell and feature columns. Column and axis specs live in
 // column-specs.lib.tengo.
 
 wf := import("@platforma-sdk/workflow-tengo:workflow")
@@ -33,25 +32,22 @@ verdictImportTpl := assets.importTemplate(":verdict-import")
 featurePropsSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:feature-properties")
 
 // Per-sample mitool resource defaults. The fb-parse and fb-refine formulas add size("reads")*4 on top of
-// this base and cap at 256 GiB, so the base only sets the floor for small inputs. Feature-barcode
-// parse/refine are far lighter than the VDJ alignment the mixcr-analyze formula was tuned for, so the floor
-// is 16 GiB, against peptide-extraction's 32 GiB fixed default. Keep it low: mitool's memory-from-limits
-// launcher derives the JVM -Xms from the grant, so a 64 GiB floor picks a ~32 GiB -Xms on a tiny dataset,
-// swaps on desktop RAM, and stalls at "parsing reads". CPUs default to 8, matching peptide-extraction,
-// because 16 exceeds the core count of a typical desktop. Advanced Settings overrides both.
+// this base and cap at 256 GiB, so the base only sets the floor for small inputs. Keep it low: mitool's
+// memory-from-limits launcher derives the JVM -Xms from the grant, so a 64 GiB floor picks a ~32 GiB -Xms
+// on a tiny dataset, swaps on desktop RAM, and stalls at "parsing reads". CPUs default to 8, because 16
+// exceeds the core count of a typical desktop. Advanced Settings overrides both.
 defaultMitoolMemGB := 16
 defaultMitoolCPUs := 8
 
 // Staging imports and exports the CSV to drive its upload before production needs it, and emits the
-// feature-name list for the control dropdown (see prerun.tpl).
+// feature-name list for the control dropdown.
 wf.setPreRun(prerunTpl)
 
 // Only the FASTQ dataset is resolved here, and the single-cell V(D)J dataset deliberately is NOT.
 // Everything in prepare's bundle is awaited in full, spec AND data, before the body runs. Resolving the
 // clonotype dataset here would leave the per-sample mitool fan-out undeclared until the whole clonotyping
-// chain had finished: two chains that run concurrently would run one after the other, roughly doubling wall
-// clock, and nothing would surface it until a real dataset. The body needs only the FASTQ column. The
-// clonotype linker is resolved inside the verdict stage's own child templates.
+// chain had finished: two chains that could run concurrently would run one after the other. The clonotype
+// linker is resolved inside the verdict stage's own child templates.
 wf.prepare(func(args) {
 	return {
 		resolvedFastq: wf.resolve(args.fbFastqRef)
@@ -66,22 +62,21 @@ wf.body(func(args) {
 	sampleAxis := inputSpec.axesSpec[0] // pl7.app/sampleId — inherited verbatim
 	fileExtension := inputSpec.domain["pl7.app/fileExtension"]
 
-	// Import the user-uploaded tag->feature CSV and share its blob across every per-sample body invocation,
-	// since the mapping is identical for all samples. The model guarantees the handle is set.
+	// The mapping is identical for every sample, so one imported blob is shared across every per-sample body
+	// invocation. The model guarantees the handle is set.
 	csvImport := file.importFile(args.tagFeatureCsvHandle)
 	csvFile := csvImport.file
 
-	// The mitool tag pattern, assembled and validated in the model's args() and passed through verbatim (see
-	// model/src/pattern.ts). It carries the CELL/UMI/FEATURE tags and the R2 capture that refine-tags and
-	// tag-stat reference by name. Any extra flanks, spacers or anchors reach mitool as-is.
+	// Assembled and validated in the model's args() and passed through verbatim. It carries the CELL/UMI/
+	// FEATURE tags and the R2 capture that refine-tags and tag-stat reference by name. Any extra flanks,
+	// spacers or anchors reach mitool as-is.
 	pattern := args.pattern
 
-	// The negative-control features. They designate a per-feature marker column for downstream consumers
-	// and never reach the per-sample metrics step. A four-state verdict asks the binding question of every
-	// antigen independently, so there is no winner for a control to be excluded from.
+	// The negative-control features. They designate a per-feature marker column for downstream consumers and
+	// never reach the per-sample metrics step: a four-state verdict asks the binding question of every antigen
+	// independently, so there is no winner for a control to be excluded from.
 	//
-	// SEVERAL are allowed: a panel may carry more than one control. Which one supplies the baseline is a
-	// different setting, and it is not this one.
+	// SEVERAL are allowed. Which one supplies the baseline is a different setting.
 	controls := is_undefined(args.controlFeatures) ? [] : args.controlFeatures
 	// Cell-barcode whitelist for refine-tags CELL correction. "" = de-novo, the default. Always a defined
 	// string, so the extra-input field below resolves and never stalls the body.
@@ -91,10 +86,9 @@ wf.body(func(args) {
 	// be set before firing the body (pframes/index.lib.tengo: `renderInputs["__extra_"+k]=v`), so a key whose
 	// value is `undefined` creates a field that never resolves and stalls the body.
 	//
-	// This map is a closed list, enforced below. Everything in it describes how one sample's reads are parsed
-	// and counted, and nothing in it describes how the counts are read. That is what lets a change to the
-	// reading recover every per-sample mitool body from cache instead of re-running parse, refine-tags and
-	// tag-stat for every sample.
+	// A closed list, enforced below. Everything in it describes how one sample's reads are parsed and counted,
+	// and nothing in it describes how the counts are read. That is what lets a change to the reading recover
+	// every per-sample mitool body from cache.
 	extraInputs := {
 		pattern: pattern,
 		tags: args.tags, // mitool tag names (CELL/UMI/FEATURE). The one source is the model (pattern.ts).
@@ -119,8 +113,7 @@ wf.body(func(args) {
 		extraInputs.limitInput = args.limitInput
 	}
 	// The aggregate-barcode detection knobs (qc_measures.py AGGREGATE_BARCODE_*). Same rule as limitInput
-	// above: added only when set, so an unset knob never creates a body field that stalls waiting for a
-	// value nobody will supply. qc_report.py's own argparse default applies where absent.
+	// above. qc_report.py's own argparse default applies where absent.
 	if !is_undefined(args.aggregateBarcodeIqrMultiplier) {
 		extraInputs.aggregateBarcodeIqrMultiplier = args.aggregateBarcodeIqrMultiplier
 	}
@@ -132,9 +125,8 @@ wf.body(func(args) {
 	}
 
 	// processColumn outputs: the per-cell contract value columns, the per-sample QC CSV collected as a
-	// [sampleId] file map, and the per-sample QC-JSON map the model reads to build the Analysis logs.
-	// qc-summary.tpl assembles the file map into a table, because a per-sample scalar cannot be xsv-imported
-	// inside the shared processColumn. Column and axis specs come from column-specs.lib.tengo.
+	// [sampleId] file map, and the per-sample QC-JSON map. qc-summary.tpl assembles the file map into a table,
+	// because a per-sample scalar cannot be xsv-imported inside the shared processColumn.
 	outputs := columnSpecs.valueOutputs(blockId, sampleAxis.name)
 	outputs = append(outputs, columnSpecs.perCellSummaryOutput(blockId, sampleAxis.name))
 	outputs = append(outputs, columnSpecs.qcFileMapOutput(blockId))
@@ -161,10 +153,9 @@ wf.body(func(args) {
 		},
 		name: "stepReports"
 	})
-	// Per-sample x per-step LIVE stdout-stream map (parse / refine / tag-stat), keyed [step]. The model
-	// exposes these as per-step log handles (PlLogView) and scrapes them for live per-step progress. The same
-	// generic pl7.app/log column peptide-extraction uses, told apart from the flat parse stream below by
-	// carrying the step axis rather than a fixed step domain.
+	// Per-sample x per-step LIVE stdout-stream map (parse / refine / tag-stat), keyed [step]. The same generic
+	// pl7.app/log column peptide-extraction uses, told apart from the flat parse stream below by carrying the
+	// step axis rather than a fixed step domain.
 	outputs = append(outputs, {
 		type: "ResourceMap",
 		spec: {
@@ -190,8 +181,8 @@ wf.body(func(args) {
 		name: "parseLogStream"
 	})
 	// per-cell-metrics (Python) stdout: the "4-metrics" step log, surfaced flat and keyed [sampleId] by
-	// processColumn. Kept out of the stepLogs map because fb-refine-tagstat builds that map before the
-	// metrics step runs. The model keys this at step "4-metrics", and the UI reads it there.
+	// processColumn. Kept out of the stepLogs map because fb-refine-tagstat builds that map before the metrics
+	// step runs.
 	outputs = append(outputs, {
 		type: "Resource",
 		spec: {
@@ -202,12 +193,10 @@ wf.body(func(args) {
 		},
 		name: "metricsLogStream"
 	})
-	// mitool intermediates persisted by content hash, for dedup and CID stability. parse, refine and tag-stat
-	// are deterministic, but a downstream consumer resolving through their outputs walks into the streaming
-	// execs' files map, whose CID drifts run to run and raises CIDConflictError. Surfacing them as
-	// content-hashed File outputs pins their CIDs, so those resolutions stay stable across re-renders and
-	// downstream reuses them instead of re-running the block on a settings change. No model or UI consumer:
-	// the persistence is the point. Mirrors blocks/peptide-extraction. Each is a per-sample Resource, so
+	// mitool intermediates persisted by content hash, for dedup and CID stability. A downstream consumer
+	// resolving through parse, refine or tag-stat outputs walks into the streaming execs' files map, whose CID
+	// drifts run to run and raises CIDConflictError. Surfacing them as content-hashed File outputs pins their
+	// CIDs. No model or UI consumer: the persistence is the point. Each is a per-sample Resource, so
 	// processColumn yields a [sampleId] map.
 	for pn in ["parsedMic", "parseReport", "refineReport", "tagstatTsv", "rawFeatureCounts"] {
 		outputs = append(outputs, {
@@ -222,11 +211,10 @@ wf.body(func(args) {
 		})
 	}
 	// Same content-hash persistence for the per-cell-metrics (Python) exec's file outputs. Required because
-	// fb-downstream also captures that exec's stdout, the 4-metrics log, and the stream makes the exec's files
-	// map rate-dependent: resolving abundance or fractions through it drifts the CID and throws
-	// CIDConflictError, poisoning the whole per-sample body. Pinning these files by content hash keeps those
-	// resolutions stable. A `path` maps each pin to the existing body output without colliding with the Xsv or
-	// File output of the same name.
+	// fb-downstream also captures that exec's stdout, and the stream makes the exec's files map rate-dependent:
+	// resolving abundance or fractions through it drifts the CID and throws CIDConflictError, poisoning the
+	// whole per-sample body. A `path` maps each pin to the existing body output without colliding with the Xsv
+	// or File output of the same name.
 	for pn in ["abundance", "fractions", "perCellSummary"] {
 		outputs = append(outputs, {
 			type: "Resource",
@@ -254,9 +242,8 @@ wf.body(func(args) {
 
 	// Both fan-out maps are closed lists, checked here rather than reviewed later. Each key is part of every
 	// per-sample body's identity, so one added key costs every user a full parse, refine-tags and tag-stat
-	// re-run, and neither the render nor the logs says why. A verdict-stage parameter, or the resolved
-	// clonotype linker added for convenience, is exactly the addition that would land here.
-	// fanout-inputs.test.tengo asserts the lists exclude both.
+	// re-run, and neither the render nor the logs says why. fanout-inputs.test.tengo asserts the lists exclude
+	// a verdict-stage parameter and the resolved clonotype linker.
 	ll.assert(len(fanout.unlisted(extraInputs, fanout.EXTRA_INPUT_KEYS)) == 0,
 		"per-sample body inputs outside the allowlist: %v. Anything the verdict stage needs belongs in the verdict stage, not in the mitool fan-out.",
 		fanout.unlisted(extraInputs, fanout.EXTRA_INPUT_KEYS))
@@ -298,17 +285,15 @@ wf.body(func(args) {
 		}
 	}
 
-	// Exported per-cell contract frame, which goes to the result pool and on to VDJ Multiomic Integration. The
-	// full per-(cell x feature) matrix, UNCHANGED by the table collapse below: downstream still consumes
-	// abundance and fractions at [sampleId, cellId, featureId].
+	// Exported per-cell contract frame. The full per-(cell x feature) matrix, UNCHANGED by the table collapse
+	// below: downstream still consumes abundance and fractions at [sampleId, cellId, featureId].
 	fb := pframes.pFrameBuilder()
 	addXsvTo(fb, "abundance")
 	addXsvTo(fb, "fractions")
 	finalPf := fb.build()
 
-	// Main results table, table-only: one row per [sampleId, cellId], carrying the per-cell aggregates (max UMI
-	// count, max fraction) and the "feature (fraction%, umi), ..." string listing every feature the cell has
-	// signal for. Collapses the matrix above for display, leaving the export contract unaffected.
+	// Main results table, table-only: one row per [sampleId, cellId]. Collapses the matrix above for display,
+	// leaving the export contract unaffected.
 	tableFb := pframes.pFrameBuilder()
 	addXsvTo(tableFb, "perCellSummary")
 	tablePf := tableFb.build()
@@ -322,14 +307,13 @@ wf.body(func(args) {
 		sampleAxisSpec: sampleAxis
 	})
 
-	// --- per-feature properties (A-0026) ---
+	// --- per-feature properties ---
 	// Import every EXTRA tag-CSV column, beyond the mapped barcode-sequence and feature-name roles, as a
-	// per-feature property on the shared feature axis, so downstream can group and filter the binding profile
-	// by property (A-0015). Panel-global, one value per feature for every sample, so this runs ONCE on the
-	// shared CSV blob OUTSIDE the per-sample processColumn fan-out. emit_feature_properties.py writes the wide
-	// per-feature CSV plus a meta JSON of property names and distinct values, and fb-feature-properties.tpl
-	// reads that meta to build one p-column per property. The sample column, where set, is a role rather than
-	// a property, and is excluded.
+	// per-feature property on the shared feature axis. Panel-global, one value per feature for every sample,
+	// so this runs ONCE on the shared CSV blob OUTSIDE the per-sample processColumn fan-out.
+	// emit_feature_properties.py writes the wide per-feature CSV plus a meta JSON of property names and
+	// distinct values, and fb-feature-properties.tpl reads that meta to build one p-column per property. The
+	// sample column, where set, is a role rather than a property, and is excluded.
 	featurePropsSampleColumn := is_undefined(args.sampleColumn) ? "" : args.sampleColumn
 	featurePropsBuilder := exec.builder().
 		software(featurePropsSw).
@@ -364,43 +348,37 @@ wf.body(func(args) {
 
 	// --- the verdict stage ---
 	//
-	// Conditional on a chosen single-cell V(D)J dataset. Without one there is no clonotype set for a verdict
-	// to be about, and no way to say which receptor's linker the reading would be answered against, since the
+	// Conditional on a chosen single-cell V(D)J dataset. Without one there is no clonotype set for a verdict to
+	// be about, and no way to say which receptor's linker the reading would be answered against, since the
 	// linker query is scoped by that dataset's anchor. The block still runs and still emits its per-cell
-	// contract columns, the per-sample QC and the per-feature properties. A missing input narrows what can be
-	// answered, and nothing fails.
+	// contract columns, the per-sample QC and the per-feature properties.
 	verdictRun := undefined
 	verdictImport := undefined
 	if !is_undefined(args.datasetRef) {
-		// The reading is answered across the whole run, not per sample. A panel is a property of a declared tag
-		// set rather than of one sample, the panel-versus-reads check runs in both directions across the run,
-		// and the quality rollup spans samples and panels. So the per-sample counts are gathered into one
-		// table first, in a child template, because the file map must be awaited before its keys can be
+		// The reading is answered across the whole run, not per sample. So the per-sample counts are gathered into
+		// one table first, in a child template, because the file map must be awaited before its keys can be
 		// iterated.
 		countsGather := render.create(gatherCountsTpl, {
 			tagstatData: perSampleResults.outputData("tagstatTsv"),
 			tags: args.tags
 		})
 
-		// Pre-refine FEATURE counts, gathered the same way, for the undeclared-barcode table
-		// (330): refine-tags snaps every barcode onto the panel before the distinct-UMI counts
-		// above are even computed, so a sequence the panel never declared has to be read from
-		// this earlier pass or it cannot be seen at all.
+		// Pre-refine FEATURE counts, gathered the same way, for the undeclared-barcode table: refine-tags snaps
+		// every barcode onto the panel before the distinct-UMI counts above are even computed, so a sequence the
+		// panel never declared has to be read from this earlier pass or it cannot be seen at all.
 		rawFeatureCountsGather := render.create(gatherRawFeatureCountsTpl, {
 			rawFeatureData: perSampleResults.outputData("rawFeatureCounts")
 		})
 
-		// Built HERE, in the body, and not in prepare -- see the note on wf.prepare above. The bundle is passed
-		// to both child templates unresolved. A resolved bundle is a map with methods, which cannot be
-		// serialized as a template input, so each template resolves it for itself.
+		// Built HERE, in the body, and not in prepare -- see the note on wf.prepare above. The bundle is passed to
+		// both child templates unresolved. A resolved bundle is a map with methods, which cannot be serialized as
+		// a template input, so each template resolves it for itself.
 		bundleBuilder := wf.createPBundleBuilder()
 		bundleBuilder.ignoreMissingDomains()
 		bundleBuilder.addAnchor("main", args.datasetRef)
 		// Resolved by NAME as a MULTI query, because the linker is infrastructure: it carries
-		// pl7.app/isLinkerColumn and is hidden in tables, so no user can pick it. A dataset may bring one
-		// linker per receptor, and verdict-linker.lib.tengo selects the one whose clonotype axis IS the
-		// anchor's. Choosing the dataset is choosing the receptor, so a legitimate BCR + TCR run panics
-		// nowhere.
+		// pl7.app/isLinkerColumn and is hidden in tables, so no user can pick it. A dataset may bring one linker
+		// per receptor, and verdict-linker.lib.tengo selects the one whose clonotype axis IS the anchor's.
 		bundleBuilder.addMulti({ name: "pl7.app/sc/cellLinker" }, "linker")
 		verdictBundle := bundleBuilder.build()
 
@@ -410,9 +388,9 @@ wf.body(func(args) {
 			featureNameColumn: args.featureNameColumn,
 			sampleColumn: is_undefined(args.sampleColumn) ? "" : args.sampleColumn
 		}
-		// Optional parameters are ADDED, never defaulted to undefined. verdict-args tells an absent value --
-		// leave the CLI's own default, or leave the line off -- apart from a supplied one, and a key whose value
-		// crosses a template boundary as undefined arrives back as JSON null, a third thing neither side means.
+		// Optional parameters are ADDED, never defaulted to undefined. verdict-args tells an absent value -- leave
+		// the CLI's own default, or leave the line off -- apart from a supplied one, and a key whose value crosses
+		// a template boundary as undefined arrives back as JSON null, a third thing neither side means.
 		setParam := func(key, value) {
 			if !is_undefined(value) {
 				verdictParams[key] = value
@@ -452,19 +430,17 @@ wf.body(func(args) {
 			sampleAxisSpec: sampleAxis,
 			countsFile: countsGather.output("countsFile"),
 			panelFile: csvFile,
-			// The combined per-sample read QC, from the same child template that imports it as a table. Without
-			// it readsTotal, panelAssignedFraction and readsPerCell have no source and carry no status,
-			// silently, since a non-evaluation is a legitimate state rather than an error. readsPerCell is the
-			// only sequencing-depth alert the block ships.
+			// The combined per-sample read QC, from the same child template that imports it as a table. Without it
+			// readsTotal, panelAssignedFraction and readsPerCell have no source and carry no status, silently, since
+			// a non-evaluation is a legitimate state rather than an error.
 			qcSummaryFile: qcSummaryResult.output("qcSummaryCsv"),
 			rawFeatureCountsFile: rawFeatureCountsGather.output("rawCountsFile"),
 			params: verdictParams
 		})
 
 		// The import takes the run record as an INPUT so the specs it builds carry the comparator that actually
-		// SERVED. The software degrades a request it cannot honour, turning a declared comparator into none
-		// where the panel has no reference tag, and that choice sits in the emitted columns' domain. Specs
-		// built inside the exec's own template would record the request instead.
+		// SERVED. The software degrades a request it cannot honour, and that choice sits in the emitted columns'
+		// domain. Specs built inside the exec's own template would record the request instead.
 		verdictImport = render.createEphemeral(verdictImportTpl, {
 			columns: verdictBundle,
 			datasetRef: args.datasetRef,
@@ -477,10 +453,9 @@ wf.body(func(args) {
 			identitySummary: verdictRun.output("identitySummary"),
 			identityPunch: verdictRun.output("identityPunch"),
 			cellPunch: verdictRun.output("cellPunch"),
-			// cellCounts is deliberately NOT passed. The per-cell per-tag counts are the run's largest table and
-			// no reader exists for them on either side of the block boundary, so the import template does not
-			// build them into columns. An input it would ignore is worse than no input, because it reads as a
-			// consumer that is not there. See verdict-import.tpl.tengo, where the frame is built.
+			// cellCounts is deliberately NOT passed. The per-cell per-tag counts are the run's largest table and no
+			// reader exists for them on either side of the block boundary, so the import template does not build
+			// them into columns. An input it would ignore reads as a consumer that is not there.
 			cellScalars: verdictRun.output("cellScalars"),
 			offered: verdictRun.output("offered"),
 			tagIdentity: verdictRun.output("tagIdentity"),
@@ -502,11 +477,10 @@ wf.body(func(args) {
 	blockOutputs := {
 		// Collapsed per-cell results table (one row per [sampleId, cellId]).
 		perCellTable: pframes.exportFrame(tablePf),
-		// Per-sample QC metrics as JSON (fb-pipeline qcJson). The model builds the live "Analysis logs" from it:
-		// the completed-sample heartbeat and the run-level summary.
+		// Per-sample QC metrics as JSON (fb-pipeline qcJson). The model builds the live "Analysis logs" from it.
 		qcJson: perSampleResults.outputData("qcJson"),
 		// Per-sample x per-step report-file map. The model derives each sample's current step from which reports
-		// are present, which is deterministic per-step progress.
+		// are present.
 		stepReports: perSampleResults.outputData("stepReports"),
 		// Per-sample x per-step LIVE stdout-stream map -> model per-step log handles + live progress.
 		stepLogs: perSampleResults.outputData("stepLogs"),
@@ -514,8 +488,8 @@ wf.body(func(args) {
 		parseLogStream: perSampleResults.outputData("parseLogStream"),
 		// per-cell-metrics (Python) stdout -> model 4-metrics step log.
 		metricsLogStream: perSampleResults.outputData("metricsLogStream"),
-		// mitool intermediates kept reachable so they are persisted by content hash, for dedup and CID
-		// stability. See the output-spec note above. No model or UI consumer: the persistence is the point.
+		// mitool intermediates kept reachable so they are persisted by content hash. See the output-spec note
+		// above. No model or UI consumer.
 		parsedMic: perSampleResults.outputData("parsedMic"),
 		parseReport: perSampleResults.outputData("parseReport"),
 		refineReport: perSampleResults.outputData("refineReport"),
@@ -526,19 +500,18 @@ wf.body(func(args) {
 		abundancePersist: perSampleResults.outputData("abundancePersist"),
 		fractionsPersist: perSampleResults.outputData("fractionsPersist"),
 		perCellSummaryPersist: perSampleResults.outputData("perCellSummaryPersist"),
-		// Expose the tag->feature CSV import HANDLE so the model can watch it through getImportProgress()
-		// (model/src/index.ts). That model output is the upload driver: it registers the import with the
-		// middle-layer so the CSV bytes are pushed. Without it the CSV blob never materialises and every
-		// per-sample body hangs on __extra_tagsCsv. Mirrors immune-assay-data.
+		// Expose the tag->feature CSV import HANDLE so the model can watch it through getImportProgress(). That
+		// model output is the upload driver: it registers the import with the middle-layer so the CSV bytes are
+		// pushed. Without it the CSV blob never materialises and every per-sample body hangs on __extra_tagsCsv.
 		tagFeatureCsvImportHandle: csvImport.handle
 	}
 
 	blockExports := {
 		perCellFeatures: finalPf,
-		// Per-feature properties (A-0026), keyed on the shared feature axis (pl7.app/feature/featureId). A
-		// separate frame keeps the per-cell contract above unchanged, and the result pool is flat, so these are
-		// discoverable and joinable by the feature axis downstream. VDJ Multiomic Integration reuses this exact
-		// feature axis for its per-feature outputs. Empty where the CSV has no extra columns.
+		// Per-feature properties, keyed on the shared feature axis (pl7.app/feature/featureId). A separate frame
+		// keeps the per-cell contract above unchanged, and the result pool is flat, so these are discoverable and
+		// joinable by the feature axis downstream. VDJ Multiomic Integration reuses this exact feature axis.
+		// Empty where the CSV has no extra columns.
 		featureProperties: featurePropsResult.output("featureProperties")
 	}
 
@@ -546,23 +519,19 @@ wf.body(func(args) {
 	// the verdict results are added rather than defaulted.
 	if !is_undefined(verdictImport) {
 		// Everything a downstream block joins to: the verdicts, the set-keyed counts that are the only family
-		// lead selection can see, the pivoted per-identity summary, the offered scope, the tag -> identity
-		// linker and the label columns.
+		// lead selection can see, the pivoted per-identity summary, the offered scope, the tag -> identity linker
+		// and the label columns.
 		//
-		// No per-cell material is among them. Reading the same experiment under another grouping is another
-		// execution of this block rather than a re-derivation a reader performs, so per-cell state has no
-		// consumer across the boundary: labelling and lead selection both read verdicts, never cells. The
-		// per-cell reference readings are still reported, as an OUTPUT below, because they are part of what
-		// this run says about itself. The per-cell per-tag counts are not built at any grain.
+		// No per-cell material is among them: labelling and lead selection both read verdicts, never cells. The
+		// per-cell reference readings are still reported, as an OUTPUT below. The per-cell per-tag counts are not
+		// built at any grain.
 		blockExports.antigenVerdicts = verdictImport.output("antigenVerdicts")
 		// The same frame as an OUTPUT, because a block's own exports are not in its own result pool. Without
 		// this the block that produced the verdicts would be the one place that cannot read them.
 		//
-		// NOTHING READS IT TODAY. The punchcard is the block's own view of the verdicts and reads the pivoted
-		// frame below instead, because a table cannot turn a (set, identity) frame into one column per
-		// identity. So this output is a capability held open rather than a wire in use: the first page that
-		// wants the verdicts unpivoted reads it without a workflow change. Removing it costs nothing outside
-		// this block, since the EXPORT above carries the verdicts to labelling and lead selection.
+		// NOTHING READS IT TODAY. The punchcard reads the pivoted frame below instead, because a table cannot
+		// turn a (set, identity) frame into one column per identity. This output is a capability held open:
+		// the first page that wants the verdicts unpivoted reads it without a workflow change.
 		blockOutputs.antigenVerdictsTable = pframes.exportFrame(verdictImport.output("antigenVerdicts"))
 		// The punchcard's source: the same verdicts pivoted onto the clonotype set, one column per identity for
 		// the state and one for the support behind it. A table cannot pivot a (set, identity) frame into
@@ -570,40 +539,38 @@ wf.body(func(args) {
 		blockOutputs.antigenPunchcardTable = pframes.exportFrame(verdictImport.output("punchcard"))
 		// The run's own report. Outputs rather than exports: these are read by this block's model and UI.
 		blockOutputs.antigenQcTable = pframes.exportFrame(verdictImport.output("qcTable"))
-		// The across-samples table: one row per sample, one column per sample-level measurement,
-		// carrying that sample's rolled-up status, replacing the earlier mitool-only qcSummaryTable
-		// (which ran unconditionally). This table is gated behind a chosen V(D)J dataset -- same as
-		// every other antigen output here, since the rolled-up status comes from the verdict stage
-		// and that stage has no clonotype set to run against until a dataset is picked.
+		// One row per sample, one column per sample-level measurement, carrying that sample's rolled-up status.
+		// Gated behind a chosen V(D)J dataset, unlike the earlier mitool-only qcSummaryTable it replaces: the
+		// rolled-up status comes from the verdict stage, and that stage has no clonotype set to run against
+		// until a dataset is picked.
 		blockOutputs.qcSummaryTable = pframes.exportFrame(verdictImport.output("qcSummaryTable"))
-		// 330's own table: barcodes the reads carried that no panel declares, keyed by sequence,
-		// carrying the one status this run's quality surface publishes outside the measurement
-		// list -- the share of a sample's reads landing in undeclared barcodes. Usually empty.
+		// Barcodes the reads carried that no panel declares, keyed by sequence, carrying the one status this
+		// run's quality surface publishes outside the measurement list -- the share of a sample's reads landing
+		// in undeclared barcodes. Usually empty.
 		blockOutputs.antigenUndeclaredBarcodesTable = pframes.exportFrame(verdictImport.output("undeclaredBarcodesTable"))
-		// The distributions the readout draws. Outputs rather than exports, like the report above:
-		// they are what this block says about its own run, and nothing downstream reads them.
+		// The distributions the readout draws. Outputs rather than exports, like the report above: nothing
+		// downstream reads them.
 		blockOutputs.antigenQcDistributions = pframes.exportFrame(verdictImport.output("qcDistributions"))
 		blockOutputs.antigenReagentTable = pframes.exportFrame(verdictImport.output("reagentTable"))
 		// The per-cell reference readings, kept inside the block. One row per cell: the reading itself, and
-		// whether a declared gate set the cell aside. They are part of what the run reports about itself. A
-		// reader checks here why a cell could or could not be compared, and here the block reports the cells
-		// carrying a high reference reading whether or not a gate was declared.
+		// whether a declared gate set the cell aside. A reader checks here why a cell could or could not be
+		// compared, and here the block reports the cells carrying a high reference reading whether or not a gate
+		// was declared.
 		//
 		// Named for what it holds rather than for its grain: it is not a table of cells. The per-cell per-tag
-		// counts are not built at all, because no reader exists for them on either side of the boundary and
-		// they are the run's largest table. See verdict-import.tpl.tengo, where that frame is assembled.
+		// counts are not built at all, because no reader exists for them on either side of the boundary and they
+		// are the run's largest table.
 		blockOutputs.antigenCellReference = pframes.exportFrame(verdictImport.output("cellReference"))
 		// What the run was answered under, including the comparator and cell list that actually served and every
-		// parameter the reading used. Read as content by the model for the run summary.
+		// parameter the reading used. Read as content by the model.
 		blockOutputs.antigenRunMeta = verdictRun.output("runMeta")
 		// Every sample-level quality measurement, keyed by sample, with that sample's rolled-up status and
-		// coverage. Read as content by the model. It is the only source for both the Main grid's Quality
-		// tag and the sample detail view's Quality Checks tab.
+		// coverage. Read as content. The only source for both the Main grid's Quality tag and the sample detail
+		// view's Quality Checks tab.
 		blockOutputs.antigenSampleQc = verdictRun.output("qcBySample")
-		// Binned count distributions per (sample, tag), taken from the raw counts, with the one edge list
-		// they share. The fitted-background grid and the per-sample antigen-count plots are drawn from
-		// these. Content rather than a p-frame: the chart takes its bins as values in the UI, so a frame
-		// handle would only have to be read back out again.
+		// Binned count distributions per (sample, tag), taken from the raw counts, with the one edge list they
+		// share. Content rather than a p-frame: the chart takes its bins as values in the UI, so a frame handle
+		// would only have to be read back out again.
 		blockOutputs.antigenTagBins = verdictRun.output("qcTagBins")
 	}
 

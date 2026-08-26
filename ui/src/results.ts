@@ -15,8 +15,7 @@ export type SampleResult = {
   sampleId: string;
   label: string;
   progress: ProgressCell;
-  // Populated once the sample's QC has settled, meaning the sample finished, to drive the Quality and Read
-  // recovery columns. Absent while the sample is still running.
+  // Populated once the sample's QC has settled, meaning the sample finished. Absent while it is running.
   quality?: QcStatus;
   recovery?: RecoveryBar;
   // The sample's own quality report: every sample-level measurement the software declares, with its status,
@@ -25,9 +24,8 @@ export type SampleResult = {
   qcReport?: SampleQcReport;
 };
 
-// QC status tag shown in the Quality column and beside each measurement. Rendered by PlAgCellStatusTag and
-// PlStatusTag, whose vocabulary is upper-case; the software's is not. A measurement with no line behind it
-// carries no status at all, and there is no fourth word for that.
+// Rendered by PlAgCellStatusTag and PlStatusTag, whose vocabulary is upper-case; the software's is not. A
+// measurement with no line behind it carries no status at all, and there is no fourth word for that.
 export type QcStatus = "OK" | "WARN" | "ALERT";
 
 const STATUS_TAG: Record<QcMeasurementStatus, QcStatus> = {
@@ -48,9 +46,8 @@ export type RecoveryBar = {
 
 // Read-recovery funnel, splitting each sample's reads three ways: usable, meaning matched the pattern AND
 // kept after the feature-barcode panel correction; off-panel, meaning matched but dropped; and no pattern
-// match. The values are read counts summing to readsTotal, and PlAgChartStackedBarCell renders them
-// proportionally. Where no refine report is available (panelAssignedFraction === "") the off-panel split is
-// unknown, so only usable, which is then matched, and no-match are shown.
+// match. The values are read counts summing to readsTotal. Where no refine report is available
+// (panelAssignedFraction === "") the off-panel split is unknown, so only usable and no-match are shown.
 const RECOVERY_COLORS = {
   usable: Gradient("viridis").getNthOf(2, 5),
   offPanel: Gradient("magma").getNthOf(4, 9),
@@ -120,14 +117,12 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
   const sampleStep = app.model.outputs.sampleStep;
 
   // Early roster signal. The flat parseLogStream registers per sample the moment parse starts, before any
-  // step report settles, so a sample appears in the grid immediately. This answers only "does this sample
-  // exist yet". The bar detail comes from stepProgress below.
+  // step report settles. This answers only "does this sample exist yet".
   const parseProgress = app.model.outputs.parseProgress;
   const earlyRosterIds = parseProgress ? parseProgress.data.map((p) => String(p.key[0])) : [];
-  // It also carries parse's live LINE, and that matters for the whole of parse rather than a moment of
-  // it: `stepLogs` is built by fb-refine-tagstat, so nothing lands in the per-step map below until parse
-  // is over and the next template runs. Read only for the roster, the bar spent every parse showing the
-  // bare step label while a percent and an ETA sat right here.
+  // It also carries parse's live LINE, and that matters for the whole of parse: `stepLogs` is built by
+  // fb-refine-tagstat, so nothing lands in the per-step map below until parse is over and the next template
+  // runs.
   const parseStreamBySample = new Map<string, StepStream>();
   if (parseProgress) {
     for (const p of parseProgress.data) {
@@ -150,9 +145,8 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
     }
   }
   // Every streaming step's live line for a sample, so deriveProgress can pick the furthest one actually
-  // streaming. The report-derived step advances a beat early and flashes the next step's label in the gap.
-  // The Python step streams on its own output rather than into the per-step map, because it runs in a
-  // different template. Keyed by sample alone, so it is indexed here and joined under the step name the
+  // streaming. The Python step streams on its own output rather than into the per-step map, because it runs
+  // in a different template. Keyed by sample alone, so it is indexed here and joined under the step name the
   // bar knows it by.
   const metricsProgress = app.model.outputs.metricsProgress;
   const metricsStreamBySample = new Map<string, StepStream>();
@@ -170,7 +164,6 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
     "4-metrics": metricsStreamBySample.get(sampleId),
   });
 
-  // Roster: dataset labels ∪ completed ∪ QC'd ∪ any sample with a step signal ∪ early parse signal.
   const sampleIds = new Set<string>([
     ...Object.keys(labels),
     ...completed,
@@ -184,13 +177,12 @@ export const sampleResults = computed<SampleResult[] | undefined>(() => {
   return [...sampleIds]
     .map((sampleId): SampleResult => {
       const label = labels[sampleId] ?? sampleId;
-      // Per-sample QC settles when the sample finishes, so Quality + Read recovery fill in at completion.
       const qc = qcBySample[sampleId];
       const qcReport = reportBySample[sampleId];
       const qcFields = {
         ...(qc ? { recovery: recoveryBar(qc) } : {}),
-        // The tag IS the report's rollup. Nothing here recomputes it, so the grid and the sample's own
-        // report state one status rather than two that can drift.
+        // The tag IS the report's rollup. Nothing here recomputes it, so the grid and the sample's own report
+        // state one status rather than two that can drift.
         ...(qcReport ? { quality: qcStatusTag(qcReport.status), qcReport } : {}),
       };
       const progressCell = deriveProgress(sampleId, completed, sampleStep, liveLinesFor(sampleId));

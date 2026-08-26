@@ -1,15 +1,11 @@
 // What may reach the per-sample mitool fan-out, as a closed list.
 //
-// The block runs in two stages, and the whole value of the split is that the expensive stage does not notice
-// the cheap one. Where only the reading's parameters change -- a different grouping, a different floor -- the
-// body re-executes and processColumn is re-declared with identical inputs, so every per-sample mitool body
-// is recovered from cache and only the verdict stage re-runs. That holds exactly as long as no verdict-stage
-// parameter and no resolved clonotype linker enters `extra` or `metaExtra`. Both are part of each per-sample
-// body's identity, so one added key costs every user a full re-run of parse, refine-tags and tag-stat, and
-// neither the render nor the logs says why.
-//
-// The extra-input block in main.tpl.tengo is where a convenience addition lands, so the list is closed here
-// and checked at render time rather than reviewed later.
+// The block runs in two stages, and the whole value of the split is that the expensive stage does not
+// notice the cheap one. Where only the reading's parameters change, processColumn is re-declared with
+// identical inputs, so every per-sample mitool body is recovered from cache. That holds exactly as long as
+// no verdict-stage parameter and no resolved clonotype linker enters `extra` or `metaExtra`. Both are part
+// of each per-sample body's identity, so one added key costs every user a full re-run of parse,
+// refine-tags and tag-stat, and neither the render nor the logs says why.
 
 maps := import("@platforma-sdk/workflow-tengo:maps")
 

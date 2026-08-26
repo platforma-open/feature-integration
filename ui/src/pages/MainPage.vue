@@ -58,9 +58,7 @@ const app = useApp();
 
 // A quality line and an aggregate-detection knob are both stored undefined until someone types one, and
 // the workflow then substitutes the shipped default. The fields below bind through `setting` so an
-// untouched one shows that substituted number instead of an empty box. Clearing a field writes undefined
-// back and the display returns to the default.
-//
+// untouched one shows that substituted number instead of an empty box. Clearing writes undefined back.
 // The value shown is never written to `data` on its own, so opening Settings stales nothing.
 const SETTING_DEFAULTS = { ...QC_LINE_DEFAULTS, ...AGGREGATE_DETECTION_DEFAULTS };
 type SettingKey = keyof typeof SETTING_DEFAULTS;
@@ -85,10 +83,10 @@ const usableReadWarn = setting("usableReadWarn");
 const usableReadError = setting("usableReadError");
 // No binding for the three aggregate-detection knobs. They keep their entries in SETTING_DEFAULTS, because
 // the same defaults answer a stored project and the workflow, and only their controls are gone.
-// Auto-open Settings for a fresh block, with no FASTQ chosen yet. Stays closed once configured.
+// Auto-open Settings for a fresh block. Stays closed once configured.
 const settingsOpen = ref(app.model.data.fbFastqRef === undefined);
-// Close the Settings drawer once a run starts. Watching an output and writing a local ref is not a hairpin,
-// since nothing writes to server-stored data.
+// Close the Settings drawer once a run starts. Watching an output and writing a local ref is not a hairpin:
+// nothing writes to server-stored data.
 watch(
   () => app.model.outputs.isRunning,
   (running) => {
@@ -97,21 +95,18 @@ watch(
 );
 
 // The block's "Analysis logs": a live completed-sample heartbeat while the run is in progress, then a
-// run-level summary once it finishes. The model builds the lines from the per-sample QC. Shown in a wide
-// slide-over as one text area. Detailed per-sample statistics live on the QC page.
+// run-level summary. Detailed per-sample statistics live on the QC page.
 const analysisLog = computed(() => app.model.outputs.analysisLog ?? []);
 
 // No run-level progress bar above the grid. The grid's own Progress column carries every sample's step and
 // percent, so a second reading of the same numbers competed with it for the reader's attention.
-// First line of the Analysis-logs drawer, pointing the user at the richer per-sample logs behind a
-// double-click on each sample row. The run-level analysisLog below is only a summary heartbeat.
+// First line of the Analysis-logs drawer, pointing the user at the richer per-sample logs.
 const LOGS_HINT =
   "Tip: double-click any sample in the progress table to open its own detailed per-step logs (parse, refine tags, count UMIs).";
 const logText = computed(() => [LOGS_HINT, "", ...analysisLog.value].join("\n"));
 const logsOpen = ref(false);
 
-// Per-sample report slide-over of live per-step mitool logs. Opened by double-clicking a grid row, and
-// shown whenever a sample is selected.
+// Per-sample report slide-over of live per-step mitool logs. Opened by double-clicking a grid row.
 const selectedSample = ref<string | undefined>(undefined);
 const sampleReportOpen = computed({
   get: () => selectedSample.value !== undefined,
@@ -125,25 +120,21 @@ const selectedSampleLabel = computed(() =>
     : "",
 );
 
-// True while the panel CSV has been picked but not yet read: the handle is set and csvMetaSnapshot is not.
-// For a local pick that window is a single tick, so the note below never appears. For a remote pick it lasts
-// until the upload lands and the blob watcher parses it. Drives a "reading columns..." note and disables the
-// CSV-derived dropdowns, so their empty state reads as "loading" rather than "no columns".
+// True while the panel CSV has been picked but not yet read. For a local pick that window is a single tick;
+// for a remote pick it lasts until the upload lands and the blob watcher parses it. Drives a "reading
+// columns..." note, so the empty dropdowns read as "loading" rather than "no columns".
 const csvProcessing = computed(() => app.model.outputs.csvColumnsLoading === true);
 
-// The CSV-derived tag-mapping dropdowns (barcode / feature / control / sample columns) have nothing to offer
-// until a tag-feature CSV is picked AND its columns are read. Disable and dim them while no CSV handle
-// exists, or while the panel has not been read yet, so their empty state reads as "waiting for a CSV" rather
-// than "no columns found". Reuses the SDK disabled and dimmed affordance the parse window (csvProcessing)
-// already uses.
+// The CSV-derived tag-mapping dropdowns have nothing to offer until a tag-feature CSV is picked AND its
+// columns are read. Disable and dim them until then, so their empty state reads as "waiting for a CSV"
+// rather than "no columns found".
 const tagMappingDisabled = computed(
   () => !app.model.data.tagFeatureCsvHandle || csvProcessing.value,
 );
 
-// CSV columns not already bound to the barcode-sequence or feature-name roles. A column holding DNA barcodes
-// or antigen names is not a sample column, and offering it invites a mis-pick. The data layer refuses two
-// roles on one column, but only at the end of the run. The model's args() rejects the collision too, and
-// filtering here prevents the mistake up front.
+// CSV columns not already bound to the barcode-sequence or feature-name roles. A column holding DNA
+// barcodes or antigen names is not a sample column, and offering it invites a mis-pick. args() rejects the
+// collision too, and the data layer refuses it only at the end of the run.
 const roleFreeColumnOptions = computed(() =>
   (app.model.outputs.csvColumnOptions ?? []).filter(
     (o) =>
@@ -161,27 +152,21 @@ function snapshotPanelColumns() {
 }
 
 // ---- the binding reading ----------------------------------------------------------------------
-// The settings for the binding reading. Rendered in the Main page's Settings drawer, and there ONLY. A block
-// puts its settings in one place, and the Explore readout offered this same drawer until that second copy was
-// removed. Do not mount it from a results page again: two drawers editing one set of controls is not the
-// idiom, whatever it costs to recompute.
+// Rendered in the Main page's Settings drawer, and there ONLY. Two drawers editing one set of controls is
+// not the idiom, whatever it costs to recompute.
 //
-// Everything this component EDITS is below the "binding reading" line in BlockArgs, so a change here recovers
-// every per-sample mitool body from cache and re-runs the verdict stage alone. It also READS three fields it
-// must never edit -- tagFeatureCsvHandle, barcodeSeqColumn, sampleColumn -- to tell whether the panel has
-// loaded, and to keep a role or grouping setting from naming a column the panel reader consumes as a key.
-// Those three force the whole per-sample fan-out to re-run, and the Main page owns their controls.
+// Everything this component EDITS is below the "binding reading" line in BlockArgs, so a change here
+// recovers every per-sample mitool body from cache and re-runs the verdict stage alone. It also READS three
+// fields it must never edit -- tagFeatureCsvHandle, barcodeSeqColumn, sampleColumn -- which force the whole
+// per-sample fan-out to re-run and whose controls the Main page owns.
 //
-// VOCABULARY, and the split is deliberate. Everything a USER reads says "baseline": the level a count must
-// exceed, measured in the same cell from a tag declared to bind nothing. The DATA layer keeps `reference` --
-// `ReferenceSource`, the run-meta keys, the p-column domain values -- and those cannot follow, because domain
-// is part of column identity and renaming one would change what every emitted column IS. Code comments here
-// describe the data layer, so they still say reference and comparator.
+// VOCABULARY, and the split is deliberate. Everything a USER reads says "baseline". The DATA layer keeps
+// `reference` -- `ReferenceSource`, the run-meta keys, the p-column domain values -- and cannot follow,
+// because domain is part of column identity and renaming one would change what every emitted column IS.
+// Comments here describe the data layer, so they still say reference and comparator.
 //
-// One user-facing word, never four. "control" is not it. The glossary keeps control and reference apart --
-// being a control is a property of the tag, and a panel may carry several, where being the reference that
-// supplies the baseline is a job given to exactly one of them. This form nominates the reference, so it says
-// baseline throughout and never "control".
+// The form never says "control". Being a control is a property of the tag, and a panel may carry several,
+// where being the reference that supplies the baseline is a job given to exactly one of them.
 
 // The distinct values of the chosen role column -- what the comparator is designated by.
 const roleValueOptions = computed(() => {
@@ -196,69 +181,58 @@ const roleValueOptions = computed(() => {
 // Changing the role column drops the values chosen under the old one. They designate values of THIS column,
 // and left behind they would mark no tag while still reading as a configured comparator.
 //
-// `referenceSource` is NOT cleared here, and must not be. The rung is chosen first and the form then asks for
-// what that rung needs, so the role column and the baseline value are the answers to a rung already picked.
-// Clearing the rung on either gesture unpicked it and hid both fields at the moment they were filled in.
-// Only on a GESTURE, never from a watcher -- a watcher on a model output writing back into data is the
-// hairpin, and two clients with the project open would race on it.
+// `referenceSource` is NOT cleared here, and must not be. The rung is chosen first and the form then asks
+// for what that rung needs, so clearing the rung on either gesture would unpick it at the moment its fields
+// were filled in. Only on a GESTURE, never from a watcher: a watcher on a model output writing back into
+// data is the hairpin, and two clients with the project open would race on it.
 function setRoleColumn(column: string | undefined) {
   app.model.data.roleColumn = column || undefined;
   app.model.data.referenceValues = undefined;
   snapshotPanelColumns();
 }
 
-// ONE value, stored as a one-element list. `040-glossary` splits the two cardinalities: being a control is
-// a property of the tag and a panel may carry several, but the reference is one job given to one of them.
-// So the value that marks the baseline is singular. Several values here only ever described a panel whose
-// role column spells one role more than one way, and a panel that does that is asking to be corrected
-// rather than accommodated.
+// ONE value, stored as a one-element list. Being a control is a property of the tag and a panel may carry
+// several, but the reference is one job given to one of them. Several values here only ever described a
+// panel whose role column spells one role more than one way.
 //
 // `data.referenceValues` stays a LIST. The field name, the `--reference-values` flag and every stored
 // project keep their shape, so this tightens the control without a migration. The `> 1 tag` refusal in
-// `verdict.py` stays too, and is now the only thing that can fire: one value can still mark several tags,
-// which is a panel fact this control cannot see.
+// `verdict.py` stays too: one value can still mark several tags, which is a panel fact this control cannot
+// see.
 function setReferenceValue(value: string | undefined) {
   app.model.data.referenceValues = value ? [value] : undefined;
 }
 
 // The comparator sources this panel can serve. Both the option list and the reasons come from a model output
-// rather than from a watcher: the facts behind them are the panel's, and copying them into data would make
-// the output depend on the data it feeds.
+// rather than from a watcher: copying panel facts into data would make the output depend on the data it
+// feeds.
 const referenceSources = computed(() => app.model.outputs.referenceSources);
 
 // The rungs this panel can serve, and the rung the run will be answered under. Both come from model outputs:
 // the option list from `referenceSources`, the shown value from `effectiveReferenceSource`.
 //
 // NEVER derive the shown value here. Writing the rule twice -- once to decide what to display, once in
-// `args()` to decide what to send -- makes the field lie the moment a stored choice stops being serviceable.
-// Clearing the role values then leaves a dead "declared" behind: this component re-renders as "the panel's
-// own readings" while the data still holds "declared", so the form shows a scientist the exact value they are
-// being asked to supply while Run stays greyed out, and only re-picking the already-shown value fixes it.
+// `args()` to decide what to send -- makes the field lie the moment a stored choice stops being
+// serviceable: the form would show a scientist the exact value they are being asked to supply while Run
+// stays greyed out. The block does not choose a baseline, because a baseline nobody chose is a methodology
+// nobody knows they used.
 //
-// No derivation exists anywhere. The block does not choose a baseline, because a baseline nobody chose is a
-// methodology nobody knows they used. `effectiveReferenceSource` is the stored choice, or the bottom rung
-// where none was made. Reading an output to display it is not a hairpin: nothing here writes back.
-// EVERY rung, always, and every one selectable. The scientist picks the rung first and the form then asks
-// for what that rung needs. Offering only the rungs already satisfied made the declared rung unreachable:
-// its requirements are the two fields that appear once it is chosen, so it could never become serviceable
-// while it was hidden.
+// EVERY rung, always, and every one selectable. Offering only the rungs already satisfied made the declared
+// rung unreachable: its requirements are the two fields that appear once it is chosen.
 const allSources = computed(() => referenceSources.value?.options ?? []);
 
-// The agreement limit as a PERCENTAGE, where the data holds a share from 0 to 1. A share reads as a
-// number a scientist has to translate, and this one has a floor most readers do not expect: agreement is
-// the share of voting cells holding the state the verdict took, so a majority can never fall below a
-// half. The useful range is 51 to 100, and "0-1" hid that.
+// The agreement limit as a PERCENTAGE, where the data holds a share from 0 to 1. Agreement is the share of
+// voting cells holding the state the verdict took, so a majority can never fall below a half: the useful
+// range is 51 to 100, and "0-1" hid that.
 //
-// The data keeps the share. `--min-agreement` and every stored project keep their shape, so this is a
-// display conversion and not a migration. Rounded on the way in, because a percentage entered as an
-// integer must come back as the same integer.
+// The data keeps the share, so this is a display conversion and not a migration. Rounded on the way in,
+// because a percentage entered as an integer must come back as the same integer.
 const agreementPercent = computed({
   get: () => {
     const share = app.model.data.minAgreement;
-    // NOT rounded. The field accepts a typed fraction of a percent -- `step` drives only the arrow
-    // buttons, and `commitValue` in PlNumberField assigns whatever was typed. Rounding here would show
-    // 51 for a stored 50.5, and 50 for a stored 50.001, so the number on screen would stop being the
-    // number in force.
+    // NOT rounded. `step` drives only the arrow buttons, and `commitValue` in PlNumberField assigns
+    // whatever was typed, so rounding here would show 51 for a stored 50.5 and the number on screen would
+    // stop being the number in force.
     return typeof share === "number" ? share * 100 : undefined;
   },
   set: (percent: number | undefined) => {
@@ -266,9 +240,8 @@ const agreementPercent = computed({
   },
 });
 
-// The chosen rung, from DATA. Each baseline brings its own rule, so a setting belonging to one rule is
-// shown only where that rule runs. Read from data and never from `effectiveReferenceSource`: the form
-// reveals fields against what the scientist picked, and that must not move on its own.
+// The chosen rung, from DATA. Read from data and never from `effectiveReferenceSource`: the form reveals
+// fields against what the scientist picked, and that must not move on its own.
 const chosenSource = computed(() => app.model.data.referenceSource);
 
 // What the chosen rung still needs, if anything. The model computes it, because whether a rung can serve
@@ -280,16 +253,15 @@ function setBaselineSource(value: string | undefined) {
   app.model.data.referenceSource = value === undefined ? undefined : (value as ReferenceSource);
 }
 
-// The panel-derived dropdowns have nothing to offer until the panel file is uploaded and staging has read
-// its columns. Disabled and dimmed, so their empty state reads as "waiting" rather than "nothing found".
+// The panel-derived dropdowns have nothing to offer until the panel file is uploaded and read. Disabled and
+// dimmed, so their empty state reads as "waiting" rather than "nothing found".
 const panelUnread = computed(
   () => !app.model.data.tagFeatureCsvHandle || app.model.outputs.csvColumnsLoading === true,
 );
 
 // The panel's PROPERTY columns: every header except the ones the panel reader consumes as keys, which are
-// the barcode column and the sample column where one is set. Mirrors panel.py's own rule. A column the
-// reader strips is not one the grouping setting may name, and emit_verdicts.py ends the run rather than
-// degrading when handed one.
+// the barcode column and the sample column where one is set. Mirrors panel.py's own rule.
+// emit_verdicts.py ends the run rather than degrading when handed a column the reader strips.
 const panelPropertyOptions = computed(() =>
   (app.model.outputs.csvColumnOptions ?? []).filter(
     (o) => o.value !== app.model.data.barcodeSeqColumn && o.value !== app.model.data.sampleColumn,
@@ -301,10 +273,9 @@ const panelPropertyOptions = computed(() =>
 // concentrations two identities.
 //
 // The barcode column sits in the same list as the property columns, because naming it IS a grouping -- the
-// finest one available, one identity per barcode -- rather than a mode beside grouping. It cannot be offered
-// as a property column, since the panel reader consumes it as the `tag` key, so it maps to the `tag` rule,
-// which produces exactly that reading. A sentinel value stands for it, prefixed with a space so no real
-// column name can collide.
+// finest one available -- rather than a mode beside grouping. It cannot be offered as a property column,
+// since the panel reader consumes it as the `tag` key, so a sentinel maps it to the `tag` rule. The
+// sentinel is prefixed with a space so no real column name can collide.
 const TAG_GROUPING_VALUE = " tag";
 
 const groupingSelection = computed<string[]>(() => {
@@ -317,9 +288,8 @@ const groupingSelection = computed<string[]>(() => {
 const groupingOptions = computed(() => [
   {
     value: TAG_GROUPING_VALUE,
-    // Sits in the same list as the property columns on purpose: naming the barcode IS a grouping, the
-    // finest one available, rather than a mode beside grouping. It is labelled so it cannot be mistaken
-    // for one of the panel's own columns, which is what naming it after the barcode column did.
+    // Labelled so it cannot be mistaken for one of the panel's own columns, which is what naming it
+    // after the barcode column did.
     label: "Each barcode on its own — one identity per barcode",
   },
   ...panelPropertyOptions.value,
@@ -327,9 +297,9 @@ const groupingOptions = computed(() => [
 
 function setGrouping(selected: string[] | undefined) {
   const picked = (selected ?? []).filter((c) => c !== "");
-  // The barcode column is the finest grouping there is, so it does not combine with a coarser one: a
-  // combination including it is already one identity per barcode. Picking it therefore wins alone, and
-  // picking nothing leaves the rule absent, which reads the same way.
+  // The barcode column is the finest grouping there is, so a combination including it is already one
+  // identity per barcode. Picking it wins alone, and picking nothing leaves the rule absent, which reads
+  // the same way.
   const rule: GroupingRule | undefined = picked.includes(TAG_GROUPING_VALUE)
     ? { by: "tag" }
     : picked.length > 0
@@ -337,16 +307,14 @@ function setGrouping(selected: string[] | undefined) {
       : undefined;
   app.model.data.grouping = rule;
   // The identities ARE the values of the grouping columns, so groups declared under the previous rule name
-  // things that no longer exist. Cleared on the gesture that invalidates them rather than left to fail.
+  // things that no longer exist.
   app.model.data.contendingGroups = undefined;
   snapshotPanelColumns();
 }
 
-// Visible reason when the Combine-mode column is invalid, so a disabled Run button is explained rather than
-// mysterious. The model's args() is the authoritative gate, throwing and greying out Run, and this mirrors
-// the same condition into an inline alert. The selector is not offered today, but a project saved while it
-// was, or migrated, can still carry a value that collides with the barcode or feature roles, and without
-// this the Run button would simply be grey.
+// Visible reason when the Combine-mode column is invalid, so a disabled Run button is explained. args() is
+// the authoritative gate, and this mirrors the same condition into an inline alert. The selector is not
+// offered today, but a project saved or migrated while it was can still carry a colliding value.
 const combineColumnError = computed(() => {
   const c = app.model.data.combineColumn;
   if (!c) return undefined;
@@ -361,8 +329,8 @@ const combineColumnError = computed(() => {
 });
 
 // Run mode: read-limited Preview (dry run) against a full run. The same PlBtnGroup pattern
-// mixcr-clonotyping and demultiplex-fastq use, Preview first. Feature-barcode is single-cell and shallow per
-// cell, so the dry-run default matches mixcr's single-cell recommendation of 500k reads per sample.
+// mixcr-clonotyping and demultiplex-fastq use, Preview first. Feature-barcode is single-cell and shallow
+// per cell, so the dry-run default matches mixcr's single-cell recommendation of 500k reads per sample.
 const runModeOptions = [
   { label: "Preview", value: "dry" as const },
   { label: "Full run", value: "full" as const },
@@ -380,17 +348,15 @@ watch(
 // Empty stores as undefined so the no-control note below reads one condition rather than two.
 
 // A GESTURE IS NOT A CHANGE. Every clear below must compare the new value against the old one: a control
-// re-emitting the value it already held -- a user re-picking the dataset they had picked, or a re-render
-// after the block pack was updated -- otherwise discards configuration nobody touched.
+// re-emitting the value it already held -- a re-pick of the dataset already picked, or a re-render after a
+// block-pack update -- otherwise discards configuration nobody touched.
 //
 // Concretely: re-emitting an UNCHANGED FASTQ ref wipes `sampleColumn`, the run reaches per_cell_metrics.py
 // with no `--sample-col`, and its duplicate-barcode guard refuses a sample-keyed panel. The user meets that
-// as a QuickJS stack trace minutes after a gesture that changed nothing. `clearOnCsvChange` is the same shape
-// over nine more fields, the whole binding reading included.
+// as a QuickJS stack trace minutes after a gesture that changed nothing.
 //
 // The previous value has to be remembered HERE: `v-model` writes the new one into data before the handler
-// runs, so data holds the "after" on both sides of any comparison made inside it. Keyed by JSON, so a ref
-// object and a file handle compare the same way.
+// runs. Keyed by JSON, so a ref object and a file handle compare the same way.
 const keyOf = (v: unknown) => (v === undefined || v === null ? "" : JSON.stringify(v));
 const seenFastqRef = ref(keyOf(app.model.data.fbFastqRef));
 const seenCsvHandle = ref(keyOf(app.model.data.tagFeatureCsvHandle));
@@ -405,12 +371,12 @@ function changed(seen: { value: string }, next: unknown): boolean {
 }
 
 // Sample-aware mapping (optional). Picking the sample column snapshots the CURRENT dataset's sampleId->name
-// map into data, so the args projection stays pure (model.md) and the per-sample workflow body can translate
-// its iteration key.
+// map into data, so the args projection stays pure and the per-sample workflow body can translate its
+// iteration key.
 function setSampleColumn(col: string | undefined) {
   app.model.data.sampleColumn = col || undefined;
   // Snapshot both the dataset's sampleId->name map AND the chosen column's CSV values, so args() can both
-  // filter per sample and gate Run -- blocking when a dataset sample has no CSV rows -- purely from data.
+  // filter per sample and gate Run purely from data.
   app.model.data.sampleLabelSnapshot = col ? app.model.outputs.sampleLabels : undefined;
   app.model.data.sampleColumnValues = col
     ? (app.model.outputs.csvValuesByColumn?.[col] ?? [])
@@ -422,9 +388,8 @@ function setSampleColumn(col: string | undefined) {
 }
 
 // The snapshot goes stale where the dataset changes, giving a different sampleId->name, or the CSV changes,
-// giving different columns and values. Clear the sample-aware selection on those gestures and let the user
-// re-pick. Split from its gesture handler because `clearOnCsvChange` calls it too, and THAT path must clear
-// unconditionally: a new panel file invalidates the sample selection whatever the FASTQ ref does.
+// giving different columns and values. Split from its gesture handler because `clearOnCsvChange` calls it
+// too, and THAT path must clear unconditionally.
 function clearSampleAwareState() {
   app.model.data.sampleColumn = undefined;
   app.model.data.sampleLabelSnapshot = undefined;
@@ -437,15 +402,13 @@ function onFastqRefChanged(next: unknown) {
 }
 
 // Picking the barcode column is what makes a duplicate mapping knowable, so it is where the two numbers
-// args() needs are snapshotted. args() is data-only and the CSV meta lives on ctx.prerun, so without this the
-// model can see the problem and still not refuse the run.
+// args() needs are snapshotted. args() is data-only and the CSV meta lives on ctx.prerun, so without this
+// the model can see the problem and still not refuse the run.
 const seenBarcodeColumn = ref(keyOf(app.model.data.barcodeSeqColumn));
 
 // Called from every gesture that can make a duplicate mapping RELEVANT, not only from the one that makes it
-// knowable. Taken on the barcode-column pick alone, the gate is inert in the case that actually happens: the
-// barcode column was picked long ago, and what changes now is the SAMPLE column being cleared, which turns a
-// legal sample-keyed panel into an illegal duplicate one. Idempotent, so calling it from three places costs
-// nothing.
+// knowable. The case that actually happens is the SAMPLE column being cleared long after the barcode column
+// was picked, which turns a legal sample-keyed panel into an illegal duplicate one. Idempotent.
 function snapshotPanelCounts() {
   const col = app.model.data.barcodeSeqColumn;
   app.model.data.panelRowCount = col ? app.model.outputs.csvRowCount : undefined;
@@ -456,10 +419,8 @@ function snapshotPanelCounts() {
 
 // Claiming a column as a key invalidates any verdict setting that names it. The panel reader strips the
 // barcode and sample columns before the properties are read, so the setting would name a column that is no
-// longer a property. args() refuses the run in that state, which is a blocked Run button rather than a dead
-// run, but the user still has to find the stale pick in a dropdown that stopped offering it. Clearing it on
-// the gesture that invalidates it is the treatment clearOnCsvChange gives the panel swap. This is the
-// reassignment case, reaching the same stale pick by a different gesture.
+// longer a property. args() refuses the run in that state, but the user still has to find the stale pick in
+// a dropdown that stopped offering it.
 function clearVerdictSettingsNaming(column: string | undefined) {
   if (!column) return;
   if (app.model.data.roleColumn === column) {
@@ -469,12 +430,12 @@ function clearVerdictSettingsNaming(column: string | undefined) {
   }
   const remaining = groupingColumns(app.model.data.grouping).filter((c) => c !== column);
   if (remaining.length !== groupingColumns(app.model.data.grouping).length) {
-    // A grouping may name several columns, so losing one leaves the others standing. Losing the last leaves no
-    // rule, which reads as one identity per tag: the same state as never having set it.
+    // A grouping may name several columns, so losing one leaves the others standing. Losing the last leaves
+    // no rule, which reads as one identity per tag.
     app.model.data.grouping =
       remaining.length > 0 ? { by: "property", columns: remaining } : undefined;
-    // The identities ARE the values of the grouping columns, so declared groups now name things that do not
-    // exist. Cleared here for the same reason setGrouping clears them.
+    // The identities ARE the values of the grouping columns, so declared groups now name things that do
+    // not exist.
     app.model.data.contendingGroups = undefined;
   }
 }
@@ -485,11 +446,10 @@ function onBarcodeColumnChanged(next: unknown) {
   clearVerdictSettingsNaming(app.model.data.barcodeSeqColumn);
 }
 
-// CSV swap invalidates every CSV-derived selection: the barcode / feature-name columns, since the new file's
-// headers differ, the negative control, the sample-aware selection, and every setting of the binding reading
-// that names a panel column or a panel value. The last group matters most: emit_verdicts.py ends the whole
-// run when the role column or the grouping column is not one the panel carries, so a stale pick left behind
-// here costs a run and reports it where the user never looks.
+// A CSV swap invalidates every CSV-derived selection: the barcode and feature-name columns, the negative
+// control, the sample-aware selection, and every binding-reading setting that names a panel column or
+// value. The last group matters most: emit_verdicts.py ends the whole run when the role column or the
+// grouping column is not one the panel carries, and reports it where the user never looks.
 function onCsvChanged(next: unknown) {
   if (!changed(seenCsvHandle, next)) return;
   // The feature-name column is about to be cleared, so its own guard must not later read a stale key and
@@ -497,18 +457,17 @@ function onCsvChanged(next: unknown) {
   seenFeatureColumn.value = "";
   clearOnCsvChange();
   // Read the panel NOW, from the file the user just chose, rather than waiting for the upload to land and a
-  // workflow step to describe it. `next` is the parse target, not data: v-model has already written it, but
-  // reading the argument makes the handler independent of listener order.
+  // workflow step to describe it. Reading the argument rather than data makes the handler independent of
+  // listener order.
   void readPanelFrom(next as ImportFileHandle | undefined);
 }
 
-// Fills csvMetaSnapshot from the picked file. Local picks are read from disk, which is what makes the column
-// dropdowns fill on the gesture. A remote pick reads nothing here and is served by the blob watcher below
-// once the upload lands.
+// Fills csvMetaSnapshot from the picked file. Local picks are read from disk, which is what makes the
+// column dropdowns fill on the gesture. A remote pick reads nothing here and is served by the blob watcher
+// below once the upload lands.
 //
 // The handle re-check before the write is the rapid-re-pick guard: the read is async, so a user who swaps
-// files twice in quick succession can have the FIRST read resolve last. Publishing it would leave the
-// dropdowns describing a file that is no longer chosen.
+// files twice in quick succession can have the FIRST read resolve last.
 async function readPanelFrom(handle: ImportFileHandle | undefined) {
   if (!handle) return;
   try {
@@ -525,17 +484,14 @@ async function readPanelFrom(handle: ImportFileHandle | undefined) {
 // The remote-pick path. Nothing on this machine can open an `index://` file, so the panel is read from the
 // blob the prerun imported, through the SAME parser the local path uses. One parser, two byte sources.
 //
-// This is a watcher that writes to data, which hairpin.md tells reviewers to look at twice, and it is the
-// same construction blocks/immune-assay-data uses for the same job. It cannot feed itself. The output it
-// watches comes from the prerun, and the prerun re-renders only when the prerunArgs PROJECTION changes
-// (canonical-JSON compared in pl-middle-layer's setStates, which gates renderStagingFor). That projection is
-// tagFeatureCsvHandle alone, so writing csvMetaSnapshot cannot re-run the prerun and cannot change
-// csvFileHandle. Adding the snapshot to prerunArgs WOULD close that loop, and because a staging re-render
-// resets staging, each turn would throw away the uploaded blob. Leave the projection alone.
+// This watcher writes to data and cannot feed itself. The output it watches comes from the prerun, and the
+// prerun re-renders only when the prerunArgs PROJECTION changes (canonical-JSON compared in
+// pl-middle-layer's setStates, which gates renderStagingFor). That projection is tagFeatureCsvHandle alone.
+// Adding the snapshot to prerunArgs WOULD close that loop, and because a staging re-render resets staging,
+// each turn would throw away the uploaded blob. Leave the projection alone.
 //
 // Two clients open on one project both run this and both write, which is safe because they cannot disagree:
-// the parse is pure and both read the same blob, so the writes are identical. The guard below stops the
-// second one anyway.
+// the parse is pure and both read the same blob.
 const remoteCsvBytes = useRemoteCsvBytes(() => app.model.outputs.csvFileHandle);
 watch(
   remoteCsvBytes,
@@ -572,18 +528,15 @@ function clearOnCsvChange() {
   clearSampleAwareState();
 }
 
-// Sample-aware mapping sanity warning from the model: dataset samples missing from the CSV, and CSV sample
-// values matching no dataset sample. Only present once a sample column is chosen.
+// Sample-aware mapping sanity warning from the model. Only present once a sample column is chosen.
 const sampleMappingWarning = computed(() => app.model.outputs.sampleMappingWarning);
 
 // Sample-aware mapping is auto-selected. Where the model spots a CSV column whose distinct values match the
-// dataset's sample names (suggestedSampleColumn), pre-populate the Sample column dropdown with it through
-// setSampleColumn, which snapshots the sample map into data. Guarded to run only while NO column is set, so a
-// manual clear or a manual pick is never overridden. Safe from the reactive-write hairpin the block otherwise
-// avoids: suggestedSampleColumn derives from the CSV meta and sample labels alone, and depends on neither
-// sampleColumn nor the snapshot fields setSampleColumn writes, so applying it cannot re-trigger the
-// suggestion. Clearing with X sticks. A CSV or dataset change re-clears through clearOnCsvChange, then
-// re-suggests.
+// dataset's sample names, pre-populate the Sample column dropdown through setSampleColumn, which snapshots
+// the sample map into data. Guarded to run only while NO column is set, so a manual clear or pick is never
+// overridden. suggestedSampleColumn derives from the CSV meta and sample labels alone, and depends on
+// neither sampleColumn nor the snapshot fields setSampleColumn writes, so applying it cannot re-trigger the
+// suggestion.
 const suggestedSampleColumn = computed(() => app.model.outputs.suggestedSampleColumn);
 watch(
   suggestedSampleColumn,
@@ -628,8 +581,6 @@ const columnDefs: ColDef<SampleResult>[] = [
     // The Open affordance, the same one the Explore readout puts on its clonotype column.
     // `invokeRowsOnDoubleClick` makes the button fire the ROW's double-click, so it routes through the
     // `onRowDoubleClicked` handler below: one path, and double-clicking anywhere on the row keeps working.
-    // Nothing else on the row says it can be opened, and the header tooltips that said so are read only by
-    // someone who already hovered a header.
     cellRendererSelector: () => ({
       component: PlAgTextAndButtonCell,
       params: { invokeRowsOnDoubleClick: true },
@@ -720,11 +671,10 @@ const gridOptions = {
       </PlBtnGhost>
     </template>
 
-    <!-- Main shows ONLY per-sample progress, like MiXCR Clonotyping. The per-cell results table lives on its
-         own "Per-cell results" tab (pages/ResultsPage.vue). The in-memory progress grid, the same pattern as
-         blocks/peptide-extraction, is always shown: the grid handles layout, its Progress cell, and the
-         loading overlay for the pre-roster window. When the run finishes every row settles into its "Done"
-         state, which results.ts sets from completedSamples. -->
+    <!-- Main shows ONLY per-sample progress. The per-cell results table lives on its own "Per-cell results"
+         tab. The in-memory progress grid is always shown: it handles layout, its Progress cell, and the
+         loading overlay for the pre-roster window. results.ts settles every row into "Done" from
+         completedSamples. -->
     <div :style="{ flex: 1 }">
       <AgGridVue
         :theme="AgGridTheme"
@@ -763,8 +713,7 @@ const gridOptions = {
           Select the dataset that supplies the clonotypes. Every verdict is about one clonotype.
         </template>
       </PlDropdownRef>
-      <!-- Read layout: preset dropdown plus pattern builder/string (mitool tag pattern). Replaces the former
-           cell/UMI/feature length fields, whose values are now decided inside the editor. -->
+      <!-- Read layout: preset dropdown plus pattern builder/string (mitool tag pattern). -->
       <PatternEditor />
       <!-- Above Panel Settings: it scopes the whole run rather than reading the panel, and it is the choice a
            user revisits between runs while the panel columns stay put. -->
@@ -873,10 +822,8 @@ const gridOptions = {
           The block selects this when it detects a matching column.
         </template>
       </PlDropdown>
-      <!-- The baseline comes before the optional settings because it decides which of them apply: each
-           baseline brings its own rule, and a setting belonging to one rule is shown only where that rule
-           runs. A reader meeting Bound cutoff before choosing a baseline meets a field that appears and
-           disappears on a choice they have not made yet. -->
+      <!-- The baseline comes before the optional settings because it decides which of them apply: a setting
+           belonging to one rule is shown only where that rule runs. -->
       <PlSectionSeparator compact> Baseline Parameters </PlSectionSeparator>
       <PlDropdown
         :model-value="chosenSource"
@@ -896,7 +843,7 @@ const gridOptions = {
         </template>
       </PlDropdown>
       <!-- What the chosen rung still needs. Not an error: the rung is a legitimate choice and the fields that
-           satisfy it are directly below, so this names the gap rather than refusing it. -->
+           satisfy it are directly below. -->
       <PlAlert v-if="chosenNeeds" type="warn">{{ chosenNeeds }}</PlAlert>
       <PlDropdown
         v-if="chosenSource === 'declared'"
@@ -913,11 +860,9 @@ const gridOptions = {
           If your panel declares no role, change the baseline source instead.
         </template>
       </PlDropdown>
-      <!-- Required exactly while a role column is named, and not otherwise. The column alone marks no tag: it is
-           validated, recorded, and changes no number, so the pair is the setting and half of it is an unfinished
-           form. The role column is itself required under this rung, so the pair is now effectively always
-           required here. A panel that declares no role reaches `292-no-declared-reference` by choosing a
-           different baseline source, not by leaving these blank. -->
+      <!-- Required exactly while a role column is named, and not otherwise. The column alone marks no tag: it
+           is validated, recorded, and changes no number, so half the pair is an unfinished form. A panel that
+           declares no role chooses a different baseline source rather than leaving these blank. -->
       <PlDropdown
         v-if="chosenSource === 'declared'"
         :model-value="app.model.data.referenceValues?.[0]"
@@ -935,10 +880,8 @@ const gridOptions = {
         </template>
       </PlDropdown>
 
-      <!-- Directly under the baseline section rather than with the other accordion at the foot of the form.
-           Grouping the accordions together sorted this form by how advanced a control is, which split the
-           baseline's own thresholds away from the baseline. Collapsed, this costs the reader one line and puts
-           every baseline control in one place. The shared word "Baseline" is what links them. -->
+      <!-- Directly under the baseline section rather than with the other accordion at the foot of the form,
+           which split the baseline's own thresholds away from the baseline. -->
       <PlNumberField
         v-model="app.model.data.distributionMinCells"
         v-if="chosenSource === 'distribution'"
@@ -953,12 +896,11 @@ const gridOptions = {
         </template>
       </PlNumberField>
 
-      <!-- The sticky-cell controls sit in the baseline section rather than under a header of their own.
-           It reads a cell's own baseline reading, so it exists only where a declared tag supplies one --
-           a fitted population gives no per-cell reading to compare against. Sticky is the glossary's word:
-           a cell that took up reagent indiscriminately, so its counts report on the cell rather than on
-           its receptor. ONE threshold, not two: only a declared gate supplies a *high*, so with the gate
-           off nothing is counted and the quality readout carries the spread of the readings instead. -->
+      <!-- The sticky-cell controls sit in the baseline section rather than under a header of their own. They
+           read a cell's own baseline reading, so they exist only where a declared tag supplies one -- a fitted
+           population gives no per-cell reading to compare against. ONE threshold, not two: only a declared gate
+           supplies a *high*, so with the gate off the quality readout carries the spread of the readings
+           instead. -->
       <PlNumberField
         v-model="app.model.data.gateThreshold"
         v-if="chosenSource === 'declared'"
@@ -976,12 +918,10 @@ const gridOptions = {
         </template>
       </PlNumberField>
 
-      <!-- Closable, and closed until opened. Every field inside ships a default a run is valid under, so
-           a reader meets the baseline choice above without four thresholds under it competing for the
-           same attention. The same treatment Compute resources and Quality lines already have. -->
+      <!-- Closable, and closed until opened. Every field inside ships a default a run is valid under. -->
       <PlAccordionSection label="Threshold Parameters">
-        <!-- Paired on one line: both are minimums on how much evidence a reading needs, both are always
-             shown, and side by side a reader sets them as the one decision they are. -->
+        <!-- Paired on one line: both are minimums on how much evidence a reading needs, and side by side a
+               reader sets them as the one decision they are. -->
         <PlRow>
           <PlNumberField
             :class="$style.half"
@@ -1012,9 +952,8 @@ const gridOptions = {
           </PlNumberField>
         </PlRow>
         <!-- Both are conditions on the same verdict: the cutoff decides what one cell says, the agreement
-           limit decides how many cells must say it. Side by side under the declared rung, where both apply.
-           `half` on each splits the row; on the agreement field alone, once the cutoff is hidden, the same
-           `flex: 1 1 0` takes the whole width, so the lone field does not sit left with a gap beside it. -->
+             limit decides how many cells must say it. `half` on each splits the row; once the cutoff is hidden,
+             the same `flex: 1 1 0` gives the lone field the whole width. -->
         <PlRow>
           <PlNumberField
             v-if="chosenSource === 'declared'"
@@ -1051,10 +990,10 @@ const gridOptions = {
           </PlNumberField>
         </PlRow>
       </PlAccordionSection>
-      <!-- The combine-mode column selector is not offered (MILAB-6496): with it unset, every antigen uses the
-           default "sum" mode. The parameter itself is live -- combineColumn and minUmi still reach
-           per_cell_metrics.py -- so a value carried in from an older project is still honoured, and the alert
-           below explains a Run button greyed out by one that collides with a role. -->
+      <!-- The combine-mode column selector is not offered: with it unset, every antigen uses the default
+           "sum" mode. combineColumn and minUmi still reach per_cell_metrics.py, so a value carried in from an
+           older project is still honoured, and the alert below explains a Run button greyed out by one that
+           collides with a role. -->
       <PlAlert v-if="combineColumnError" type="warn">
         {{ combineColumnError }}
       </PlAlert>
@@ -1062,16 +1001,12 @@ const gridOptions = {
         <div v-for="(line, i) in sampleMappingWarning" :key="i">{{ line }}</div>
       </PlAlert>
       <!-- Beside its siblings rather than under the Sample column control: all three are about the same CSV,
-           and a reader scanning for what is wrong should find them in one place.
-
-           barcodeMappingIssue was computed by the model and rendered NOWHERE. The block knew, at config
-           time, that a barcode sat on several rows and knew which column fixed it -- and said so to no one.
-           What a user got instead was a QuickJS stack trace at the end of a run, from per_cell_metrics.py's
-           own guard, minutes after the gesture that caused it. -->
-      <!-- Same lesson as the note above, one rung earlier: this fires when the chosen column holds no
-           sequences at all, so the panel the run is built on is not barcodes. First of the two, and the model
-           suppresses the duplicate-barcode warning while it is showing -- that warning would send a reader
-           chasing the sample column when the actual mistake is the barcode column itself. -->
+           and a reader scanning for what is wrong should find them in one place. barcodeMappingIssue was once
+           computed by the model and rendered NOWHERE, so a user met a QuickJS stack trace from
+           per_cell_metrics.py's own guard minutes after the gesture that caused it. -->
+      <!-- One rung earlier: this fires when the chosen column holds no sequences at all, so the panel the run
+           is built on is not barcodes. First of the two, and the model suppresses the duplicate-barcode warning
+           while it is showing -- that warning would send a reader chasing the sample column. -->
       <PlAlert v-if="app.model.outputs.barcodeAlphabetIssue" type="warn">
         {{ app.model.outputs.barcodeAlphabetIssue }}
       </PlAlert>
@@ -1084,9 +1019,8 @@ const gridOptions = {
       <!-- Less-common params. -->
       <PlAccordionSection label="Compute resources">
         <!-- Hidden with the control it belongs to. This is the AND-combine per-barcode floor, and the
-             Combine-mode column selector is not offered, so every antigen uses "sum" and this value can
-             never take effect. A setting a user can change that cannot do anything is worse than an
-             absent one. Restore both together.
+             Combine-mode column selector is not offered, so every antigen uses "sum" and this value can never
+             take effect. Restore both together.
         <PlNumberField
           v-model="app.model.data.minUmi"
           :min-value="1"
@@ -1132,9 +1066,9 @@ const gridOptions = {
         </PlNumberField>
       </PlAccordionSection>
 
-      <!-- The QC lines (315-where-the-lines-come-from), separate from Compute resources: these change what
-           a measurement's own status reads, never what the run computes. Every field here is clearable --
-           empty means the shipped default, the same number the tooltip names. -->
+      <!-- The QC lines, separate from Compute resources: these change what a measurement's own status reads,
+           never what the run computes. Every field here is clearable -- empty means the shipped default, the
+           same number the tooltip names. -->
       <PlAccordionSection label="Quality lines">
         <PlRow>
           <PlNumberField
@@ -1290,11 +1224,10 @@ const gridOptions = {
         </PlRow>
       </PlAccordionSection>
 
-      <!-- No Aggregate-barcode detection section. The three knobs behind it (IQR multiplier, minimum UMI
-           floor, barcode cohort size) stay in BlockData and in args, so a stored project keeps whatever it
-           set, and an unset one runs on Cell Ranger's own constants. They have no control because the 0.05
-           warn line was calibrated against those constants: moving one changes what the aggregate-barcode
-           line is judging, and no line in the field covers the moved position. -->
+      <!-- No Aggregate-barcode detection section. The three knobs behind it stay in BlockData and in args, so
+           a stored project keeps whatever it set, and an unset one runs on Cell Ranger's own constants. They
+           have no control because the 0.05 warn line was calibrated against those constants, and no line in the
+           field covers a moved position. -->
     </PlSlideModal>
 
     <PlSlideModal v-model="logsOpen" width="80%">

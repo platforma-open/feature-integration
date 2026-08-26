@@ -14,8 +14,7 @@ HERE = Path(__file__).resolve().parent.parent  # software/test-data/manual
 
 # The gex arm annotates against a human gene-annotations table that is downloaded, not committed, so a
 # full multiomic run cannot be built in a clean checkout. Tests needing only the antigen arm use the
-# scenario path instead and are unaffected. The ones that genuinely need a full run say so rather than
-# failing with a bare subprocess error that names no cause.
+# scenario path instead.
 GENE_ANNOTATIONS = HERE / "assets" / "homo_sapiens_gene_annotations.csv"
 needs_full_run = pytest.mark.skipif(
     not GENE_ANNOTATIONS.exists(),
@@ -44,8 +43,8 @@ def _read_csv(path):
 
 
 def test_panel_has_type_species_class(tmp_path):
-    # tags.csv comes from the antigen arm, so the self-contained scenario bed suffices — no full run,
-    # no gene-annotations asset.
+    # tags.csv comes from the antigen arm, so the self-contained scenario bed suffices -- no full run, no
+    # gene-annotations asset.
     _run("--scenario", "errors", "--offtarget-count", "2", out=tmp_path)
     header, rows = _read_csv(tmp_path / "tags.csv")
     assert {"Type", "Species", "Class"} <= set(header)
@@ -103,15 +102,11 @@ def _top_two_ratio(counts):
 def test_generator_plants_crossreactive(tmp_path):
     """A planted cross-reactive cell carries a co-dominant pair of two ON-TARGET antigens.
 
-    This asserts the generator against its own output and reads nothing from the block. It used to check
-    the block's `consensus_category` instead, which no longer exists: a single dominant antigen per cell
-    answers a different question from the four-state verdict and was removed with it. What the bed still
-    owes is the planted shape, because the gex and vdj arms are both built from this truth file.
-    """
-    # The antigen-only scenario bed rather than a full `tiny` run. A full run also builds the gex arm,
-    # which needs a gene-annotations asset that is downloaded rather than committed, so a full run
-    # cannot be generated in a clean checkout. This test needs the antigen arm alone. The scenario bed
-    # is self-contained and writes its truth files flat in the output directory.
+        This asserts the generator against its own output and reads nothing from the block. What the bed owes
+        is the planted shape, because the gex and vdj arms are both built from this truth file.
+        """
+    # The antigen-only scenario bed rather than a full `tiny` run: a full run also builds the gex arm,
+    # which needs a gene-annotations asset that is downloaded rather than committed.
     _run("--scenario", "errors", "--offtarget-count", "1", "--crossreactive-frac", "0.1", out=tmp_path)
 
     consensus = _read_tsv(tmp_path / "expected-consensus.tsv")
@@ -125,8 +120,8 @@ def test_generator_plants_crossreactive(tmp_path):
     for r in _read_tsv(tmp_path / "expected-abundance.tsv"):
         counts_by_cell.setdefault((r["sample"], r["cellId"]), {})[r["feature"]] = int(r["planted_distinct_umis"])
 
-    # The pair is planted as second = first * U(0.85, 1.0), then truncated to an int, so 0.84 is the
-    # floor a correctly planted cell cannot fall below.
+    # The pair is planted as second = first * U(0.85, 1.0), then truncated to an int, so 0.84 is the floor
+    # a correctly planted cell cannot fall below.
     for key in crossreactive:
         counts = counts_by_cell[key]
         ratio = _top_two_ratio(counts.values())
@@ -134,10 +129,8 @@ def test_generator_plants_crossreactive(tmp_path):
         top_two = sorted(counts, key=counts.get, reverse=True)[:2]
         assert set(top_two) <= on_target, f"{key}'s co-dominant pair includes a non-Target antigen: {top_two}"
 
-    # The check above is only worth running if it can fail, and an evenness test passes vacuously on a
-    # bed where every cell is even. An ordinary binder plants one dominant antigen over background, so
-    # some non-cross-reactive cell must be visibly UNEVEN — otherwise the assertion above proves
-    # nothing about the label.
+    # The check above is only worth running if it can fail, and an evenness test passes vacuously on a bed
+    # where every cell is even. Some non-cross-reactive cell must be visibly UNEVEN.
     uneven = [
         key
         for key, counts in counts_by_cell.items()
@@ -172,8 +165,8 @@ def test_annotation_emitter(tmp_path):
     with (tmp_path / "truth" / "expected-consensus.tsv").open() as fh:
         cons = list(csv.DictReader(fh, delimiter="\t"))
     ann_ids = {r["cell_id"] for r in rows}
-    # expected-consensus.tsv keys the barcode as `cellId` (antigen arm). Annotations use `cell_id`.
-    # Accept either so the join-compatibility check is meaningful against the real truth schema.
+    # expected-consensus.tsv keys the barcode as `cellId` (antigen arm). Annotations use `cell_id`. Accept
+    # either so the join-compatibility check is meaningful against the real truth schema.
     cons_ids = {r.get("cell_id") or r.get("cellId") for r in cons}
     assert ann_ids & cons_ids
 
@@ -196,8 +189,8 @@ def test_offtarget_count_out_of_range_errors(tmp_path):
             capture_output=True,
             text=True,
         )
-        # Asserting only a nonzero exit would pass for any failure at all -- a missing asset, a syntax
-        # error, a bad path -- so it must name the rejection it is checking for.
+        # Asserting only a nonzero exit would pass for any failure at all, so it must name the rejection it
+        # is checking for.
         assert result.returncode != 0, f"expected nonzero exit for {extra}, got 0"
         assert "--offtarget-count must be between" in (result.stderr + result.stdout), (
             f"exited nonzero for {extra}, but not because the count was out of range:\n{result.stderr}"

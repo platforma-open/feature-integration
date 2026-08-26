@@ -6,20 +6,12 @@ import { PUNCH_LEGEND_DIAMETER_PX, PUNCH_PAINT, type PunchGlyph } from "./punchM
 // What the card's marks mean, stated once above it.
 //
 // The swatches are drawn from PUNCH_PAINT, the same map the cells paint from, so a legend cannot drift from
-// the card it explains. That is the failure mode of every hand-drawn legend, and one nobody notices because
-// both halves look deliberate.
+// the card it explains. They are smaller than the card's marks, which is harmless: a diameter carries no
+// meaning on the card.
 //
-// The swatches are smaller than the card's marks, which is harmless: a diameter carries no meaning on the
-// card, so a swatch is an example of a COLOUR at the scale a line of text wants. The counts still reach the
-// reader, in the per-cell tooltip and in the clonotype expansion.
-//
-// Which card this legend is above. The four glyphs are the same on both faces, which is the point of the
-// shared paint map, but what a glyph MEANS is not: a mark on the card is a verdict a majority of cells
-// produced, and a mark on the by-cell face is one cell's own reading. "A majority read it as bound" is false
-// of a single cell, and a legend that said it would teach the wrong thing about the very view a reader opened
-// to see individual cells.
-//
-// Both wordings live here, in the one component, so a glyph can never be paired with the wrong swatch.
+// The four glyphs are the same on both faces, but what a glyph MEANS is not: a mark on the card is a verdict
+// a majority of cells produced, and a mark on the by-cell face is one cell's own reading. Both wordings live
+// here, in the one component, so a glyph can never be paired with the wrong swatch.
 const props = withDefaults(defineProps<{ variant?: "set" | "cell" }>(), { variant: "set" });
 
 type Entry = { glyph: PunchGlyph | "none"; label: string; meaning: string };

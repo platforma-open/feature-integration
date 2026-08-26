@@ -51,11 +51,10 @@ def gen_distinct(rng, count, length, min_dist, avoid=()):
 
 
 def gen_cells(rng, count):
-    """Distinct random 16-mer cell barcodes, O(count) via a set. The panel's gen_distinct is O(n^2) and
-    does not scale to tens of thousands of cells. Hamming spacing is NOT enforced: at cohort scale a
-    1 bp error colliding with a *different* real barcode is astronomically unlikely
-    (~count * 48 / 4^16), so the `errors` scenario's clean-correction guarantee still holds, and real
-    barcodes are Hamming-close anyway."""
+    """Distinct random 16-mer cell barcodes, O(count) via a set. The panel's gen_distinct is O(n^2) and does
+        not scale to tens of thousands of cells. Hamming spacing is NOT enforced: at cohort scale a 1 bp error
+        colliding with a *different* real barcode is astronomically unlikely (~count * 48 / 4^16), and real
+        barcodes are Hamming-close anyway."""
     seen = set()
     out = []
     while len(out) < count:
@@ -86,9 +85,8 @@ def write_gz(path, text):
 
 
 def write_fastq_gz(path, reads, idx):
-    """Stream FASTQ records straight into gzip (never materialize the whole file as one string — at
-    cohort scale that is hundreds of MB per file). `idx` selects the R1 (1) or R2 (2) column of each
-    read tuple [name, r1, r2, lane]."""
+    """Stream FASTQ records straight into gzip -- at cohort scale one string is hundreds of MB per file.
+        `idx` selects the R1 (1) or R2 (2) column of each read tuple [name, r1, r2, lane]."""
     with open(path, "wb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", mtime=0, compresslevel=GZIP_LEVEL) as gz:
         for r in reads:
             gz.write(fq_record(r[0], r[idx]).encode())

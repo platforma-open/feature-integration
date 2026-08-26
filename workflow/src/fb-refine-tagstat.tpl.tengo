@@ -6,13 +6,12 @@
 //   - matched > 0  -> the normal chain: refine-tags (fb-refine), then tag-stat (fb-tagstat).
 //   - matched == 0 -> mitool wrote no parsed.mic, and fb-parse pre-wrote an empty placeholder, so refine and
 //                     tag-stat would crash on it. Skip both and return the header-only tag-stat TSV and
-//                     empty refine report the gate synthesized. The downstream Python is empty-safe, so the
-//                     sample completes with zero cells instead of failing the whole block.
+//                     empty refine report the gate synthesized. The downstream Python is empty-safe.
+//
 // It also assembles the per-sample step-report map of the parse, refine and tag-stat output files, keyed by
 // an ordinal step axis. These files are deterministic, so surfacing them is CID-safe. The model reads only
-// their PRESENCE to derive which step a sample has reached (see the model's sampleStep), and a report
-// appears once its step finishes. A no-match sample still gets all three -- parse's real report plus the
-// gate's empty refine report and header-only tag-stat -- so it advances to Done like any other sample.
+// their PRESENCE, and a report appears once its step finishes. A no-match sample still gets all three, so
+// it advances to Done like any other sample.
 //
 // Also runs a raw FEATURE tag-stat on the pre-refine parsedMic (rawFeatureCounts), gated the same way: on
 // no-match it returns the gate's header-only tagstat_empty.tsv, which already carries the FEATURE and
@@ -30,8 +29,8 @@ json := import("json")
 fbRefineTpl := assets.importTemplate(":fb-refine")
 fbTagstatTpl := assets.importTemplate(":fb-tagstat")
 
-// For the raw (pre-refine) FEATURE tag-stat below. refine-tags and tag-stat -u run inside
-// fb-refine and fb-tagstat; this step is deterministic and unstreamed, so it runs directly here.
+// For the raw (pre-refine) FEATURE tag-stat below. This step is deterministic and unstreamed, so it runs
+// directly here rather than in its own render boundary.
 mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
 
 self.defineOutputs("tagstatTsv", "refineReport", "stepReports", "stepLogs", "rawFeatureCounts")
@@ -43,16 +42,14 @@ self.body(func(inputs) {
 
 	if !shouldContinue {
 		// No-match branch: use the gate's header-only tag-stat and empty refine report, since refine and
-		// tag-stat never ran. The step-report map carries parse's real report plus those fallbacks. Reports
-		// are exported through file.exportFile, so each map value is a downloadable Blob the model can probe
-		// with getFileHandle. The model reads only their PRESENCE, never the content.
+		// tag-stat never ran. Reports are exported through file.exportFile, so each map value is a downloadable
+		// Blob the model can probe with getFileHandle. The model reads only their PRESENCE, never the content.
 		stepReports := pcolumn.resourceMapBuilder(1)
 		stepReports.add(["1-parse"], file.exportFile(inputs.parseReport))
 		stepReports.add(["2-refine"], file.exportFile(inputs.emptyRefineReport))
 		stepReports.add(["3-tagstat"], file.exportFile(inputs.emptyTagstat))
 		// Only the parse step ran, so only its log stream exists. A variable key set is expected, and the UI
-		// shows nothing for the absent steps, mirroring peptide's empty branch. parse still streamed, so the
-		// sample gets a live parse log and progress.
+		// shows nothing for the absent steps.
 		stepLogs := pcolumn.resourceMapBuilder(1)
 		stepLogs.add(["1-parse"], inputs.parseLogStream)
 		return {
@@ -60,9 +57,9 @@ self.body(func(inputs) {
 			refineReport: inputs.emptyRefineReport,
 			stepReports: stepReports.build(),
 			stepLogs: stepLogs.build(),
-			// emptyTagstat is header-only (CELL FEATURE count totalWeight unique_UMI): no data
-			// rows, so its extra columns are harmless, and it carries the FEATURE and
-			// totalWeight columns a reader of rawFeatureCounts needs.
+			// emptyTagstat is header-only (CELL FEATURE count totalWeight unique_UMI): no data rows, so its
+			// extra columns are harmless, and it carries the FEATURE and totalWeight columns a reader of
+			// rawFeatureCounts needs.
 			rawFeatureCounts: inputs.emptyTagstat
 		}
 	}
@@ -85,18 +82,14 @@ self.body(func(inputs) {
 		mitoolCPUs: inputs.mitoolCPUs
 	})
 
-	// Raw FEATURE tag-stat on the PRE-refine parsedMic, so a sequence the panel never
-	// declared still shows up (refine-tags has not yet snapped it onto the panel or
-	// dropped it). No -u: the streaming TagStatsAggregator, one entry per distinct
-	// observed FEATURE value, rather than -u's on-disk hierarchical sort. Output columns:
-	// FEATURE, count, totalWeight.
+	// Raw FEATURE tag-stat on the PRE-refine parsedMic, so a sequence the panel never declared still shows
+	// up. No -u: the streaming TagStatsAggregator, one entry per distinct observed FEATURE value, rather
+	// than -u's on-disk hierarchical sort. Output columns: FEATURE, count, totalWeight.
 	//
-	// Measured on a generated 4.26M-read run with a 6-tag panel: 94 distinct FEATURE barcodes
-	// observed pre-refine, peak RSS ~489 MB for this step at -Xmx4g. The aggregator holds one
-	// entry per distinct observed barcode, so its memory scales with sequencing-error diversity
-	// rather than with panel size. Generated reads carry a simpler error model than a
-	// sequencer's, so this count is a lower bound on what real data produces; the formula is
-	// unvalidated against a real run or a large panel.
+	// Measured on a generated 4.26M-read run with a 6-tag panel: 94 distinct FEATURE barcodes observed
+	// pre-refine, peak RSS ~489 MB at -Xmx4g. Memory scales with sequencing-error diversity rather than
+	// with panel size. Generated reads carry a simpler error model than a sequencer's, so this is a lower
+	// bound; the formula is unvalidated against a real run or a large panel.
 	rawFeatureBaseGB := 4
 	formula := exec.formula
 	rawFeatureMemFormula := formula.gib(rawFeatureBaseGB).
@@ -118,8 +111,8 @@ self.body(func(inputs) {
 	stepReports.add(["3-tagstat"], file.exportFile(tagStatRun.output("tagstatTsv")))
 
 	// Per-step live stdout streams, on the same [step] axis as stepReports. The model exposes these as
-	// per-step log handles (PlLogView) and scrapes parse's for a live % (see fb-parse.tpl.tengo). The Python
-	// per-cell-metrics step (fb-downstream) is surfaced separately as the metrics log.
+	// per-step log handles (PlLogView) and scrapes parse's for a live %. The Python per-cell-metrics step is
+	// surfaced separately as the metrics log.
 	stepLogs := pcolumn.resourceMapBuilder(1)
 	stepLogs.add(["1-parse"], inputs.parseLogStream)
 	stepLogs.add(["2-refine"], refineRun.output("refineLogStream"))

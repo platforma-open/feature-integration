@@ -5,9 +5,8 @@ VDJ arms, so import-sc-rnaseq-data -> pl7.app/rna-seq/countMatrix feeds the OPTI
 vdj-multiomic-integration and cell-type-annotation (CellTypist).
 
 Coherence: each cell's expression program follows its planted antigen class, from the antigen arm's
-expected-consensus.tsv. Clear-binder cells get a plasmablast/plasma program, with
-MZB1/XBP1/PRDM1/CD38/TNFRSF17 high. Ambiguous cells get a naive-B program, with TCL1A/IGHD/IGHM high.
-All cells are B lineage, since this is a CD19-sorted BEAM experiment.
+expected-consensus.tsv. Clear-binder cells get a plasmablast/plasma program; ambiguous cells get a
+naive-B program. All cells are B lineage, since this is a CD19-sorted BEAM experiment.
 
 Format, verified against import-sc-rnaseq-data: genes-in-rows CSV. The first column is real human
 Ensembl IDs (`^ENSG\\d{11}$` -> species=human, gene-format=Ensembl auto-detected), the header is
@@ -132,8 +131,8 @@ def build(tags_csv, consensus_tsv, out_dir, truth_dir, annot_csv, n_filler=1000,
     clear = load_clear_antigens(tags_csv)
     by_donor = read_cell_classes(consensus_tsv, clear)
 
-    # Keep the gene count strictly above the largest per-donor cell count so import-sc-rnaseq-data
-    # detects genes-in-rows (see the module docstring / the transpose guard).
+    # Keep the gene count strictly above the largest per-donor cell count so import-sc-rnaseq-data detects
+    # genes-in-rows (see the module docstring).
     max_cells = max((len(cells) for cells in by_donor.values()), default=0)
     n_filler = max(n_filler, max_cells + 200)
 

@@ -6,9 +6,8 @@
 //
 // Resolution is capped by the source: the caller's `nBins` must not exceed `weights.length`.
 //
-// Empty bins are skipped, so the reconstructed range spans the first and last bin that hold anything.
-// `createHistogramLinear` takes its domain from the values it is given, and an empty leading bin would
-// otherwise widen the axis past any observation.
+// Empty bins are skipped. `createHistogramLinear` takes its domain from the values it is given, and an
+// empty leading bin would otherwise widen the axis past any observation.
 export function valuesFromBins(edges: number[], weights: number[]): number[] {
   const out: number[] = [];
   for (let i = 0; i < weights.length; i++) {

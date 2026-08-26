@@ -4,36 +4,29 @@ import type { CSSProperties } from "vue";
  * The punchcard's marks, in one place.
  *
  * The cell renderer and the legend both paint from this map, so the legend cannot describe a colour the card
- * does not draw. Two hand-maintained copies is the ordinary way a legend goes wrong, and it is invisible
- * when it does: both halves look deliberate, and only a reader comparing them closely would notice that the
- * swatch and the cell disagree.
+ * does not draw.
  *
  * Styles are inline values rather than CSS classes because these are consumed inside an ag-grid cell
  * renderer, which is instantiated outside Vue's scope-id context: a scoped stylesheet emits every rule with
  * a `[data-v-...]` attribute the rendered elements do not carry, so not one rule matches and the card paints
- * blank. That is not hypothetical -- it shipped, and the card was reported as empty.
+ * blank.
  */
 export type PunchGlyph = "bound" | "not-bound" | "unreliable" | "unknown";
 
 /**
  * One diameter for every mark on the card.
  *
- * The card used to size bound and not-bound by how many of a clonotype's cells answered, on the reading that
- * a verdict resting on three cells must not look like one resting on forty. The obligation behind that is
- * `support-travels-with-the-reading`, and it is a delivery obligation: it fixes that the scientist is HANDED
- * the two counts, not that a dot encode them. They are handed over twice already -- in the per-cell tooltip,
- * and as columns in the clonotype expansion -- so the card is free to be a field of flat colour, which is
- * what it is actually read as at panel density.
+ * The card used to size bound and not-bound by how many of a clonotype's cells answered. The scientist is
+ * handed the two counts twice already -- in the per-cell tooltip, and as columns in the clonotype expansion
+ * -- so the card is free to be a field of flat colour, which is what it is read as at panel density.
  */
 export const PUNCH_DIAMETER_PX = 22;
 
 /**
  * The legend's swatches, smaller than the card's marks on purpose.
  *
- * Two numbers rather than one is safe here for the reason the encoding was removed: a diameter carries no
- * meaning any more, so a swatch drawn at a different size cannot misreport anything -- it is an example of a
- * COLOUR, at the scale a line of text wants. While the card sized its dots by evidence this would have been
- * a real hazard, because the swatch would have been read as one particular amount of support.
+ * A diameter carries no meaning any more, so a swatch drawn at a different size cannot misreport anything.
+ * While the card sized its dots by evidence this would have been a real hazard.
  */
 export const PUNCH_LEGEND_DIAMETER_PX = 11;
 
@@ -46,16 +39,14 @@ export const PUNCH_PAINT: Record<PunchGlyph, CSSProperties> = {
   unknown: { border: "1.5px dotted #d94438", opacity: "0.7" },
 };
 
-// ONE decoder for the punch value, shared by the grid cell and the clonotype expansion. The value is a single
-// `|`-joined string because a grid pairs a cell with another column's cell only by position, and no import
-// guarantees that, so everything a position needs travels together. Two readers of one format would be two
-// chances to disagree about it, which is why this lives here rather than in a component.
+// ONE decoder for the punch value, shared by the grid cell and the clonotype expansion. The value is a
+// single `|`-joined string because a grid pairs a cell with another column's cell only by position, and no
+// import guarantees that, so everything a position needs travels together.
 //
 //   state | cellsAnswered | cellsCouldAnswer | agreement | unreliableReason | cellsBound
 //
 // `cellsBound` is the sixth field and was appended, so a value written before it existed has five and still
-// decodes. Anything that does not decode is reported as such rather than guessed at: an unreadable value must
-// never pass for an answer.
+// decodes. Anything that does not decode is reported as such rather than guessed at.
 export const VERDICT_STATES = ["bound", "not bound", "unreliable", "never asked"] as const;
 export type VerdictState = (typeof VERDICT_STATES)[number];
 

@@ -26,7 +26,7 @@ from .common import BASES, CELL_LEN, FEAT_LEN, UMI_LEN, new_rng
 SEED = 6496
 
 # Real 10x / TotalSeq-style 15-mers (designed min Hamming distance >= 3). bcSpikeB + the off-panel junk
-# barcodes are generated with an explicit distance filter so the design guarantees hold.
+# barcodes are generated with an explicit distance filter.
 PANEL_SEQ = {
     "bcSpikeA": "CGATGCCGGACGATC",
     "bcRSVF": "CCGTCTCACCGATAT",

@@ -141,14 +141,14 @@ def test_columns_are_overridable(tmp_path):
     (600, 50, 29.4968614580),
 ])
 def test_specificity_score_matches_the_block(count, reference, expected):
-    """The bed's standard-library score against the values scipy gives for the block's own formula.
-    They have to agree, or the verdict simulation predicts a different run than the block produces."""
+    """The bed's standard-library score against the values scipy gives for the block's own formula. They
+        have to agree, or the verdict simulation predicts a different run than the block produces."""
     assert realpanel.specificity_score(count, reference) == pytest.approx(expected, rel=1e-9)
 
 
 def test_the_line_sits_where_the_tiers_assume(tmp_path):
-    """`medium` is 60-200 UMIs because the line against a comparator of ~5 is ~120. If that moves, the
-    tier stops straddling anything and the bed silently loses its borderline cells."""
+    """`medium` is 60-200 UMIs because the line against a comparator of ~5 is ~120. If that moves, the tier
+        stops straddling anything and the bed silently loses its borderline cells."""
     below = realpanel.specificity_score(60, 5)
     above = realpanel.specificity_score(200, 5)
     assert below < realpanel.CUTOFF < above
@@ -186,8 +186,8 @@ def test_every_tier_a_sample_can_support_is_present(panel_csv, tmp_path):
 
 
 def test_no_negative_control_is_planted(panel_csv, tmp_path):
-    """A real role column declares no comparator, so the run must not invent one — otherwise the
-    declared-reference path is exercised and the panel-reference path never is."""
+    """A real role column declares no comparator, so the run must not invent one -- otherwise the
+        declared-reference path is exercised and the panel-reference path never is."""
     out = tmp_path / "run"
     assert run_generator(panel_csv, out).returncode == 0
     with open(out / "truth" / "expected-abundance.tsv", newline="") as fh:
@@ -237,7 +237,7 @@ def test_offset_zero_moves_the_feature_to_the_front_of_r2(panel_csv, tmp_path):
 
 def test_sample_metadata_names_exactly_the_panels_samples(panel_csv, tmp_path):
     """Samples & Data joins metadata on the sample name. A row for a sample that is not in the run, or a
-    sample with no row, means a grouping column that silently covers part of the run."""
+        sample with no row, means a grouping column that silently covers part of the run."""
     out = tmp_path / "run"
     assert run_generator(panel_csv, out).returncode == 0
     with open(out / "samples-metadata.tsv", newline="") as fh:
@@ -247,8 +247,8 @@ def test_sample_metadata_names_exactly_the_panels_samples(panel_csv, tmp_path):
 
 
 def test_metadata_carries_the_per_sample_panel_shape(panel_csv, tmp_path):
-    """PanelMembers / PanelTargets are the two metadata columns that are read from the panel rather than
-    invented, and the per-sample difference is what makes *never asked* reachable."""
+    """PanelMembers / PanelTargets are the two metadata columns read from the panel rather than invented, and
+        the per-sample difference is what makes *never asked* reachable."""
     out = tmp_path / "run"
     assert run_generator(panel_csv, out).returncode == 0
     with open(out / "samples-metadata.tsv", newline="") as fh:
@@ -288,9 +288,8 @@ def test_arm_vdj_without_an_antigen_arm_says_so(panel_csv, tmp_path):
 
 def test_most_cells_sit_in_expanded_clones(panel_csv, tmp_path):
     """The shape that matters for an antibody-discovery bed: a clonotype's verdict must usually rest on
-    SEVERAL cells. Asserted on the share of CELLS in clones of >= 10, not on the share of clonotypes.
-    Singletons are legitimately a large share of clonotypes and a small share of cells, and confusing
-    the two is what produced a 97%-singleton repertoire in the first place."""
+        SEVERAL cells. Asserted on the share of CELLS in clones of >= 10, not on the share of clonotypes.
+        Singletons are legitimately a large share of clonotypes and a small share of cells."""
     out = tmp_path / "run"
     assert run_generator(panel_csv, out).returncode == 0
     with open(out / "truth" / "truth_clonotypes.csv", newline="") as fh:
@@ -314,7 +313,7 @@ def test_clone_size_knobs_move_the_distribution(panel_csv, tmp_path):
 
 def test_crossreactive_cells_form_clones_not_singletons(panel_csv, tmp_path):
     """A cross-reactive clonotype is a real lead. If those cells are all singletons, no clonotype is ever
-    cross-reactive with more than one cell agreeing, and the two-identity case is untestable."""
+        cross-reactive with more than one cell agreeing, and the two-identity case is untestable."""
     out = tmp_path / "run"
     assert run_generator(panel_csv, out).returncode == 0
     with open(out / "truth" / "truth_clonotypes.csv", newline="") as fh:
@@ -339,9 +338,9 @@ def test_clone_sizes_account_for_every_cell():
 # --- regimes -------------------------------------------------------------------------------------
 #
 # Two measured calibrations exist and they disagree by more than an order of magnitude. `deep` is the
-# public 10x BEAM shape, and `shallow` stands in for real in-vivo BEAM libraries. The contract these
-# tests hold is that `deep` is unchanged by the existence of `shallow`, and that `shallow` actually lands
-# in the regime it claims rather than merely running.
+# public 10x BEAM shape, and `shallow` stands in for real in-vivo BEAM libraries. These tests hold that
+# `deep` is unchanged by the existence of `shallow`, and that `shallow` actually lands in the regime it
+# claims rather than merely running.
 
 NARROW_ROWS = [
     ("grp1", SEQ["a"], "Ag Alpha"),
@@ -368,8 +367,7 @@ def narrow_panel_csv(tmp_path):
 def test_regime_tables_are_complete():
     """Every regime supplies every key the builder reads, and both tier tables use the same tier names.
 
-    The tier NAMES are shared on purpose: the truth tables, the validator and RUN.md all key off them,
-    so a regime that renamed a tier would break those silently rather than loudly."""
+        The tier NAMES are shared on purpose: the truth tables, the validator and RUN.md all key off them."""
     keys = set(realpanel.REGIMES["deep"])
     for name, spec in realpanel.REGIMES.items():
         assert set(spec) == keys, f"{name} has {set(spec) ^ keys} against deep"
@@ -383,8 +381,8 @@ def test_regime_tables_are_complete():
 def test_shallow_magnitudes_are_ordered_below_deep():
     """Signal ordering holds within a regime, and shallow sits strictly under deep.
 
-    Ordering is what the shallow validator asserts instead of absolute bound rates, so if the
-    magnitudes ever stop descending the validator's monotonicity check becomes vacuous."""
+        Ordering is what the shallow validator asserts instead of absolute bound rates, so if the magnitudes
+        ever stop descending the validator's monotonicity check becomes vacuous."""
     for spec in realpanel.REGIMES.values():
         ladder = [spec["magnitudes"][t] for t in ("strong", "good", "medium", "weak", "noise")]
         for (lo, _hi), (nlo, _nhi) in zip(ladder, ladder[1:]):
@@ -394,8 +392,8 @@ def test_shallow_magnitudes_are_ordered_below_deep():
 
 
 def test_deep_regime_is_the_default(panel_csv, tmp_path):
-    """The default path must not acquire the shallow regime's behaviours by accident: no aggregates, no
-    sized barcode universe, and the original duplication draw."""
+    """The default path must not acquire the shallow regime's behaviours by accident: no aggregates, no sized
+        barcode universe, and the original duplication draw."""
     r = realpanel.REGIMES["deep"]
     assert r["aggregates"] == 0 and r["ambient_barcode_ratio"] == 0.0
     assert r["dup_mean"] is None
@@ -407,8 +405,8 @@ def test_deep_regime_is_the_default(panel_csv, tmp_path):
 
 
 def test_shallow_run_lands_in_the_measured_regime(panel_csv, tmp_path):
-    """A shallow run reproduces the shape real in-vivo data actually shows, checked from the truth tables
-    rather than from the log line."""
+    """A shallow run reproduces the shape real in-vivo data shows, checked from the truth tables rather than
+        from the log line."""
     out = run_generator(panel_csv, tmp_path / "run", "--regime", "shallow")
     assert out.returncode == 0, out.stdout + out.stderr
     assert "[validate]" in out.stdout and "FAIL" not in out.stdout, out.stdout
@@ -432,7 +430,7 @@ def test_shallow_run_lands_in_the_measured_regime(panel_csv, tmp_path):
 
 def test_shallow_tail_cycle_beats_the_deep_floor():
     """TAIL_CYCLE averages 1.47 cells per clonotype and is a floor no parameter setting gets under. The
-    sparse cycle is why the shallow regime can reach 1.05."""
+        sparse cycle is why the shallow regime can reach 1.05."""
     from lib import vdj
     assert sum(vdj.TAIL_CYCLE) / len(vdj.TAIL_CYCLE) > 1.4
     sparse = sum(vdj.TAIL_CYCLE_SPARSE) / len(vdj.TAIL_CYCLE_SPARSE)
@@ -449,9 +447,9 @@ def test_narrow_shape_is_detected_and_wide_still_is(panel_csv, narrow_panel_csv)
 
 
 def test_narrow_panel_infers_role_from_the_antigen_name(narrow_panel_csv):
-    """A narrow panel declares no role column, so role has to come from the name. Getting this wrong in
-    the permissive direction is the dangerous one: a target mistaken for a comparator moves the line
-    every reading in the sample is judged against."""
+    """A narrow panel declares no role column, so role has to come from the name. Getting this wrong in the
+        permissive direction is the dangerous one: a target mistaken for a comparator moves the line every
+        reading in the sample is judged against."""
     panels = realpanel.load_panel(str(narrow_panel_csv))
     grp1 = panels["grp1"]
     assert set(grp1.targets) == {"Ag Alpha", "Ag Alpha Var"}
