@@ -1274,7 +1274,7 @@ def test_a_reading_from_a_sample_that_never_offered_it_is_not_a_vote(bed):
     # One bound and one not-bound among the two cells that were actually asked.
     assert row["state"] == "unreliable"
     assert row["unreliableReason"] == "tie"
-    assert (row["cellsCouldAnswer"], row["cellsAnswered"]) == ("2", "2")
+    assert (row["cellsAsked"], row["cellsAnswered"]) == ("2", "2")
 
 
 def test_every_asked_cell_reading_still_counts_when_both_samples_offered_it(bed):
@@ -1296,7 +1296,7 @@ def test_every_asked_cell_reading_still_counts_when_both_samples_offered_it(bed)
         .filter(pl.col("identity") == "XXXX")
         .row(0, named=True)
     )
-    assert (row["cellsCouldAnswer"], row["cellsAnswered"]) == ("3", "3")
+    assert (row["cellsAsked"], row["cellsAnswered"]) == ("3", "3")
     assert row["state"] == "bound"  # two bound against one silent
 
 
@@ -1623,7 +1623,7 @@ def _states_prefix(bed, prefix):
 # --- the punchcard's pivot ---------------------------------------------------------
 #
 # All of these run against the COMMITTED bed rather than the small inline one, and that is
-# load-bearing. On the inline bed every row has cellsAnswered == cellsCouldAnswer and the panel yields
+# load-bearing. On the inline bed every row has cellsAnswered == cellsAsked and the panel yields
 # a single identity, so swapping the two counts and shuffling the column order are both invisible.
 #
 # Verified by mutation: swapping the two counts, dropping the state from the value, and changing the
@@ -1646,7 +1646,7 @@ def test_punch_bed_can_tell_the_two_counts_apart(wide_bed):
     # the two counts is undetectable and the agreement test below passes while the punch draws the wrong
     # size everywhere.
     verdicts, punch = _punch_bed(wide_bed)
-    differing = verdicts.filter(pl.col("cellsAnswered") != pl.col("cellsCouldAnswer"))
+    differing = verdicts.filter(pl.col("cellsAnswered") != pl.col("cellsAsked"))
     assert differing.height > 0, "bed no longer distinguishes answered from could-answer"
     assert len([c for c in punch.columns if c != "setId"]) > 1, "bed no longer has several identities"
 
@@ -1664,7 +1664,7 @@ def test_punch_pivot_agrees_with_the_long_verdicts(wide_bed):
             [
                 r["state"],
                 r["cellsAnswered"],
-                r["cellsCouldAnswer"],
+                r["cellsAsked"],
                 r["agreement"] or "",
                 r["unreliableReason"] or "",
                 r["cellsBound"],
@@ -2111,7 +2111,7 @@ def test_the_set_counts_carry_the_clonotype_cell_count(bed):
     # And it is not the answering count: that varies by identity, this one does not.
     verdicts = pl.read_csv(bed / "result_verdicts.csv", infer_schema_length=0)
     by_set = dict(zip(counts["setId"].to_list(), counts["cellCount"].to_list()))
-    for set_id, could in zip(verdicts["setId"].to_list(), verdicts["cellsCouldAnswer"].to_list()):
+    for set_id, could in zip(verdicts["setId"].to_list(), verdicts["cellsAsked"].to_list()):
         assert int(could) <= int(by_set[set_id]), "a set cannot answer with more cells than it has"
 
 

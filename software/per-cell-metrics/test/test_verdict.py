@@ -8,6 +8,7 @@ from verdict import (
     BOUND_CUTOFF,
     DEFAULT_FLOOR,
     DEFAULT_PANEL_MIN_MEMBERS,
+    DISTRIBUTION_BOUND_PROBABILITY,
     Admissibility,
     ReferenceChoice,
     State,
@@ -412,6 +413,42 @@ def test_cutoff_is_seventy_five():
 def test_high_count_against_a_quiet_reference_is_bound():
     out = read_states(_ident([("S1", "c1", "A", 200)]), Admissibility({("S1", "c1"): 0}, set()), 75.0)
     assert out["state"].to_list() == [State.BOUND.value]
+
+
+def _fitted(rows, probabilities):
+    """A one-cell identity frame read under the fitted rung, whose comparator is a probability."""
+    return read_states(
+        _ident(rows),
+        Admissibility(reference={}, gated=set(), probabilities=probabilities),
+        BOUND_CUTOFF,
+    )
+
+
+def test_the_population_rung_binds_at_its_line_and_not_above_it():
+    # `what-plays-the-baseline` reads a cell bound "at 0.9 or above", so the line itself is inside. The
+    # declared rung has the same test at its cutoff; this rung had none, so `>=` and `>` read alike.
+    at_line = _fitted([("S1", "c1", "A", 7)], {("S1", "c1", "A"): DISTRIBUTION_BOUND_PROBABILITY})
+    assert at_line["state"].to_list() == [State.BOUND.value]
+
+
+def test_the_population_rung_does_not_bind_below_its_line():
+    # Pinned from BELOW as well as above. A probability just under the line must not read bound, or any
+    # value at or under 0.9 would serve as the line and nothing would say so.
+    just_below = _fitted([("S1", "c1", "A", 7)], {("S1", "c1", "A"): DISTRIBUTION_BOUND_PROBABILITY - 1e-9})
+    assert just_below["state"].to_list() == [State.NOT_BOUND.value]
+
+    # And a probability the line would admit if it were halved reads not bound too, so the line cannot
+    # quietly move down.
+    mid = _fitted([("S1", "c1", "A", 7)], {("S1", "c1", "A"): 0.6})
+    assert mid["state"].to_list() == [State.NOT_BOUND.value]
+
+
+def test_the_population_rung_leaves_a_position_it_fitted_nothing_for_unreliable():
+    # A missing key means the fit established NOTHING for that position, which is not the same fact as a
+    # low probability. Defaulting it to zero would read as "served, and found nothing".
+    out = _fitted([("S1", "c1", "A", 7)], {("S1", "c1", "B"): 0.99})
+    assert out["state"].to_list() == [State.UNRELIABLE.value]
+    assert out["unreliableReason"].to_list() == [UnreliableReason.NO_COMPARATOR.value]
 
 
 def test_zero_reads_not_bound_never_unreliable():

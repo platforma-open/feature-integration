@@ -487,13 +487,36 @@ servedDomain := func(served) {
 	}
 }
 
-// servedNotes: the floor and the cutoff, which stay ANNOTATIONS. They move where the line falls rather
-// than what a reading means, so a change to them must not fork column identity.
+// servedNotes: every parameter the reading was answered under, as ANNOTATIONS. They move where a line
+// falls rather than what a reading means, so a change to one must not fork column identity the way a
+// change of comparator does -- the comparator, the cell list and the grouping are in the DOMAIN for
+// exactly that reason.
+//
+// `parameter-set` requires every one of them to be recorded where its verdicts appear, so that a run
+// that lowered a number does not look like a run that did not. Two of the seven change WHICH verdicts
+// exist -- the gate and the agreement floor -- and two runs differing on them used to emit columns of
+// identical identity and identical annotations, with the record only in a block-local output that
+// labelling and lead selection never see.
 servedNotes := func(served) {
-	return {
+	notes := {
 		"pl7.app/antigen/countFloor": string(served.floor),
-		"pl7.app/antigen/boundCutoff": string(served.cutoff)
+		"pl7.app/antigen/boundCutoff": string(served.cutoff),
+		"pl7.app/antigen/minVotingCells": string(served.minVoters)
 	}
+	// Off means ABSENT, both here and on the command line. A note reading "0" would say the scientist
+	// set a floor of zero, which is a different claim from having set none.
+	if !is_undefined(served.minAgreement) && served.minAgreement != undefined {
+		notes["pl7.app/antigen/minAgreement"] = string(served.minAgreement)
+	}
+	if !is_undefined(served.gateThreshold) && served.gateThreshold != undefined {
+		notes["pl7.app/antigen/gateThreshold"] = string(served.gateThreshold)
+	}
+	// Only the rung that fits anything carries it. Under a declared baseline the number named no
+	// condition the run was subject to.
+	if served.referenceChoice == "distribution" {
+		notes["pl7.app/antigen/distributionMinCells"] = string(served.distributionMinCells)
+	}
+	return notes
 }
 
 // --- Verdicts: result_verdicts.csv, keyed (setId, identity) -----------------------------
@@ -531,20 +554,30 @@ verdictsImportSpec := func(setAxisSpec, identityAxisSpec, served) {
 					"pl7.app/description": "A statement left unsettled by a position the experiment never asked calls for a panel change; one left unsettled by a reading that did not survive calls for a re-run. A bare 'unreliable' cannot tell them apart."
 				})
 			}),
-			verdictCol("cellsCouldAnswer", "cellsCouldAnswer", {
-				name: "pl7.app/antigen/cellsCouldAnswer",
+			// The two sets `four-state-verdict` names, and they are NOT the same set. The cells a question
+			// was put to is a fact about the experiment; the cells that could answer is that set narrowed
+			// by what the data and the settings allow -- a gate that set a cell aside, or a baseline that
+			// could not be computed for it. With no gate declared and a comparator for every cell the two
+			// numbers agree, which is why carrying the first under the second's name went unnoticed.
+			verdictCol("cellsAsked", "cellsAsked", {
+				name: "pl7.app/antigen/cellsAsked",
 				valueType: "Int",
 				annotations: a(99000, true, {
-					"pl7.app/label": "Cells that could answer",
-					"pl7.app/min": "0"
+					"pl7.app/label": "Cells the question was put to",
+					"pl7.app/min": "0",
+					"pl7.app/description": "How many of this clonotype's cells sat in a sample whose panel offered this antigen and whose reads carried at least one of its tags. Cells a gate set aside, or with no baseline to read against, are in this number and did not vote."
 				})
 			}),
+			// The verdict rests on this one. Every cell that could answer DID -- a cell with nothing left
+			// votes not bound rather than abstaining -- so this and cellsBound are the split the verdict
+			// carries, and agreement is read off the pair against the state.
 			verdictCol("cellsAnswered", "cellsAnswered", {
 				name: "pl7.app/antigen/cellsAnswered",
 				valueType: "Int",
 				annotations: a(98000, true, {
-					"pl7.app/label": "Cells that answered",
-					"pl7.app/min": "0"
+					"pl7.app/label": "Cells that could answer",
+					"pl7.app/min": "0",
+					"pl7.app/description": "How many of this clonotype's cells could be read at this antigen, and therefore voted. The verdict is the majority among them, and the vote limit is applied to this number."
 				})
 			}),
 			// How many of the set's cells read BOUND here. A position where three of ten read bound and the
@@ -597,7 +630,9 @@ setCountsImportSpec := func(setAxisSpec, served) {
 	// `a` renders false as "optional": present in the table's column chooser, absent until a reader turns it
 	// on.
 	countCol := func(colName, name, label, order, visible, description) {
-		annotations := { "pl7.app/label": label, "pl7.app/min": "0" }
+		// The parameters ride here too. A count over the identities a clonotype settled moves with the
+		// gate and the agreement floor, since both decide whether a position settled at all.
+		annotations := maps.merge(servedNotes(served), { "pl7.app/label": label, "pl7.app/min": "0" })
 		if description != "" {
 			annotations["pl7.app/description"] = description
 		}
@@ -693,6 +728,25 @@ identityPivotColumns := func(identities, groupingId, served, colName, valueType,
 	// the middle one is true. PlAgDataTable renders the description annotation as the header tooltip, so the
 	// explanation travels with the column into both punch faces.
 	conflicts := is_undefined(served.identityNameConflicts) ? {} : served.identityNameConflicts
+
+	// `substituteSpecialCharacters` collapses every run of punctuation to a single "_", so `SARS-CoV-2`,
+	// `SARS CoV 2` and `SARS.CoV.2` all produce one id -- and the importer writes ids into a map with no
+	// duplicate check, so the second column overwrites the first and an antigen leaves the answer with no
+	// error raised anywhere. Under the shipped per-tag grouping the identities are barcodes and cannot
+	// collide; under a property grouping they are the scientist's own antigen names and can.
+	//
+	// Disambiguated by position in `identities`, which the run record writes sorted and which is fixed for
+	// the run, so the same data always produces the same id. That matters once these are
+	// content-addressed. The COLUMN stays the identity itself, since it names a header in the CSV.
+	ids := []
+	seen := {}
+	for identity in identities {
+		base := idPrefix + strings.substituteSpecialCharacters(identity)
+		taken := is_undefined(seen[base]) ? 0 : seen[base]
+		ids = append(ids, taken == 0 ? base : base + "__" + string(taken))
+		seen[base] = taken + 1
+	}
+
 	cols := []
 	for i, identity in identities {
 		note := {}
@@ -707,7 +761,7 @@ identityPivotColumns := func(identities, groupingId, served, colName, valueType,
 		}
 		cols = append(cols, {
 			column: identity,
-			id: idPrefix + strings.substituteSpecialCharacters(identity),
+			id: ids[i],
 			spec: {
 				name: colName,
 				valueType: valueType,
@@ -717,9 +771,13 @@ identityPivotColumns := func(identities, groupingId, served, colName, valueType,
 				}),
 				// `extra` last: a caller that sets a description for the whole family means it, and a
 				// per-identity note must not outrank it.
-				annotations: a(basePriority - i, visibility, maps.merge(maps.merge({
-					"pl7.app/label": is_undefined(labels[identity]) ? identity : labels[identity]
-				}, note), extra))
+				// The parameters the reading was answered under travel with every verdict wherever it
+				// appears, this pivot included. `extra` last: a caller that sets a description for the
+				// whole family means it, and a per-identity note must not outrank it.
+				annotations: a(basePriority - i, visibility, maps.merge(maps.merge(maps.merge(
+					servedNotes(served), {
+						"pl7.app/label": is_undefined(labels[identity]) ? identity : labels[identity]
+					}), note), extra))
 			}
 		})
 	}
@@ -755,7 +813,7 @@ identityPivotImportSpec := func(setAxisSpec, identities, groupingId, served, col
 // --- The punchcard's pivot: result_identity_punch.csv, keyed (setId) --------------------
 //
 // One column per identity whose value carries the state AND everything behind it, as
-// `state|answered|couldAnswer|agreement|reason`. The UI reads all five from the one cell: the state picks
+// `state|answered|asked|agreement|reason`. The UI reads all five from the one cell: the state picks
 // the punch's colour, the two counts its size, and all five its hover panel. `agreement` and `reason` are
 // empty where they do not apply. The field count is fixed at five, and a shorter value is not a valid
 // punch.

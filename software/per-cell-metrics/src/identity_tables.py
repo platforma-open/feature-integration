@@ -351,7 +351,7 @@ def _pivot_identity_summary(verdicts: pl.DataFrame, universe: set[str]) -> tuple
     a column per identity.
 
     The second frame is the readout's, and its cell carries everything a reader needs to ask "why is
-    this mark this colour": `state|answered|couldAnswer|agreement|reason|bound`. `agreement` and
+    this mark this colour": `state|answered|asked|agreement|reason|bound`. `agreement` and
     `reason` are empty where they do not apply. `bound` is last because it was appended, so a reader
     that destructures the first five fields positionally still decodes an older value.
 
@@ -379,7 +379,7 @@ def _pivot_identity_summary(verdicts: pl.DataFrame, universe: set[str]) -> tuple
             [
                 pl.col("state"),
                 pl.col("cellsAnswered").cast(pl.String).fill_null(""),
-                pl.col("cellsCouldAnswer").cast(pl.String).fill_null(""),
+                pl.col("cellsAsked").cast(pl.String).fill_null(""),
                 pl.col("agreement").cast(pl.String).fill_null(""),
                 pl.col("unreliableReason").cast(pl.String).fill_null(""),
                 # Sixth, and APPENDED rather than inserted, so a reader that destructures the first five

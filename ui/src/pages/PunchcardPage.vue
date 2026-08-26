@@ -130,7 +130,7 @@ const cellRendererSelector = (params: { colDef?: { context?: PunchColumnContext 
       // the header row at all.
       antigen: labelOf.value[identity] ?? identity,
       mergedNote: mergedNote(identity),
-      showCouldAnswer: panelsDiffer.value,
+      showAsked: panelsDiffer.value,
     },
   };
 };

@@ -30,7 +30,6 @@ DEFAULT_MIN_VOTERS = 1
 DEFAULT_MIN_AGREEMENT = None
 
 
-
 class SetUnreliableReason(str, Enum):
     """Why a set's verdict at one identity could not be settled, or why it was never asked.
     `verdict.UnreliableReason` answers "why can't this cell be compared". This answers "why can't
@@ -114,7 +113,7 @@ def combine_cells(
     for a cell no set lists is dropped, exactly as `silent_tally` drops such cells.
 
     `offered` is keyed by sample: a set's offered identities are the union over its member samples,
-    while `cellsCouldAnswer` still counts only members whose OWN sample offered that identity.
+    while `cellsAsked` still counts only members whose OWN sample offered that identity.
 
     `cells_by_set` gives each set's full membership, including the silent cells, which vote through
     `silent_tally`. It must be disjoint: a cell key may repeat within one set's list with no effect,
@@ -171,7 +170,7 @@ def combine_cells(
                         "setId": set_id,
                         "identity": identity,
                         "state": State.NEVER_ASKED.value,
-                        "cellsCouldAnswer": 0,
+                        "cellsAsked": 0,
                         "cellsAnswered": 0,
                         # No tally exists for a position never put to this clonotype. 0 is the honest count
                         # -- a null would ride into the punch value as an empty field.
@@ -201,7 +200,7 @@ def combine_cells(
                         "setId": set_id,
                         "identity": identity,
                         "state": State.UNRELIABLE.value,
-                        "cellsCouldAnswer": could,
+                        "cellsAsked": could,
                         "cellsAnswered": 0,
                         "cellsBound": 0,
                         "cellsNotBound": 0,
@@ -217,7 +216,7 @@ def combine_cells(
                         "setId": set_id,
                         "identity": identity,
                         "state": State.UNRELIABLE.value,
-                        "cellsCouldAnswer": could,
+                        "cellsAsked": could,
                         "cellsAnswered": answered,
                         "cellsBound": counts.get(State.BOUND.value, 0),
                         "cellsNotBound": counts.get(State.NOT_BOUND.value, 0),
@@ -239,7 +238,7 @@ def combine_cells(
                         "setId": set_id,
                         "identity": identity,
                         "state": State.UNRELIABLE.value,
-                        "cellsCouldAnswer": could,
+                        "cellsAsked": could,
                         "cellsAnswered": answered,
                         "cellsBound": counts.get(State.BOUND.value, 0),
                         "cellsNotBound": counts.get(State.NOT_BOUND.value, 0),
@@ -255,7 +254,7 @@ def combine_cells(
                         "setId": set_id,
                         "identity": identity,
                         "state": State.UNRELIABLE.value,
-                        "cellsCouldAnswer": could,
+                        "cellsAsked": could,
                         "cellsAnswered": answered,
                         "cellsBound": counts.get(State.BOUND.value, 0),
                         "cellsNotBound": counts.get(State.NOT_BOUND.value, 0),
@@ -270,7 +269,7 @@ def combine_cells(
                     "setId": set_id,
                     "identity": identity,
                     "state": top_state,
-                    "cellsCouldAnswer": could,
+                    "cellsAsked": could,
                     "cellsAnswered": answered,
                     # Read from the tally, never from `agreement`. `agreement` is top_count/answered --
                     # the MAJORITY's share -- and the majority is not always bound, so deriving a bound
@@ -291,7 +290,7 @@ def combine_cells(
             "setId": pl.String,
             "identity": pl.String,
             "state": pl.String,
-            "cellsCouldAnswer": pl.Int64,
+            "cellsAsked": pl.Int64,
             "cellsAnswered": pl.Int64,
             "cellsBound": pl.Int64,
             "cellsNotBound": pl.Int64,

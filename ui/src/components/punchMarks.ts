@@ -43,7 +43,7 @@ export const PUNCH_PAINT: Record<PunchGlyph, CSSProperties> = {
 // single `|`-joined string because a grid pairs a cell with another column's cell only by position, and no
 // import guarantees that, so everything a position needs travels together.
 //
-//   state | cellsAnswered | cellsCouldAnswer | agreement | unreliableReason | cellsBound
+//   state | cellsAnswered | cellsAsked | agreement | unreliableReason | cellsBound
 //
 // `cellsBound` is the sixth field and was appended, so a value written before it existed has five and still
 // decodes. Anything that does not decode is reported as such rather than guessed at.
@@ -55,7 +55,7 @@ export type Punch =
       kind: "read";
       state: VerdictState;
       answered: number;
-      couldAnswer: number;
+      asked: number;
       agreement?: number;
       reason?: string;
       bound?: number;
@@ -66,10 +66,10 @@ export function parsePunch(raw: unknown): Punch {
   if (typeof raw !== "string") return { kind: "unparsed" };
   const parts = raw.split("|");
   if (parts.length !== 5 && parts.length !== 6) return { kind: "unparsed" };
-  const [state, answered, couldAnswer, agreement, reason, bound] = parts;
+  const [state, answered, asked, agreement, reason, bound] = parts;
   const known = VERDICT_STATES.find((s) => s === state);
   const a = Number(answered);
-  const c = Number(couldAnswer);
+  const c = Number(asked);
   if (known === undefined || !Number.isFinite(a) || !Number.isFinite(c))
     return { kind: "unparsed" };
   // Empty is carried as absent rather than as zero. A settled verdict has no reason, a set nobody could ask
@@ -80,7 +80,7 @@ export function parsePunch(raw: unknown): Punch {
     kind: "read",
     state: known,
     answered: a,
-    couldAnswer: c,
+    asked: c,
     agreement: ag !== undefined && Number.isFinite(ag) ? ag : undefined,
     reason: reason === "" ? undefined : reason,
     bound: b !== undefined && Number.isFinite(b) ? b : undefined,

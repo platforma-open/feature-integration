@@ -47,6 +47,11 @@ self.body(func(inputs) {
 	combineColumn := is_undefined(inputs.combineColumn) ? "" : inputs.combineColumn
 	minUmi := is_undefined(inputs.minUmi) ? 1 : inputs.minUmi
 	cellWhitelist := inputs.cellWhitelist // "" = de-novo CELL correction, the default. Else a 10x built-in.
+	// Undefined where the scientist left the knob alone, and passed through as undefined: fb-downstream
+	// adds a flag only where one is set, so the exec's own argparse default stands.
+	aggregateBarcodeIqrMultiplier := inputs.aggregateBarcodeIqrMultiplier
+	aggregateBarcodeMinUmiThreshold := inputs.aggregateBarcodeMinUmiThreshold
+	aggregateBarcodeTopN := inputs.aggregateBarcodeTopN
 	memBaseGB := inputs.mitoolBaseMemGB
 
 	// mitool memory override (Advanced Settings), passed to the parse and refine sub-templates. 0 = no
@@ -199,7 +204,14 @@ self.body(func(inputs) {
 		barcodeSeqColumn: barcodeSeqColumn,
 		featureNameColumn: featureNameColumn,
 		combineColumn: combineColumn,
-		minUmi: minUmi
+		minUmi: minUmi,
+		// The aggregate-barcode knobs. fb-downstream adds each as a flag only where it is set, and
+		// qc_report.py's own argparse default applies otherwise. They reached this body through
+		// `extra` and stopped here, so every one of them was part of a per-sample body's identity --
+		// costing a full re-parse of every sample on a change -- while reaching no command line.
+		aggregateBarcodeIqrMultiplier: aggregateBarcodeIqrMultiplier,
+		aggregateBarcodeMinUmiThreshold: aggregateBarcodeMinUmiThreshold,
+		aggregateBarcodeTopN: aggregateBarcodeTopN
 	})
 
 	// The body must return exactly the defineOutputs set and no output may be undefined.

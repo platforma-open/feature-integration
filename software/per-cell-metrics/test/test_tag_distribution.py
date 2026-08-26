@@ -81,6 +81,14 @@ def test_a_sample_below_the_cell_condition_gets_no_fit():
     assert fit.reason == TOO_FEW_CELLS
 
 
+def test_a_sample_holding_exactly_the_cell_condition_fits():
+    # "at least 300 cells", so 300 is inside. The below-floor case uses 299 and the above-floor one 400,
+    # and nothing sat on the line itself -- so `<` and `<=` read the same across the whole suite.
+    counts = _mixture(DEFAULT_DISTRIBUTION_MIN_CELLS - 15, 2, 15, 300)
+    assert counts.size == DEFAULT_DISTRIBUTION_MIN_CELLS
+    assert fit_tag_probabilities(counts).reason is None
+
+
 def test_the_cell_condition_counts_cells_not_readings():
     # A mostly-silent tag over 400 cells clears the condition, though far fewer than 300 of them carry a
     # reading. The population the fit is taken over is the sample's cells.

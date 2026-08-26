@@ -186,7 +186,7 @@ def test_the_mutant_no_cell_bound_reads_not_bound_not_never_asked(epitope_bed):
 
     # Every one of the four cells was offered M4 and every one of them voted. A reading resting on the
     # four silences is what makes the failure a finding rather than an absence of data.
-    assert (int(m4["cellsCouldAnswer"]), int(m4["cellsAnswered"])) == (4, 4)
+    assert (int(m4["cellsAsked"]), int(m4["cellsAnswered"])) == (4, 4)
 
 
 def test_a_live_mutant_nothing_bound_is_still_reported_as_seen(epitope_bed):
@@ -216,7 +216,7 @@ def test_a_dead_reagent_reads_never_asked_not_a_confident_negative(dead_reagent_
 
     m4 = _row(dead_reagent_bed, "K1", "M4")
     assert m4["state"] == "never asked", "zero reads means nobody could answer, not that nobody bound"
-    assert int(m4["cellsCouldAnswer"]) == 0, "cells in a sample where the tag returned nothing do not vote"
+    assert int(m4["cellsAsked"]) == 0, "cells in a sample where the tag returned nothing do not vote"
 
     # And the reagent finding is still stated on its own row, for the reagent's sake rather than the
     # answer's.
@@ -289,7 +289,7 @@ def test_an_off_target_the_panel_omitted_is_present_and_reads_never_asked(off_ta
     unasked = _row(off_target_bed, "KA", "OFF3")
     assert unasked["state"] == "never asked"
     assert unasked["unreliableReason"] == "never-offered"
-    assert int(unasked["cellsCouldAnswer"]) == 0  # no cell of KA was ever offered OFF3
+    assert int(unasked["cellsAsked"]) == 0  # no cell of KA was ever offered OFF3
 
     # And the positions S1 did ask are settled, so the clonotype is unsettled by exactly one position.
     assert _row(off_target_bed, "KA", "TARGET")["state"] == "bound"
@@ -365,8 +365,8 @@ def test_a_reading_on_forty_cells_and_one_on_three_are_distinguishable(support_b
     thin = _row(support_bed, "K1", "AGB")
     assert deep["state"] == thin["state"] == "bound"
 
-    assert (int(deep["cellsCouldAnswer"]), int(deep["cellsAnswered"])) == (40, 40)
-    assert (int(thin["cellsCouldAnswer"]), int(thin["cellsAnswered"])) == (3, 3)
+    assert (int(deep["cellsAsked"]), int(deep["cellsAnswered"])) == (40, 40)
+    assert (int(thin["cellsAsked"]), int(thin["cellsAnswered"])) == (3, 3)
     assert int(deep["cellsAnswered"]) != int(thin["cellsAnswered"])
 
     # Agreement travels the same way: both readings are unanimous, and a reader has the figure rather than
@@ -416,7 +416,7 @@ def test_a_set_whose_every_cell_was_gated_reads_unreliable_and_never_not_bound(g
     assert gated["unreliableReason"] == "all-cells-gated"
     # The question was put to three cells and none of them could answer it. Reporting zero on both would
     # lose the distinction the state carries.
-    assert (int(gated["cellsCouldAnswer"]), int(gated["cellsAnswered"])) == (3, 0)
+    assert (int(gated["cellsAsked"]), int(gated["cellsAnswered"])) == (3, 0)
 
     # Same files, gate off: the identity binds outright. Without this the test would pass just as well
     # over a bed with no signal in it.

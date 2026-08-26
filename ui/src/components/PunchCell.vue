@@ -29,7 +29,7 @@ import { PUNCH_DIAMETER_PX, PUNCH_PAINT, parsePunch } from "./punchMarks";
 // There is deliberately no score and no binding level here. The tooltip explains a verdict by what it RESTS
 // on and never by how strongly anything bound.
 const props = defineProps<{
-  params: { value: unknown; antigen?: string; mergedNote?: string; showCouldAnswer?: boolean };
+  params: { value: unknown; antigen?: string; mergedNote?: string; showAsked?: boolean };
 }>();
 
 const punch = computed<Punch>(() => parsePunch(props.params.value));
@@ -100,14 +100,18 @@ const lines = computed<string[]>(() => {
   const out = props.params.antigen === undefined ? [] : [props.params.antigen];
   out.push(p.state.toUpperCase(), EXPLANATION[p.state]);
   if (p.state !== "never asked") {
-    // How many COULD answer is shown only where the run carried panels that differ, which is where it
-    // varies. Under one panel it is the clonotype's own cell count at every identity, already beside its
-    // name in the grid.
+    // Two different sets, and the pair is shown wherever they differ: a gate set cells aside, or no
+    // baseline could be computed for them. Also wherever the run carried panels that differ, where a
+    // clonotype's cells were asked different things. With neither in play the two agree, and the second
+    // number is the clonotype's own cell count, already beside its name in the grid.
     out.push(
-      props.params.showCouldAnswer
-        ? `${p.answered} of ${p.couldAnswer} cells answered`
-        : `${p.answered} cells answered`,
+      props.params.showAsked || p.asked !== p.answered
+        ? `${p.answered} of the ${p.asked} cells asked could answer`
+        : `${p.answered} cells could answer`,
     );
+    // Both numbers travel with the verdict wherever it appears, and this one is the vote itself. Without
+    // it a tie or a refused majority carries no split at all, since agreement is absent on those.
+    if (p.bound !== undefined) out.push(`${p.bound} of them read bound`);
     if (p.agreement !== undefined) out.push(`${Math.round(p.agreement * 100)}% of them agreed`);
   }
   if (p.reason !== undefined) out.push(WHY_UNSETTLED[p.reason] ?? p.reason);

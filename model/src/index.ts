@@ -712,6 +712,28 @@ export const platforma = BlockModelV3.create(dataModel)
     if (data.boundCutoff < 0 || data.boundCutoff > 100)
       throw new Error("The bound cutoff is a score between 0 and 100");
     if (data.minVotingCells < 1) throw new Error("At least one cell must vote");
+    // A majority is above half by construction, so a floor at or below half can never fire and the run
+    // would record an agreement limit that did nothing. The settings field starts just above 50%; this is
+    // the same line for a project stored before it existed, or written by another client.
+    if (
+      typeof data.minAgreement === "number" &&
+      data.minAgreement > 0 &&
+      (data.minAgreement <= 0.5 || data.minAgreement > 1)
+    )
+      throw new Error("The agreement floor is a share above 50% and at most 100%");
+    // The cell condition GATES the fitted rung rather than tuning it, so it is a real population size.
+    if (data.distributionMinCells < 1)
+      throw new Error("A fitted baseline needs at least one cell to be fitted over");
+    // The gate is a count of unique baseline counts. A stored fraction rounds to zero on projection,
+    // which reaches the workflow as "off" while the settings field still shows a number.
+    if (
+      typeof data.gateThreshold === "number" &&
+      data.gateThreshold > 0 &&
+      Math.round(data.gateThreshold) < 1
+    )
+      throw new Error(
+        "The admissibility gate is a count of unique baseline counts, so it is at least 1",
+      );
     // A baseline is required, and a run without one does not happen. Refused HERE, before the run reads
     // anything, because the chosen rung and the declared baseline tag are both properties of the settings.
     //
@@ -1408,7 +1430,7 @@ export const platforma = BlockModelV3.create(dataModel)
       const WANTED = [
         "pl7.app/label",
         "pl7.app/antigen/verdict",
-        ...(panelsDiffer ? ["pl7.app/antigen/cellsCouldAnswer"] : []),
+        ...(panelsDiffer ? ["pl7.app/antigen/cellsAsked"] : []),
         "pl7.app/antigen/cellsAnswered",
         "pl7.app/antigen/cellsBound",
       ];

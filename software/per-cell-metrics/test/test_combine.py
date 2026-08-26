@@ -83,7 +83,7 @@ def test_never_asked_comes_only_from_not_being_offered():
     )
     r = _row(out, "Z")
     assert r["state"] == NA
-    assert r["cellsCouldAnswer"] == 0
+    assert r["cellsAsked"] == 0
     assert r["unreliableReason"] == SetUnreliableReason.NEVER_OFFERED.value
 
 
@@ -106,15 +106,20 @@ def test_silent_cells_vote_an_antigen_every_cell_failed_still_reads_not_bound():
     r = _row(combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility), "A")
     assert r["state"] == N
     assert r["cellsAnswered"] == 5
-    assert r["cellsCouldAnswer"] == 5
+    assert r["cellsAsked"] == 5
     assert r["agreement"] == 1.0
 
 
-def test_unsettled_cells_do_not_vote_but_do_count_as_could_answer():
+def test_unsettled_cells_do_not_vote_but_were_still_asked():
+    # Two different sets. The question was put to three cells, and one of them could answer.
     df = _states([("S1", "c1", "A", B), ("S1", "c2", "A", U), ("S1", "c3", "A", U)])
     cells_by_set = {"s1": [("S1", "c1"), ("S1", "c2"), ("S1", "c3")]}
     r = _row(combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL), "A")
-    assert r["state"] == B and r["cellsAnswered"] == 1 and r["cellsCouldAnswer"] == 3
+    assert r["state"] == B and r["cellsAnswered"] == 1 and r["cellsAsked"] == 3
+    # Agreement is the share of the VOTING cells holding the state the verdict took, so the denominator
+    # is the one cell that could answer and not the three that were asked. This is the only row in the
+    # suite where the two differ, so it is the only place the denominator can be pinned at all.
+    assert r["agreement"] == 1.0
 
 
 def test_a_verdict_may_rest_on_one_cell_and_says_so():
@@ -197,7 +202,7 @@ def test_set_with_every_cell_set_aside_is_unreliable_through_the_real_pipeline()
     states = per_cell.select("sampleId", "cellId", "identity", "state")
     cells_by_set = {"s1": [("S1", "c1"), ("S1", "c2")]}
     r = _row(combine_cells(states, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility), "A")
-    assert r["state"] == U and r["cellsCouldAnswer"] == 2 and r["cellsAnswered"] == 0
+    assert r["state"] == U and r["cellsAsked"] == 2 and r["cellsAnswered"] == 0
     assert r["unreliableReason"] == SetUnreliableReason.ALL_CELLS_GATED.value
 
 
@@ -215,20 +220,20 @@ def test_all_cells_gated_is_not_reported_when_the_reason_mix_is_not_unanimous():
 
 def test_cellscouldanswer_is_not_a_row_count():
     # THE defect this reduction exists to fix. 40 cells. Only 3 have a row in `states`, the other 37 are
-    # silent and admissible. cellsCouldAnswer must reflect all 40 cells asked, never the 3 rows.
+    # silent and admissible. cellsAsked must reflect all 40 cells asked, never the 3 rows.
     explicit = [("S1", "c0", "A", B), ("S1", "c1", "A", B), ("S1", "c2", "A", N)]
     df = _states(explicit)
     members = [("S1", "c0"), ("S1", "c1"), ("S1", "c2")] + [("S1", f"s{i}") for i in range(37)]
     cells_by_set = {"s1": members}
     admissibility = Admissibility({k: 5 for k in members}, set())
     r = _row(combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility), "A")
-    assert r["cellsCouldAnswer"] == 40  # not 3
+    assert r["cellsAsked"] == 40  # not 3
     assert r["cellsAnswered"] == 40  # 2 explicit bound + 1 explicit not-bound + 37 silent not-bound
     assert r["state"] == N  # 38 not-bound votes beat 2 bound
 
 
 def test_a_set_spanning_two_panels_counts_only_the_asked_cells_and_does_not_inflate_silent_unreliable():
-    # S1 offers A, S2 offers B (not A). The set holds cells from both. For identity A: cellsCouldAnswer
+    # S1 offers A, S2 offers B (not A). The set holds cells from both. For identity A: cellsAsked
     # must count only S1's cells, and S2's gated cell must not inflate silentUnreliable at A.
     df = _states([])
     members = [("S1", "c1"), ("S1", "c2"), ("S2", "c3"), ("S2", "c4")]
@@ -239,12 +244,12 @@ def test_a_set_spanning_two_panels_counts_only_the_asked_cells_and_does_not_infl
     out = combine_cells(df, {"A", "B"}, {"S1": {"A"}, "S2": {"B"}}, cells_by_set, admissibility)
 
     row_a = _row(out, "A")
-    assert row_a["cellsCouldAnswer"] == 2  # only S1's two cells, not all four
+    assert row_a["cellsAsked"] == 2  # only S1's two cells, not all four
     assert row_a["state"] == N  # both S1 cells silent and admissible -> not bound
     assert row_a["cellsAnswered"] == 2
 
     row_b = _row(out, "B")
-    assert row_b["cellsCouldAnswer"] == 2  # only S2's two cells
+    assert row_b["cellsAsked"] == 2  # only S2's two cells
     # S2's gated cell counts against B (which S2 offers), and its silent not-bound cell (c4) settles.
     assert row_b["cellsAnswered"] == 1
     assert row_b["state"] == N
@@ -252,14 +257,14 @@ def test_a_set_spanning_two_panels_counts_only_the_asked_cells_and_does_not_infl
 
 def test_a_row_for_a_cell_no_set_lists_is_ignored():
     # A stray row for a cell absent from every set's membership must not vote: cellsAnswered must never
-    # exceed cellsCouldAnswer. Before the fix, a stray row counted toward the set it happened to name in a
+    # exceed cellsAsked. Before the fix, a stray row counted toward the set it happened to name in a
     # setId column. There is no such column now, only cells_by_set.
     df = _states([("S1", "c1", "A", B), ("S1", "stray", "A", B)])
     cells_by_set = {"s1": [("S1", "c1")]}
     r = _row(combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL), "A")
-    assert r["cellsCouldAnswer"] == 1
+    assert r["cellsAsked"] == 1
     assert r["cellsAnswered"] == 1
-    assert r["cellsAnswered"] <= r["cellsCouldAnswer"]
+    assert r["cellsAnswered"] <= r["cellsAsked"]
 
 
 def test_a_cell_in_two_sets_fails_naming_cells_by_set():
