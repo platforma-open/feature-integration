@@ -135,7 +135,7 @@ class ReferenceChoice(str, Enum):
     # cross three boundaries -- run-meta JSON, a p-column DOMAIN, a UI branch -- so prose here
     # would make rewording a sentence a breaking change. Display wording lives in the model's
     # `referenceSources` output. `UnreliableReason` does the opposite, since its value IS the
-    # prose and nothing branches on it. DECLARED reads against ONE tag; several is refused.
+    # prose and nothing branches on it. DECLARED reads against every declared tag, by the highest.
     DECLARED = "declared"
     PANEL = "panel"
     DISTRIBUTION = "distribution"
@@ -323,6 +323,11 @@ class State(str, Enum):
     NOT_BOUND = "not bound"
     NEVER_ASKED = "never asked"
     UNRELIABLE = "unreliable"
+
+
+# The two states a reading can settle on. A cell in neither made no comparison, so it is not evidence
+# about anything -- not about a clonotype's verdict, and not about how a tag agrees with its siblings.
+SETTLED = (State.BOUND.value, State.NOT_BOUND.value)
 
 
 class UnreliableReason(str, Enum):

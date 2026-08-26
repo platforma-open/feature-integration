@@ -145,7 +145,11 @@ def main() -> None:
     features = int(stat[args.feature_col].n_unique())
     total_umis = int(stat[args.umi_col].sum())
     per_cell = stat.group_by(args.cell_col).agg(pl.col(args.umi_col).sum().alias("u"))
-    median_umis = float(per_cell["u"].median()) if per_cell.height else 0.0
+    # Blank, never 0.0. `qc-status-and-rollup` renders a measurement the run could not supply the
+    # inputs for as its reason rather than as a number, and a blank and a zero are opposite
+    # findings: a sample whose reads never arrived would otherwise sit beside its neighbours
+    # reading a median of nothing, which is a library that failed rather than a library missing.
+    median_umis = float(per_cell["u"].median()) if per_cell.height else ""
     assigned = _refine_kept_fraction(args.refine_report, args.feature_col)
     # The same report's CELL step. It corrects each cell barcode against the chemistry's whitelist rather
     # than against the panel, so its kept share is the share of reads whose barcode the chemistry could
@@ -166,7 +170,7 @@ def main() -> None:
         "sampleId": args.sample_id,
         "readsTotal": total,
         "readsMatched": matched,
-        "matchedFraction": (matched / total) if total else 0.0,
+        "matchedFraction": (matched / total) if total else "",
         "cellsDetected": cells,
         "featuresDetected": features,
         "totalUniqueUmis": total_umis,

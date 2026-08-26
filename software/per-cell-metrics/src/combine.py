@@ -21,7 +21,7 @@ from __future__ import annotations
 from enum import Enum
 
 import polars as pl
-from verdict import Admissibility, State, UnreliableReason, _admissibility_reason, silent_tally
+from verdict import SETTLED, Admissibility, State, UnreliableReason, _admissibility_reason, silent_tally
 
 # Both limits default permissively, because the failure they would prevent is visible and the
 # failure they would cause is not. Requiring two voting cells would silently discard every
@@ -29,7 +29,6 @@ from verdict import Admissibility, State, UnreliableReason, _admissibility_reaso
 DEFAULT_MIN_VOTERS = 1
 DEFAULT_MIN_AGREEMENT = None
 
-SETTLED = (State.BOUND.value, State.NOT_BOUND.value)
 
 
 class SetUnreliableReason(str, Enum):

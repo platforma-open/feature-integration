@@ -316,9 +316,11 @@ def test_a_panel_too_small_to_serve_still_falls_to_no_comparator(bed):
     assert "declares no baseline tag" in r.stderr
 
 
-def test_zero_cells_detected_alerts(bed):
-    # The categorical route: the alerting condition is a fact -- no cell barcode observed at all -- not a
-    # quantity with a published threshold.
+def test_zero_cells_detected_shows_its_number_and_carries_no_status(bed):
+    # Nothing published says how many cell barcodes a sample should carry, so no line stands behind this
+    # and it carries no status. `where-the-lines-come-from` keeps a categorical route open for an
+    # alerting condition that is a fact rather than a quantity, and says no measurement in the current
+    # set stands on it. The zero is shown as the zero it is, and the reader judges it.
     (bed / "qc.csv").write_text(
         "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
         "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction\n"
@@ -329,12 +331,13 @@ def test_zero_cells_detected_alerts(bed):
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
     row = qc.filter(pl.col("measurement") == "cellsDetected").row(0, named=True)
     assert row["value"] == "0.0"
-    assert row["status"] == "alert"
+    assert row["status"] is None
 
 
-def test_a_positive_cell_count_reads_ok_and_claims_nothing_about_yield(bed):
-    # Above zero, nothing here says the yield was good -- how many cells a sample should yield depends
-    # on the experiment, and no number for that is published.
+def test_a_positive_cell_count_claims_nothing_about_yield(bed):
+    # Nothing here says the yield was good OR bad -- how many cells a sample should yield depends on the
+    # experiment, and no number for that is published. An OK at one barcode was the costly half: it read
+    # as a sample checked and found sound.
     (bed / "qc.csv").write_text(
         "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
         "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction\n"
@@ -345,7 +348,7 @@ def test_a_positive_cell_count_reads_ok_and_claims_nothing_about_yield(bed):
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
     row = qc.filter(pl.col("measurement") == "cellsDetected").row(0, named=True)
     assert row["value"] == "1.0"
-    assert row["status"] == "OK"
+    assert row["status"] is None
 
     (bed / "qc.csv").write_text(
         "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
@@ -357,7 +360,7 @@ def test_a_positive_cell_count_reads_ok_and_claims_nothing_about_yield(bed):
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
     row = qc.filter(pl.col("measurement") == "cellsDetected").row(0, named=True)
     assert row["value"] == "50000.0"
-    assert row["status"] == "OK"
+    assert row["status"] is None
 
 
 def test_no_cell_list_leaves_membership_unknown_and_depth_unevaluated(bed):
@@ -2520,6 +2523,57 @@ def test_the_sticky_measurement_says_why_where_no_cell_carries_a_baseline_readin
         assert row["detail"] == "cellsWithAComparator=0"
 
 
+@pytest.fixture
+def ambient_bed(tmp_path, n_cells=3, n_ambient=300, cell_count=40):
+    """Three cells reading a tag properly, beside a crowd of ambient barcodes reading it once.
+
+    The shape every droplet run has: ambient reagent reaches most barcodes, so observed barcodes
+    outnumber cells by one to two orders of magnitude while carrying one or two counts each. Which of
+    those barcodes held a cell is an input, and the cell list carries it.
+    """
+    counts = ["sampleId,cellId,tag,umiCount"]
+    cells = ["sampleId,cellId"]
+    linker = ["sampleId,cellId,setId"]
+    for i in range(n_cells):
+        counts += [f"S1,c{i},AAAA,{cell_count}", f"S1,c{i},CTRL,6"]
+        cells.append(f"S1,c{i}")
+        linker.append(f"S1,c{i},K1")
+    counts += [f"S1,amb{i},AAAA,1" for i in range(n_ambient)]
+    (tmp_path / "counts.csv").write_text("\n".join(counts) + "\n")
+    (tmp_path / "cells.csv").write_text("\n".join(cells) + "\n")
+    (tmp_path / "linker.csv").write_text("\n".join(linker) + "\n")
+    (tmp_path / "panel.csv").write_text("Samples,Name,Sequence,Type\nS1,AgA,AAAA,Target\nS1,Ctrl,CTRL,Control\n")
+    return tmp_path
+
+
+def test_the_reagent_figures_count_cells_rather_than_observed_barcodes(ambient_bed):
+    # The reagent table's two count columns and its median are about CELLS. Taken over every observed
+    # barcode instead, ambient droplets set the median -- and a median below the minimum is how this
+    # table reports a reagent delivering under the level at which anything is credited, so every tag in
+    # the panel reads as a failed reagent.
+    _run(ambient_bed, *BASE, "--cells", "cells.csv")
+    qc = pl.read_csv(ambient_bed / "result_qc.csv", infer_schema_length=0)
+    row = qc.filter((pl.col("measurement") == "perAntigen") & (pl.col("entity") == "AAAA")).row(0, named=True)
+
+    assert "cellsWithCount=3" in row["detail"], row["detail"]
+    assert "medianCountPerCell=40.0" in row["detail"], row["detail"]
+    # And the figure says which list it was computed against, since two runs whose lists came from
+    # different sources do not share a denominator.
+    assert "cellList=cell list" in row["detail"], row["detail"]
+
+
+def test_the_reagent_figures_fall_back_to_the_linker_as_the_cell_list(ambient_bed):
+    # With no `--cells` the clonotype linker supplies the list, which is the narrower of the two sources
+    # and the ordinary case for this block. The figures are scoped to it and say so, so a reader can
+    # tell a run counted against one list from a run counted against the other.
+    _run(ambient_bed, *BASE)
+    qc = pl.read_csv(ambient_bed / "result_qc.csv", infer_schema_length=0)
+    row = qc.filter((pl.col("measurement") == "perAntigen") & (pl.col("entity") == "AAAA")).row(0, named=True)
+
+    assert "cellsWithCount=3" in row["detail"], row["detail"]
+    assert "cellList=clonotype linker" in row["detail"], row["detail"]
+
+
 def test_the_sticky_measurement_is_a_spread_when_no_gate_is_declared(bed):
     # The default, and therefore the first run every scientist sees. Where no threshold is declared there
     # is no *high* to count, and the measurement is the distribution of those readings instead -- which is
@@ -3278,16 +3332,16 @@ def test_qc_frame_carries_the_line_and_route_for_an_inherited_measurement():
     assert frame["route"] == "inherited"
 
 
-def test_qc_frame_leaves_the_numbers_null_for_the_categorical_route():
-    # cellsDetected carries a route -- its status is a fact, not a threshold -- but no numeric line:
-    # `route` is non-null while `lineWarn` and `lineAlert` stay null.
+def test_qc_frame_leaves_all_three_null_for_cells_detected():
+    # cellsDetected stood on the categorical route and was the only measurement that ever did. With it
+    # off, no route and no numbers back it, and the frame says so in all three columns.
     rows = []
     qc_rows._add(rows, "sample", "S1", "cellsDetected", 12.0)
     frame = qc_rows._qc_frame(rows).row(0, named=True)
 
     assert frame["lineWarn"] is None
     assert frame["lineAlert"] is None
-    assert frame["route"] == "categorical"
+    assert frame["route"] is None
 
 
 def test_qc_frame_leaves_all_three_null_where_no_line_backs_the_measurement():

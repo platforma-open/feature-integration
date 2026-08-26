@@ -23,6 +23,7 @@ from typing import NamedTuple
 
 import numpy as np
 import polars as pl
+from verdict import SETTLED
 
 
 # Three values and no fourth: a reader meeting five words in one column reads them as a scale.
@@ -149,20 +150,20 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "which points at the wrong whitelist or the wrong read geometry.",
         "inherited",
     ),
-    # The categorical route's first member. The alerting condition is a fact -- no cell barcode observed
-    # at all -- rather than a quantity with a published threshold. Computed in `qc_report.py` as the
-    # count of distinct cell barcodes the tag-stat table carries, before any cell-calling step.
+    # No line stands behind this, so it carries no status. `where-the-lines-come-from` keeps a
+    # categorical route open for an alerting condition that is a fact rather than a quantity, and says
+    # no measurement in the current set stands on it; a status here would be a line invented for the
+    # purpose, and its OK half would report a sample holding one barcode as checked and sound.
     #
-    # `implies` names only the zero case: nothing downstream can be computed for a sample with no cells.
-    # Above zero nothing is claimed, because how many cells a sample should yield depends on the
-    # experiment.
+    # Computed in `qc_report.py` as the count of distinct cell barcodes the tag-stat table carries,
+    # before any cell-calling step. It carries no `implies` either: where no line stands behind a
+    # measurement, nothing is said about what a bad value would mean, because nothing is known. How many
+    # cells a sample should yield depends on the experiment, and a zero shows as the zero it is.
     Measurement(
         "cellsDetected",
         "Cell barcodes detected",
         "sample",
         "Distinct cell barcodes in the tag-stat table, before any cell-calling step.",
-        "Zero cells means nothing downstream can be computed for this sample.",
-        "categorical",
     ),
     # Saturation is deliberately NOT measured. The vendor's own report carries it, and a scientist
     # cannot act on it for the run already collected; whether the run was deep enough is answered by
@@ -619,7 +620,14 @@ def sibling_disagreement(
                 rates[tag] = None
             continue
 
-        here = states.filter(pl.col("tag").is_in(members)).select("sampleId", "cellId", "tag", "state")
+        # SETTLED only. The rule is to put every tag of the identity in bound or not bound on its own
+        # count, and a cell with no comparator or one a gate set aside is in neither. Counting
+        # *unreliable* as a state lets it win a sibling majority, so a tag that fitted where its
+        # siblings did not reads as differing from all of them -- the panel's worst reagent by the
+        # measurement, and its only working one in fact.
+        here = states.filter(pl.col("tag").is_in(members) & pl.col("state").is_in(SETTLED)).select(
+            "sampleId", "cellId", "tag", "state"
+        )
         for tag in members:
             mine = here.filter(pl.col("tag") == tag).select("sampleId", "cellId", "state")
             counted = here.filter(pl.col("tag") != tag).group_by("sampleId", "cellId", "state").agg(pl.len().alias("n"))

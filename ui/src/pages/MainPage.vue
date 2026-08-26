@@ -911,8 +911,8 @@ const gridOptions = {
       >
         <template #tooltip>
           Empty means off, which is the default. Set it, in baseline unique counts, and the block
-          sets aside any cell whose baseline reading goes above this value. That cell gives no verdict
-          anywhere.<br /><br />
+          sets aside any cell whose baseline reading goes above this value. That cell gives no
+          verdict anywhere.<br /><br />
           Off matches Cell Ranger defaults. The cost is that a sticky cell stays in the set and
           returns a confident "not bound".
         </template>

@@ -86,7 +86,12 @@ describe("VERDICT_DEFAULTS matches verdict-args.lib.tengo and the Python that ow
     ["countFloor", "DEFAULT_COUNT_FLOOR", "verdict.py", "DEFAULT_FLOOR"],
     ["boundCutoff", "DEFAULT_BOUND_CUTOFF", "verdict.py", "BOUND_CUTOFF"],
     ["minVotingCells", "DEFAULT_MIN_VOTING_CELLS", "combine.py", "DEFAULT_MIN_VOTERS"],
-    ["panelReferenceMinMembers", "DEFAULT_PANEL_MIN_MEMBERS", "verdict.py", "DEFAULT_PANEL_MIN_MEMBERS"],
+    [
+      "panelReferenceMinMembers",
+      "DEFAULT_PANEL_MIN_MEMBERS",
+      "verdict.py",
+      "DEFAULT_PANEL_MIN_MEMBERS",
+    ],
     [
       "distributionMinCells",
       "DEFAULT_DISTRIBUTION_MIN_CELLS",

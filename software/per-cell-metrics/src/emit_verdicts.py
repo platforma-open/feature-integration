@@ -636,6 +636,19 @@ def main() -> None:
         schema={"sampleId": pl.String, "cellId": pl.String, "inCellList": pl.String},
     )
 
+    def _listed(frame: pl.DataFrame) -> pl.DataFrame:
+        """`frame` narrowed to the cell list, or unchanged where no list arrived.
+
+        The reagent table counts CELLS -- how many held any count of a tag, how many it called bound,
+        and the median over the cells holding one. Observed barcodes are not cells and outnumber them
+        by one to two orders of magnitude, because ambient reads land on most barcodes, so a median
+        taken over them is the ambient floor and every tag in the panel reads as a failed reagent.
+
+        A run with no cell list keeps every barcode. Membership is unknown rather than false there, and
+        `cellListSource` in the run record says which case a figure was computed under.
+        """
+        return frame if cell_list is None else frame.join(in_list, on=["sampleId", "cellId"], how="inner")
+
     def _admissibility(key: CellKey) -> str:
         reason = cell_admissibility_reason(key, admissibility)
         return "admissible" if reason is None else reason.value
@@ -1157,21 +1170,26 @@ def main() -> None:
                 panel_id,
             )
 
-        panel_states = tag_states.filter(pl.col("sampleId").is_in(panel_samples_here)).rename({"identity": "tag"})
+        panel_states = _listed(tag_states.filter(pl.col("sampleId").is_in(panel_samples_here))).rename(
+            {"identity": "tag"}
+        )
         # RAW counts, not `floored`. Cells-with-count and the median are what the reagent delivered, and
         # the minimum is what survived it. Passing the floored frame here would make a reagent putting
         # two counts into every cell read the same as one that delivered nothing.
-        panel_counts = counts.filter(pl.col("sampleId").is_in(panel_samples_here))
+        panel_counts = _listed(counts.filter(pl.col("sampleId").is_in(panel_samples_here)))
         for row in per_antigen_measures(
             panel_counts, panel_states, panel_tags, panel_samples_here, reference_tags
         ).iter_rows(named=True):
             above = row["cellsAboveTheLine"]
             # None only for a reference tag, which is held out of the verdict read. Say so rather than
             # printing a zero: no cell was called bound because none was asked.
+            # The cell list rides with the figure. Two runs whose lists came from different sources do
+            # not share a denominator, so a count of cells means nothing without the list behind it.
             detail = (
                 f"cellsWithCount={row['cellsWithCount']}"
                 f"|medianCountPerCell={row['medianCountPerCell']}"
                 f"|samplesSeenIn={row['samplesSeenIn']}/{row['samplesInPanel']}"
+                f"|cellList={cell_list_source}"
             )
             if above is None:
                 detail += "|cellsAboveTheLine=none asked, this tag supplies the baseline"
@@ -1249,11 +1267,13 @@ def main() -> None:
         for scope, pairs in sorted(pairs_of_subset.items(), key=lambda kv: sorted(kv[0])):
             scope_samples = sorted(scope)
             scope_tags = {tag for tag, _ in pairs}
-            scope_states = tag_states.filter(pl.col("sampleId").is_in(scope_samples)).rename({"identity": "tag"})
+            scope_states = _listed(tag_states.filter(pl.col("sampleId").is_in(scope_samples))).rename(
+                {"identity": "tag"}
+            )
             scope_measure = {
                 row["tag"]: row
                 for row in per_antigen_measures(
-                    counts.filter(pl.col("sampleId").is_in(scope_samples)),
+                    _listed(counts.filter(pl.col("sampleId").is_in(scope_samples))),
                     scope_states,
                     scope_tags,
                     scope_samples,
