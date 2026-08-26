@@ -246,6 +246,66 @@ def test_a_declared_tag_the_reads_never_showed_gets_no_fit():
     assert set(fits.probabilities["tag"].unique().to_list()) == {"AAAA"}
 
 
+def _weak_reagent_bed(sample="S1", tag="AAAA", n_cells=400, n_binders=100, probe_count=3, seed=5):
+    """A weak reagent: a signal population around five counts beside a near-silent background.
+
+    One extra cell reads `probe_count`, which such a fit calls bound with near certainty -- and which
+    the shipped minimum of four says is not evidence of binding. Returns the counts frame, the cell
+    universe, and the probe cell's id.
+    """
+    rng = np.random.default_rng(seed)
+    values = np.concatenate([rng.poisson(0.01, n_cells - n_binders), rng.poisson(5, n_binders)])
+    cells = [(sample, f"c{i}") for i in range(n_cells)] + [(sample, "probe")]
+    rows = [(sample, f"c{i}", tag, int(v)) for i, v in enumerate(values) if v > 0]
+    rows.append((sample, "probe", tag, probe_count))
+    return _counts_frame(rows), cells, (sample, "probe")
+
+
+def _probe_probability(fits, key, tag="AAAA"):
+    row = fits.probabilities.filter(
+        (pl.col("sampleId") == key[0]) & (pl.col("cellId") == key[1]) & (pl.col("tag") == tag)
+    )
+    return row["pBound"].item()
+
+
+def test_the_minimum_count_decides_what_a_cell_is_scored_on():
+    # A count below the declared minimum is not evidence of binding, decided per cell and per tag on
+    # the raw count before anything is read against a baseline. That rule does not stop at this rung:
+    # a weak reagent fits a distribution that calls a count of three bound with near certainty, and
+    # with the shipped floor of four that cell is scored on the zero the minimum made it.
+    counts, cells, probe = _weak_reagent_bed()
+    panel = _panel([("AAAA", "S1")])
+
+    unfloored = fit_tag_probabilities_by_pair(counts, cells, panel)
+    assert _probe_probability(unfloored, probe) >= DISTRIBUTION_BOUND_PROBABILITY, (
+        "the bed has to reach a bound reading at the probe count, or the floor has nothing to change"
+    )
+
+    floored = fit_tag_probabilities_by_pair(counts, cells, panel, floor=4)
+    assert _probe_probability(floored, probe) < DISTRIBUTION_BOUND_PROBABILITY
+
+
+def test_the_minimum_does_not_narrow_the_population_the_fit_is_taken_over():
+    # The fit stays on the raw counts, which is what this rung is specified on. Only the reading each
+    # cell is scored on moves, so the background the run reports is the same either way.
+    counts, cells, _ = _weak_reagent_bed()
+    panel = _panel([("AAAA", "S1")])
+
+    assert (
+        fit_tag_probabilities_by_pair(counts, cells, panel, floor=4).backgrounds
+        == fit_tag_probabilities_by_pair(counts, cells, panel).backgrounds
+    )
+
+
+def test_the_minimum_never_reaches_a_declared_baseline_tag():
+    # `apply_floor` exempts a comparator with no switch, and the exemption has to hold here too or the
+    # same tag would be floored on one path and spared on the other.
+    counts, cells, probe = _weak_reagent_bed()
+    panel = _panel([("AAAA", "S1")])
+    spared = fit_tag_probabilities_by_pair(counts, cells, panel, floor=4, reference_tags={"AAAA"})
+    assert _probe_probability(spared, probe) >= DISTRIBUTION_BOUND_PROBABILITY
+
+
 def test_every_sample_is_fitted_on_its_own_cells():
     # Fits are local. Two samples staining one tag get two fits, and the one below the cell condition
     # gets none.

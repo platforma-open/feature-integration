@@ -28,6 +28,7 @@ baseline this rung would produce is wrong rather than conservative.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import NamedTuple
 
 import numpy as np
@@ -267,6 +268,7 @@ def _signal_probability(counts: np.ndarray, fit: _Mixture) -> np.ndarray | None:
 def fit_tag_probabilities(
     counts: np.ndarray,
     min_cells: int = DEFAULT_DISTRIBUTION_MIN_CELLS,
+    scored: np.ndarray | None = None,
 ) -> TagFit:
     """One tag's counts across one sample's cells, as a probability of binding per cell.
 
@@ -279,9 +281,23 @@ def fit_tag_probabilities(
 
     The count of cells, not of readings, is what the 300 gates.
 
-    The returned probabilities are aligned to `counts`. The trim above the 99th percentile keeps those
+    `scored` is the reading each cell is turned into a state on, defaulting to `counts`. The two differ
+    by the minimum: `what-plays-the-baseline` fits this rung "on the raw counts", while
+    `minimum-count-before-any-reference` decides a count below the minimum per cell and per tag, on the
+    raw count, "before anything is read against a baseline". A count the minimum zeroed is therefore in
+    the population the background is estimated from and is read as the zero it became. Both arrays are
+    one entry per cell, in the same order.
+
+    The returned probabilities are aligned to `scored`. The trim above the 99th percentile keeps those
     cells and excludes them from the FIT alone.
     """
+    if scored is None:
+        scored = counts
+    if scored.size != counts.size:
+        raise ValueError(
+            f"the fitted population holds {counts.size} cells and the scored one {scored.size}: "
+            "both are one entry per cell of the sample and the probabilities are aligned to the second"
+        )
     n = int(counts.size)
     if n < min_cells:
         return TagFit(None, TOO_FEW_CELLS, n)
@@ -295,7 +311,7 @@ def fit_tag_probabilities(
     fit = _fit_two_component_nb(fitted_on)
     if fit is None:
         return TagFit(None, NO_FIT, n)
-    probabilities = _signal_probability(counts, fit)
+    probabilities = _signal_probability(scored, fit)
     if probabilities is None:
         return TagFit(None, NO_FIT, n)
     background_index = 1 - fit.signal
@@ -331,6 +347,8 @@ def fit_tag_probabilities_by_pair(
     cells: list[tuple[str, str]],
     panel: pl.DataFrame,
     min_cells: int = DEFAULT_DISTRIBUTION_MIN_CELLS,
+    floor: int = 0,
+    reference_tags: Collection[str] = (),
 ) -> TagFits:
     """One fit per (sample, tag) the panel declares, scored per cell.
 
@@ -342,6 +360,15 @@ def fit_tag_probabilities_by_pair(
     and it is the population every fit is taken over: a cell that read nothing for a tag enters that
     tag's fit as a zero, and cells an admissibility gate will later set aside are still in it. That is
     what makes the background a background rather than the shape of whatever happened to be observed.
+
+    `floor` is the declared minimum count, and it applies to what each cell is SCORED on rather than to
+    what the fit is taken over. The two rules meet here and neither gives way: this rung fits on the raw
+    counts, and a count below the minimum is not evidence of binding, decided per cell and per tag on
+    the raw count before anything is read against a baseline. So a floored reading stays in the
+    background population and is read as the zero it became -- which is how it contributes to every
+    other rung. `reference_tags` are exempt from the floor here for the same reason `apply_floor`
+    exempts them: the minimum asks whether a count is evidence of binding, and a tag declared to be
+    bound by nothing never is.
 
     A tag the panel declared but the reads never showed is fitted over all zeros. Every count is then
     identical, so no two-component fit exists and the pair establishes nothing.
@@ -363,6 +390,7 @@ def fit_tag_probabilities_by_pair(
     if scoped.height != scoped.select(*CELL_KEY, "tag").unique().height:
         raise ValueError("the counts frame holds duplicated readings; every fit's population would be wrong")
 
+    exempt = set(reference_tags)
     by_sample = {s: f.select("cellId") for (s,), f in universe.group_by("sampleId")}
     frames: list[pl.DataFrame] = []
     reasons: dict[tuple[str, str], str] = {}
@@ -379,7 +407,9 @@ def fit_tag_probabilities_by_pair(
             how="left",
         ).with_columns(pl.col("umiCount").fill_null(0))
 
-        fit = fit_tag_probabilities(dense["umiCount"].to_numpy(), min_cells)
+        raw = dense["umiCount"].to_numpy()
+        scored = raw if floor <= 0 or tag in exempt else np.where(raw < floor, 0, raw)
+        fit = fit_tag_probabilities(raw, min_cells, scored=scored)
         if fit.probabilities is None:
             reasons[(sample, tag)] = fit.reason or NO_FIT
             continue

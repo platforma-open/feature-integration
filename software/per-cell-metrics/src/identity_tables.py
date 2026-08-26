@@ -464,18 +464,28 @@ def _pivot_cell_punch(
 
     # Joined to `offered` rather than crossed with the universe: a position no sample holding the cell
     # offered must not appear at all, or the silent rule below would resolve a question nobody asked.
-    # Where the comparator is keyed by identity, a (sample, identity) with no fitted background is
-    # uncomparable for every cell of that sample, and only for that identity. Carried as the pairs that
-    # DID fit, so the missing ones fall out of a left join as nulls.
-    fitted = (
-        pl.DataFrame(
+    #
+    # A comparator that is not keyed by cell leaves some POSITIONS uncomparable while the cell itself is
+    # fine, and `cell_admissibility_reason` cannot see that -- it answers about the cell. Two bundle
+    # shapes do it and at most one is ever set: a per-(sample, identity) background, and the fitted
+    # rung's per-(sample, cell, identity) probabilities. Carried as the positions that DID get a
+    # comparator, so the rest fall out of a left join as nulls and reach the silent rule below as
+    # *unreliable* rather than as *not bound*.
+    comparable, comparable_on = None, None
+    if admissibility.by_identity is not None:
+        comparable_on = ["sampleId", "identity"]
+        comparable = pl.DataFrame(
             sorted(admissibility.by_identity),
             orient="row",
             schema={"sampleId": pl.String, "identity": pl.String},
-        ).with_columns(pl.lit(True).alias("_fitted"))
-        if admissibility.by_identity is not None
-        else None
-    )
+        ).with_columns(pl.lit(True).alias("_comparable"))
+    elif admissibility.probabilities is not None:
+        comparable_on = ["sampleId", "cellId", "identity"]
+        comparable = pl.DataFrame(
+            sorted(admissibility.probabilities),
+            orient="row",
+            schema={"sampleId": pl.String, "cellId": pl.String, "identity": pl.String},
+        ).with_columns(pl.lit(True).alias("_comparable"))
 
     grid = (
         member_frame.join(offered_frame, on="sampleId", how="inner")
@@ -486,11 +496,11 @@ def _pivot_cell_punch(
             how="left",
         )
     )
-    if fitted is not None:
-        grid = grid.join(fitted, on=["sampleId", "identity"], how="left").with_columns(
+    if comparable is not None:
+        grid = grid.join(comparable, on=comparable_on, how="left").with_columns(
             pl.when(pl.col("cellReason").is_not_null())
             .then(pl.col("cellReason"))
-            .when(pl.col("_fitted").is_null())
+            .when(pl.col("_comparable").is_null())
             .then(pl.lit(UnreliableReason.NO_COMPARATOR.value))
             .otherwise(None)
             .alias("cellReason")

@@ -165,14 +165,24 @@ def test_empty_droplets_is_not_offered():
     assert not hasattr(ReferenceChoice, "EMPTY_DROPLETS")
 
 
-def test_several_reference_tags_are_refused_rather_than_combined():
-    # Never take the highest of them: references are never combined, and taking the highest is a
-    # combination. Refused rather than given a different rule, because scoping each reference to a group
-    # of antigens needs a group-by half this version of the block does not have. It is also what the
-    # field does: the ordinary antibody run rejects a second control outright.
+def test_several_reference_tags_combine_by_the_highest():
+    # `baseline-scope` combines replicates WITHIN one group by taking the highest, and forbids combining
+    # ACROSS groups. This block has no scope construct, so no declared property separates any two
+    # references and the whole panel is one group -- the case the atom settles, not the one it forbids.
+    # Taking the highest is also what stops a dead reference from making the background look cleaner
+    # than it was.
     counts = _counts([("S1", "c1", "CTRL1", 3), ("S1", "c1", "CTRL2", 11)])
-    with pytest.raises(SystemExit, match="declares 2 baseline tags"):
-        reference_by_cell(counts, {"CTRL1", "CTRL2"}, ReferenceChoice.DECLARED)
+    ref, choice = reference_by_cell(counts, {"CTRL1", "CTRL2"}, ReferenceChoice.DECLARED)
+    assert choice is ReferenceChoice.DECLARED
+    assert ref[("S1", "c1")] == 11
+
+
+def test_a_dead_reference_does_not_drag_the_comparator_down():
+    # The reason the combination is the highest rather than a mean or a minimum: a reference that
+    # returned nothing must not make the background look cleaner than it was.
+    counts = _counts([("S1", "c1", "CTRL1", 0), ("S1", "c1", "CTRL2", 9)])
+    ref, _ = reference_by_cell(counts, {"CTRL1", "CTRL2"}, ReferenceChoice.DECLARED)
+    assert ref[("S1", "c1")] == 9
 
 
 def test_one_reference_tag_still_serves():

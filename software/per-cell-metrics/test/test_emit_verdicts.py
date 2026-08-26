@@ -1189,19 +1189,19 @@ def test_one_antigen_on_two_barcodes_is_read_by_its_highest_member(wide_bed):
     assert _states(wide_bed)[(spanning, name)] == "bound"
 
 
-def test_two_declared_comparators_are_refused_rather_than_combined(wide_bed):
-    # Never take the higher of the two, and never combine comparator tags the way an identity's tags
-    # combine: references are never combined, and taking the highest is a combination. Scoping a second
-    # reference to a group of antigens needs a group-by half this version does not have, so it refuses
-    # rather than choosing a rule nobody wrote down.
-    #
-    # Refused loudly rather than degraded to no comparator: this is a panel a scientist fixes in a minute.
-    r = _run(wide_bed, *_bed_args("panel_multi_reference.csv"), expect_failure=True)
-    assert "declares 2 baseline tags" in r.stderr
-    assert "one baseline tag or none" in r.stderr
+def test_two_declared_comparators_serve_together(wide_bed):
+    # A panel declaring two undifferentiated comparators runs. `baseline-scope` makes them replicates of
+    # one group, since nothing declared separates them, and replicates combine by taking the highest.
+    # It used to be refused, which sent the scientist back to edit a panel file over a case the corpus
+    # had already decided.
+    r = _run(wide_bed, *_bed_args("panel_multi_reference.csv"))
+    assert r.returncode == 0, r.stderr
 
-    # The one-comparator panel over the same counts still serves, so the refusal is about the count of
-    # comparators and not about anything else in the bed.
+    meta = json.loads((wide_bed / "result_run_meta.json").read_text())
+    assert meta["referenceChoice"] == ReferenceChoice.DECLARED.value
+    assert len(meta["referenceTags"]) == 2, "both declared comparators have to be serving"
+
+    # The one-comparator panel over the same counts also serves, so nothing here turns on the count.
     assert _run(wide_bed, *_bed_args("panel_with_reference.csv")).returncode == 0
     assert any(state == "bound" for state in _states(wide_bed).values())
 
@@ -1580,13 +1580,14 @@ def test_naming_the_off_target_role_as_the_comparator_deletes_the_off_target_que
 def test_a_role_value_differing_only_in_case_is_not_matched(wide_bed):
     # The observed file held six Type values that were three roles. A tag whose role is spelled
     # `Off-target` is not selected by `Off-Target`, silently. The claim is proved by WHICH tags the run
-    # names: `Off-Target` marks two tags, so this version refuses the panel and says which two. A matcher
-    # that ignored case would have found three.
+    # ends up reading against: the run record names them, `Off-Target` marks two, and a matcher that
+    # ignored case would have found three. The role column is asked for the off-target value here rather
+    # than the comparator one because that is where the observed file's case variant sits.
     roles = _wide_roles(wide_bed)
     agreed = {tag: next(iter(values)) for tag, values in roles.items() if len(values) == 1}
     exact = {tag for tag, value in agreed.items() if value == "Off-Target"}
     variant = {tag for tag, value in agreed.items() if value != "Off-Target" and value.lower() == "off-target"}
-    assert len(exact) > 1, "the bed must declare more than one off-target for the refusal to fire"
+    assert len(exact) > 1, "the bed must declare more than one off-target for the count to discriminate"
     assert variant, "the bed must carry a case variant of the off-target role"
 
     r = _run(
@@ -1603,13 +1604,12 @@ def test_a_role_value_differing_only_in_case_is_not_matched(wide_bed):
         "Off-Target",
         "--output-prefix",
         "named",
-        expect_failure=True,
     )
-    assert f"declares {len(exact)} baseline tags" in r.stderr
-    for tag in exact:
-        assert tag in r.stderr, "a tag the role value names must be in the refusal"
-    for tag in variant:
-        assert tag not in r.stderr, "the case-variant tag was matched, and it must not be"
+    assert r.returncode == 0, r.stderr
+
+    matched = set(json.loads((wide_bed / "named_run_meta.json").read_text())["referenceTags"])
+    assert matched == exact, "the role value must select exactly the tags spelling it exactly"
+    assert not (matched & variant), "the case-variant tag was matched, and it must not be"
 
 
 def _states_prefix(bed, prefix):
@@ -2408,6 +2408,98 @@ def test_the_tag_distribution_rung_serves_and_says_so(tmp_path):
     assert meta["referenceChoice"] == ReferenceChoice.DISTRIBUTION.value
     assert meta["referenceSourceRequested"] == ReferenceChoice.DISTRIBUTION.value
     assert meta["distributionMinCells"] == 300
+
+
+def _distribution_bed_with_a_baseline_tag(root, n_cells=400, sticky=40, seed=7):
+    """The distribution bed, plus a declared baseline tag reading high in a few cells.
+
+    The rung's comparator is the fit. The baseline tag is here only in its other role, which is what
+    `reference-two-roles` keeps apart. Its readings sit either side of the gate used below, and the
+    minimum never touches a baseline tag, so the low ones survive as the measurement they are.
+    """
+    _distribution_bed(root, n_cells=n_cells, seed=seed)
+    rows = (root / "counts.csv").read_text().rstrip("\n").split("\n")
+    rows += [f"S1,c{i},CTRL,{200 if i < sticky else 3}" for i in range(n_cells)]
+    (root / "counts.csv").write_text("\n".join(rows) + "\n")
+    (root / "panel.csv").write_text(
+        "Sample,Antigen,Sequence,Role\nS1,AgSep,SEPS,Target\nS1,AgFlat,FLAT,Target\nS1,Ctrl,CTRL,Control\n"
+    )
+    return sticky
+
+
+def _distribution_bed_with_a_short_sample(root, n_cells=400, short_cells=250, seed=7):
+    """The distribution bed, plus a second sample too small for the rung to fit.
+
+    S2 holds fewer cells than the rung needs, so no tag fits there and none of its cells has a
+    comparator for any identity. One S2 cell reads SEPS so the tag is measured in that sample and the
+    question was put -- every other S2 cell is SILENT for it, which is the position under test.
+    """
+    _distribution_bed(root, n_cells=n_cells, seed=seed)
+    rows = (root / "counts.csv").read_text().rstrip("\n").split("\n")
+    cells = (root / "cells.csv").read_text().rstrip("\n").split("\n")
+    linker = (root / "linker.csv").read_text().rstrip("\n").split("\n")
+    for i in range(short_cells):
+        rows.append(f"S2,d{i},FLAT,5")
+        cells.append(f"S2,d{i}")
+        linker.append(f"S2,d{i},KS2")
+    rows.append("S2,d0,SEPS,50")
+    (root / "counts.csv").write_text("\n".join(rows) + "\n")
+    (root / "cells.csv").write_text("\n".join(cells) + "\n")
+    (root / "linker.csv").write_text("\n".join(linker) + "\n")
+    (root / "panel.csv").write_text(
+        "Sample,Antigen,Sequence\nS1,AgSep,SEPS\nS1,AgFlat,FLAT\nS2,AgSep,SEPS\nS2,AgFlat,FLAT\n"
+    )
+
+
+def test_cell_punch_marks_a_position_with_no_fitted_background_unreliable(tmp_path):
+    # A cell whose sample the rung could not fit has no comparator for any identity, so its silent
+    # positions are unreliable. They used to render *not bound*: the punchcard corrected a silent
+    # position only through a per-(sample, identity) comparator, which nothing in production sets, and
+    # never through the fitted rung's per-cell probabilities -- so every such position fell through to
+    # the not-bound default and contradicted the set verdict above it.
+    _distribution_bed_with_a_short_sample(tmp_path)
+    r = _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
+    assert r.returncode == 0, r.stderr
+
+    rows = _cell_punch(tmp_path)
+    silent = rows[("S2", "d1")]["SEPS"]
+    assert silent.split("|")[0] == "unreliable", silent
+    assert "no comparator" in silent
+
+    # S1 fitted, so the same identity resolves there. Without this the test would pass over a run where
+    # nothing resolved anywhere.
+    assert rows[("S1", "c0")]["SEPS"].split("|")[0] in ("bound", "not bound")
+
+
+def test_a_declared_gate_acts_under_the_tag_distribution_rung(tmp_path):
+    # The gate reads a declared baseline tag; the comparator is whatever rung was selected. They are
+    # separate roles, so which rung serves must not reach the gate. It used to: the fitted rung handed
+    # `gate_cells` an empty reading map, so a stored threshold set nothing aside and reported nothing,
+    # silently, from the moment a scientist switched the baseline source.
+    sticky = _distribution_bed_with_a_baseline_tag(tmp_path)
+    r = _run(
+        tmp_path,
+        *DISTRIBUTION_ARGS,
+        "--cells",
+        "cells.csv",
+        "--role-column",
+        "Role",
+        "--reference-values",
+        "Control",
+        "--gate-threshold",
+        "100",
+    )
+    assert r.returncode == 0, r.stderr
+
+    meta = json.loads((tmp_path / "result_run_meta.json").read_text())
+    assert meta["referenceChoice"] == ReferenceChoice.DISTRIBUTION.value, "the comparator is still the fit"
+    assert meta["cellsSetAside"] == sticky, "the gate has to have acted"
+
+    # And the exposure is a count rather than a reason, because the population now exists.
+    qc = pl.read_csv(tmp_path / "result_qc.csv", infer_schema_length=0)
+    row = qc.filter(pl.col("measurement") == "highReferenceCells").row(0, named=True)
+    assert float(row["value"]) == sticky
+    assert "gate=100" in row["detail"]
 
 
 def test_the_sticky_measurement_says_why_where_no_cell_carries_a_baseline_reading(tmp_path):

@@ -449,13 +449,34 @@ def main() -> None:
         # A run with no cell list keeps the barcode union. Membership is unknown rather than false
         # there, and `cellListSource` in the run record says which case the verdicts were read under.
         fit_universe = sorted(cell_list) if cell_list is not None else analysed_cells
-        tag_fits = fit_tag_probabilities_by_pair(counts, fit_universe, panel, args.distribution_min_cells)
+        tag_fits = fit_tag_probabilities_by_pair(
+            counts,
+            fit_universe,
+            panel,
+            args.distribution_min_cells,
+            floor=args.floor,
+            reference_tags=reference_tags,
+        )
         probabilities = _identity_probabilities(tag_fits, grouping)
         # A run where no tag fitted anywhere established no baseline. This is the one refusal that
         # cannot be caught from the settings: whether a sample holds three hundred cells whose counts
         # admit a two-component fit is a property of the data. So the run FINISHES, says so, and draws
         # no punchcard.
-        reference = Reference({}, ReferenceChoice.DISTRIBUTION)
+        # The gate is not the comparator. `reference-two-roles` keeps a declared baseline tag's two
+        # roles apart: comparator always, admissibility gate only where a threshold is declared. Which
+        # rung supplies the comparator does not reach the gate, so the declared readings are built here
+        # too wherever the panel carries them. Without them a stored gate goes silently inert the moment
+        # a scientist switches the baseline source, and the sticky measurement loses the population it
+        # is taken over.
+        #
+        # `served` stays DISTRIBUTION. These readings gate and are reported; no verdict is read against
+        # them, which is why `_comparator` returns null for every position on this rung.
+        reference = Reference(
+            reference_by_cell(counts, reference_tags, ReferenceChoice.DECLARED, cells=analysed_cells).by_cell
+            if reference_tags
+            else {},
+            ReferenceChoice.DISTRIBUTION,
+        )
         by_identity = None
         if not probabilities:
             no_baseline_reason = (
@@ -474,9 +495,10 @@ def main() -> None:
         reference = _cell_keyed_reference(counts, reference_tags, source, analysed_cells, panel_size, args)
 
     gated, cells_high_reference = gate_cells(reference.by_cell, args.gate_threshold)
-    if reference.served is ReferenceChoice.DISTRIBUTION:
-        # No per-cell comparator exists to read a gate against, so the gate sets nothing aside and the
-        # exposure count is not a measurement this run made. None, never 0: a zero would report a run
+    if not reference.by_cell:
+        # No cell carries a baseline reading, so there is no population to count high ones in. The
+        # condition is the readings and not the rung: a panel declaring a baseline tag gates under every
+        # rung, and one declaring none gates under no rung. None, never 0 -- a zero would report a run
         # with no high background rather than one where the question does not arise.
         cells_high_reference = None
 

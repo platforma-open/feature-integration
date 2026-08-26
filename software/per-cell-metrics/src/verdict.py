@@ -237,22 +237,16 @@ def reference_by_cell(
     )
 
     if served is ReferenceChoice.DECLARED:
-        if len(reference_tags) > 1:
-            # Scope of this version: no reference tag or one, never several. Combining references
-            # ACROSS scope groups is forbidden, and replicates WITHIN one group combine by taking
-            # the highest. Where no declared property separates them the whole panel is one group,
-            # so two undifferentiated references are replicates. This block has no scope construct,
-            # so it cannot tell the two cases apart and refuses rather than picking one.
-            named = ", ".join(sorted(reference_tags))
-            raise SystemExit(
-                f"the panel declares {len(reference_tags)} baseline tags ({named}), and this version of "
-                "the block reads counts against one baseline tag or none. Reading against several needs "
-                "a panel column that says which antigens each one belongs to, which this version does "
-                "not have. Mark one tag as the baseline, or clear the role values and choose a different "
-                "baseline source."
-            )
-        # An aggregator over a single tag. `group_by` still runs, so a duplicated reading
-        # cannot produce two rows.
+        # Several declared references combine by taking the HIGHEST, which is `baseline-scope`'s rule
+        # for replicates within one group. This block has no scope construct, so no declared property
+        # separates any two references, so the whole panel is one group and every declared reference in
+        # it is a replicate -- the case that atom settles rather than the cross-group case it forbids.
+        # Taking the highest is also what stops a dead reference from making the background look
+        # cleaner than it was, and it is what the gate already does with several references, so both
+        # roles read them alike.
+        #
+        # The alternative was refusing a panel that declares two, which sent the scientist back to edit
+        # the panel file for a case the corpus had already decided.
         rows = (
             scoped.filter(pl.col("tag").is_in(list(reference_tags)))
             .group_by(CELL_KEY)
@@ -610,6 +604,17 @@ def silent_tally(
         # Sample-keyed path. One accumulating pass, never one loop per sample: scanning all of
         # `keys` per sample is O(groups x cells), harmless at 24 samples but quadratic once a
         # wider key groups thousands of sets.
+        #
+        # It hoists the inadmissible term out of the identity loop, which needs that term to be a fact
+        # about the CELL. The fitted rung's comparator is keyed by position, so it is not, and the
+        # hoisted count would disagree with `inadmissible()` below. Refused rather than computed: both
+        # production callers pass `group_by_cell`, so this is a guard on the next one.
+        if admissibility.probabilities is not None:
+            raise ValueError(
+                "silent_tally was given a position-keyed comparator with no group_by_cell: whether a "
+                "cell can be compared then depends on the identity asked about, which the sample-keyed "
+                "path cannot hoist. Pass group_by_cell, as both production callers do."
+            )
         asked_count: dict[str, int] = {}
         gated_count: dict[str, int] = {}
         no_comparator_count: dict[str, int] = {}
@@ -618,9 +623,15 @@ def silent_tally(
             asked_count[sample] = asked_count.get(sample, 0) + 1
             if k in admissibility.gated:
                 gated_count[sample] = gated_count.get(sample, 0) + 1
-            elif admissibility.by_identity is None and k not in admissibility.reference:
-                # Cell-keyed comparators only. Where the comparator is keyed by identity this is
-                # not a property of the cell, and the loop below computes it per identity.
+            elif (
+                admissibility.by_identity is None
+                and admissibility.probabilities is None
+                and k not in admissibility.reference
+            ):
+                # Cell-keyed comparators only. Where the comparator is keyed by identity, or by
+                # position as the fitted rung's probabilities are, this is not a property of the cell
+                # and the loop below computes it per identity. Testing `reference` under those shapes
+                # would disagree with `inadmissible()` below and drive `silentNotBound` negative.
                 no_comparator_count[sample] = no_comparator_count.get(sample, 0) + 1
 
         observed_count: dict[tuple[str, str], int] = {}
