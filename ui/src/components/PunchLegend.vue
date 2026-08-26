@@ -30,7 +30,7 @@ const SET_ENTRIES: Entry[] = [
   {
     glyph: "unreliable",
     label: "Unreliable",
-    meaning: "asked, and the readings could not settle it — hover for which of the seven ways",
+    meaning: "asked, and the readings could not settle it — hover for which of the five ways",
   },
   {
     glyph: "none",

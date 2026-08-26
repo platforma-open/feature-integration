@@ -237,7 +237,8 @@ export type TagCountBins = {
   spreads: Record<string, { edges: number[]; weights: number[] }>;
 };
 
-// Mirrors verdict.py resolve_default_source.
+// The rungs the dropdown offers. Nothing below the model derives one: `--reference-source` is required
+// and verdict.py deliberately carries no function that could pick a rung, which a test pins.
 export type ReferenceSourceChoices = {
   /** EVERY rung, always, in ladder order, and every rung selectable. */
   options: {

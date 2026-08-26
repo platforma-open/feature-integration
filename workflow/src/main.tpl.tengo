@@ -350,8 +350,12 @@ wf.body(func(args) {
 	//
 	// Conditional on a chosen single-cell V(D)J dataset. Without one there is no clonotype set for a verdict to
 	// be about, and no way to say which receptor's linker the reading would be answered against, since the
-	// linker query is scoped by that dataset's anchor. The block still runs and still emits its per-cell
-	// contract columns, the per-sample QC and the per-feature properties.
+	// linker query is scoped by that dataset's anchor.
+	//
+	// UNREACHABLE from the app: `args()` refuses a run with no dataset, since verdicts are what this block
+	// is for and a settings-knowable refusal belongs there. Kept as a guard rather than deleted, so a
+	// hand-driven render emits the per-cell contract columns, the per-sample QC and the per-feature
+	// properties instead of failing on an absent input. `types.ts` records the same.
 	verdictRun := undefined
 	verdictImport := undefined
 	if !is_undefined(args.datasetRef) {

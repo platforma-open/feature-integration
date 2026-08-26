@@ -67,7 +67,8 @@ const cellStyle: CSSProperties = {
 };
 
 // Why this mark is this colour, in the order a reader asks it: what the verdict is, what it rests on, and
-// -- where the verdict is unsettled -- which of the six ways it failed to settle. The reason tokens are
+// -- where the verdict is unsettled -- which of the five ways it failed to settle. The sixth key below is
+// never-offered, which belongs to *never asked* rather than to an unsettled reading. The reason tokens are
 // machine values (`no-comparator`, `tie`, ...), so each is expanded here rather than shown raw.
 //
 // Each line is capitalised at the source rather than by a transform over `lines`. A blanket transform would

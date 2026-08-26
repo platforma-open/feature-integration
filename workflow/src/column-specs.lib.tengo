@@ -1612,7 +1612,7 @@ qcSampleSummaryImportSpec := func(sampleAxisSpec) {
 			num("readsPerCell", "readsPerCell", "Reads per cell", 85000, ".1f",
 				"Reads matched, over cells in the cell list."),
 			num("antigenCountDistribution", "antigenCountDistribution", "Median antigen count per cell", 84000, ".1f",
-				"Deciles of the total antigen count per cell barcode."),
+				"The median total antigen count per cell barcode. Its deciles ride in the measurement's detail."),
 			num("aggregateBarcodeFraction", "aggregateBarcodeFraction", "Aggregate-barcode read fraction", 83000, ".2p",
 				"Reads in barcodes flagged as aggregates by the top-100 IQR rule, over readsTotal."),
 			num("floorRemoved", "floorRemoved", "Counts removed by the minimum", 82000, undefined,
