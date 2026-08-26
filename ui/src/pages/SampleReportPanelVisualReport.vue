@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { PlAlert, PlChartStackedBar } from "@platforma-sdk/ui-vue";
+import { PlChartStackedBar } from "@platforma-sdk/ui-vue";
 import { computed } from "vue";
-import { useApp } from "../app";
-import CountHistogram from "../components/CountHistogram.vue";
 import type { SampleResult } from "../results";
+// DEFERRED with the antigen-count section below. Uncomment these three together with it.
+// import { PlAlert } from "@platforma-sdk/ui-vue";
+// import { useApp } from "../app";
+// import CountHistogram from "../components/CountHistogram.vue";
 
-// The Visual Report tab: where this sample's reads went, and the shape of this sample's own antigen
-// counts. RecoveryBar is already the settings object a stacked bar wants ({ title, data: [{ label,
-// value, color, description }] }), so the read-recovery half presents data results.ts builds for the
-// grid anyway.
+// The Visual Report tab: where this sample's reads went. The antigen-count half is deferred, so the
+// tab carries the read-recovery breakdown alone. RecoveryBar is already the settings object a stacked
+// bar wants ({ title, data: [{ label, value, color, description }] }), so the read-recovery half
+// presents data results.ts builds for the grid anyway.
 //
 // PlChartStackedBar, never PlAgChartStackedBarCell. The Ag* one is an ag-grid cell renderer taking
 // ICellRendererParams, so using it outside a grid would mean fabricating a fake cell params object.
@@ -18,7 +20,8 @@ const props = defineProps<{
   sampleData: SampleResult | undefined;
 }>();
 
-const app = useApp();
+// DEFERRED with the antigen-count section below.
+// const app = useApp();
 
 // The chart's own legend gives colour and label only. The segment meanings are spelled out below the chart
 // instead, so the legend would be a redundant second colour key.
@@ -50,6 +53,8 @@ const segments = computed(() => {
 
 // --- this sample's antigen counts, one plot per tag ----------------------------------------------
 //
+// DEFERRED, with the template block and the three imports above. Uncomment all of them together.
+//
 // `330-the-quality-readout` asks for the shape of the antigen counts as a plot about ONE sample, so it
 // belongs with that sample rather than on the run's own page. Per TAG, because a total pools a tag that
 // bound nothing with one that bound everything and draws one hump from the two.
@@ -58,19 +63,24 @@ const segments = computed(() => {
 // this sample's counts look like, and every axis picker is a way to stop answering that. The bins come off
 // the RAW counts, before the minimum, which is what makes this readable on a first run -- the minimum is
 // one of the things it is read in order to set.
-const tagBins = computed(() => app.model.outputs.tagCountBins);
-
-const panels = computed(() => {
-  const bins = tagBins.value;
-  const sampleId = props.sampleData?.sampleId;
-  if (bins === undefined || sampleId === undefined) return undefined;
-  const byTag = bins.bySample[sampleId];
-  if (byTag === undefined) return [];
-  // Sorted, so the reading order does not follow whatever key order the JSON was written in.
-  return Object.keys(byTag)
-    .sort()
-    .map((tag) => ({ tag, weights: byTag[tag]! }));
-});
+//
+// The model output, the `tagCountBins` JSON behind it and the `.visual-report__tag*` styles below are all
+// untouched and still live. Run quality's own fitted-background grid reads the same output.
+//
+// const tagBins = computed(() => app.model.outputs.tagCountBins);
+//
+// const panels = computed(() => {
+//   const bins = tagBins.value;
+//   const sampleId = props.sampleData?.sampleId;
+//   if (bins === undefined || sampleId === undefined) return undefined;
+//   const byTag = bins.bySample[sampleId];
+//   if (byTag === undefined) return [];
+//   // Sorted by the NAME a reader sees, so the reading order is the one on screen rather than the barcode
+//   // order behind it. A tag the panel named nowhere reads as its own barcode and sorts under it.
+//   return Object.keys(byTag)
+//     .map((tag) => ({ tag, label: bins.tagLabels?.[tag] ?? tag, weights: byTag[tag]! }))
+//     .sort((a, b) => a.label.localeCompare(b.label));
+// });
 </script>
 
 <template>
@@ -93,24 +103,38 @@ const panels = computed(() => {
       logs are what the running pipeline is producing right now.
     </div>
 
+    <!-- DEFERRED: the antigen counts for this sample, one plot per barcode. Uncomment this block
+         together with `tagBins`, `panels` and the three imports in the script above.
+
+         Two states are told apart here. The first alert is the run having reported nothing yet. The
+         second is a report in which this sample held no counted reading on any barcode.
+
+         `compact` drew bars only, at the same grain as the Run quality grid. This grid has no enlarge
+         action, so no panel showed an axis. Restore an enlarge action or drop `compact` if a reader
+         has to read a count off one of these.
+
     <div class="visual-report__block">
       <div class="visual-report__title">Antigen count per cell, by barcode</div>
       <PlAlert v-if="panels === undefined" type="info">
         No count distributions have arrived from this run yet. They are taken by the same verdict
         stage as the read-recovery breakdown, so they arrive once the run reports.
       </PlAlert>
-      <!-- Reported, and this sample holds no counted reading on any barcode. Distinct from the case
-           above, where the run has not said anything yet. -->
       <PlAlert v-else-if="panels.length === 0" type="info">
         No barcode in this sample held a counted reading, so there is no distribution to draw.
       </PlAlert>
       <div v-else class="visual-report__tagGrid">
         <div v-for="panel in panels" :key="panel.tag" class="visual-report__tagPanel">
-          <div class="visual-report__tagTitle">{{ panel.tag }}</div>
-          <CountHistogram :edges="tagBins!.edges" :weights="panel.weights" :total-height="140" />
+          <div class="visual-report__tagTitle">{{ panel.label }}</div>
+          <CountHistogram
+            :edges="tagBins!.edges"
+            :weights="panel.weights"
+            :total-height="140"
+            compact
+          />
         </div>
       </div>
     </div>
+    -->
   </div>
 </template>
 

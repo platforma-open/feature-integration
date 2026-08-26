@@ -33,21 +33,25 @@ type Panel = {
 
 // Sorted by tag then sample, so the grid's reading order is stable across runs: `Record` iteration order
 // follows insertion, and the JSON's own key order is whatever the writer produced.
+//
+// Tags sort on the NAME a panel is titled with, not on the barcode behind it, so the grid reads in the
+// order it prints. A tag the panel named nowhere reads as its own barcode and sorts under it.
 const panels = computed<Panel[]>(() => {
   const samples = Object.keys(props.bins.bySample).sort();
   const tags = new Set<string>();
   for (const sample of samples) {
     for (const tag of Object.keys(props.bins.bySample[sample] ?? {})) tags.add(tag);
   }
+  const tagName = (tag: string) => props.bins.tagLabels?.[tag] ?? tag;
   const out: Panel[] = [];
-  for (const tag of [...tags].sort()) {
+  for (const tag of [...tags].sort((a, b) => tagName(a).localeCompare(tagName(b)))) {
     for (const sample of samples) {
       const weights = props.bins.bySample[sample]?.[tag];
       // A tag absent from this sample's panel has nothing to draw.
       if (weights === undefined) continue;
       out.push({
         key: `${tag} ${sample}`,
-        title: `${tag} · ${props.sampleLabels[sample] ?? sample}`,
+        title: `${tagName(tag)} · ${props.sampleLabels[sample] ?? sample}`,
         weights,
       });
     }
@@ -80,7 +84,9 @@ const isOpen = computed({
         <span :class="$style.title">{{ panel.title }}</span>
         <span :class="$style.enlarge">⤢</span>
       </div>
-      <CountHistogram :edges="bins.edges" :weights="panel.weights" :total-height="140" />
+      <!-- `compact`: bars only. The thumbnail is scanned for whether two humps stand apart, and the
+           enlarged panel below is where a value gets read off an axis. -->
+      <CountHistogram :edges="bins.edges" :weights="panel.weights" :total-height="140" compact />
     </button>
   </div>
 
@@ -99,7 +105,10 @@ const isOpen = computed({
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
   gap: 20px 16px;
   overflow-y: auto;
-  padding: 4px 0 16px;
+  /* Horizontal padding matches `.panel`'s -4px margin, so the panels' hover bleed stays inside this box.
+     Without it the last column ends 4px past the content edge, and `overflow-y: auto` makes `overflow-x`
+     compute to `auto` as well, which turns those 4px into a permanent horizontal scrollbar. */
+  padding: 4px 4px 16px;
 }
 
 .panel {

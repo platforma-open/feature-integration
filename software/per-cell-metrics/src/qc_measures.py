@@ -907,7 +907,10 @@ COUNT_BIN_COUNT = 24
 
 
 def count_bin_edges(counts: pl.DataFrame) -> list[float]:
-    """Log-spaced bin edges spanning every count in the run, shared by every plot drawn from it.
+    """Log-spaced bin edges spanning every count in the frame, shared by every plot drawn from it.
+
+    The caller passes the counts of the CELL LIST where one arrived, so the domain ends at the
+    highest count among cells. Observed barcodes outnumber cells by one to two orders of magnitude.
 
     ONE edge set for the whole run, not one per tag. The judgement these bins are drawn for is
     whether a tag's counts fall into two separated humps, and a reader makes it by scanning a grid
@@ -957,6 +960,9 @@ def bin_values(values: np.ndarray, edges: list[float]) -> list[int]:
 
 def per_tag_count_bins(counts: pl.DataFrame, edges: list[float]) -> dict[str, dict[str, list[int]]]:
     """Per (sample, tag), how many cells hold each binned count. `{sampleId: {tag: weights}}`.
+
+    The caller passes the counts of the CELL LIST where one arrived. A run with no list yields
+    observed barcodes here, and its `cellListSource` says so.
 
     Taken from the RAW counts, before the minimum and with reference tags kept. This is a plot a
     scientist reads in order to SET the minimum, so binning after it would hide exactly the low

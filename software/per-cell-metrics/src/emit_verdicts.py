@@ -1450,7 +1450,18 @@ def main() -> None:
     #
     # Taken from the RAW counts. The floor and the reference hold-out both happen later, and a plot
     # read in order to SET the floor cannot have the floor already applied to it.
-    bin_edges = count_bin_edges(counts)
+    #
+    # Restricted to the CELL LIST, unlike every other use of `counts` in this file. In droplet data
+    # the observed barcodes outnumber the cells by one to two orders of magnitude, because ambient
+    # reads land on most barcodes. An ambient population that size is the only hump a panel shows.
+    #
+    # A run with no cell list bins every barcode. Membership is then unknown rather than false, and
+    # `cellListSource` in the run meta says which case a plot was drawn under.
+    #
+    # The edges are taken from the same filtered frame, so the shared domain ends at the highest
+    # count among cells rather than among barcodes.
+    bin_counts = counts if cell_list is None else counts.join(in_list, on=["sampleId", "cellId"], how="inner")
+    bin_edges = count_bin_edges(bin_counts)
     # The fit's two means travel WITH the bins, at the same (sample, tag) grain. They are what a reader
     # judges the humps against, so reaching them through the p-frame beside this would mean a driver
     # query per panel of the grid. Absent under a declared baseline, which fits nothing.
@@ -1465,8 +1476,13 @@ def main() -> None:
         json.dump(
             {
                 "edges": bin_edges,
-                "bySample": per_tag_count_bins(counts, bin_edges),
+                "bySample": per_tag_count_bins(bin_counts, bin_edges),
                 "fitsBySample": fits_by_sample,
+                # The same names `result_tag_labels.csv` carries, so a tag reads under one name on
+                # the plots and in the reagent table. The plots are drawn from this JSON rather than
+                # from a p-frame, and a label column reaches only p-frame surfaces, so without this
+                # every panel title is a barcode sequence.
+                "tagLabels": tag_names,
                 # The run's score spread and its reference readings, on their own linear edges. Each
                 # is one distribution for the whole run, because the cutoff and the gate are each one
                 # number for the run, so a plot must show every cell the number will act on.

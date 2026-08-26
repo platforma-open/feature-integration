@@ -243,6 +243,10 @@ export type SampleQcReport = {
  * counts: before the minimum, and with the reference tag kept. A plot read in order to SET the minimum
  * cannot have the minimum already applied to it, and the reference tag is the run's own ambient floor.
  *
+ * Counted over the CELL LIST, not over every observed barcode. Observed barcodes outnumber cells by one to
+ * two orders of magnitude. A run that supplied no cell list counts barcodes, and `verdictRunMeta` carries
+ * `cellListSource` for which case a plot was drawn under.
+ *
  * `edges` holds `weights.length + 1` boundaries, log-spaced, shared across the whole run so a grid of tags
  * can be scanned side by side. Empty where the run carried no counts at all.
  *
@@ -252,6 +256,17 @@ export type SampleQcReport = {
 export type TagCountBins = {
   edges: number[];
   bySample: Record<string, Record<string, number[]>>;
+  /**
+   * Tag -> the name a reader knows the reagent by, the same name the reagent table's leading column carries.
+   * A tag with no entry renders as its own barcode sequence.
+   *
+   * Here rather than through the tag axis's label column: these plots are drawn from this JSON, and a label
+   * column reaches p-frame surfaces only.
+   *
+   * Absent in full for a run that finished before this key was written. Such a run's plots title on the
+   * barcode, and re-running is what names them.
+   */
+  tagLabels?: Record<string, string>;
   /**
    * The fit's two means and the background's share of cells, at the same (sample, tag) grain as the bins.
    * They travel here rather than through the p-frame beside them, so drawing a grid of panels costs no

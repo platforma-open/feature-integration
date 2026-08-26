@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { PlChartHistogram } from "@platforma-sdk/ui-vue";
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { valuesFromBins } from "./binValues";
 
 // One binned count distribution, drawn from precomputed bins.
 //
@@ -9,8 +10,9 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 // answering it. It also takes a `threshold`, which is how a declared gate draws its marker; a builder has
 // no marker mechanism at all.
 //
-// The `log-bins` form, because the edges are log-spaced: UMI counts per cell span orders of magnitude, and
-// on a linear axis the ambient population occupies one bar with emptiness above it.
+// Two forms, picked by `scale`. `log-bins` takes the bins as given and draws a symlog axis with decade
+// ticks. `basic` is the only linear axis the component has, and it bins raw values itself, so linear
+// callers hand it values reconstructed from the same bins.
 //
 // `totalWidth` MUST be passed. The component draws an SVG at a fixed width and measures nothing, so its
 // 674px default overflows any narrower container and paints over whatever sits beside it. Measured here
@@ -20,9 +22,22 @@ const props = defineProps<{
   edges: number[];
   /** Cells per bin, in edge order. */
   weights: number[];
+  /**
+   * The x axis. `log` suits counts per cell, which span orders of magnitude: on a linear axis the ambient
+   * population occupies one bar with emptiness above it. `linear` suits a quantity read against a number
+   * typed in the same units -- a specificity score, a reference reading -- which a log axis puts where the
+   * reader cannot find it.
+   */
+  scale?: "log" | "linear";
   title?: string;
   /** Drawn as a marker. Undefined draws none, which is the statement that no gate is declared. */
   threshold?: number;
+  /**
+   * Zeroes every margin, which drops the axes, the axis labels and the title. For a thumbnail whose one
+   * question is whether two humps stand apart. Without it the fixed 85px left and 40px bottom margins take
+   * most of a small panel, leaving a plot narrower than its own axis gutter.
+   */
+  compact?: boolean;
   totalHeight?: number;
   xAxisLabel?: string;
   yAxisLabel?: string;
@@ -50,21 +65,47 @@ onBeforeUnmount(() => {
   observer = undefined;
 });
 
-const settings = computed(() => ({
-  type: "log-bins" as const,
-  // A bin's own bounds travel with its weight, since the component bins nothing itself.
-  bins: props.weights.map((weight, i) => ({
-    from: props.edges[i]!,
-    to: props.edges[i + 1]!,
-    weight,
-  })),
-  ...(props.threshold === undefined ? {} : { threshold: props.threshold }),
-  ...(props.title === undefined ? {} : { title: props.title }),
-  xAxisLabel: props.xAxisLabel ?? "Counts per cell",
-  yAxisLabel: props.yAxisLabel ?? "Cells",
-  totalWidth: width.value,
-  totalHeight: props.totalHeight,
-}));
+// `drawThreshold` returns on a falsy threshold, so a declared gate of exactly 0 would draw no marker and
+// read as no gate at all -- the one distinction this marker carries. The smallest positive double sits at
+// the same pixel as 0 on either scale.
+const threshold = computed(() => (props.threshold === 0 ? Number.MIN_VALUE : props.threshold));
+
+// `basic` bins the values it is handed over `nBins` thresholds of its own. More of them than the source
+// carries would draw the reconstruction's interpolation as if it were data, so this is the source's own bin
+// count at most.
+const LINEAR_BIN_TARGET = 20;
+
+const settings = computed(() => {
+  const common = {
+    ...(threshold.value === undefined ? {} : { threshold: threshold.value }),
+    ...(props.title === undefined ? {} : { title: props.title }),
+    xAxisLabel: props.xAxisLabel ?? "Counts per cell",
+    yAxisLabel: props.yAxisLabel ?? "Cells",
+    totalWidth: width.value,
+    totalHeight: props.totalHeight,
+    compact: props.compact,
+  };
+
+  if (props.scale === "linear") {
+    return {
+      ...common,
+      type: "basic" as const,
+      numbers: valuesFromBins(props.edges, props.weights),
+      nBins: Math.min(LINEAR_BIN_TARGET, props.weights.length),
+    };
+  }
+
+  return {
+    ...common,
+    type: "log-bins" as const,
+    // A bin's own bounds travel with its weight, since this form bins nothing itself.
+    bins: props.weights.map((weight, i) => ({
+      from: props.edges[i]!,
+      to: props.edges[i + 1]!,
+      weight,
+    })),
+  };
+});
 </script>
 
 <template>

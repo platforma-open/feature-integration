@@ -358,6 +358,7 @@ const tagBins = computed(() => app.model.outputs.tagCountBins);
           v-else
           :edges="scoreSpread.edges"
           :weights="scoreSpread.weights"
+          scale="linear"
           :threshold="app.model.data.boundCutoff"
           x-axis-label="Specificity score"
         />
@@ -378,6 +379,7 @@ const tagBins = computed(() => app.model.outputs.tagCountBins);
           v-else
           :edges="referenceSpread.edges"
           :weights="referenceSpread.weights"
+          scale="linear"
           :threshold="app.model.data.gateThreshold"
           x-axis-label="Reference reading (counts)"
         />
