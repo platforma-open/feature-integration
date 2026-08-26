@@ -1,5 +1,125 @@
 # @platforma-open/milaboratories.feature-integration.per-cell-metrics
 
+## 3.0.1
+
+### Patch Changes
+
+- 5ef1665: Count plots are drawn over the cell list, and each reads on the axis its number is typed on.
+
+  The binned count distributions now count the cell list rather than every barcode the reads touched. In
+  droplet data the observed barcodes outnumber the cells by one to two orders of magnitude, because ambient
+  reads land on most barcodes, so an ambient population that size was the only hump any panel showed. The
+  shared edge list is taken from the same filtered counts, so the axis ends at the highest count among cells.
+  A run that supplied no cell list still counts every barcode — membership is then unknown rather than false
+  — and `cellListSource` in the run record says which case a plot was drawn under.
+
+  The score spread and the reference readings draw on a linear axis. Both are read against a number a
+  scientist types in the same units, and both had been drawn on a log axis, which put that number where the
+  reader could not find it. A declared gate of exactly zero now draws its marker; it drew none before, which
+  read as no gate declared at all.
+
+  The fitted-background grid and the sample's own count panels title on the reagent's name and sort by it,
+  rather than on the barcode sequence behind it. Thumbnails in both grids draw bars only, so a small panel
+  spends its width on the plot instead of on an axis gutter wider than the plot itself; an enlarged panel
+  still carries its axes. The grid no longer offers a horizontal scrollbar with four pixels of travel.
+
+  Per-sample QC draws each sample's rolled-up status as the same tag the sample list draws, and no longer as
+  the bare word.
+
+  `Cells detected` is now `Cell barcodes detected` on both surfaces that carry it. It counts distinct barcodes
+  in the tag-stat table, before any cell-calling step, which is one to two orders of magnitude above the cell
+  count — the measurement set already named it this way, and only the column label overstated it.
+
+  The sample view's antigen counts per barcode are deferred, and the section is commented out with what to
+  uncomment.
+
+- 46268f1: Run quality reads by reagent, and the fitted background is a grid you can enlarge.
+
+  The Reagents table leads with the reagent's name rather than its barcode. Every axis of that table now
+  carries a label column, so no column renders a raw id: a tag reads as its name, an identity as its
+  antigen, a panel as its panel. A barcode several panels name differently reads as those names joined,
+  under every grouping — previously it fell back to its own sequence whenever the run grouped by a panel
+  property.
+
+  The fitted background is a grid of small multiples ordered by tag, so one reagent's samples sit side by
+  side, and any panel enlarges to a dialog. Every count plot now sizes itself to its container; each drew
+  at a fixed 674px before and overlapped its neighbours. The score and reference plots label their own x
+  axis, which they had been passing and having ignored.
+
+  The exported verdicts drop two columns a reader derives from the pair beside them: cells that read not
+  bound is `answered - bound`, and cell agreement is that pair read against the state. Both are still
+  computed, and the punchcard still carries them.
+
+- bf00e26: The baseline form keeps the rung you picked, and Run quality shows only what this run can draw.
+
+  **Naming the role column no longer un-picks the baseline source.** Picking _Declared baseline tag_ and then naming a role column cleared the baseline source, which hid the role column, the baseline value and the admissibility gate — the three fields the rung had just asked for. Naming the baseline value did the same thing again. Both gestures cleared `referenceSource` on the reasoning that a choice must not outlive the declaration it was made against, but the form works the other way round: the scientist picks the rung first, and the form then asks for what that rung needs. So the answer un-asked the question, and the value stayed in the data while the field showed nothing — which is why re-opening the source dropdown showed the role column set correctly.
+
+  Neither gesture touches the baseline source now. A new panel file still clears the role column and the baseline value, because those name columns and values of the file that was replaced.
+
+  **The two baseline-source descriptions are shorter and read one instruction at a time.** No fact left them. The declared rung's missing-requirement note is two sentences instead of one carrying two steps. The population rung's description no longer ends by pointing at the retired panel-size option.
+
+  **Run quality gives a plot no tab where the run's baseline cannot produce it.** A run read against each tag's own distribution offered Scores and Reference readings, and a run read against a declared baseline tag offered Fitted background; each opened onto a paragraph explaining why it was empty. Those three tabs now appear only on the runs that can draw them. While a run has not yet reported which rung served it, all three are offered, because the rung is unknown at that point rather than known to be wrong.
+
+  **Run quality shows the processing placeholder while the run is in flight, on the grids and on the plots.** Each of the four grids sat behind an alert saying its table had not arrived, and each of the three plots behind one saying its distributions had not arrived — which during a run reads as a finished run with nothing in it. The grids are now drawn straight away and answer all three states themselves: the processing placeholder while the model is unstable, a stated reason once the run settles with no frame, and the empty-table wording for a frame that arrived with no rows. The plots draw the same placeholder in its graph variant while the distributions are unstable, and keep a stated reason for a settled run that produced none. An errored output reaches the grid or the plot either way, which renders the error it was handed.
+
+  **The bound cutoff and the agreement limit share a row.** Both are conditions on one verdict — the cutoff decides what a single cell says, the agreement limit how many cells must say it — and they sat on separate lines. Under the declared rung they are now side by side; where the cutoff does not apply, the agreement field takes the whole row rather than half of one.
+
+  **Every _Minimum_ under Threshold Parameters is now _Min_.** Paired on one row, the full word pushed each label past the field it names.
+
+  **Two surfaces come out.** The _Not measured, and why_ list under the measurement table restated four method-level exclusions that hold on every run and never change; they stay recorded beside the measurements they sit next to in the software. The run-level progress bar above the sample grid restated the percent and step that the grid's own Progress column already carries for each sample.
+
+  **The Aggregate-barcode detection settings come out of the form.** All three were calibrated as a set — moving one changes what the aggregate-barcode quality line is judging, and no published line covers the moved position. The parameters and their defaults are unchanged, so a stored project keeps whatever it set and a new one runs on the shipped constants.
+
+  ## Also on this branch
+
+  Four earlier changes that shipped no changeset of their own, released here.
+
+  **The aggregate-barcode figure reaches the combined QC summary.** The three aggregate fields were computed per sample and then dropped in transit, because the summary's column list did not carry them. The reading that follows fell to "this sample's read QC reports no reads, so the share has no denominator" — false on a sample whose reads number in the millions. The column list now carries the three fields, and the reading has a third branch for a genuinely absent denominator.
+
+  **The distribution rung says what it checks, and what it does not.** Nothing checks that a tag's two components stand apart, and the rung's own description said otherwise.
+
+  **The cell gate's own limit reaches the run record**, so the export gates on the readout name the figure they stopped at rather than only that a limit exists.
+
+  **A barcode's own number no longer flags its sample.** The undeclared-barcode share is a property of the barcode, and its status was reaching the samples it was measured on.
+
+  Plus the entity cell reading its parameters where ag-grid puts them, the quality-line settings named the way the rest are, and model comments carrying fact and constraint without rationale.
+
+- 7feac4c: The tag-distribution baseline is fitted over the sample's cells, and every verdict it served changes.
+
+  `what-plays-the-baseline` states the third rung as "that tag's own distribution across the sample's
+  cells". It was fitted over every observed barcode instead — the cell list unioned with the barcodes the
+  reads touched. In droplet data those outnumber the cells by one to two orders of magnitude, because
+  ambient reads land on most barcodes, so the population a background was estimated from was mostly empty
+  droplets. On the run this was found against, the fit ran over 2,633,996 barcodes for 25,032 cells.
+
+  Both components then land on that ambient mass. Every tag in that run reported a background sitting on
+  top of its own signal — the two means equal to three decimal places, on tags whose counts separate
+  cleanly when plotted. `what-plays-the-baseline` names this as the rung's one known failure, where a tag
+  that bound almost nothing has one population and the fit splits it anyway; fitting over barcodes puts
+  every tag in that state at once.
+
+  **Verdicts served by this rung change, and most of them change from bound to not bound.** A background
+  of a fraction of a count is cleared by almost any reading. On the run this was found against, bound
+  calls fall by roughly three quarters. Runs served by a declared reference tag are unaffected: that rung
+  fits nothing.
+
+  The fit still runs over every listed cell including the ones the admissibility gate later sets aside,
+  which is `baseline-over-all-returned-cells` and why it runs before the gate. That atom forbids the gate
+  narrowing this population; it does not widen it past the cells. A run that supplied no cell list keeps
+  the barcode union, because membership is unknown there rather than false, and `cellListSource` in the
+  run record says which case a run's verdicts were read under.
+
+  Two components that converge onto each other end the fit, as they were always meant to. The check
+  compared them with `==`, and two floats from separate reductions land on the same value only by luck, so
+  a converged pair went on to report itself as two populations. It is a relative tolerance now. This is a
+  numerical guard on the fit and not a test of whether a tag's counts separated — no such test exists, and
+  none is invented here.
+
+  Each panel of the fitted-background grid now carries the fit's own three numbers: the background mean,
+  the signal mean, and the share of cells the background component holds. `what-plays-the-baseline` makes
+  that panel the substitute for the check nobody has built — "the run shows the fit instead of judging it"
+  — and it cannot do that job while the fit's output is withheld from it.
+
 ## 3.0.0
 
 ### Major Changes

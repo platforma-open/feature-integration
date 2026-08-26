@@ -1,5 +1,14 @@
 # @platforma-open/milaboratories.feature-integration.test
 
+## 1.0.7
+
+### Patch Changes
+
+- Updated dependencies [5ef1665]
+- Updated dependencies [46268f1]
+- Updated dependencies [bf00e26]
+  - @platforma-open/milaboratories.feature-integration.model@3.0.1
+
 ## 1.0.6
 
 ### Patch Changes
