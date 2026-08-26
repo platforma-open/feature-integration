@@ -1150,7 +1150,8 @@ const gridOptions = {
             times the read volume, between 16 and 256 GiB.<br /><br />
             Set a number only if a sample runs out of memory. That number becomes a fixed request
             for every sample, so a value chosen for your largest sample is demanded for the smallest
-            one too.
+            one too. It reaches the parse and refine-tags steps only. Tag-stat stays sized from its
+            own input.
           </template>
         </PlNumberField>
       </PlAccordionSection>
