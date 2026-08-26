@@ -1167,13 +1167,13 @@ const gridOptions = {
             :max-value="1"
             :step="0.01"
             clearable
-            label="Barcode validity: warn below"
+            label="Barcode validity warn"
           >
             <template #tooltip>
-              Below this share of reads whose cell barcode corrects onto the chemistry's whitelist,
-              the measurement warns.<br /><br />
-              Default 0.75, inherited from the field rather than calibrated for this assay: it is a
-              round number, and no test asserts it.
+              The share of reads whose cell barcode corrects onto the chemistry's whitelist. The
+              measurement warns below this share.<br /><br />
+              Default 0.75. The field supplies this number. Nothing calibrates it for this assay,
+              and no test asserts it.
             </template>
           </PlNumberField>
           <PlNumberField
@@ -1183,12 +1183,12 @@ const gridOptions = {
             :max-value="1"
             :step="0.01"
             clearable
-            label="Barcode validity: alert below"
+            label="Barcode validity alert"
           >
             <template #tooltip>
-              Below this share the measurement alerts instead of warning.<br /><br />
-              Default 0.50, inherited from the field rather than calibrated for this assay: it is a
-              round number, and no test asserts it.
+              The same share. The measurement alerts below this share instead of warning.<br /><br />
+              Default 0.50. The field supplies this number. Nothing calibrates it for this assay,
+              and no test asserts it.
             </template>
           </PlNumberField>
         </PlRow>
@@ -1197,13 +1197,13 @@ const gridOptions = {
           :min-value="0"
           :step="100"
           clearable
-          label="Reads per cell: warn below"
+          label="Reads per cell warn"
         >
           <template #tooltip>
-            Below this many reads matched per cell in the cell list, the measurement warns. There is
-            no alert threshold: the vendor published one boundary.<br /><br />
-            Default 5000, the vendor's recommended minimum for this assay type -- not a number
-            calibrated against your own data, and no test asserts it.
+            Reads matched per cell in the cell list. The measurement warns below this count. It has
+            no alert line, because the vendor published one boundary.<br /><br />
+            Default 5000. The vendor recommends this minimum for this assay type. Nothing calibrates
+            it against your own data, and no test asserts it.
           </template>
         </PlNumberField>
         <PlRow>
@@ -1214,15 +1214,15 @@ const gridOptions = {
             :max-value="1"
             :step="0.01"
             clearable
-            label="Aggregate-barcode reads: warn above"
+            label="Aggregate reads warn"
           >
             <template #tooltip>
-              Above this share of reads sitting in barcodes flagged as aggregates, the measurement
-              warns.<br /><br />
-              Default 0.05, inherited from the field rather than calibrated for this assay: it is a
-              round number, and no test asserts it. Moving any of the three detection knobs below
-              changes what this line judges, since they decide which barcodes count as aggregates in
-              the first place.
+              The share of reads in barcodes flagged as aggregates. The measurement warns above this
+              share.<br /><br />
+              Default 0.05. The field supplies this number. Nothing calibrates it for this assay,
+              and no test asserts it.<br /><br />
+              The three detection settings below decide which barcodes count as aggregates, so each
+              one changes what this line judges.
             </template>
           </PlNumberField>
           <PlNumberField
@@ -1232,12 +1232,13 @@ const gridOptions = {
             :max-value="1"
             :step="0.01"
             clearable
-            label="Aggregate-barcode reads: alert at"
+            label="Aggregate reads alert"
           >
             <template #tooltip>
-              At this share the measurement alerts.<br /><br />
-              Default 1.0 (total failure), inherited from the field rather than calibrated for this
-              assay: it is a round number, and no test asserts it.
+              The same share. The measurement alerts where the share equals this value, and not
+              above it.<br /><br />
+              Default 1.0, which is total failure. The field supplies this number. Nothing
+              calibrates it for this assay, and no test asserts it.
             </template>
           </PlNumberField>
         </PlRow>
@@ -1249,13 +1250,13 @@ const gridOptions = {
             :max-value="1"
             :step="0.01"
             clearable
-            label="Undeclared-barcode reads: warn above"
+            label="Undeclared reads warn"
           >
             <template #tooltip>
-              Above this share of a sample's reads landing in barcodes the panel never declared, the
-              measurement warns.<br /><br />
-              Default 0.50, inherited from the field rather than calibrated for this assay: it is a
-              round number, and no test asserts it.
+              The share of a sample's reads in barcodes the panel never declared. The measurement
+              warns above this share.<br /><br />
+              Default 0.50. The field supplies this number. Nothing calibrates it for this assay,
+              and no test asserts it.
             </template>
           </PlNumberField>
           <PlNumberField
@@ -1265,12 +1266,13 @@ const gridOptions = {
             :max-value="1"
             :step="0.01"
             clearable
-            label="Undeclared-barcode reads: alert at"
+            label="Undeclared reads alert"
           >
             <template #tooltip>
-              At this share the measurement alerts.<br /><br />
-              Default 1.0 (total failure), inherited from the field rather than calibrated for this
-              assay: it is a round number, and no test asserts it.
+              The same share. The measurement alerts where the share equals this value, and not
+              above it.<br /><br />
+              Default 1.0, which is total failure. The field supplies this number. Nothing
+              calibrates it for this assay, and no test asserts it.
             </template>
           </PlNumberField>
         </PlRow>
@@ -1282,13 +1284,13 @@ const gridOptions = {
             :max-value="1"
             :step="0.01"
             clearable
-            label="Usable antigen-read fraction: warn below"
+            label="Usable reads warn"
           >
             <template #tooltip>
-              Below this share of the library's reads reaching a called cell with a panel-recognised
-              barcode, the measurement warns.<br /><br />
-              Default 0.20, inherited from the field rather than calibrated for this assay: it is a
-              round number, and no test asserts it.
+              The share of the library's reads that reach a called cell with a panel-recognised
+              barcode. The measurement warns below this share.<br /><br />
+              Default 0.20. The field supplies this number. Nothing calibrates it for this assay,
+              and no test asserts it.
             </template>
           </PlNumberField>
           <PlNumberField
@@ -1298,12 +1300,14 @@ const gridOptions = {
             :max-value="1"
             :step="0.01"
             clearable
-            label="Usable antigen-read fraction: alert below"
+            label="Usable reads alert"
           >
             <template #tooltip>
-              Below this share the measurement alerts instead of warning.<br /><br />
-              Default 0.0 (total failure), inherited from the field rather than calibrated for this
-              assay: it is a round number, and no test asserts it.
+              The same share. The measurement alerts where the share equals this value, and not
+              below it.<br /><br />
+              Default 0.0, which is total failure. At that default the alert fires only where no
+              read is usable. The field supplies this number. Nothing calibrates it for this assay,
+              and no test asserts it.
             </template>
           </PlNumberField>
         </PlRow>
