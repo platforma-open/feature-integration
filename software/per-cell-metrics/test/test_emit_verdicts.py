@@ -2672,6 +2672,30 @@ def test_the_distributions_are_emitted_as_plottable_frames(bed):
     assert backgrounds.height == 0, "a declared baseline fits no background"
 
 
+def test_the_spreads_are_taken_over_the_cell_list_not_over_observed_barcodes(bed):
+    # The cutoff and the gate act on cells, and the count plots beside these two on the same page are
+    # already narrowed to the cell list. In droplet data observed barcodes outnumber cells by one to two
+    # orders of magnitude. `zzz` is observed and unlisted, and its reference reading of 999 is the only
+    # one in the run that is not 6, so an unnarrowed spread cannot pass.
+    (bed / "counts.csv").write_text((bed / "counts.csv").read_text() + "S1,zzz,AAAA,7\nS1,zzz,CTRL,999\n")
+    r = _run(bed, *BASE)
+    assert r.returncode == 0, r.stderr
+
+    meta = json.loads((bed / "result_run_meta.json").read_text())
+    assert meta["cellsInList"] == 3 and meta["cellsAnalysed"] == 4, "the bed no longer separates the two"
+
+    bins = json.loads((bed / "result_qc_tag_bins.json").read_text())
+    # Two scored positions, not three: a silent admissible cell carries no row, so c3 never reaches the
+    # score spread. Unnarrowed this would be three, c1 and c2 plus zzz.
+    assert sum(bins["spreads"]["score"]["weights"]) == 2
+    # Three readings: every listed cell carries a comparator whether or not it read an antigen.
+    assert sum(bins["spreads"]["referenceReading"]["weights"]) == 3
+
+    deciles = pl.read_csv(bed / "result_qc_deciles.csv", infer_schema_length=0)
+    readings = deciles.filter(pl.col("distribution") == "referenceReading")["value"].to_list()
+    assert {float(v) for v in readings} == {6.0}, readings
+
+
 @pytest.fixture
 def sample_decile_bed(tmp_path):
     # Three samples: S1 and S2 each hold cells with an antigen count, at different scales so their decile

@@ -640,10 +640,9 @@ def main() -> None:
     def _listed(frame: pl.DataFrame) -> pl.DataFrame:
         """`frame` narrowed to the cell list, or unchanged where no list arrived.
 
-        The reagent table counts CELLS -- how many held any count of a tag, how many it called bound,
-        and the median over the cells holding one. Observed barcodes are not cells and outnumber them
-        by one to two orders of magnitude, because ambient reads land on most barcodes, so a median
-        taken over them is the ambient floor and every tag in the panel reads as a failed reagent.
+        Every figure a reader takes as a per-CELL number goes through here: the reagent table's counts
+        and medians, and the score and reference spreads. Observed barcodes outnumber cells by one to
+        two orders of magnitude, so a figure taken over them is the ambient population's.
 
         A run with no cell list keeps every barcode. Membership is unknown rather than false there, and
         `cellListSource` in the run record says which case a figure was computed under.
@@ -1398,15 +1397,17 @@ def main() -> None:
     # encoded inside a detail string is a number nobody can plot.
     #
     # Deciles of the score and of the reference reading share one frame, keyed by which distribution a
-    # row belongs to. Both are taken over the whole run: the cutoff is one number for the run, and so is
-    # the gate, so a plot must show every cell the number will act on.
+    # row belongs to. Both are pooled across samples and both are narrowed to the CELL LIST, through the
+    # same `_listed` the count plots on this page use. The cutoff and the gate are each one number for
+    # the run, and each acts on cells; a spread taken over observed barcodes is a different population
+    # from the one beside it on the page.
     decile_rows: list[dict] = []
     # Binned beside the deciles, and for a different reader. Eleven decile points suggest a shape; they
     # cannot show WHERE a distribution separates, which is the one thing both plots are read for.
-    # Binning every cell is how the plot shows every cell without shipping one row per cell.
+    # Binning is how the plot shows every cell without shipping one row per cell.
     spread_bins: dict[str, dict[str, object]] = {}
     if reference.served is ReferenceChoice.DECLARED:
-        scored = states.filter(pl.col("unreliableReason").is_null())
+        scored = _listed(states.filter(pl.col("unreliableReason").is_null()))
         if scored.height > 0:
             values = specificity_score(
                 scored["umiCount"].to_numpy(),
@@ -1416,8 +1417,12 @@ def main() -> None:
             decile_rows += _decile_rows("score", deciles_of(scores))
             score_edges = linear_bin_edges(scores)
             spread_bins["score"] = {"edges": score_edges, "weights": bin_values(scores, score_edges)}
-    if reference.by_cell:
-        readings = np.asarray(list(reference.by_cell.values()), dtype=float)
+    # Narrowed by key rather than through `_listed`: the comparator is a dict keyed by cell, not a frame.
+    # An empty result is possible where a list arrived and no listed cell carries a comparator, and it
+    # writes no rows rather than an all-zero spread.
+    listed_readings = [value for key, value in reference.by_cell.items() if cell_list is None or key in cell_list]
+    if listed_readings:
+        readings = np.asarray(listed_readings, dtype=float)
         decile_rows += _decile_rows("referenceReading", deciles_of(readings))
         reading_edges = linear_bin_edges(readings)
         spread_bins["referenceReading"] = {
@@ -1447,14 +1452,14 @@ def main() -> None:
     # Taken from the RAW counts. The floor and the reference hold-out both happen later, and a plot read
     # in order to SET the floor cannot have the floor already applied to it.
     #
-    # Restricted to the CELL LIST, unlike every other use of `counts` in this file. In droplet data the
-    # observed barcodes outnumber the cells by one to two orders of magnitude, and an ambient population
-    # that size is the only hump a panel shows.
+    # Restricted to the CELL LIST, as every per-cell figure on this page is. In droplet data the observed
+    # barcodes outnumber the cells by one to two orders of magnitude, and an ambient population that size
+    # is the only hump a panel shows.
     #
     # A run with no cell list bins every barcode, and `cellListSource` in the run meta says which case a
     # plot was drawn under. The edges are taken from the same filtered frame, so the shared domain ends
     # at the highest count among cells rather than among barcodes.
-    bin_counts = counts if cell_list is None else counts.join(in_list, on=["sampleId", "cellId"], how="inner")
+    bin_counts = _listed(counts)
     bin_edges = count_bin_edges(bin_counts)
     # The fit's two means travel WITH the bins, at the same (sample, tag) grain. They are what a reader
     # judges the humps against, so reaching them through the p-frame beside this would mean a driver
@@ -1477,8 +1482,8 @@ def main() -> None:
                 # a label column reaches only p-frame surfaces, so without this every panel title is a barcode.
                 "tagLabels": tag_names,
                 # The run's score spread and its reference readings, on their own linear edges. Each is one
-                # distribution for the whole run, because the cutoff and the gate are each one number for the
-                # run, so a plot must show every cell the number will act on.
+                # distribution for the whole run, pooled across samples and narrowed to the cell list, so it
+                # carries the same population as the count bins beside it.
                 "spreads": spread_bins,
             },
             out,
