@@ -29,9 +29,6 @@ cells. The block computes which are available and refuses to pick for you, becau
 is a method nobody knows they used — and which one served travels with every verdict, since no two produce
 comparable numbers.
 
-**A binding level never leaves this block.** Counts stay available to inspect and the quality picture is
-built on them, but the answer is a state: no strength score, and no ordering by how hard something bound.
-
 The block also reports the quality of the run before you spend time on its biology — per sample, per
 reagent, and per barcode the panel never declared — so a failed reagent or a mis-declared panel is visible
 as itself rather than as a clone that did not bind.
