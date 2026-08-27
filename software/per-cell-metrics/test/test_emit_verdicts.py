@@ -316,11 +316,10 @@ def test_a_panel_too_small_to_serve_still_falls_to_no_comparator(bed):
     assert "declares no baseline tag" in r.stderr
 
 
-def test_zero_cells_detected_shows_its_number_and_carries_no_status(bed):
-    # Nothing published says how many cell barcodes a sample should carry, so no line stands behind this
-    # and it carries no status. `where-the-lines-come-from` keeps a categorical route open for an
-    # alerting condition that is a fact rather than a quantity, and says no measurement in the current
-    # set stands on it. The zero is shown as the zero it is, and the reader judges it.
+def test_zero_cells_detected_alerts(bed):
+    # The categorical route: the alerting condition is a fact -- no cell barcode observed at all -- and
+    # not a quantity with a published threshold. A sample that detected none produced nothing for
+    # anything downstream to read, which is a run failure a reader needs at a glance.
     (bed / "qc.csv").write_text(
         "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
         "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction\n"
@@ -331,13 +330,12 @@ def test_zero_cells_detected_shows_its_number_and_carries_no_status(bed):
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
     row = qc.filter(pl.col("measurement") == "cellsDetected").row(0, named=True)
     assert row["value"] == "0.0"
-    assert row["status"] is None
+    assert row["status"] == "alert"
 
 
-def test_a_positive_cell_count_claims_nothing_about_yield(bed):
-    # Nothing here says the yield was good OR bad -- how many cells a sample should yield depends on the
-    # experiment, and no number for that is published. An OK at one barcode was the costly half: it read
-    # as a sample checked and found sound.
+def test_a_positive_cell_count_reads_ok_and_claims_nothing_about_yield(bed):
+    # Above zero the status says only that the fact is false. It does not say the yield was good -- how
+    # many cells a sample should yield depends on the experiment, and no number for that is published.
     (bed / "qc.csv").write_text(
         "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
         "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction\n"
@@ -348,7 +346,7 @@ def test_a_positive_cell_count_claims_nothing_about_yield(bed):
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
     row = qc.filter(pl.col("measurement") == "cellsDetected").row(0, named=True)
     assert row["value"] == "1.0"
-    assert row["status"] is None
+    assert row["status"] == "OK"
 
     (bed / "qc.csv").write_text(
         "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
@@ -360,7 +358,7 @@ def test_a_positive_cell_count_claims_nothing_about_yield(bed):
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
     row = qc.filter(pl.col("measurement") == "cellsDetected").row(0, named=True)
     assert row["value"] == "50000.0"
-    assert row["status"] is None
+    assert row["status"] == "OK"
 
 
 def test_no_cell_list_leaves_membership_unknown_and_depth_unevaluated(bed):
@@ -3332,16 +3330,16 @@ def test_qc_frame_carries_the_line_and_route_for_an_inherited_measurement():
     assert frame["route"] == "inherited"
 
 
-def test_qc_frame_leaves_all_three_null_for_cells_detected():
-    # cellsDetected stood on the categorical route and was the only measurement that ever did. With it
-    # off, no route and no numbers back it, and the frame says so in all three columns.
+def test_qc_frame_leaves_the_numbers_null_for_the_categorical_route():
+    # cellsDetected carries a route -- its status is a fact, not a threshold -- but no numeric line:
+    # `route` is non-null while `lineWarn` and `lineAlert` stay null.
     rows = []
     qc_rows._add(rows, "sample", "S1", "cellsDetected", 12.0)
     frame = qc_rows._qc_frame(rows).row(0, named=True)
 
     assert frame["lineWarn"] is None
     assert frame["lineAlert"] is None
-    assert frame["route"] is None
+    assert frame["route"] == "categorical"
 
 
 def test_qc_frame_leaves_all_three_null_where_no_line_backs_the_measurement():

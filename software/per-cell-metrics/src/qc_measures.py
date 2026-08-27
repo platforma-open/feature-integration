@@ -150,20 +150,22 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "which points at the wrong whitelist or the wrong read geometry.",
         "inherited",
     ),
-    # No line stands behind this, so it carries no status. `where-the-lines-come-from` keeps a
-    # categorical route open for an alerting condition that is a fact rather than a quantity, and says
-    # no measurement in the current set stands on it; a status here would be a line invented for the
-    # purpose, and its OK half would report a sample holding one barcode as checked and sound.
+    # The categorical route's member. `where-the-lines-come-from` keeps that route for an alerting
+    # condition that is a fact rather than a quantity, and says the route stays because the next
+    # measurement may need it. This is that measurement: no cell barcode observed at all is a fact, and
+    # a sample that detects none produced nothing for anything downstream to read.
     #
     # Computed in `qc_report.py` as the count of distinct cell barcodes the tag-stat table carries,
-    # before any cell-calling step. It carries no `implies` either: where no line stands behind a
-    # measurement, nothing is said about what a bad value would mean, because nothing is known. How many
-    # cells a sample should yield depends on the experiment, and a zero shows as the zero it is.
+    # before any cell-calling step. `implies` names only the zero case. Above zero nothing is claimed,
+    # because how many cells a sample should yield depends on the experiment and no number for that is
+    # published.
     Measurement(
         "cellsDetected",
         "Cell barcodes detected",
         "sample",
         "Distinct cell barcodes in the tag-stat table, before any cell-calling step.",
+        "Zero cells means nothing downstream can be computed for this sample.",
+        "categorical",
     ),
     # Saturation is deliberately NOT measured. The vendor's own report carries it, and a scientist
     # cannot act on it for the run already collected; whether the run was deep enough is answered by

@@ -582,14 +582,15 @@ def test_a_numeric_route_has_a_line_and_a_comparison_and_nothing_else_does():
     assert "undeclaredBarcodeShare" in _COMPARISON
 
 
-def test_the_categorical_route_carries_no_measurement():
-    # `where-the-lines-come-from` keeps the route open for an alerting condition that is a fact rather
-    # than a quantity, and says no measurement in the current set stands on it. A member here is a line
-    # invented for the purpose -- and its OK half is the costly one, reporting a sample holding a single
-    # barcode as checked and sound.
+def test_the_categorical_route_carries_cells_detected_and_nothing_else():
+    # The route is for an alerting condition that is a fact rather than a quantity, and it was kept
+    # because the next measurement may need it. Cells detected is that measurement: no cell barcode
+    # observed at all is a fact, not a threshold. A fact carries no numeric line, so its id must appear
+    # in neither table.
     categorical_routed = {m.id for m in MEASUREMENTS if m.line == "categorical"}
-    assert categorical_routed == set()
-    assert "categorical" in LINE_ROUTES, "the route stays; the next measurement may need it"
+    assert categorical_routed == {"cellsDetected"}
+    assert categorical_routed.isdisjoint(DEFAULT_LINES)
+    assert categorical_routed.isdisjoint(_COMPARISON)
 
 
 def test_the_undeclared_barcode_line_is_read_direct_not_as_a_complement():
@@ -726,14 +727,14 @@ def test_a_tag_the_reads_never_show_carries_no_status():
     assert "declaredNeverSeen" not in DEFAULT_LINES
 
 
-def test_cells_detected_carries_no_status():
-    # Nothing published says how many cell barcodes a sample should carry, so no line stands behind this
-    # and it carries no status at either end. The number is shown and the reader judges it.
+def test_cells_detected_alerts_at_zero_and_reads_ok_above_it():
+    # The fact is "no cell barcode at all", so the line falls between zero and one and nowhere else.
+    # Above zero the status claims only that the fact is false, never that the yield was good.
     by_id = {m.id: m for m in MEASUREMENTS}
-    assert by_id["cellsDetected"].line is None
-    assert status_for("cellsDetected", 0, DEFAULT_LINES) is None
-    assert status_for("cellsDetected", 1, DEFAULT_LINES) is None
-    assert status_for("cellsDetected", 50_000, DEFAULT_LINES) is None
+    assert by_id["cellsDetected"].line == "categorical"
+    assert status_for("cellsDetected", 0, DEFAULT_LINES) is Status.ALERT
+    assert status_for("cellsDetected", 1, DEFAULT_LINES) is Status.OK
+    assert status_for("cellsDetected", 50_000, DEFAULT_LINES) is Status.OK
 
 
 def test_cells_detected_claims_nothing_about_yield():
@@ -741,7 +742,9 @@ def test_cells_detected_claims_nothing_about_yield():
     # here says the yield was good.
     by_id = {m.id: m for m in MEASUREMENTS}
     m = by_id["cellsDetected"]
-    assert m.implies is None, "a measurement with no line says nothing about what a bad value means"
+    # A measurement WITH a line may say what a bad value implies, where that is known. Here it is known
+    # for the zero case only, and the wording stays narrow.
+    assert "yield" not in (m.implies or "").lower()
     assert "cellsDetected" not in DEFAULT_LINES
     assert "cellsDetected" not in _COMPARISON
 
