@@ -57,6 +57,7 @@ from identity_tables import (
     CELL_PUNCH_MAX_CELLS,
     IDENTITY_KEY_COLUMN,
     IDENTITY_SUMMARY_MAX_IDENTITIES,
+    REFERENCE_IDENTITY_LABEL,
     CellKey,
     _build_grouping,
     _cells_by_set,
@@ -733,8 +734,16 @@ def main() -> None:
         grouping_id,
         label_disagreements,
     )
+    # Reference tags carry a row too. They are held out of `universe`, but the reagent table gives a
+    # tag absent from the grouping a row under its own barcode, so without a label here that row
+    # renders a blank where every other row names an antigen. The label is the ROLE, not the tag's
+    # feature name, which the same row already carries in its Tag column, and not a grouping value,
+    # which would read as a fourth identity beside an identity count of three.
+    #
+    # `universe` and `reference_tags` are disjoint: `_build_grouping` excludes reference tags.
     identity_labels = pl.DataFrame(
-        [(identity, labels.get(identity, identity)) for identity in sorted(universe)],
+        [(identity, labels.get(identity, identity)) for identity in sorted(universe)]
+        + [(tag, REFERENCE_IDENTITY_LABEL) for tag in sorted(reference_tags)],
         orient="row",
         schema={"identity": pl.String, "label": pl.String},
     )

@@ -232,6 +232,11 @@ def tag_labels(
     return {tag: (f"{name} ({tag})" if collisions[name] > 1 else name) for tag, name in names.items()}
 
 
+# The identity label a reference tag reads under in the reagent table. A reference tag is held out of
+# every identity, so it has no name from the grouping; it still takes a reagent row under its own
+# barcode. Names the ROLE rather than the reagent, which the same row carries in its Tag column.
+REFERENCE_IDENTITY_LABEL = "baseline reagent"
+
 # The key column of result_identity_properties.csv. A panel column of the same name would collapse
 # into the key as the frame is built: the property would not be dropped, it would silently BECOME
 # the identity. Such a column is excluded from the export and reported.

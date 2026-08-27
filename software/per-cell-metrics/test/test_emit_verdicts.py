@@ -8,7 +8,7 @@ import polars as pl
 import pytest
 import qc_rows
 from emit_verdicts import _build_grouping, _identity_properties, _linker_frame, undeclared_feature_counts
-from identity_tables import CELL_PUNCH_MAX_CELLS, IDENTITY_SUMMARY_MAX_IDENTITIES
+from identity_tables import CELL_PUNCH_MAX_CELLS, IDENTITY_SUMMARY_MAX_IDENTITIES, REFERENCE_IDENTITY_LABEL
 from panel import ANY_SAMPLE, consistent_properties, property_columns
 from qc_measures import DEFAULT_LINES, MEASUREMENTS, Line, Measurement
 from verdict import DEFAULT_PANEL_MIN_MEMBERS, ReferenceChoice
@@ -33,6 +33,18 @@ def _run(cwd, *args, expect_failure=False):
     else:
         assert r.returncode == 0, f"exited {r.returncode}. stderr={r.stderr!r}"
     return r
+
+
+def _identities_only(bed):
+    """`result_identity_labels.csv` less the reference tags, which are not identities.
+
+    The file also labels the reagent table's identity axis, and a reference tag takes a reagent row
+    keyed on its own barcode. A test about the identity universe must not see it.
+    """
+    labels = dict(pl.read_csv(bed / "result_identity_labels.csv", infer_schema_length=0).iter_rows())
+    for tag in json.loads((bed / "result_run_meta.json").read_text())["referenceTags"]:
+        labels.pop(tag, None)
+    return labels
 
 
 BASE = [
@@ -108,10 +120,38 @@ def test_tag_labels_match_identity_labels_under_the_per_tag_grouping(bed):
     _run(bed, *BASE)
     tags = dict(pl.read_csv(bed / "result_tag_labels.csv", infer_schema_length=0).iter_rows())
     identities = dict(pl.read_csv(bed / "result_identity_labels.csv", infer_schema_length=0).iter_rows())
+    reference = set(json.loads((bed / "result_run_meta.json").read_text())["referenceTags"])
     # An identity IS a tag here, so one rule must give one answer. Two rules would read a tag under one
     # name beside its verdict and another beside its reagent figures.
+    #
+    # The reference tag is exempt: held out of every identity and carrying no verdict, it reads under
+    # its role rather than under its name, so the two tables differ on it by design.
     for identity, label in identities.items():
+        if identity in reference:
+            continue
         assert tags[identity] == label, f"{identity}: {tags[identity]!r} vs {label!r}"
+
+
+def test_the_reference_tag_reads_as_the_baseline_reagent(bed):
+    _run(bed, *BASE)
+    identities = dict(pl.read_csv(bed / "result_identity_labels.csv", infer_schema_length=0).iter_rows())
+    tags = dict(pl.read_csv(bed / "result_tag_labels.csv", infer_schema_length=0).iter_rows())
+    meta = json.loads((bed / "result_run_meta.json").read_text())
+
+    # The reagent table keys a tag absent from the grouping on its own barcode. Without a row here that
+    # cell renders blank while every other row of the table names an antigen.
+    assert identities["CTRL"] == REFERENCE_IDENTITY_LABEL, identities
+
+    # The ROLE, never the reagent's own name: the same reagent row already carries that in its Tag column.
+    assert tags["CTRL"] == "Ctrl"
+    # And never the grouping value, which would read as an identity the run does not score.
+    assert "Control" not in identities.values()
+    assert "CTRL" not in meta["identities"]
+    assert meta["referenceTags"] == ["CTRL"]
+
+    # The label reaches only the reference tag. Without this the assertion above also passes on a build
+    # that labelled every identity "baseline reagent".
+    assert identities["AAAA"] == "AgA"
 
 
 def test_a_silent_cell_votes_not_bound(bed):
@@ -778,7 +818,7 @@ def test_two_identities_that_disagree_the_same_way_do_not_share_a_label(bed):
     (bed / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS2,c2,K2\n")
     _run(bed, *BASE, "--grouping", json.dumps({"by": "property", "column": "Family"}))
 
-    labels = dict(pl.read_csv(bed / "result_identity_labels.csv", infer_schema_length=0).iter_rows())
+    labels = _identities_only(bed)
     assert set(labels) == {"Spike", "Nuc"}, "each barcode joins the family its own sample declared"
     assert len(set(labels.values())) == 2, f"two identities under one label: {labels}"
     # A property grouping makes the identity the property's value, which is already the name a reader
@@ -1071,7 +1111,7 @@ def test_the_bed_keys_identity_by_barcode_where_the_names_would_split(wide_bed):
 
     # A label is not an identity, and two identities under one label are two rows a reader cannot tell
     # apart, so where two barcodes share a name the label has to carry the barcode as well.
-    labels = dict(pl.read_csv(wide_bed / "result_identity_labels.csv", infer_schema_length=0).iter_rows())
+    labels = _identities_only(wide_bed)
     assert set(labels) == shape["antigens"]
     assert len(set(labels.values())) == len(labels)
 
@@ -1818,11 +1858,7 @@ def test_a_barcode_named_differently_per_sample_becomes_one_identity_per_name(tm
     (tmp_path / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS2,c2,K2\n")
     _run(tmp_path, *BASE, *NAME_GROUPING)
 
-    labels = dict(
-        pl.read_csv(tmp_path / "result_identity_labels.csv", infer_schema_length=0)
-        .select("identity", "label")
-        .iter_rows()
-    )
+    labels = _identities_only(tmp_path)
     assert set(labels) == {"SpikeWT", "SpikeWT__alt", "Lysozyme"}
     assert labels["SpikeWT"] == "SpikeWT"
     assert labels["SpikeWT__alt"] == "SpikeWT__alt"
