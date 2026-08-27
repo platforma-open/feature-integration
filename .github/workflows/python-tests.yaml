@@ -34,8 +34,10 @@ jobs:
       - run: uv sync --all-groups --locked
       - run: uv run pytest -m "not slow"
 
+  # Runs on pull requests too. This is the end-to-end lane -- the CLI driven over the committed fixture
+  # bed -- so it is the one that catches a wiring fault between the modules the fast lane tests apart.
+  # It was excluded from pull requests to save time, and it takes about a second.
   pytest-slow:
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: software } }
     steps:
