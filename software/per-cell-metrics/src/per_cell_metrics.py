@@ -22,16 +22,16 @@ def combine_barcode_counts(
 ) -> dict[str, float]:
     """Collapse ONE cell's per-barcode UMI counts into per-feature counts by combine mode.
 
-    The pure rule the vectorized ``_load`` path mirrors; an oracle test pins them together. One
-    antigen can be read out by several barcodes, such as a dual-labeled probe:
+    The pure rule the vectorized ``_load`` path mirrors; an oracle test pins them together. One antigen
+    can be read out by several barcodes, such as a dual-labeled probe:
 
     - ``"sum"`` (OR, default): UMI is the sum of member barcodes present in the cell.
-    - ``"all"`` (AND): called only when every member fired at ``umi >= min_umi``, UMI is their
-      sum. Otherwise the feature is absent for the cell -- omitted, not zero -- so it takes no
-      share of the cell's signal. This is the LIBRA-seq dual-probe design.
+    - ``"all"`` (AND): called only when every member fired at ``umi >= min_umi``, UMI is their sum.
+      Otherwise the feature is absent for the cell -- omitted, not zero -- so it takes no share of the
+      cell's signal. This is the LIBRA-seq dual-probe design.
 
-    ``barcode_umi`` holds only barcodes with signal, because tag-stat emits count>0 rows.
-    Off-panel barcodes are ignored, mirroring the inner join.
+    ``barcode_umi`` holds only barcodes with signal, because tag-stat emits count>0 rows. Off-panel
+    barcodes are ignored, mirroring the inner join.
     """
     present: dict[str, dict[str, float]] = {}
     for bc, umi in barcode_umi.items():
@@ -43,11 +43,10 @@ def combine_barcode_counts(
     for feat, bc_umis in present.items():
         if feature_modes.get(feat, "sum") == "all":
             members = feature_barcodes[feat]
-            # Presence is tested explicitly so AND stays correct at min_umi == 0, where a 0.0
-            # default would let an absent barcode fire. _load never sees absent barcodes.
+            # Presence is tested explicitly so AND stays correct at min_umi == 0, where a 0.0 default
+            # would let an absent barcode fire.
             if all(bc in bc_umis and bc_umis[bc] >= min_umi for bc in members):
                 out[feat] = sum(bc_umis.values())
-            # Not every member fired: omit the feature for this cell.
         else:  # "sum" / OR
             out[feat] = sum(bc_umis.values())
     return out
@@ -56,25 +55,23 @@ def combine_barcode_counts(
 def with_fraction(counts: pl.DataFrame) -> pl.DataFrame:
     """Add the within-cell UMI ``fraction`` to the (sampleId, cellId, feature, umiCount) frame.
 
-    Each feature's share of its cell's total, summing to 1 per cell. main() computes it once and
-    reuses it for the exported CSV and the per-cell summary, so the two cannot diverge.
+    Each feature's share of its cell's total, summing to 1 per cell. main() computes it once and reuses
+    it for the exported CSV and the per-cell summary, so the two cannot diverge.
 
-    A cell whose counts are all zero divides to NaN, which reaches the exported CSV and then
-    crashes `per_cell_summary`'s Int64 cast. Zero is the honest reading. Real input cannot get
-    there, because tag-stat emits count>0 rows only, so the guard is for hand-fed CSVs and any
-    future counts source. An empty frame carries its schema through."""
+    A cell whose counts are all zero divides to NaN, which reaches the exported CSV and then crashes
+    `per_cell_summary`'s Int64 cast. Zero is the honest reading. Real input cannot get there, because
+    tag-stat emits count>0 rows only."""
     total = pl.col("umiCount").sum().over(["sampleId", "cellId"])
     return counts.with_columns(pl.when(total > 0).then(pl.col("umiCount") / total).otherwise(0.0).alias("fraction"))
 
 
 def per_cell_summary(per_cell: pl.DataFrame) -> pl.DataFrame:
-    """One row per (sampleId, cellId): max feature UMI count, max fraction, and a
-    ``featureSummary`` string of every feature with signal as ``feature (fraction%, umiCount UMI)``,
-    bullet-separated, largest share first, feature name as tie-break.
+    """One row per (sampleId, cellId): max feature UMI count, max fraction, and a ``featureSummary``
+    string of every feature with signal as ``feature (fraction%, umiCount UMI)``, bullet-separated,
+    largest share first, feature name as tie-break.
 
     A TABLE-ONLY collapse; the abundance and fractions exports are unaffected. ``per_cell`` already
-    carries the ``fraction`` main() computed, so the maxima cannot diverge from the exports. An
-    empty frame carries its schema through.
+    carries the ``fraction`` main() computed, so the maxima cannot diverge from the exports.
     """
     # "<1%" so a real-but-tiny signal never reads as "0%". Exports keep full precision.
     pct = (pl.col("fraction") * 100).round(0)
@@ -96,7 +93,6 @@ def per_cell_summary(per_cell: pl.DataFrame) -> pl.DataFrame:
         pl.col("fraction").max().alias("maxFraction"),
         pl.col("_entry")
         .sort_by(["fraction", "feature"], descending=[True, False])
-        # comma-separated, largest share first.
         .str.join(", ")
         .alias("featureSummary"),
     ]
@@ -119,16 +115,16 @@ def _load(
 
     ``tag-stat -t CELL -t FEATURE -u UMI`` emits one row per (cell, barcode) group with columns
     ``CELL FEATURE count totalWeight unique_UMI``. mitool deduplicates, so ``unique_UMI`` is taken
-    directly as the molecule count. The tag->feature CSV maps barcode to feature name;
-    ``csv_barcode_col`` / ``csv_feature_col`` map arbitrary headers onto those roles.
+    directly as the molecule count. ``csv_barcode_col`` / ``csv_feature_col`` map arbitrary headers
+    onto the barcode and feature roles.
 
     Barcodes sharing a feature collapse by its ``combine_col`` mode: ``"sum"`` or absent sums the
-    counts (OR, default), ``"all"`` emits the feature only where every member fired at
-    >= ``min_umi``. The output column is always named ``feature``, because Xsv import needs it.
+    counts (OR, default), ``"all"`` emits the feature only where every member fired at >= ``min_umi``.
+    The output column is always named ``feature``, because Xsv import needs it.
     """
     stat = pl.read_csv(tag_stat_tsv, separator="\t")
-    # A header-only tag-stat (every read dropped) has no data rows, so polars infers String for
-    # every column. Coerce here, or the fraction division fails on String arithmetic.
+    # A header-only tag-stat (every read dropped) has no data rows, so polars infers String for every
+    # column. Coerce here, or the fraction division fails on String arithmetic.
     stat = stat.with_columns(pl.col(umi_count_col).cast(pl.Int64))
     mapping = pl.read_csv(tag_feature_csv)  # columns: csv_barcode_col, csv_feature_col
     # Normalize the join key and feature name the way mitool does.
@@ -144,8 +140,8 @@ def _load(
         f"[per-cell-metrics] tag->feature CSV: {mapping.height} rows, columns={mapping.columns}",
         file=sys.stderr,
     )
-    # A barcode must appear on exactly one CSV row. A repeat fans the inner join out once per copy,
-    # and the group_by(...).sum() below then silently DOUBLES that barcode's molecule counts.
+    # A barcode must appear on exactly one CSV row. A repeat fans the inner join out once per copy, and
+    # the group_by(...).sum() below then silently DOUBLES that barcode's molecule counts.
     dup_barcodes = (
         mapping.group_by(csv_barcode_col).agg(pl.len().alias("_n")).filter(pl.col("_n") > 1)[csv_barcode_col].to_list()
     )
@@ -155,8 +151,8 @@ def _load(
             f"(column {csv_barcode_col!r}); each feature barcode must map to exactly one feature. "
             f"Remove the duplicate rows: {dup_barcodes[:8]}"
         )
-    # Per-feature combine mode and member set, parsed once from the small mapping. Default "sum"
-    # (OR); "all" requests AND. A blank cell is unset. Non-blank rows of one feature must agree.
+    # Per-feature combine mode and member set, parsed once from the small mapping. Default "sum" (OR);
+    # "all" requests AND. A blank cell is unset. Non-blank rows of one feature must agree.
     feature_barcodes: dict[str, set[str]] = {}
     feature_modes_raw: dict[str, set[str]] = {}
     map_cols = [csv_barcode_col, csv_feature_col] + ([combine_col] if combine_col else [])
@@ -196,8 +192,8 @@ def _load(
         rename[csv_feature_col] = "feature"
 
     # Per-feature mode and expected member count, joined onto the aggregate. n_expected counts the
-    # DISTINCT barcodes mapping to the feature; the AND gate keeps a group only when that many
-    # fired. With no combine column every feature is "sum", so the filter is a no-op.
+    # DISTINCT barcodes mapping to the feature; the AND gate keeps a group only when that many fired.
+    # With no combine column every feature is "sum", so the filter is a no-op.
     mode_df = pl.DataFrame(
         {
             csv_feature_col: list(feature_barcodes.keys()),
@@ -211,7 +207,6 @@ def _load(
         .group_by([cell_col, csv_feature_col])
         .agg(
             pl.col(umi_count_col).sum().alias("umiCount"),
-            # distinct members that fired here (one tag-stat row per barcode)
             pl.col("_fired").sum().cast(pl.UInt32).alias("_nFired"),
         )
         .join(mode_df, on=csv_feature_col, how="left")
@@ -228,13 +223,11 @@ def _load(
 
 
 # The live-progress contract the mitool steps already use. The workflow captures this step's stdout as
-# a stream and the model scrapes lines carrying this prefix, so printing one here puts the Python step
-# on the same bar as parse, refine and tag-stat. Without it the bar sat at the band floor for the whole
-# of this step, which is the slowest one on a large run.
+# a stream and the model scrapes lines carrying this prefix. Without it the bar sat at the band floor
+# for the whole of this step, the slowest one on a large run.
 #
-# The percent is the share of THIS step done when the named phase begins, so the bar advances as each
-# phase starts rather than jumping at the end. No ETA: these phases are whole-frame polars operations
-# with no iteration count to extrapolate from, and an invented ETA is worse than none.
+# The percent is the share of THIS step done when the named phase begins. No ETA: these phases are
+# whole-frame polars operations with no iteration count to extrapolate from.
 _PROGRESS_PREFIX = "[==PROGRESS==]"
 
 
@@ -282,12 +275,10 @@ def main() -> None:
     p.add_argument("--output-prefix", default="result")
     args = p.parse_args()
 
-    # The two mapped roles must be distinct, and neither may collide with a tag-stat column. The
-    # inner join carries every tag-stat column through, so a --csv-feature-col naming one of them
-    # (`count`, `totalWeight`, `unique_UMI`, CELL, FEATURE) would silently put the WRONG data into
-    # the output `feature` column; a collision on the cell key crashes with a raw polars
-    # DuplicateError. Read the real header, so every collision is caught, not just the flag-named
-    # three.
+    # The two mapped roles must be distinct, and neither may collide with a tag-stat column. The inner
+    # join carries every tag-stat column through, so a --csv-feature-col naming one of them would silently
+    # put the WRONG data into the output `feature` column; a collision on the cell key crashes with a raw
+    # polars DuplicateError. Read the real header, so every collision is caught.
     with open(args.tag_stat_tsv, newline="") as fh:
         reserved = set(next(csv.reader(fh, delimiter="\t"), []))
     if args.csv_barcode_col == args.csv_feature_col:
@@ -323,7 +314,6 @@ def main() -> None:
     counts = counts.with_columns(pl.lit(args.sample_id).alias("sampleId"))
 
     _progress("Writing counts per cell", 45.0)
-    # abundance matrix (cell x feature) UMI counts
     (
         counts.select(["sampleId", "cellId", "feature", "umiCount"])
         .sort(["sampleId", "cellId", "feature"])

@@ -4,7 +4,7 @@ import { computed, ref } from "vue";
 import type { Punch, VerdictState } from "./punchMarks";
 import { PUNCH_DIAMETER_PX, PUNCH_PAINT, parsePunch } from "./punchMarks";
 
-// One punch, in the operator's vocabulary rather than the use case figure's:
+// One punch:
 //
 //   bound        a GREEN dot
 //   not bound    a RED dot
@@ -12,30 +12,24 @@ import { PUNCH_DIAMETER_PX, PUNCH_PAINT, parsePunch } from "./punchMarks";
 //   never asked  nothing at all
 //
 // This departs from `assets/punch-card.svg`, which fills a dot for bound, leaves the cell blank for not
-// bound, and rings it for never-offered. Operator decision, taken after reading a live card: the figure's
-// blank-for-negative is unreadable at real density, because a clonotype binds one antigen out of the panel
-// and the grid is therefore ~92% negative before anything goes wrong. Blank is reserved for the one state
-// that genuinely has no answer in it, a position the experiment never put to this clonotype. The three
-// states that ARE answers read as dots of one family, so the card is a field of colour and a reader is never
-// asked to tell a shape from an absence.
+// bound, and rings it for never-offered. Operator decision, taken after reading a live card: a clonotype
+// binds one antigen out of the panel, so the grid is ~92% negative before anything goes wrong and
+// blank-for-negative is unreadable at that density. Blank is reserved for the one state that has no answer
+// in it. The three states that ARE answers read as dots of one family.
 //
 // EVERY mark is one size, and a large one. Never size a mark by the share of a clonotype's cells that
-// answered. `support-travels-with-the-reading` is a DELIVERY obligation: it fixes that the scientist is
-// handed the two counts, not that a dot encode them, and they are handed over twice already, in this
-// component's own tooltip and as columns in the clonotype expansion. The encoding costs legibility of the
-// thing the card is for: at panel density a reader scans for WHERE the colour is, and a grid of dots at
-// eight different diameters reads as noise long before anyone measures one against another.
+// answered: the scientist is handed the two counts in this component's own tooltip and as columns in the
+// clonotype expansion, and a grid of dots at eight diameters reads as noise at panel density.
 //
 // The cell's value carries everything needed to explain itself, in ONE value because a grid pairs a cell
 // with another column's cell only by position and no import guarantees that. The format and its decoder
-// live in `punchMarks.ts`, shared with the clonotype expansion, so the two cannot disagree about it.
-// Anything that does not parse is drawn as its own mark rather than guessed at, so an unreadable value
-// cannot pass as an answer.
+// live in `punchMarks.ts`, shared with the clonotype expansion. Anything that does not parse is drawn as
+// its own mark rather than guessed at.
 //
-// There is deliberately no score and no binding level here: `binary-narrowing` forbids one leaving the
-// block, so the tooltip explains a verdict by what it RESTS on and never by how strongly anything bound.
+// There is deliberately no score and no binding level here. The tooltip explains a verdict by what it RESTS
+// on and never by how strongly anything bound.
 const props = defineProps<{
-  params: { value: unknown; antigen?: string; mergedNote?: string; showCouldAnswer?: boolean };
+  params: { value: unknown; antigen?: string; mergedNote?: string; showAsked?: boolean };
 }>();
 
 const punch = computed<Punch>(() => parsePunch(props.params.value));
@@ -63,8 +57,7 @@ const punchStyle = computed<CSSProperties>(() => ({
 }));
 
 // Fills the cell, so the hover target is the whole cell rather than the dot. The measured wrapper was 130px
-// inside a 161px cell, which leaves a strip on each side where a reader aiming at the column would get
-// nothing back.
+// inside a 161px cell, which leaves a strip on each side where a reader aiming at the column gets nothing.
 const cellStyle: CSSProperties = {
   display: "flex",
   alignItems: "center",
@@ -73,14 +66,13 @@ const cellStyle: CSSProperties = {
   height: "100%",
 };
 
-// Why this mark is this colour, in the order a reader asks it: what the verdict is, what it rests on, and --
-// where the verdict is unsettled -- which of the six ways it failed to settle. The reason tokens are machine
-// values (`no-comparator`, `tie`, ...), so each is expanded here rather than shown raw. A token is a key,
-// not a sentence.
+// Why this mark is this colour, in the order a reader asks it: what the verdict is, what it rests on, and
+// -- where the verdict is unsettled -- which of the five ways it failed to settle. The sixth key below is
+// never-offered, which belongs to *never asked* rather than to an unsettled reading. The reason tokens are
+// machine values (`no-comparator`, `tie`, ...), so each is expanded here rather than shown raw.
 //
-// Each line reads as its own sentence, so each is capitalised at the source rather than by a transform over
-// `lines`. A blanket transform would also capitalise the antigen name, which is panel data -- the panel says
-// `gp120`, and a tooltip is not the place to start editing what the scientist declared.
+// Each line is capitalised at the source rather than by a transform over `lines`. A blanket transform would
+// also capitalise the antigen name, which is panel data.
 const WHY_UNSETTLED: Record<string, string> = {
   "never-offered": "No sample holding these cells declared this antigen",
   "no-comparator": "No baseline reading existed for these cells",
@@ -109,15 +101,18 @@ const lines = computed<string[]>(() => {
   const out = props.params.antigen === undefined ? [] : [props.params.antigen];
   out.push(p.state.toUpperCase(), EXPLANATION[p.state]);
   if (p.state !== "never asked") {
-    // How many COULD answer is shown only where the run carried panels that differ, which is where it
-    // varies. Under one panel it is the clonotype's own cell count at every identity, already beside its
-    // name in the grid, and repeating it here would teach a reader to skip the line that separates a verdict
-    // resting on three cells from one resting on forty.
+    // Two different sets, and the pair is shown wherever they differ: a gate set cells aside, or no
+    // baseline could be computed for them. Also wherever the run carried panels that differ, where a
+    // clonotype's cells were asked different things. With neither in play the two agree, and the second
+    // number is the clonotype's own cell count, already beside its name in the grid.
     out.push(
-      props.params.showCouldAnswer
-        ? `${p.answered} of ${p.couldAnswer} cells answered`
-        : `${p.answered} cells answered`,
+      props.params.showAsked || p.asked !== p.answered
+        ? `${p.answered} of the ${p.asked} cells asked could answer`
+        : `${p.answered} cells could answer`,
     );
+    // Both numbers travel with the verdict wherever it appears, and this one is the vote itself. Without
+    // it a tie or a refused majority carries no split at all, since agreement is absent on those.
+    if (p.bound !== undefined) out.push(`${p.bound} of them read bound`);
     if (p.agreement !== undefined) out.push(`${Math.round(p.agreement * 100)}% of them agreed`);
   }
   if (p.reason !== undefined) out.push(WHY_UNSETTLED[p.reason] ?? p.reason);
@@ -127,15 +122,13 @@ const lines = computed<string[]>(() => {
   return out;
 });
 
-// The panel is rendered by this component and teleported to <body>, rather than left to the browser's native
-// `title`. Three reasons, and the first is decisive: a `title` inside a virtualised grid cell did not fire at
-// all in the app, which is what a reader reported after the tooltip was "verified" by inspecting attributes
-// in the DOM. A title also cannot be styled or laid out -- a five-line explanation arrives as one
-// run-together string -- and it appears only after the OS hover delay, which for a grid a reader is scanning
-// is long enough to feel absent.
+// The panel is rendered by this component and teleported to <body>, rather than left to the browser's
+// native `title`. A `title` inside a virtualised grid cell did not fire at all in the app. It also cannot be
+// styled or laid out -- a five-line explanation arrives as one run-together string -- and it waits for the
+// OS hover delay, which for a grid a reader is scanning is long enough to feel absent.
 //
-// Teleported because the cell clips: ag-grid gives each cell `overflow: hidden`, so a panel rendered in place
-// is cut to a 40px row.
+// Teleported because the cell clips: ag-grid gives each cell `overflow: hidden`, so a panel rendered in
+// place is cut to a 40px row.
 const hover = ref<{ x: number; y: number } | null>(null);
 
 // Positioned beside the cursor and flipped when it would leave the window, so a punch in the last column or

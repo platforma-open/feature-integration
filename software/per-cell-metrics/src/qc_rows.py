@@ -33,12 +33,12 @@ from tag_distribution import TagFits
 from verdict import ReferenceChoice, specificity_score
 
 # A rollup is reported in the same frame as the measurements it aggregates, as a row whose
-# measurement is the rollup itself. A measurement is an axis value here, so a level's
-# summary costs a row rather than a column.
+# measurement is the rollup itself. A measurement is an axis value here, so a level's summary costs
+# a row rather than a column.
 ROLLUP = "rollup"
 ROLLUP_COUNTS = "The worst status among this level's measurements, and how much of it was checked."
-# The rollup has no declaration to borrow a readable name from, and a row reading `rollup`
-# beside rows reading `readsPerCell` leaves the reader guessing which is which.
+# The rollup has no declaration to borrow a readable name from, and a row reading `rollup` beside
+# rows reading `readsPerCell` leaves the reader guessing which is which.
 ROLLUP_LABEL = "Worst status at this level"
 
 MEASUREMENT_BY_ID = {m.id: m for m in MEASUREMENTS}
@@ -47,18 +47,15 @@ MEASUREMENT_BY_ID = {m.id: m for m in MEASUREMENTS}
 class QcRow(NamedTuple):
     """One measurement at one level entity, before its declaration is attached.
 
-    `status` and `coverage` are both carried because a measurement's own status is not
-    recoverable from a coverage triple: `roll_up` reports *not evaluated* for a level with
-    nothing judgeable in it, so a row computed and left unjudged would come back saying
-    nobody looked. The triple says how much was checked. The status says whether what was
-    checked is wrong.
+    `status` and `coverage` are both carried because a measurement's own status is not recoverable
+    from a coverage triple: `roll_up` reports *not evaluated* for a level with nothing judgeable in
+    it, so a row computed and left unjudged would come back saying nobody looked.
 
-    `panel_id` is set on tag-level and identity-level rows and left empty on the rest. A
-    panel carries the worst status among those measurements, so those rows have to say
-    which panel they belong to.
+    `panel_id` is set on tag-level and identity-level rows and left empty on the rest. A panel carries
+    the worst status among those measurements, so those rows have to say which panel they belong to.
 
-    `reason` is set only where `value` is None, and it is separate from `detail`: a detail
-    is carried alongside a number, a reason stands in place of one.
+    `reason` is set only where `value` is None, and it is separate from `detail`: a detail is carried
+    alongside a number, a reason stands in place of one.
     """
 
     level: str
@@ -115,8 +112,8 @@ def _qc_frame(rows: list[QcRow], lines: dict[str, Line] = DEFAULT_LINES) -> pl.D
                 "label": ROLLUP_LABEL if declared is None else declared.label,
                 "value": row.value,
                 "detail": row.detail or None,
-                # Null where no line stands behind the measurement. The reason is read from the
-                # value, which is where a reader looks next anyway.
+                # Null where no line stands behind the measurement. The reason is read from the value,
+                # which is where a reader looks next anyway.
                 "status": None if row.status is None else row.status.value,
                 "judged": row.coverage.judged,
                 "unjudged": row.coverage.unjudged,
@@ -126,9 +123,9 @@ def _qc_frame(rows: list[QcRow], lines: dict[str, Line] = DEFAULT_LINES) -> pl.D
                 "lineWarn": None if line is None else line.warn,
                 "lineAlert": None if line is None else line.error,
                 "route": route,
-                # Why this row has no number. The declaration wins: a deferred measurement's
-                # reason is the same on every run, and a call site cannot restate it. Any other
-                # row carries its own. Same precedence as `sample_report_rows`.
+                # Why this row has no number. The declaration wins: a deferred measurement's reason is the
+                # same on every run, and a call site cannot restate it. Same precedence as
+                # `sample_report_rows`.
                 "reason": (None if declared is None else declared.deferred_reason) or row.reason or None,
             }
         )
@@ -169,15 +166,15 @@ def _add(
 ):
     """Append one measurement row, taking its status from the lines in force.
 
-    Every declared measurement goes through here. One with no line in force carries no
-    status, which is honest rather than a refusal: it was computed, no line stands behind it,
-    so its number is shown and nothing is claimed.
+    Every declared measurement goes through here. One with no line in force carries no status, which
+    is honest rather than a refusal: it was computed, no line stands behind it, so its number is shown
+    and nothing is claimed.
 
-    `lines` defaults to the shipped set; a caller threading an operator override passes its
-    own dict, which then also governs what `_qc_frame` renders as `lineWarn` / `lineAlert`.
+    `lines` defaults to the shipped set; a caller threading an operator override passes its own dict,
+    which then also governs what `_qc_frame` renders as `lineWarn` / `lineAlert`.
 
-    `reason` belongs on a row with no number and is ignored on any other. A value that is not
-    a finite number is not a number the caller's reason describes, so it takes its own.
+    `reason` belongs on a row with no number and is ignored on any other. A value that is not a finite
+    number is not a number the caller's reason describes, so it takes its own.
     """
     rows.append(
         _leaf(
@@ -193,11 +190,9 @@ def _add(
     )
 
 
-# The two standing reasons, for the cases no call site accounts for.
-#
-# A deferred measurement carries its declaration's reason and needs neither of these. Of the
-# rest, every call site that can go valueless states its own, so `UNSUPPLIED_REASON` covers only
-# a declared measurement with no call site at all.
+# The two standing reasons, for the cases no call site accounts for. A deferred measurement carries
+# its declaration's reason and needs neither. Of the rest, every call site that can go valueless
+# states its own, so `UNSUPPLIED_REASON` covers only a declared measurement with no call site.
 UNSUPPLIED_REASON = "nothing in this run supplied a value for this measurement"
 # A number arrived and was not finite. Distinct from the above, which is nothing arriving: the
 # caller's reason describes an input that is missing and would misname this.
@@ -207,15 +202,14 @@ NOT_A_NUMBER_REASON = "this run computed a value for this measurement that is no
 def sample_report_rows(sample: str, rows: list[QcRow]) -> tuple[list[dict], Coverage]:
     """One sample's report: every sample-level measurement, and the rollup over them.
 
-    The walk is over `MEASUREMENTS` rather than over `rows`, so the report is the declared set:
-    a measurement this run never reached takes its place carrying a reason.
+    The walk is over `MEASUREMENTS` rather than over `rows`, so the report is the declared set: a
+    measurement this run never reached takes its place carrying a reason.
 
-    A value that is not a finite number counts as no value, by `is_computed`, which is the rule
-    the coverage triple counts by. The entry's account of itself and the triple cannot disagree.
+    A value that is not a finite number counts as no value, by `is_computed`, which is the rule the
+    coverage triple counts by.
 
-    A measurement declaring `rolls_up=False` is listed with its own status and left out of the
-    rollup. The entry carries `rollsUp`, which is what separates a status shown here from the
-    status the tag beside the list carries.
+    A measurement declaring `rolls_up=False` is listed with its own status and left out of the rollup.
+    The entry carries `rollsUp`, which separates a status shown here from the tag beside the list.
     """
     by_id = {r.measurement: r for r in rows if r.level == "sample" and r.entity == sample}
     entries: list[dict] = []
@@ -229,9 +223,9 @@ def sample_report_rows(sample: str, rows: list[QcRow]) -> tuple[list[dict], Cove
         status = None if row is None or value is None else row.status
         reason = None
         if value is None:
-            # Declaration first, so a call site cannot restate a deferred measurement's reason.
-            # Then the row's own, which `_add` has already replaced where a non-finite number
-            # arrived. `UNSUPPLIED_REASON` is left for a declared measurement with no call site.
+            # Declaration first, so a call site cannot restate a deferred measurement's reason. Then the
+            # row's own, which `_add` has already replaced where a non-finite number arrived.
+            # `UNSUPPLIED_REASON` is left for a declared measurement with no call site.
             reason = m.deferred_reason or (row.reason if row is not None else "") or UNSUPPLIED_REASON
         entries.append(
             {
@@ -253,9 +247,9 @@ def sample_report_rows(sample: str, rows: list[QcRow]) -> tuple[list[dict], Cove
 
 _DECILE_SCHEMA = {"distribution": pl.String, "decile": pl.Int64, "value": pl.Float64}
 # Deciles of the total antigen count per cell barcode, kept PER SAMPLE rather than pooled into
-# `_DECILE_SCHEMA`: `330-the-quality-readout` reads this shape as one sample's own plot, and
-# pooling it would answer a different question. A separate schema mints a separate p-column
-# rather than adding a sample axis to the existing one.
+# `_DECILE_SCHEMA`: this shape is one sample's own plot, and pooling it would answer a different
+# question. A separate schema mints a separate p-column rather than adding a sample axis to the
+# existing one.
 _SAMPLE_DECILE_SCHEMA = {"sampleId": pl.String, "decile": pl.Int64, "value": pl.Float64}
 _BACKGROUND_SCHEMA = {
     "sampleId": pl.String,
@@ -266,14 +260,12 @@ _BACKGROUND_SCHEMA = {
 }
 
 # One row per (panelId, tag, identity). Per-tag figures repeat across a tag's identities: the frame
-# is not a summary. `reason` names each figure that has no value and why, pipe-separated, and is
-# empty when every figure has one.
+# is not a summary. `reason` names each figure that has no value and why, pipe-separated.
 #
-# Three fields carry what the quality view prints, beside the figures they are printed from:
-# `seenIn` is the ratio the view shows in place of the two counts, and the two `...Shown` fields
-# carry a rate or, where none exists, the words for why. A rate whose absence is a blank cell reads
-# as a figure that failed to load, and single-tag identities are the common case, so the column
-# would be blank on most rows. The numeric fields stay, because sorting a rate against its
+# Three fields carry what the quality view prints, beside the figures they are printed from: `seenIn`
+# is the ratio shown in place of the two counts, and the two `...Shown` fields carry a rate or, where
+# none exists, the words for why. A blank cell reads as a figure that failed to load, and single-tag
+# identities are the common case. The numeric fields stay, because sorting a rate against its
 # neighbours is the whole use of these two columns and a string does not sort.
 _REAGENT_SCHEMA = {
     "panelId": pl.String,
@@ -296,11 +288,10 @@ _REAGENT_SCHEMA = {
 
 # One row per (sampleId, tag) the pre-refine pass saw and the sample's panel does not declare.
 # `readShare` and `status` are the SAMPLE's undeclared-read share, repeated on every one of that
-# sample's rows -- 330's "the field publishes a line for the share of a sample's reads that land
-# in barcodes nobody declared", read together with 310's "its status is the barcode's, and it
-# does not become a sample's": the status is computed at the sample and carried on the barcode's
-# own row, never on the sample's. Usually there are no rows for a sample at all, which is the
-# outcome the field wants.
+# sample's rows: the field publishes a line for the share of a sample's reads landing in barcodes
+# nobody declared, and that status is the barcode's, never the sample's -- so it is computed at the
+# sample and carried on the barcode's own row. Usually there are no rows for a sample at all, which
+# is the wanted outcome.
 _UNDECLARED_BARCODE_SCHEMA = {
     "sampleId": pl.String,
     "tag": pl.String,
@@ -335,14 +326,20 @@ def _sample_decile_rows(sample: str, deciles: pl.DataFrame) -> list[dict]:
 def _sticky_measure(readings: dict[tuple[str, str], int], gate: int | None) -> tuple[float | None, str]:
     """One sample's sticky exposure, in whichever form the gate allows.
 
-    A declared gate supplies a *high*, so the measurement is a count of the cells at or above
-    it. With no gate there is no high, and a count against a line nobody drew would assert a
-    boundary; the spread of the readings goes out instead, which is what a scientist reads in
-    order to place one. The value is then the median, matching the other spreads here.
+    A declared gate supplies a *high*, so the measurement is a count of the cells above it. With no gate
+    there is no high, and a count against a line nobody drew would assert a boundary; the spread of the
+    readings goes out instead. The value is then the median, matching the other spreads.
+
+    Both forms are taken over the cells' own baseline readings, which only a declared baseline tag
+    supplies. Over none, a gated count is 0.0 and reports a sample as checked and clean on a question the
+    run never asked, while the run record reports None for the same condition. So neither form returns a
+    number there, and the caller's reason goes out in place of one.
     """
     comparator_detail = f"cellsWithAComparator={len(readings)}"
+    if not readings:
+        return None, comparator_detail
     if gate is not None:
-        return float(sum(1 for v in readings.values() if v >= gate)), f"{comparator_detail}|gate={gate}"
+        return float(sum(1 for v in readings.values() if v > gate)), f"{comparator_detail}|gate={gate}"
     deciles = deciles_of(np.asarray(list(readings.values()), dtype=float))
     points = "|".join(
         f"{d}:{'' if v is None else round(v, 3)}" for d, v in zip(deciles["decile"], deciles["value"], strict=True)
@@ -354,12 +351,11 @@ def _sticky_measure(readings: dict[tuple[str, str], int], gate: int | None) -> t
 def _score_spread(states: pl.DataFrame, served: ReferenceChoice) -> tuple[float | None, str]:
     """The run's scores as deciles, or why there are none.
 
-    Only the declared rung scores. A population baseline yields a probability, which is not on
-    the same scale and cannot be pooled with a score, so under it this does not exist.
+    Only the declared rung scores. A population baseline yields a probability, which is not on the
+    same scale and cannot be pooled with a score.
 
-    Cells carrying an `unreliableReason` are left out. A cell with no comparator or one a gate
-    set aside still has a number here -- the score is computed before the state is called -- but
-    it answers a comparison that never happened.
+    Cells carrying an `unreliableReason` are left out. Such a cell still has a number here -- the score
+    is computed before the state is called -- but it answers a comparison that never happened.
     """
     if served is not ReferenceChoice.DECLARED:
         return None, f"the {served.value} baseline yields no score, so a run resting on it has no spread"
@@ -417,9 +413,9 @@ def _number(row: dict, column: str) -> float | None:
 _SAMPLE_MEASUREMENTS: tuple[Measurement, ...] = tuple(m for m in MEASUREMENTS if m.level == "sample")
 
 # Read-QC figures with no declared measurement behind them. `readsTotal`, `panelAssignedFraction`,
-# `cellBarcodeValidFraction` and `cellsDetected` are declared measurements already carrying these
-# same mitool figures (see `_add` calls above), so they are excluded here and read from the pivot
-# instead -- one column per figure, not two agreeing ones under two names.
+# `cellBarcodeValidFraction` and `cellsDetected` are declared measurements already carrying these same
+# mitool figures, so they are excluded here and read from the pivot instead -- one column per figure,
+# not two agreeing ones under two names.
 _MITOOL_ONLY_COLUMNS: tuple[str, ...] = (
     "readsMatched",
     "matchedFraction",
@@ -436,14 +432,13 @@ def sample_summary_rows(
 ) -> pl.DataFrame:
     """The across-samples QC table: one row per sample, one column per sample-level measurement.
 
-    Pivots `sample_report` -- the same dict `main` writes to `result_qc_by_sample.json` -- rather
-    than walking `MEASUREMENTS` a second time, so this table and a sample's own report cannot
-    disagree about a value or a status. `status` is `sample_report`'s own rollup, from `roll_up`,
-    never recomputed here.
+    Pivots `sample_report` -- the same dict `main` writes to `result_qc_by_sample.json` -- rather than
+    walking `MEASUREMENTS` a second time, so this table and a sample's own report cannot disagree.
+    `status` is `sample_report`'s own rollup, from `roll_up`, never recomputed here.
 
-    Every id in `samples` gets a row, a sample absent from `sample_report` included: its
-    measurement columns and its status come back null, which reads as nothing having rolled up
-    rather than as a passing sample.
+    Every id in `samples` gets a row, a sample absent from `sample_report` included: its measurement
+    columns and its status come back null, which reads as nothing having rolled up rather than as a
+    passing sample.
     """
     built = []
     for sample in samples:

@@ -1,21 +1,17 @@
 // Per-feature property import (render.create boundary).
 //
-// Feature Integration imports every EXTRA column of the tag->feature CSV -- every column beyond the
-// user-mapped barcode-sequence and feature-name roles -- as a per-feature property, and surfaces each as a
-// p-column keyed on the shared feature axis (pl7.app/feature/featureId). The properties then ride that axis
-// into VDJ Multiomic Integration's per-feature outputs and lead selection, so downstream can group and
-// aggregate the binding profile by property, such as all human against all cyno antigens, with no re-import
-// (spec A-0026 / A-0015).
+// Imports every EXTRA column of the tag->feature CSV -- every column beyond the user-mapped
+// barcode-sequence and feature-name roles -- as a p-column keyed on the shared feature axis
+// (pl7.app/feature/featureId). The properties then ride that axis into VDJ Multiomic Integration's
+// per-feature outputs and lead selection, with no re-import.
 //
 // emit_feature_properties.py, run in main.tpl.tengo, produced two inputs: the wide per-feature CSV
 // (`feature` plus one column per property) and a meta JSON listing the property column names and each
 // property's distinct values. The property NAMES are user data, unknown at graph-build time, so this
-// template reads the meta content through .getData() to build one xsv import column per property. Same
-// "inspect file content inside a sub-template that receives it" pattern as fb-refine-tagstat.tpl.tengo, and
-// the same dynamic-columns-from-a-tool-output pattern as VDJ Multiomic Integration's finalize.tpl.
+// template reads the meta content through .getData() to build one xsv import column per property.
 //
-// Returns a BUILT pFrame, as VDJM's clonotypeProperties export does, which main.tpl publishes as the
-// `featureProperties` export. Where the CSV carries no extra columns the frame is empty.
+// Returns a BUILT pFrame, which main.tpl publishes as the `featureProperties` export. Where the CSV carries
+// no extra columns the frame is empty.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
@@ -40,11 +36,11 @@ self.body(func(inputs) {
 
 	fb := pframes.pFrameBuilder()
 
-	// Nothing to emit without extra property columns (A-0026) or a negative-control marker. Publish an empty
-	// frame otherwise, because an empty xsv `columns` list fails the import spec validation.
+	// Publish an empty frame where there is nothing to emit, because an empty xsv `columns` list fails the
+	// import spec validation.
 	if len(propertyColumns) > 0 || hasControl {
 		// Same trace step as the per-cell contract columns, deterministic and seeded from the input FASTQ spec
-		// plus blockId, so the properties carry consistent provenance and labels.
+		// plus blockId.
 		trace := pSpec.makeTrace(inputs.traceSeedSpec, {
 			type: "milaboratories.feature-integration",
 			id: blockId,

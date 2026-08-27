@@ -12,21 +12,15 @@ import { createPlDataTableStateV2, wrapOutputs } from "@platforma-sdk/model";
 
 // Block tests for the Feature Barcode Profiling block.
 //
-// WHAT THIS FILE COVERS. The block has two halves and this file reaches one of them:
+// The block has two halves and this file reaches one of them. The per-sample counting half is exercised end
+// to end by the second test below, when a backend can run it. The ANTIGEN VERDICT half is not covered here
+// at all: it needs a single-cell V(D)J dataset upstream to supply the clonotype sets, and the
+// samples-and-data chain this file uses cannot produce one. That logic is covered by the Python suite
+// (software/per-cell-metrics/test/) and by the Tengo suite for the p-column specs (workflow/src/*.test.tengo),
+// and the block is verified by hand against software/test-data/fixtures/verdicts/ before release.
 //
-//   * the per-sample counting half, FASTQ in and per-cell UMI counts out, is exercised end to end by
-//     the second test below, when a backend can run it.
-//   * the ANTIGEN VERDICT half is not covered here at all. It needs a single-cell V(D)J dataset
-//     upstream to supply the clonotype sets, and the samples-and-data chain this file uses cannot
-//     produce one. The verdict logic is covered by the Python suite
-//     (software/per-cell-metrics/test/) and by the Tengo suite for the p-column specs
-//     (workflow/src/*.test.tengo). Neither substitutes for a live run, which is why the block is
-//     verified by hand against software/test-data/fixtures/verdicts/ before release.
-//
-// The upstream chain follows the proven samples-and-data FASTQ pattern
-// (blocks/mixcr-amplicon-alignment). The tag->feature CSV is a direct upload, set as the block arg
-// `tagFeatureCsvHandle` through a local file handle, and the workflow imports it with file.importFile
-// and shares the blob across the per-sample bodies.
+// The upstream chain follows the samples-and-data FASTQ pattern. The tag->feature CSV is a direct upload,
+// set as the block arg `tagFeatureCsvHandle` through a local file handle.
 //
 // Golden, decoded from test/assets/fb_small_R{1,2}.fastq.gz. Geometry is CELL 16 + UMI 10 on R1 and
 // feature 15 on R2, and tags.csv maps 15xG -> AGX and 15xC -> BGX:
@@ -56,11 +50,9 @@ blockTest("empty inputs", { timeout: 20000 }, async ({ rawPrj: project, expect }
   });
 
   // Every output a page reads must RESOLVE on a freshly added block, before anything has run. An output
-  // that throws here is not a failed computation: it breaks the page that reads it at the moment the block
-  // is created, which is the first thing a user sees. Each verdict-branch output is guarded by its own
-  // undefined-until-computed path, and the guards are what this asserts. Values are deliberately not
-  // asserted, because `ok` with an undefined value is the correct empty-state answer for all of them,
-  // punchcardIdentityOptions included, which answers with an empty list before any run.
+  // that throws here breaks the page that reads it at the moment the block is created. Each verdict-branch
+  // output is guarded by its own undefined-until-computed path, and the guards are what this asserts. Values
+  // are deliberately not asserted, because `ok` with an undefined value is the correct empty-state answer.
   const mustResolve = [
     "perCellTable",
     "qcSummaryTable",
@@ -74,23 +66,19 @@ blockTest("empty inputs", { timeout: 20000 }, async ({ rawPrj: project, expect }
   expect(unresolved, "outputs that failed to resolve on an empty block").toEqual([]);
 });
 
-// Level-4 end-to-end run against the published mitool (software-mitool 2.3.1-129-main, carrying the
-// FEATURE tag type #86 and tag-stat -u #84). Exercises the full per-sample chain: SND FASTQ upload,
-// fastqOptions, args derivation, the tag->feature CSV upload driven by prerun.tpl, the mitool
-// parse -> refine-tags -> tag-stat -u exec chain, the per-cell-metrics Python, and the processColumn
-// export emitting pl7.app/feature/umiCount.
+// Level-4 end-to-end run against the published mitool (software-mitool 2.3.1-129-main, carrying the FEATURE
+// tag type #86 and tag-stat -u #84). Exercises the full per-sample chain: SND FASTQ upload, fastqOptions,
+// args derivation, the tag->feature CSV upload driven by prerun.tpl, the mitool
+// parse -> refine-tags -> tag-stat -u exec chain, the per-cell-metrics Python, and the processColumn export.
 //
-// SKIPPED (2026-07-06): it hangs on the CI and run-platforma FS-storage backend. The tag->feature CSV
-// is a DIRECT upload consumed by file.importFile, in prerun.tpl and main.tpl, and a raw
-// file.importFile of a local handle never finalizes on that backend. So the prerun's `csvColumns`
-// never resolves and awaitStableState aborts with `field_not_resolved:csvColumns`. A test-backend
-// limitation rather than a block bug: the block runs correctly against a real backend, driven live.
+// SKIPPED (2026-07-06): it hangs on the CI and run-platforma FS-storage backend. A raw file.importFile of a
+// local handle never finalizes there, so the prerun's `csvColumns` never resolves and awaitStableState
+// aborts with `field_not_resolved:csvColumns`. A test-backend limitation rather than a block bug.
 //
-// No block e2e-tests this direct-upload path. Every block consuming a file.importFile handle
-// (immune-assay-data, blast, makeblastdb, antibody-sequence-liabilities) ships without block tests,
-// and the Samples & Data upstream chain, the one CI-working file-input pattern, cannot supply a direct
-// CSV upload. Re-enable if the backend gains a working local file.importFile, or if the CSV moves to a
-// pool column.
+// No block e2e-tests this direct-upload path. Every block consuming a file.importFile handle ships without
+// block tests, and the Samples & Data upstream chain, the one CI-working file-input pattern, cannot supply
+// a direct CSV upload. Re-enable if the backend gains a working local file.importFile, or if the CSV moves
+// to a pool column.
 blockTest.skip(
   "feature integration end-to-end emits per-cell umiCount",
   { timeout: 300000 },
@@ -152,18 +140,14 @@ blockTest.skip(
     // The tag->feature CSV is a direct upload (not a pool ref). Provision it as a local file handle.
     const csvHandle = await helpers.getLocalFileHandle("./assets/tags.csv");
 
-    // Configure the block. update-block-data must carry EVERY BlockArgsValid field, or the backend
-    // reports "currentArgs not set". controlFeature is optional, since there is no negative-control
-    // marker here, and so is datasetRef: this run has no single-cell V(D)J dataset, so it exercises the
-    // counting half alone. The reading's numeric parameters are required and carry the shipped
-    // defaults, the same values a freshly created block starts with.
+    // update-block-data must carry EVERY BlockArgsValid field, or the backend reports "currentArgs not
+    // set". controlFeature is optional, and so is datasetRef: this run has no single-cell V(D)J dataset, so
+    // it exercises the counting half alone.
     //
-    // What a datasetless run emits BESIDES the per-cell table is deliberately not asserted. Today the
-    // whole antigen stage is skipped, so nothing antigen-related is produced, while the spec's
-    // qc-measurement set requires the eight read-and-panel measurements and the panel mismatch report
-    // to survive a run with no cell list, marking the rest not-evaluated. That gap is open (decision
-    // log O-4), and asserting today's behaviour would have to be deleted to fix it, so this test
-    // asserts only what both readings agree on.
+    // What a datasetless run emits BESIDES the per-cell table is deliberately not asserted. Today the whole
+    // antigen stage is skipped, while the spec requires the eight read-and-panel measurements and the panel
+    // mismatch report to survive a run with no cell list. That gap is open, and asserting today's behaviour
+    // would have to be deleted to fix it.
     await project.mutateBlockStorage(fiBlockId, {
       operation: "update-block-data",
       value: {
@@ -173,13 +157,11 @@ blockTest.skip(
         countFloor: 4,
         boundCutoff: 75,
         minVotingCells: 1,
-        // Stated, because the block chooses no baseline for anyone and `args()` refuses a run without
-        // one. The tag-distribution rung is the one this bed can serve: the declared rung needs a role
-        // column marking a baseline tag, which this panel does not carry, and the panel's own readings
-        // are retired.
+        // Stated, because the block chooses no baseline for anyone and `args()` refuses a run without one.
+        // The tag-distribution rung is the one this bed can serve: the declared rung needs a role column
+        // marking a baseline tag, which this panel does not carry.
         referenceSource: "distribution",
-        // Still required by the data shape though the rung it gated is retired. Recorded as debt in
-        // .meta/milab-6496-ui-first-logic-debt-20260824.md.
+        // Still required by the data shape though the rung it gated is retired.
         panelReferenceMinMembers: 25,
         distributionMinCells: 300,
         tableState: createPlDataTableStateV2(),
@@ -207,9 +189,9 @@ blockTest.skip(
     const pFrameDriver = ml.driverKit.pFrameDriver;
     const fullHandle = tableOutput.value!.fullTableHandle as PTableHandle;
 
-    // perCellTable is COLLAPSED to one row per cell [sampleId, cellId] (DECISION 2026-07-02). The
-    // per-(cell,feature) matrix — (cellA,AGX)=2, (cellA,BGX)=1, (cellB,AGX)=1 — becomes 2 rows, cellA and
-    // cellB. The per-feature matrix is still exported to the pool, just not in this table.
+    // perCellTable is COLLAPSED to one row per cell [sampleId, cellId]. The per-(cell,feature) matrix —
+    // (cellA,AGX)=2, (cellA,BGX)=1, (cellB,AGX)=1 — becomes 2 rows. The per-feature matrix is still
+    // exported to the pool.
     const shape = await pFrameDriver.getShape(fullHandle);
     expect(shape.rows).toBe(2);
 
@@ -217,17 +199,16 @@ blockTest.skip(
     const data = await pFrameDriver.getData(fullHandle, indices);
 
     // The only Int column is pl7.app/feature/maxUmiCount, the cell's largest per-feature UMI count: cellA
-    // max(2,1)=2, cellB=1. maxFraction is a Double column, so it is not counted here. Order is unspecified,
-    // so compare sorted.
+    // max(2,1)=2, cellB=1. maxFraction is a Double column. Order is unspecified, so compare sorted.
     const maxUmiColumns = data.filter((c) => c.type === "Int");
     expect(maxUmiColumns).toHaveLength(1);
     const maxUmiCounts = [...maxUmiColumns[0].data].map(Number).sort((a, b) => a - b);
     expect(maxUmiCounts).toEqual([1, 2]);
     expect(maxUmiCounts.reduce((a, b) => a + b, 0)).toBe(3);
 
-    // The cell's largest per-feature share of its own total: cellA 2/3, cellB 1/1. The one surviving
-    // per-cell magnitude. It says how concentrated a cell's counts were rather than which antigen it bound,
-    // so it is not a binding level and does not fall under the no-ordering prohibition.
+    // The cell's largest per-feature share of its own total: cellA 2/3, cellB 1/1. It says how concentrated
+    // a cell's counts were rather than which antigen it bound, so it is not a binding level and does not
+    // fall under the no-ordering prohibition.
     const fractionColumns = data.filter((c) => c.type === "Double");
     expect(fractionColumns).toHaveLength(1);
     const maxFractions = [...fractionColumns[0].data].map(Number).sort((a, b) => a - b);
@@ -235,10 +216,9 @@ blockTest.skip(
     expect(maxFractions[1]).toBeCloseTo(1, 5);
 
     // No dominant-feature call, and it must never come back through this table. It answers a different
-    // question from the four-state verdict -- one antigen per cell, chosen by a share threshold -- and
-    // beside a verdict it would give a reader two disagreeing answers with no rule for which wins.
-    // `guardNoScore` in column-specs.lib.tengo refuses the score annotation at build time, and this is
-    // the same claim checked against what actually reached a table.
+    // question from the four-state verdict -- one antigen per cell, chosen by a share threshold -- and beside
+    // a verdict it would give a reader two disagreeing answers with no rule for which wins. `guardNoScore` in
+    // column-specs.lib.tengo refuses the score annotation at build time; this checks what reached a table.
     const stringColumnValues = data.filter((c) => c.type === "String").map((c) => [...c.data]);
     expect(
       stringColumnValues.some((vals) => vals.every((v) => v === "AGX")),

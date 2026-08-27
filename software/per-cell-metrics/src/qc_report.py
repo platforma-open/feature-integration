@@ -1,11 +1,10 @@
 """Per-sample QC summary for the Feature Integration block.
 
-One row per sample: read-level metrics from mitool's parse JSON report
-(parseReport.total/.matched), cell/feature/UMI metrics from the tag-stat TSV, the
-panel-assigned fraction from the refine-tags JSON report, and the aggregate-barcode read
-fraction (`qc_measures.detect_aggregate_barcodes`) computed from the tag-stat TSV's
-per-barcode UMI and read totals. panelAssignedFraction is left blank only when no refine
-report is available. Stdlib and polars only.
+One row per sample: read-level metrics from mitool's parse JSON report (parseReport.total/.matched),
+cell/feature/UMI metrics from the tag-stat TSV, the panel-assigned fraction from the refine-tags JSON
+report, and the aggregate-barcode read fraction (`qc_measures.detect_aggregate_barcodes`) computed
+from the tag-stat TSV's per-barcode UMI and read totals. panelAssignedFraction is left blank only
+when no refine report is available.
 """
 
 import argparse
@@ -70,8 +69,8 @@ def _refine_kept_fraction(path: str | None, tag_name: str = "FEATURE") -> float 
             if not input_count:
                 return None
             return step.get("outputCount", 0) / input_count
-    # A report with steps but none matching the feature tag means the schema or tag naming
-    # drifted. Surface it rather than silently blanking the metric for every sample.
+    # A report with steps but none matching the feature tag means the schema or tag naming drifted.
+    # Surface it rather than silently blanking the metric for every sample.
     if steps:
         print(
             f"[qc-report] refine report has no {tag_name!r} step "
@@ -93,11 +92,10 @@ def _aggregate_barcode_metrics(
 ) -> tuple[float | None, int, float | None]:
     """Fraction of reads_total sitting in barcodes `detect_aggregate_barcodes` flags.
 
-    Per-barcode UMI and read totals from the whole whitelist-corrected barcode universe
-    (`stat`, not the cell list) feed `detect_aggregate_barcodes`. Returns `(None, 0, None)`
-    only where `reads_total` is falsy, since a fraction has no denominator there; otherwise
-    the fraction is always a number, 0.0 where nothing is flagged, so a run that checked and
-    found no aggregate reads is never indistinguishable from one that never checked.
+    Per-barcode UMI and read totals from the whole whitelist-corrected barcode universe (`stat`, not
+    the cell list) feed `detect_aggregate_barcodes`. Returns `(None, 0, None)` only where `reads_total`
+    is falsy; otherwise the fraction is always a number, 0.0 where nothing is flagged, so a run that
+    checked and found no aggregate reads is never indistinguishable from one that never checked.
     """
     if not reads_total:
         return None, 0, None
@@ -126,8 +124,8 @@ def main() -> None:
     p.add_argument("--feature-col", default="FEATURE")
     p.add_argument("--umi-col", default="unique_UMI")
     p.add_argument("--count-col", default="count")
-    # The aggregate-barcode detection knobs. Defaults mirror qc_measures.py's own constants.
-    # Moving any of them changes which barcodes `detect_aggregate_barcodes` flags.
+    # The aggregate-barcode detection knobs. Defaults mirror qc_measures.py's own constants. Moving any
+    # of them changes which barcodes `detect_aggregate_barcodes` flags.
     p.add_argument("--aggregate-iqr-multiplier", type=float, default=AGGREGATE_BARCODE_IQR_MULTIPLIER)
     p.add_argument("--aggregate-min-umi-threshold", type=float, default=AGGREGATE_BARCODE_MIN_THRESHOLD)
     p.add_argument("--aggregate-top-n", type=int, default=AGGREGATE_BARCODE_TOP_N)
@@ -136,9 +134,8 @@ def main() -> None:
 
     total, matched = _parse_report(args.parse_report)
     stat = pl.read_csv(args.tag_stat_tsv, separator="\t")
-    # A header-only tag-stat (every read dropped) has no data rows, so polars infers String
-    # for every column. Coerce here, or .sum()/.median() below raise on String arithmetic.
-    # Mirrors per_cell_metrics._load.
+    # A header-only tag-stat (every read dropped) has no data rows, so polars infers String for every
+    # column. Coerce here, or .sum()/.median() below raise on String arithmetic.
     stat = stat.with_columns(
         pl.col(args.umi_col).cast(pl.Int64),
         pl.col(args.count_col).cast(pl.Int64),
@@ -148,11 +145,15 @@ def main() -> None:
     features = int(stat[args.feature_col].n_unique())
     total_umis = int(stat[args.umi_col].sum())
     per_cell = stat.group_by(args.cell_col).agg(pl.col(args.umi_col).sum().alias("u"))
-    median_umis = float(per_cell["u"].median()) if per_cell.height else 0.0
+    # Blank, never 0.0. `qc-status-and-rollup` renders a measurement the run could not supply the
+    # inputs for as its reason rather than as a number, and a blank and a zero are opposite
+    # findings: a sample whose reads never arrived would otherwise sit beside its neighbours
+    # reading a median of nothing, which is a library that failed rather than a library missing.
+    median_umis = float(per_cell["u"].median()) if per_cell.height else ""
     assigned = _refine_kept_fraction(args.refine_report, args.feature_col)
-    # The same report's CELL step. It corrects each cell barcode against the chemistry's
-    # whitelist rather than against the panel, so its kept share is the share of reads whose
-    # barcode the chemistry could have produced.
+    # The same report's CELL step. It corrects each cell barcode against the chemistry's whitelist rather
+    # than against the panel, so its kept share is the share of reads whose barcode the chemistry could
+    # have produced.
     cell_valid = _refine_kept_fraction(args.refine_report, args.cell_col)
     agg_fraction, agg_flagged, agg_threshold = _aggregate_barcode_metrics(
         stat,
@@ -169,7 +170,7 @@ def main() -> None:
         "sampleId": args.sample_id,
         "readsTotal": total,
         "readsMatched": matched,
-        "matchedFraction": (matched / total) if total else 0.0,
+        "matchedFraction": (matched / total) if total else "",
         "cellsDetected": cells,
         "featuresDetected": features,
         "totalUniqueUmis": total_umis,
@@ -185,8 +186,8 @@ def main() -> None:
         w.writeheader()
         w.writerow(row)
 
-    # Also emit the row as JSON so the model can read per-sample QC (getDataAsJson) to build
-    # the block's live "Analysis logs": the per-sample completed count and the run summary.
+    # Also emit the row as JSON so the model can read per-sample QC (getDataAsJson) to build the block's
+    # live "Analysis logs".
     with open("result_qc.json", "w") as jf:
         json.dump(row, jf)
 

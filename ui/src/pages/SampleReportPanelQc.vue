@@ -5,9 +5,8 @@ import QcSection from "../components/QcSection.vue";
 import { qcStatusTag, type SampleResult } from "../results";
 
 // The Quality Checks tab: this sample's own report. Every sample-level measurement the software declares
-// takes a row, including the ones it could not compute, so a reader meets a measurement rather than noticing
-// an absence. The Main grid's Quality column carries the rollup at the top of this list and nothing else, so
-// the tag and the rows beneath it cannot disagree.
+// takes a row, including the ones it could not compute. The Main grid's Quality column carries the rollup
+// at the top of this list and nothing else, so the tag and the rows beneath it cannot disagree.
 const props = defineProps<{
   sampleData: SampleResult | undefined;
 }>();

@@ -1,22 +1,19 @@
 """Rung 3's fit: a two-component negative binomial per (sample, tag), scored per cell.
 
-`what-plays-the-baseline` fixes the rule: on the raw counts, drop the counts above the 99th percentile,
-fit a two-component negative binomial mixture, label the higher-median component the signal one, and
-give each cell the probability that its count belongs to it. A cell reads bound at 0.9 or above.
+The rule: on the raw counts, drop the counts above the 99th percentile, fit a two-component negative
+binomial mixture, label the higher-median component the signal one, and give each cell the probability
+that its count belongs to it. A cell reads bound at 0.9 or above.
 
 Every bed here is generated from a seeded generator rather than written out by hand, because the thing
-under test is a distribution and a hand-written handful of counts has none. The seed is fixed, so the
-beds are the same bytes on every run and on every machine.
+under test is a distribution and a hand-written handful of counts has none.
 
-The population sizes are the ones a real run carries: the manual bed's presets are 2000 cells per donor,
-and a binder fraction of a few percent is what this method exists to find.
+The population sizes are the ones a real run carries: 2000 cells per donor, and a binder fraction of a
+few percent.
 
 **One thing this file pins deliberately, and it looks like a bug.** A tag nothing bound still fits, and
-the fit still calls some of its cells bound. `what-plays-the-baseline` says so outright -- the method
-assumes two components exist, "the fit will split that single population anyway and call its upper slice
-signal, inventing binders on exactly the tag that had none", and no published test replaces the eye. An
-earlier implementation rejected such a tag with a separation test of its own invention. That test is
-exactly what the spec refuses, so it is gone, and the run shows the fit instead of judging it.
+the fit still calls some of its cells bound. The method assumes two components exist, so it splits a
+single population and calls its upper slice signal, and no published test replaces the eye. An earlier
+implementation rejected such a tag with a separation test of its own invention.
 """
 
 import numpy as np
@@ -84,9 +81,17 @@ def test_a_sample_below_the_cell_condition_gets_no_fit():
     assert fit.reason == TOO_FEW_CELLS
 
 
+def test_a_sample_holding_exactly_the_cell_condition_fits():
+    # "at least 300 cells", so 300 is inside. The below-floor case uses 299 and the above-floor one 400,
+    # and nothing sat on the line itself -- so `<` and `<=` read the same across the whole suite.
+    counts = _mixture(DEFAULT_DISTRIBUTION_MIN_CELLS - 15, 2, 15, 300)
+    assert counts.size == DEFAULT_DISTRIBUTION_MIN_CELLS
+    assert fit_tag_probabilities(counts).reason is None
+
+
 def test_the_cell_condition_counts_cells_not_readings():
-    # A mostly-silent tag over 400 cells clears the condition, though far fewer than 300 of them
-    # carry a reading. The population the fit is taken over is the sample's cells.
+    # A mostly-silent tag over 400 cells clears the condition, though far fewer than 300 of them carry a
+    # reading. The population the fit is taken over is the sample's cells.
     counts = _mixture(390, 0.2, 10, 200)
     assert int((counts > 0).sum()) < DEFAULT_DISTRIBUTION_MIN_CELLS
     assert fit_tag_probabilities(counts).reason is None
@@ -117,11 +122,37 @@ def test_a_mostly_silent_background_is_handled():
 
 
 def test_an_even_split_is_handled():
-    # Two populations of the same size. The published method's own paper rejects a Gaussian
-    # mixture because it degrades on UNEQUAL populations, so the equal case must also hold.
+    # Two populations of the same size. The published method's own paper rejects a Gaussian mixture
+    # because it degrades on UNEQUAL populations, so the equal case must also hold.
     fit = fit_tag_probabilities(_mixture(1000, 2, 1000, 300))
     assert fit.reason is None
     assert _bound(fit.probabilities)[1000:].all()
+
+
+def test_a_cell_that_read_nothing_is_not_called_bound_beside_an_overdispersed_population():
+    """The signal component is the higher-MEDIAN one, and the median is not ordered by the mean.
+
+    An ambient population -- mostly zero with a few enormous counts -- fits a component whose mean sits
+    far above a real binder population's while its median sits far below. The Poisson-shaped binders
+    here are the higher-median component and the overdispersed ambient one is not, so ordering the two
+    by mean labels them the wrong way round.
+
+    Asserted at a count of zero because that is where the inversion is unmistakable: under the mean
+    ordering every cell that read nothing lands in the ambient component with probability 1 and is
+    called bound.
+    """
+    rng = np.random.default_rng(3)
+    ambient = rng.negative_binomial(0.15, 0.15 / (0.15 + 40), 1000)
+    binders = rng.poisson(12, 1000)
+    counts = np.concatenate([ambient, binders])
+
+    fit = fit_tag_probabilities(counts)
+    assert fit.reason is None
+    silent = fit.probabilities[counts == 0]
+    assert silent.size > 0, "the bed must hold cells that read nothing for this to say anything"
+    assert silent.max() < DISTRIBUTION_BOUND_PROBABILITY, "a cell holding no count of the tag cannot bind it"
+    # The direction holds over the two populations and not only at zero.
+    assert fit.probabilities[1000:].mean() > fit.probabilities[:1000].mean()
 
 
 def test_the_probability_is_a_probability():
@@ -152,16 +183,14 @@ def test_a_tag_no_cell_read_at_all_does_not_fit():
 
 
 def test_a_tag_nothing_bound_still_fits_and_calls_some_cells_bound():
-    # DELIBERATE, and the spec says so: the method assumes two components exist, so it splits a
-    # single population and calls its upper slice signal. Rejecting this would be a separation test
-    # of our own invention, which `what-plays-the-baseline` refuses -- the run shows the fit instead.
+    # DELIBERATE: the method assumes two components exist, so it splits a single population and calls its
+    # upper slice signal. Rejecting this would be a separation test of our own invention.
     #
-    # The background here is OVERDISPERSED rather than Poisson, which is what a real one is: the
-    # invented binders are the long tail of a single skewed population, so a Poisson bed does not
-    # produce them and would let this pass for the wrong reason.
+    # The background here is OVERDISPERSED rather than Poisson, which is what a real one is: the invented
+    # binders are the long tail of a single skewed population, so a Poisson bed would let this pass for
+    # the wrong reason.
     #
-    # Pinned so that nobody restores the rejection as a bug fix. If the spec ever admits a published
-    # separation test, this is the test to change.
+    # Pinned so that nobody restores the rejection as a bug fix.
     rng = np.random.default_rng(SEED)
     fit = fit_tag_probabilities(rng.negative_binomial(3, 3 / (3 + 2), size=2000))
     assert fit.reason is None
@@ -172,9 +201,8 @@ def test_a_tag_nothing_bound_still_fits_and_calls_some_cells_bound():
 
 
 def test_the_trimmed_cells_still_get_a_probability():
-    # The fit drops the counts above the 99th percentile so a handful of very high readings cannot
-    # drag the signal component's mean. Those cells are the most bound in the sample, so withholding
-    # an answer for them would be the opposite of what the trim is for.
+    # The fit drops the counts above the 99th percentile so a handful of very high readings cannot drag
+    # the signal component's mean. Those cells are the most bound in the sample.
     counts = _mixture(1940, 2, 60, 300)
     counts[-1] = 100_000
     fit = fit_tag_probabilities(counts)
@@ -194,9 +222,8 @@ def test_the_fit_is_deterministic():
 
 
 def test_the_silent_cells_are_in_the_fit():
-    # The counts frame holds only observed readings. A fit over those alone is a fit over the cells
-    # that read SOMETHING, which is not the background -- and on a mostly-silent tag it is barely
-    # any of it.
+    # The counts frame holds only observed readings. A fit over those alone is a fit over the cells that
+    # read SOMETHING, which is not the background -- and on a mostly-silent tag it is barely any of it.
     rng = np.random.default_rng(SEED)
     cells = [("S1", f"c{i}") for i in range(2000)]
     values = np.concatenate([rng.poisson(0.2, 1900), rng.poisson(200, 100)])
@@ -210,8 +237,8 @@ def test_the_silent_cells_are_in_the_fit():
 
 
 def test_the_probabilities_are_keyed_to_the_right_cells():
-    # The fit is taken over an array and the answer is read back per cell, so the alignment between
-    # the two is the thing most easily lost. Only the planted binders may come back bound.
+    # The fit is taken over an array and the answer is read back per cell, so the alignment between the
+    # two is the thing most easily lost. Only the planted binders may come back bound.
     counts, cells = _bed(n_cells=2000, n_binders=60)
     fits = fit_tag_probabilities_by_pair(counts, cells, _panel([("AAAA", "S1")]))
     called = fits.probabilities.filter(pl.col("pBound") >= DISTRIBUTION_BOUND_PROBABILITY)
@@ -227,9 +254,69 @@ def test_a_declared_tag_the_reads_never_showed_gets_no_fit():
     assert set(fits.probabilities["tag"].unique().to_list()) == {"AAAA"}
 
 
+def _weak_reagent_bed(sample="S1", tag="AAAA", n_cells=400, n_binders=100, probe_count=3, seed=5):
+    """A weak reagent: a signal population around five counts beside a near-silent background.
+
+    One extra cell reads `probe_count`, which such a fit calls bound with near certainty -- and which
+    the shipped minimum of four says is not evidence of binding. Returns the counts frame, the cell
+    universe, and the probe cell's id.
+    """
+    rng = np.random.default_rng(seed)
+    values = np.concatenate([rng.poisson(0.01, n_cells - n_binders), rng.poisson(5, n_binders)])
+    cells = [(sample, f"c{i}") for i in range(n_cells)] + [(sample, "probe")]
+    rows = [(sample, f"c{i}", tag, int(v)) for i, v in enumerate(values) if v > 0]
+    rows.append((sample, "probe", tag, probe_count))
+    return _counts_frame(rows), cells, (sample, "probe")
+
+
+def _probe_probability(fits, key, tag="AAAA"):
+    row = fits.probabilities.filter(
+        (pl.col("sampleId") == key[0]) & (pl.col("cellId") == key[1]) & (pl.col("tag") == tag)
+    )
+    return row["pBound"].item()
+
+
+def test_the_minimum_count_decides_what_a_cell_is_scored_on():
+    # A count below the declared minimum is not evidence of binding, decided per cell and per tag on
+    # the raw count before anything is read against a baseline. That rule does not stop at this rung:
+    # a weak reagent fits a distribution that calls a count of three bound with near certainty, and
+    # with the shipped floor of four that cell is scored on the zero the minimum made it.
+    counts, cells, probe = _weak_reagent_bed()
+    panel = _panel([("AAAA", "S1")])
+
+    unfloored = fit_tag_probabilities_by_pair(counts, cells, panel)
+    assert _probe_probability(unfloored, probe) >= DISTRIBUTION_BOUND_PROBABILITY, (
+        "the bed has to reach a bound reading at the probe count, or the floor has nothing to change"
+    )
+
+    floored = fit_tag_probabilities_by_pair(counts, cells, panel, floor=4)
+    assert _probe_probability(floored, probe) < DISTRIBUTION_BOUND_PROBABILITY
+
+
+def test_the_minimum_does_not_narrow_the_population_the_fit_is_taken_over():
+    # The fit stays on the raw counts, which is what this rung is specified on. Only the reading each
+    # cell is scored on moves, so the background the run reports is the same either way.
+    counts, cells, _ = _weak_reagent_bed()
+    panel = _panel([("AAAA", "S1")])
+
+    assert (
+        fit_tag_probabilities_by_pair(counts, cells, panel, floor=4).backgrounds
+        == fit_tag_probabilities_by_pair(counts, cells, panel).backgrounds
+    )
+
+
+def test_the_minimum_never_reaches_a_declared_baseline_tag():
+    # `apply_floor` exempts a comparator with no switch, and the exemption has to hold here too or the
+    # same tag would be floored on one path and spared on the other.
+    counts, cells, probe = _weak_reagent_bed()
+    panel = _panel([("AAAA", "S1")])
+    spared = fit_tag_probabilities_by_pair(counts, cells, panel, floor=4, reference_tags={"AAAA"})
+    assert _probe_probability(spared, probe) >= DISTRIBUTION_BOUND_PROBABILITY
+
+
 def test_every_sample_is_fitted_on_its_own_cells():
-    # Fits are local. Two samples staining one tag get two fits, and the one below the cell
-    # condition gets none -- the other is unaffected.
+    # Fits are local. Two samples staining one tag get two fits, and the one below the cell condition
+    # gets none.
     big_counts, big_cells = _bed(n_cells=2000, sample="S1")
     small_counts, small_cells = _bed(n_cells=200, n_binders=6, sample="S2")
     counts = pl.concat([big_counts, small_counts])
@@ -250,8 +337,8 @@ def test_a_panel_with_no_sample_column_is_fitted_per_sample_anyway():
 
 
 def test_cells_outside_the_universe_do_not_enter_a_fit():
-    # A barcode the analysis excluded carries real counts, and letting them into the background makes
-    # the fit a fit over a population nobody chose.
+    # A barcode the analysis excluded carries real counts, and letting them into the background makes the
+    # fit a fit over a population nobody chose.
     counts, cells = _bed()
     intruders = _counts_frame([("S1", "x1", "AAAA", 900), ("S1", "x2", "AAAA", 900)])
     clean = fit_tag_probabilities_by_pair(counts, cells, _panel([("AAAA", "S1")]))
@@ -260,8 +347,8 @@ def test_cells_outside_the_universe_do_not_enter_a_fit():
 
 
 def test_a_duplicated_cell_is_refused():
-    # A duplicate adds one zero to the population it duplicates. That is a background over a
-    # population nobody chose -- small, plausible, and invisible in the output.
+    # A duplicate adds one zero to the population it duplicates -- a background over a population nobody
+    # chose, small, plausible, and invisible in the output.
     counts, cells = _bed()
     with pytest.raises(ValueError, match="duplicated cells"):
         fit_tag_probabilities_by_pair(counts, cells[:-1] + [cells[0]], _panel([("AAAA", "S1")]))
@@ -276,9 +363,9 @@ def test_a_tag_read_twice_in_one_cell_is_refused():
 
 
 def test_a_fit_returns_the_background_it_fitted():
-    # The parameters used to die inside the function that made them, so the one number a reader
-    # needs in order to judge a fit never left it. Two clear populations: a low background and a
-    # high signal, overdispersed so the negative binomial is the right model.
+    # The parameters used to die inside the function that made them, so the one number a reader needs in
+    # order to judge a fit never left it. Two clear populations: a low background and a high signal,
+    # overdispersed so the negative binomial is the right model.
     rng = np.random.default_rng(11)
     background = rng.negative_binomial(2, 2 / (2 + 3), size=900)
     signal = rng.negative_binomial(6, 6 / (6 + 90), size=300)
@@ -288,8 +375,8 @@ def test_a_fit_returns_the_background_it_fitted():
 
     assert fit.probabilities is not None
     assert fit.background is not None
-    # The background sits below the signal, which is what labelling the higher-median component
-    # signal means. Bounds rather than point values: the fit is stochastic.
+    # The background sits below the signal, which is what labelling the higher-median component signal
+    # means. Bounds rather than point values: the fit is stochastic.
     assert fit.background.mean < fit.background.signal_mean
     assert 0.0 < fit.background.weight < 1.0
     # The background holds the larger share, since three quarters of the cells are background.
@@ -297,16 +384,16 @@ def test_a_fit_returns_the_background_it_fitted():
 
 
 def test_a_fit_that_established_nothing_carries_no_background():
-    # `background` is None on exactly the condition `probabilities` is. A caller must branch on
-    # absence, and a background sitting beside a None probability would invite the other reading.
+    # `background` is None on exactly the condition `probabilities` is. A caller must branch on absence,
+    # and a background sitting beside a None probability would invite the other reading.
     fit = fit_tag_probabilities(np.zeros(500, dtype=int), min_cells=100)
     assert fit.probabilities is None
     assert fit.background is None
 
 
 def test_backgrounds_are_collected_per_sample_and_tag():
-    # A pair in `reasons` contributes no background, and a pair that fitted contributes exactly
-    # one. The two dicts partition the declared pairs.
+    # A pair in `reasons` contributes no background, and a pair that fitted contributes exactly one. The
+    # two dicts partition the declared pairs.
     rng = np.random.default_rng(5)
     rows = []
     for sample in ("S1", "S2"):
@@ -327,10 +414,10 @@ def test_backgrounds_are_collected_per_sample_and_tag():
 
 
 def test_padding_the_universe_with_ambient_barcodes_collapses_the_fit():
-    # The defect this guards against: `what-plays-the-baseline` fits "across the sample's cells", and
-    # feeding the observed barcodes instead pads the population with ambient droplets. In droplet data
-    # they outnumber the cells by one to two orders of magnitude and each holds a count or two, so both
-    # components land on that mass and the fit reports a background sitting on top of its own signal.
+    # The defect this guards against: the fit is over "the sample's cells", and feeding the observed
+    # barcodes instead pads the population with ambient droplets. In droplet data they outnumber the cells
+    # by one to two orders of magnitude and each holds a count or two, so both components land on that
+    # mass and the fit reports a background sitting on top of its own signal.
     counts, cells = _bed()
     rng = np.random.default_rng(SEED + 1)
     ambient_ids = [("S1", f"ambient{i}") for i in range(50 * len(cells))]
@@ -345,6 +432,6 @@ def test_padding_the_universe_with_ambient_barcodes_collapses_the_fit():
     assert over_cells.signal_mean > over_cells.mean * 10
 
     # Over the barcodes the rung either refuses outright or returns two components that do not stand
-    # apart. Both are unusable; neither is the reading the spec asks a scientist to judge.
+    # apart. Both are unusable.
     over_barcodes = swamped.backgrounds.get(("S1", "AAAA"))
     assert over_barcodes is None or over_barcodes.signal_mean < over_barcodes.mean * 2

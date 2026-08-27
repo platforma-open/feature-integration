@@ -1,0 +1,111 @@
+test := import("@platforma-sdk/workflow-tengo:test")
+columnSpecs := import(":column-specs")
+
+// The run record, reduced to what a pivot spec reads off it.
+served := func() {
+	return {
+		referenceChoice: "declared",
+		cellListSource: "cell list",
+		groupingId: "g1",
+		floor: 4,
+		cutoff: 75.0,
+		minVoters: 1,
+		distributionMinCells: 300
+	}
+}
+
+setAxis := func() {
+	return { name: "pl7.app/vdj/cloneId", type: "String" }
+}
+
+idsOf := func(spec) {
+	ids := []
+	for col in spec.columns {
+		ids = append(ids, col.id)
+	}
+	return ids
+}
+
+// `substituteSpecialCharacters` collapses every run of punctuation to a single "_", so identities that
+// differ only in punctuation reduce to one id. The importer writes ids into a map with no duplicate
+// check, so a collision drops a column silently -- an antigen leaves the answer and nothing errors.
+//
+// Unreachable under the shipped per-tag grouping, where identities are barcodes. Reachable under a
+// property grouping, where they are the scientist's own antigen names.
+Test_identities_differing_only_in_punctuation_get_distinct_ids := func() {
+	spec := columnSpecs.identitySummaryImportSpec(setAxis(), ["SARS-CoV-2", "SARS.CoV.2", "SARS CoV 2"], "g1", served())
+	ids := idsOf(spec)
+
+	test.isEqual(3, len(ids), "one column per identity")
+	seen := {}
+	for id in ids {
+		test.isTrue(is_undefined(seen[id]), "every identity needs an id of its own: " + id)
+		seen[id] = true
+	}
+}
+
+// The column header stays the identity itself, since it names a header in the software's CSV. Only the
+// frame key is disambiguated.
+Test_the_column_stays_the_identity := func() {
+	spec := columnSpecs.identitySummaryImportSpec(setAxis(), ["SARS-CoV-2", "SARS.CoV.2"], "g1", served())
+	test.isEqual("SARS-CoV-2", spec.columns[0].column, "the first column names its own identity")
+	test.isEqual("SARS.CoV.2", spec.columns[1].column, "and so does the second")
+}
+
+// Same identities in the same order give the same ids on every render, which is what lets these be
+// content-addressed.
+Test_the_ids_are_stable_across_renders := func() {
+	identities := ["A-1", "A.1", "B"]
+	first := idsOf(columnSpecs.identitySummaryImportSpec(setAxis(), identities, "g1", served()))
+	second := idsOf(columnSpecs.identitySummaryImportSpec(setAxis(), identities, "g1", served()))
+	test.isEqual(first, second, "two renders of one run must agree on every id")
+}
+
+// `parameter-set` requires every parameter to be recorded where its verdicts appear. A run that lowered
+// a number must not look like a run that did not, and the exported pivot is where a consumer of the
+// verdicts reads them.
+Test_the_pivot_carries_the_parameters_the_run_was_answered_under := func() {
+	spec := columnSpecs.identitySummaryImportSpec(setAxis(), ["AgA"], "g1", served())
+	annotations := spec.columns[0].spec.annotations
+
+	test.isEqual("4", annotations["pl7.app/antigen/countFloor"], "the minimum count travels")
+	test.isEqual("75", annotations["pl7.app/antigen/boundCutoff"], "the cutoff travels")
+	test.isEqual("1", annotations["pl7.app/antigen/minVotingCells"], "the vote limit travels")
+}
+
+// Off means ABSENT, here as on the command line. A note reading "0" would say the scientist set a floor
+// of zero, which is a different claim from having set none.
+Test_an_unset_parameter_carries_no_note := func() {
+	spec := columnSpecs.identitySummaryImportSpec(setAxis(), ["AgA"], "g1", served())
+	annotations := spec.columns[0].spec.annotations
+
+	test.isTrue(is_undefined(annotations["pl7.app/antigen/gateThreshold"]), "no gate was declared")
+	test.isTrue(is_undefined(annotations["pl7.app/antigen/minAgreement"]), "no agreement floor was declared")
+}
+
+Test_a_declared_gate_and_agreement_floor_travel := func() {
+	record := served()
+	record.gateThreshold = 100
+	record.minAgreement = 0.6
+	spec := columnSpecs.identitySummaryImportSpec(setAxis(), ["AgA"], "g1", record)
+	annotations := spec.columns[0].spec.annotations
+
+	// Both change WHICH verdicts exist, so two runs differing on them must not emit columns that read
+	// alike.
+	test.isEqual("100", annotations["pl7.app/antigen/gateThreshold"], "the gate travels once declared")
+	test.isEqual("0.6", annotations["pl7.app/antigen/minAgreement"], "so does the agreement floor")
+}
+
+// Only the rung that fits anything carries its cell condition. Under a declared baseline the number
+// names no condition the run was subject to.
+Test_the_fitted_baseline_floor_travels_only_where_that_rung_served := func() {
+	declared := columnSpecs.identitySummaryImportSpec(setAxis(), ["AgA"], "g1", served())
+	test.isTrue(is_undefined(declared.columns[0].spec.annotations["pl7.app/antigen/distributionMinCells"]),
+		"a declared baseline fits nothing")
+
+	record := served()
+	record.referenceChoice = "distribution"
+	fitted := columnSpecs.identitySummaryImportSpec(setAxis(), ["AgA"], "g1", record)
+	test.isEqual("300", fitted.columns[0].spec.annotations["pl7.app/antigen/distributionMinCells"],
+		"the rung that fits carries the cells it needed")
+}

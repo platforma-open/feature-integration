@@ -8,7 +8,7 @@ import polars as pl
 import pytest
 import qc_rows
 from emit_verdicts import _build_grouping, _identity_properties, _linker_frame, undeclared_feature_counts
-from identity_tables import CELL_PUNCH_MAX_CELLS, IDENTITY_SUMMARY_MAX_IDENTITIES
+from identity_tables import CELL_PUNCH_MAX_CELLS, IDENTITY_SUMMARY_MAX_IDENTITIES, REFERENCE_IDENTITY_LABEL
 from panel import ANY_SAMPLE, consistent_properties, property_columns
 from qc_measures import DEFAULT_LINES, MEASUREMENTS, Line, Measurement
 from verdict import DEFAULT_PANEL_MIN_MEMBERS, ReferenceChoice
@@ -19,15 +19,11 @@ SRC = Path(__file__).resolve().parents[1] / "src"
 def _run(cwd, *args, expect_failure=False):
     """Run the CLI, asserting it succeeded unless the caller wants a failure.
 
-    Success is asserted HERE rather than left to each test, because a crashed run is
-    invisible to most assertions in this file: the tool writes into `cwd`, so a run that
-    dies before writing leaves the PREVIOUS run's files in place and every read of them
-    still succeeds. `test_output_is_byte_stable_across_runs` was the live case -- it
-    compares two runs' bytes and asserted neither returncode, so a second invocation
-    crashing on startup compared the first run's files against themselves and passed.
+    Success is asserted HERE rather than left to each test: the tool writes into `cwd`, so a run that dies
+    before writing leaves the PREVIOUS run's files in place and every read of them still succeeds.
 
-    stderr rides along in the message because a bare `assert returncode == 0` tells you
-    the run died and not why.
+    stderr rides along in the message because a bare `assert returncode == 0` tells you the run died and
+    not why.
     """
     r = subprocess.run(
         [sys.executable, str(SRC / "emit_verdicts.py"), *map(str, args)], cwd=cwd, capture_output=True, text=True
@@ -37,6 +33,18 @@ def _run(cwd, *args, expect_failure=False):
     else:
         assert r.returncode == 0, f"exited {r.returncode}. stderr={r.stderr!r}"
     return r
+
+
+def _identities_only(bed):
+    """`result_identity_labels.csv` less the reference tags, which are not identities.
+
+    The file also labels the reagent table's identity axis, and a reference tag takes a reagent row
+    keyed on its own barcode. A test about the identity universe must not see it.
+    """
+    labels = dict(pl.read_csv(bed / "result_identity_labels.csv", infer_schema_length=0).iter_rows())
+    for tag in json.loads((bed / "result_run_meta.json").read_text())["referenceTags"]:
+        labels.pop(tag, None)
+    return labels
 
 
 BASE = [
@@ -55,8 +63,8 @@ BASE = [
     "--reference-values",
     "Control",
     # Stated, because the CLI requires it and nothing below the model picks a rung. This bed declares a
-    # comparator tag, so the declared rung is the one it is about. A test wanting a different rung passes
-    # its own --reference-source, which argparse takes as the later value.
+    # comparator tag. A test wanting a different rung passes its own --reference-source, which argparse
+    # takes as the later value.
     "--reference-source",
     "declared",
     "--output-prefix",
@@ -67,10 +75,8 @@ BASE = [
 @pytest.fixture
 def bed(tmp_path):
     # The antigen counts clear the shipped cutoff of 75 against a reference of 6:
-    # specificity_score(500, 6) and specificity_score(600, 6) are both 100, while a
-    # silent cell scores specificity_score(0, 6), which is ~7.5e-09. Counts of 50 and
-    # 60 score 3.1 and 7.2 and would read *not bound*, which is a fact about the beta
-    # score rather than about this pipeline.
+    # specificity_score(500, 6) and specificity_score(600, 6) are both 100, while a silent cell
+    # scores ~7.5e-09. Counts of 50 and 60 would score 3.1 and 7.2 and read *not bound*.
     (tmp_path / "counts.csv").write_text(
         "sampleId,cellId,tag,umiCount\nS1,c1,AAAA,500\nS1,c1,CTRL,6\nS1,c2,AAAA,600\nS1,c2,CTRL,6\nS1,c3,CTRL,6\n"
     )  # c3 was asked about AAAA and read nothing
@@ -114,10 +120,38 @@ def test_tag_labels_match_identity_labels_under_the_per_tag_grouping(bed):
     _run(bed, *BASE)
     tags = dict(pl.read_csv(bed / "result_tag_labels.csv", infer_schema_length=0).iter_rows())
     identities = dict(pl.read_csv(bed / "result_identity_labels.csv", infer_schema_length=0).iter_rows())
+    reference = set(json.loads((bed / "result_run_meta.json").read_text())["referenceTags"])
     # An identity IS a tag here, so one rule must give one answer. Two rules would read a tag under one
     # name beside its verdict and another beside its reagent figures.
+    #
+    # The reference tag is exempt: held out of every identity and carrying no verdict, it reads under
+    # its role rather than under its name, so the two tables differ on it by design.
     for identity, label in identities.items():
+        if identity in reference:
+            continue
         assert tags[identity] == label, f"{identity}: {tags[identity]!r} vs {label!r}"
+
+
+def test_the_reference_tag_reads_as_the_baseline_reagent(bed):
+    _run(bed, *BASE)
+    identities = dict(pl.read_csv(bed / "result_identity_labels.csv", infer_schema_length=0).iter_rows())
+    tags = dict(pl.read_csv(bed / "result_tag_labels.csv", infer_schema_length=0).iter_rows())
+    meta = json.loads((bed / "result_run_meta.json").read_text())
+
+    # The reagent table keys a tag absent from the grouping on its own barcode. Without a row here that
+    # cell renders blank while every other row of the table names an antigen.
+    assert identities["CTRL"] == REFERENCE_IDENTITY_LABEL, identities
+
+    # The ROLE, never the reagent's own name: the same reagent row already carries that in its Tag column.
+    assert tags["CTRL"] == "Ctrl"
+    # And never the grouping value, which would read as an identity the run does not score.
+    assert "Control" not in identities.values()
+    assert "CTRL" not in meta["identities"]
+    assert meta["referenceTags"] == ["CTRL"]
+
+    # The label reaches only the reference tag. Without this the assertion above also passes on a build
+    # that labelled every identity "baseline reagent".
+    assert identities["AAAA"] == "AgA"
 
 
 def test_a_silent_cell_votes_not_bound(bed):
@@ -168,20 +202,16 @@ def test_run_meta_records_every_choice(bed):
 
 
 def test_none_is_no_longer_a_selectable_rung(bed):
-    # There is no bottom rung. "none" used to select one -- no baseline exists, every
-    # verdict reads unreliable -- and a baseline is now required, so the value is not a
-    # choice a caller can make. Refused by argparse rather than accepted and quietly
-    # reinterpreted as some other rung.
+    # There is no bottom rung. "none" used to select one, and a baseline is now required, so the value
+    # is refused by argparse rather than quietly reinterpreted as some other rung.
     r = _run(bed, *BASE, "--reference-source", "none", expect_failure=True)
     assert r.returncode != 0
     assert "none" in r.stderr
 
 
 def test_a_tag_the_grouping_could_not_place_is_named_in_the_output(bed):
-    # A property the panel file does not carry narrows what can be answered, and the
-    # narrowing has to be visible where the answers are. Such a tag keeps its own
-    # identity rather than vanishing, so a bare barcode sits among the family identities
-    # -- inferable from the labels, but only this says why it is there.
+    # A property the panel file does not carry narrows what can be answered, and the narrowing has to
+    # be visible where the answers are. Such a tag keeps its own identity rather than vanishing.
     (bed / "panel.csv").write_text(
         "Samples,Name,Sequence,Type,Family\n"
         "S1,AgA,AAAA,Target,Spike\n"
@@ -200,19 +230,18 @@ def test_a_tag_the_grouping_could_not_place_is_named_in_the_output(bed):
 
 
 def test_a_tag_grouping_reports_no_unplaceable_tags(bed):
-    # The default grouping places every tag by construction, so the field is present and
-    # empty rather than absent: a reader must be able to tell "none" from "not checked".
+    # The default grouping places every tag by construction, so the field is present and empty rather
+    # than absent: a reader must be able to tell "none" from "not checked".
     _run(bed, *BASE)
     meta = json.loads((bed / "result_run_meta.json").read_text())
     assert meta["tagsWithoutGroupingValue"] == []
 
 
 def test_a_tag_noisy_in_one_panel_reads_clean_on_the_panel_it_was_clean_in(bed):
-    # Two samples declaring different tag sets are two panels, and both declare T00. T00's clonotype splits
-    # itself in S2 and reads steady in S1. A run-global disagreement rate puts S2's noise on S1's row as
-    # well, so a reader comparing S1's tags against each other is handed a fault that belongs to S2 -- and
-    # is sent to re-prepare the wrong panel. The rows are keyed `(tag, panelId)`, so the figure on them has
-    # to be that panel's. No status is involved: the comparison is the reader's to make.
+    # Two samples declaring different tag sets are two panels, and both declare T00. T00's clonotype
+    # splits itself in S2 and reads steady in S1. A run-global disagreement rate puts S2's noise on S1's
+    # row, sending a reader to re-prepare the wrong panel. The rows are keyed `(tag, panelId)`, so the
+    # figure on them has to be that panel's.
     shared = [f"T{i:02d}" for i in range(5)]
     (bed / "panel.csv").write_text(
         "Samples,Name,Sequence,Type\n"
@@ -253,21 +282,18 @@ def test_a_tag_noisy_in_one_panel_reads_clean_on_the_panel_it_was_clean_in(bed):
     clean = min(rates, key=lambda p: rates[p])
     noisy = max(rates, key=lambda p: rates[p])
     assert rates[clean] == 0.0, "the panel whose cells never disagreed reads zero"
-    # Two cells of four sit in the minority of their own set, pooled over the cells of sets
-    # that had something to compare: 2 of 4.
+    # Two cells of four sit in the minority of their own set, pooled over the cells of sets that had
+    # something to compare: 2 of 4.
     assert rates[noisy] == pytest.approx(0.5)
-    # Neither row carries a status. A comparison against the other tags in a panel is not
-    # a line, so no status can be computed from it, and the value travels instead for a
-    # reader to compare.
+    # Neither row carries a status. A comparison against the other tags in a panel is not a line, so
+    # the value travels instead for a reader to compare.
     assert by_panel[clean]["status"] is None
     assert by_panel[noisy]["status"] is None
 
 
 def test_the_key_only_frames_carry_a_value_column_so_they_can_become_columns(bed):
-    # A p-column is built from a CSV's *value* columns, so a file of key columns alone
-    # imports as nothing at all -- silently, since the file exists and is well formed.
-    # What a sample was offered, and which identity a tag feeds, would never leave the
-    # block.
+    # A p-column is built from a CSV's *value* columns, so a file of key columns alone imports as
+    # nothing at all -- silently, since the file exists and is well formed.
     _run(bed, *BASE)
     offered = pl.read_csv(bed / "result_offered.csv", infer_schema_length=0)
     assert offered.columns == ["sampleId", "identity", "offered"]
@@ -275,48 +301,41 @@ def test_the_key_only_frames_carry_a_value_column_so_they_can_become_columns(bed
 
     linker = pl.read_csv(bed / "result_tag_identity.csv", infer_schema_length=0)
     # (tag, identity). The linker has no sample axis, because neither side of its join has one. A third
-    # axis would make the join malformed. Label discovery then refuses to build a spec frame, and the
-    # punchcard renders no columns.
+    # axis would make the join malformed, label discovery would refuse to build a spec frame, and the
+    # punchcard would render no columns.
     assert linker.columns == ["tag", "identity", "1"]
     assert linker.height == linker.unique().height, "duplicate axis keys break a grid silently"
     assert set(linker["1"].to_list()) == {"1"}
 
 
 def test_asking_for_a_rung_that_cannot_serve_drops_to_none_and_never_to_another_rung(bed):
-    # There is no cascade, and its absence is the point. This bed declares no comparator tag and carries a
-    # panel large enough to stand in for one, exactly the shape a cascade would rescue: ask for the declared
-    # rung and it drops to *none*, leaving every verdict unreliable, rather than quietly serving the panel.
+    # There is no cascade, and its absence is the point. This bed declares no comparator tag and carries
+    # a panel large enough to stand in for one: ask for the declared rung and it is refused, rather than
+    # quietly serving the panel. The scientist gets the rung they asked for or nothing.
     #
-    # A baseline nobody chose is a methodology nobody knows they used. The scientist gets the rung they asked
-    # for or nothing, and the run says which.
-    #
-    # Twenty-six tags, against a shipped minimum of twenty-five, so the panel rung IS serviceable here and
-    # the second half of the test proves it -- otherwise "dropped to none" would prove nothing.
+    # Twenty-six tags, against a shipped minimum of twenty-five, so the panel rung IS serviceable here
+    # and the second half of the test proves it.
     tags = [f"T{i:02d}" for i in range(26)]
     (bed / "panel.csv").write_text(
         "Samples,Name,Sequence,Type\n" + "".join(f"S1,Ag{i},{t},Target\n" for i, t in enumerate(tags))
     )
-    # Background counts sit *above* the shipped floor of 4. At 3 they would be floored to
-    # zero and the panel median would be 0, so every count that cleared the floor would
-    # score near 100 against it and read *bound* for a reason that has nothing to do with
-    # which comparator was chosen -- hiding the very thing this test exists to check.
+    # Background counts sit *above* the shipped floor of 4. At 3 they would be floored to zero and the
+    # panel median would be 0, so every count that cleared the floor would score near 100 against it.
     rows = ["sampleId,cellId,tag,umiCount"]
     for cell in ("c1", "c2", "c3"):
         rows.append(f"S1,{cell},{tags[0]},900")
         rows.extend(f"S1,{cell},{t},10" for t in tags[1:])
     (bed / "counts.csv").write_text("\n".join(rows) + "\n")
 
-    # BASE asks for the declared rung, and this panel marks no tag as a comparator. A
-    # baseline is required, so the run is refused rather than answered with a punchcard of
-    # non-answers. Whether a reference tag is declared is a property of the settings, so it
-    # is caught before anything is read.
+    # BASE asks for the declared rung, and this panel marks no tag as a comparator. Whether a reference
+    # tag is declared is a property of the settings, so the run is refused before anything is read.
     r = _run(bed, *BASE, expect_failure=True)
     assert r.returncode != 0
     assert "declares no baseline tag" in r.stderr
     assert not (bed / "result_verdicts.csv").exists(), "a refused run writes no verdicts"
 
-    # The same counts, asked the other way: the panel rung serves them perfectly well. Which is what makes
-    # the drop above a choice the scientist made rather than a limit of the data.
+    # The same counts, asked the other way: the panel rung serves them. Which is what makes the refusal
+    # above a choice the scientist made rather than a limit of the data.
     r = _run(bed, *BASE, "--reference-source", "panel")
     assert r.returncode == 0, r.stderr
     meta = json.loads((bed / "result_run_meta.json").read_text())
@@ -326,8 +345,8 @@ def test_asking_for_a_rung_that_cannot_serve_drops_to_none_and_never_to_another_
 
 
 def test_a_panel_too_small_to_serve_still_falls_to_no_comparator(bed):
-    # The founding three-antigen case: too small to stand in as its own comparator, so the
-    # third rung is right there and must not be skipped.
+    # The founding three-antigen case: too small to stand in as its own comparator, so the third rung is
+    # right there and must not be skipped.
     (bed / "panel.csv").write_text(
         "Samples,Name,Sequence,Type\nS1,AgA,AAAA,Target\nS1,AgB,BBBB,Target\nS1,AgC,CCCC,Target\n"
     )
@@ -338,8 +357,9 @@ def test_a_panel_too_small_to_serve_still_falls_to_no_comparator(bed):
 
 
 def test_zero_cells_detected_alerts(bed):
-    # 315's categorical route: the alerting condition is a fact -- no cell barcode observed at
-    # all -- not a quantity with a published threshold.
+    # The categorical route: the alerting condition is a fact -- no cell barcode observed at all -- and
+    # not a quantity with a published threshold. A sample that detected none produced nothing for
+    # anything downstream to read, which is a run failure a reader needs at a glance.
     (bed / "qc.csv").write_text(
         "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
         "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction\n"
@@ -354,8 +374,8 @@ def test_zero_cells_detected_alerts(bed):
 
 
 def test_a_positive_cell_count_reads_ok_and_claims_nothing_about_yield(bed):
-    # Above zero, nothing here says the yield was good -- how many cells a sample should
-    # yield depends on the experiment, and no number for that is published.
+    # Above zero the status says only that the fact is false. It does not say the yield was good -- how
+    # many cells a sample should yield depends on the experiment, and no number for that is published.
     (bed / "qc.csv").write_text(
         "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
         "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction\n"
@@ -382,10 +402,9 @@ def test_a_positive_cell_count_reads_ok_and_claims_nothing_about_yield(bed):
 
 
 def test_no_cell_list_leaves_membership_unknown_and_depth_unevaluated(bed):
-    # Which barcodes held a cell is an input. Nothing in the antigen readings separates a
-    # cell from an empty droplet, so with neither list input the observed barcodes must NOT
-    # stand in: they outnumber cells by one to two orders of magnitude, and `readsPerCell`
-    # divides by this, so a healthy library would read undersequenced.
+    # Which barcodes held a cell is an input. With neither list input the observed barcodes must NOT
+    # stand in: they outnumber cells by one to two orders of magnitude, and `readsPerCell` divides by
+    # this, so a healthy library would read undersequenced.
     no_linker = [a for a in BASE if a not in ("--linker", "linker.csv")]
     (bed / "qc.csv").write_text(
         "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
@@ -410,11 +429,9 @@ def test_no_cell_list_leaves_membership_unknown_and_depth_unevaluated(bed):
 
 
 def test_only_the_sample_rolls_up(bed):
-    # A panel status assumed its per-tag measurements would mostly carry statuses. They do
-    # not: one is categorical and the rest are read only as outliers against the other tags
-    # in the same panel. A capture status was then the worst of every sample and every
-    # panel, which becomes the worst of every sample -- a statement that only repeats what
-    # is beside it.
+    # A panel status assumed its per-tag measurements would mostly carry statuses. They do not: one is
+    # categorical and the rest are read only as outliers against the other tags in the same panel. A
+    # capture status was then the worst of every sample and every panel, which only repeats the samples.
     _run(bed, *BASE)
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
     rollups = qc.filter(pl.col("measurement") == "rollup")
@@ -429,9 +446,8 @@ def test_only_the_sample_rolls_up(bed):
 
 
 def test_panel_assigned_fraction_keeps_its_value_and_carries_no_status(bed):
-    # Atom 310: the undeclared-barcode line is the barcode's, and it never becomes a sample's.
-    # This sample-grain measurement keeps its number and is never judged, so it never reaches
-    # the sample's rollup either.
+    # The undeclared-barcode line is the barcode's, and it never becomes a sample's. This sample-grain
+    # measurement keeps its number and is never judged, so it never reaches the sample's rollup.
     (bed / "qc.csv").write_text(
         "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
         "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction,"
@@ -463,9 +479,8 @@ def test_panel_assigned_fraction_keeps_its_value_and_carries_no_status(bed):
 
 
 def test_per_tag_measurements_survive_the_removed_panel_rollup(bed):
-    # This task removes aggregation, not measurement. A reagent finding still lands on its
-    # own row, keyed by the panel that has it, which is what keeps a bad reagent
-    # discoverable with no panel status above it.
+    # This removes aggregation, not measurement. A reagent finding still lands on its own row, keyed by
+    # the panel that has it.
     _run(bed, *BASE)
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
     tags = qc.filter((pl.col("level") == "tag") & (pl.col("measurement") != "rollup"))
@@ -477,9 +492,8 @@ def test_contending_groups_reach_the_note(bed):
     (bed / "panel.csv").write_text((bed / "panel.csv").read_text() + "S1,AgB,CCCC,Target\n")
     (bed / "counts.csv").write_text((bed / "counts.csv").read_text() + "S1,c1,CCCC,1\nS1,c2,CCCC,1\nS1,c3,CCCC,1\n")
     _run(bed, *BASE, "--contending", json.dumps([["AAAA", "CCCC"]]))
-    # Read without schema inference: the flag is a literal "true"/"false" string, which is
-    # what a boolean p-column value has to be here, and polars would otherwise infer the
-    # column back into a Boolean and hide whether the file carries the string at all.
+    # Read without schema inference: the flag is a literal "true"/"false" string, and polars would
+    # otherwise infer the column back into a Boolean and hide whether the file carries the string.
     v = pl.read_csv(bed / "result_verdicts.csv", infer_schema_length=0)
     r = v.filter(pl.col("identity") == "CCCC").row(0, named=True)
     assert r["competedWith"] == "AAAA" and r["wasCompeted"] == "true"
@@ -540,10 +554,9 @@ def test_undeclared_barcode_is_reported_and_does_not_stop_the_reading(bed):
 
 # --- the undeclared-barcode table: keyed by sequence, carrying the field's own status ------
 #
-# 330: barcodes the reads carried that no panel declares get their own table, keyed by
-# sequence, and it is the one thing on that surface that carries a status -- the share of a
-# sample's reads landing in undeclared barcodes. 310: that status is the barcode's, and it
-# never becomes a sample's.
+# Barcodes the reads carried that no panel declares get their own table, keyed by sequence, and it is
+# the one thing on that surface that carries a status -- the share of a sample's reads landing in
+# undeclared barcodes. That status is the barcode's, and it never becomes a sample's.
 
 
 def _write_raw_feature_counts(bed, rows):
@@ -552,8 +565,8 @@ def _write_raw_feature_counts(bed, rows):
 
 
 def test_undeclared_barcode_table_is_empty_without_the_raw_feature_counts_input(bed):
-    # No pre-refine pass reached this run, so the table reads as the ordinary empty case --
-    # usually empty is the outcome to want -- rather than as an error.
+    # No pre-refine pass reached this run, so the table reads as the ordinary empty case rather than as
+    # an error.
     _run(bed, *BASE)
     t = pl.read_csv(bed / "result_undeclared_barcodes.csv")
     assert t.height == 0
@@ -587,8 +600,8 @@ def test_undeclared_barcode_share_alerts_when_every_read_is_undeclared(bed):
 
 
 def test_undeclared_barcode_table_stays_empty_when_the_panel_covers_every_sequence(bed):
-    # Every barcode the pre-refine pass saw is declared -- the outcome the field wants -- so the
-    # table carries no row, not a claim that something failed.
+    # Every barcode the pre-refine pass saw is declared -- the outcome the field wants -- so the table
+    # carries no row, not a claim that something failed.
     _write_raw_feature_counts(bed, [("S1", "AAAA", 40), ("S1", "CTRL", 10)])
     _run(bed, *BASE, "--raw-feature-counts", "raw_feature_counts.csv")
     t = pl.read_csv(bed / "result_undeclared_barcodes.csv")
@@ -596,8 +609,8 @@ def test_undeclared_barcode_table_stays_empty_when_the_panel_covers_every_sequen
 
 
 def test_undeclared_barcode_share_never_reaches_the_sample_report_or_rollup(bed):
-    # 310: the status is the barcode's, and it does not become a sample's. It must not appear
-    # among the sample's own measurements or feed the sample's rolled-up status.
+    # The status is the barcode's, and it does not become a sample's. It must not appear among the
+    # sample's own measurements or feed the sample's rolled-up status.
     _write_raw_feature_counts(bed, [("S1", "ZZZZ", 5)])
     r = _run(bed, *BASE, "--raw-feature-counts", "raw_feature_counts.csv")
     assert r.returncode == 0, r.stderr
@@ -614,11 +627,9 @@ def test_empty_join_writes_headers(bed):
 
 
 def test_a_cutoff_at_the_analytic_floor_is_refused(bed):
-    # At or below specificity_score(0, 0) the analytic tally and the dense oracle disagree
-    # about a silent admissible cell with no error raised. `silent_tally` states that
-    # refusing such a cutoff is this CLI's job. Tested *at* the bound, not merely either
-    # side of it: the refusal is "at or below", and 0.04/0.05 alone cannot tell that from
-    # "below".
+    # At or below specificity_score(0, 0) the analytic tally and the dense oracle disagree about a silent
+    # admissible cell with no error raised. Tested *at* the bound, not merely either side of it: the
+    # refusal is "at or below", and 0.04/0.05 alone cannot tell that from "below".
     from verdict import specificity_score
 
     bound = float(specificity_score(0, 0))
@@ -631,9 +642,8 @@ def test_a_cutoff_at_the_analytic_floor_is_refused(bed):
 
 
 def test_rows_are_sorted_on_a_bed_wide_enough_for_order_to_show(bed):
-    # The default bed has one set and one identity, where sorted and unsorted are the same
-    # frame and a missing sort is invisible. Three identities declared in descending order
-    # across two sets make the two differ.
+    # The default bed has one set and one identity, where sorted and unsorted are the same frame and a
+    # missing sort is invisible. Three identities declared in descending order across two sets differ.
     (bed / "panel.csv").write_text(
         "Samples,Name,Sequence,Type\nS1,AgZ,ZZZZ,Target\nS1,AgM,MMMM,Target\nS1,AgA,AAAA,Target\nS1,Ctrl,CTRL,Control\n"
     )
@@ -662,23 +672,20 @@ def test_rows_are_sorted_on_a_bed_wide_enough_for_order_to_show(bed):
 
 
 def test_run_meta_records_the_comparator_served_not_the_one_requested(bed):
-    # `served_source` degrades to `none` where it cannot honour a request -- here a panel
-    # comparator is asked for and the panel is far too small to stand in as one. Recording
-    # the request instead would claim a comparator the run never had, and two runs compared
-    # against different things would look like two runs compared against the same thing.
+    # `served_source` refuses a request it cannot honour -- here a panel comparator is asked for and the
+    # panel is far too small. Recording the request instead would claim a comparator the run never had.
     r = _run(bed, *BASE, "--reference-source", "panel", "--panel-min-members", "50", expect_failure=True)
     assert r.returncode != 0
-    # The message names the condition and the number, so a scientist reading it knows which
-    # of the two halves to change.
+    # The message names the condition and the number, so a scientist knows which of the two halves to
+    # change.
     assert "below the 50 that rung needs" in r.stderr
     assert not (bed / "result_verdicts.csv").exists(), "nothing is written for a rung that cannot serve"
 
 
 def test_sequencing_depth_divides_by_the_cell_list_not_by_observed_barcodes(bed):
-    # The vendor's five thousand is per called cell. Observed barcodes exceed called cells
-    # by one to two orders of magnitude in droplet data, because ambient reads land on most
-    # barcodes, so dividing by them would let a badly undersequenced run read acceptable.
-    # The bed makes the two differ: four barcodes carry counts, three are in the cell list.
+    # The vendor's five thousand is per called cell. Observed barcodes exceed called cells by one to two
+    # orders of magnitude in droplet data, so dividing by them would let a badly undersequenced run read
+    # acceptable. The bed makes the two differ: four barcodes carry counts, three are in the cell list.
     (bed / "counts.csv").write_text((bed / "counts.csv").read_text() + "S1,zzz,AAAA,7\n")
     (bed / "qc.csv").write_text(
         "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
@@ -696,23 +703,21 @@ def test_sequencing_depth_divides_by_the_cell_list_not_by_observed_barcodes(bed)
     assert depth["status"] == "OK"
 
 
-# Every module the entrypoint reaches, not just the entrypoint file. The check is on source
-# text, so a helper moved out of `emit_verdicts.py` leaves it behind unless it is named here.
+# Every module the entrypoint reaches, not just the entrypoint file. The check is on source text, so
+# a helper moved out of `emit_verdicts.py` leaves it behind unless it is named here.
 ENTRYPOINT_MODULES = ("emit_verdicts.py", "frame_io.py", "identity_tables.py", "qc_rows.py")
 
 
 def test_the_dense_oracle_is_not_reachable_from_the_entrypoint():
-    # The dense oracle exists to check the analytic tally in tests. On a realistic panel
-    # the grid it builds is 11-20x the sparse input, so a production caller is a memory
-    # failure waiting for a big panel.
+    # The dense oracle exists to check the analytic tally in tests. On a realistic panel the grid it
+    # builds is 11-20x the sparse input.
     for module in ENTRYPOINT_MODULES:
         assert "densify" not in (SRC / module).read_text(), module
 
 
 def test_property_grouping_normalises_and_excludes_the_reference(bed):
-    # The stray whitespace is the point: `read_panel` normalises tag and sample and leaves
-    # properties alone, so a builder reading the column directly makes " Spike " and "Spike"
-    # two identities. Built on `consistent_properties` it makes one.
+    # The stray whitespace is the point: `read_panel` normalises tag and sample and leaves properties
+    # alone, so a builder reading the column directly makes " Spike " and "Spike" two identities.
     (bed / "panel.csv").write_text(
         "Samples,Name,Sequence,Type,Family\n"
         "S1,AgA,AAAA,Target, Spike \n"
@@ -728,11 +733,10 @@ def test_property_grouping_normalises_and_excludes_the_reference(bed):
 
 
 def test_the_declarations_that_hold_of_an_identity_travel_with_it(bed):
-    # `panel-file-authority`: whatever the panel says consistently about an identity's tags travels with
-    # that identity's verdicts. The bed puts every case in one run -- a property both member tags agree on,
-    # one they disagree about, and one that agrees for a single-tag identity while disagreeing for the
-    # merged one -- because a property tested alone cannot show that the disagreement is dropped per
-    # identity rather than per column.
+    # Whatever the panel says consistently about an identity's tags travels with that identity's
+    # verdicts. The bed puts every case in one run -- a property both member tags agree on, one they
+    # disagree about, and one that agrees for a single-tag identity while disagreeing for the merged one
+    # -- because a property tested alone cannot show that the disagreement is dropped per identity.
     (bed / "panel.csv").write_text(
         "Samples,Name,Sequence,Type,Family,Species,Carrier\n"
         "S1,AgA,AAAA,Target,Spike,Human,Biotin\n"
@@ -756,26 +760,26 @@ def test_the_declarations_that_hold_of_an_identity_travel_with_it(bed):
     # Disagreed between the member tags, so it holds of nothing: neither tag's value wins.
     assert held["Spike"]["Carrier"] == ""
     assert held["Spike"]["Name"] == ""
-    # The same two columns still hold for the identity whose single tag settles them, which is what makes
-    # the omission above about the identity rather than about the column.
+    # The same two columns still hold for the identity whose single tag settles them, which is what
+    # makes the omission above about the identity rather than about the column.
     assert held["Nuc"]["Carrier"] == "Biotin"
     assert held["Nuc"]["Name"] == "AgC"
 
-    # The reference tag declares Cyno and Avidin and is no identity, so neither value can reach the export:
-    # a declaration travelling from a tag that gets no verdict would describe nothing.
+    # The reference tag declares Cyno and Avidin and is no identity, so neither value can reach the
+    # export: a declaration travelling from a tag that gets no verdict would describe nothing.
     meta = json.loads((bed / "result_run_meta.json").read_text())
     assert meta["identityPropertyValues"]["Species"] == ["Human"]
     assert meta["identityPropertyValues"]["Type"] == ["Target"]
     assert "Avidin" not in meta["identityPropertyValues"]["Carrier"]
-    # The workflow builds one spec per name in this list, so a name here that is not a column of the CSV,
-    # or the reverse, is an import of nothing.
+    # The workflow builds one spec per name in this list, so a name here that is not a column of the
+    # CSV, or the reverse, is an import of nothing.
     columns = pl.read_csv(bed / "result_identity_properties.csv", infer_schema_length=0).columns
     assert meta["identityProperties"] == [c for c in columns if c != "identity"]
 
 
 def test_a_property_no_identity_agreed_on_is_left_out_rather_than_exported_blank(bed):
-    # One identity, and it disagrees about Carrier. An all-blank column would offer a reader a filter with
-    # no values in it, so the column does not ship at all.
+    # One identity, and it disagrees about Carrier. An all-blank column would offer a reader a filter
+    # with no values in it, so the column does not ship at all.
     (bed / "panel.csv").write_text(
         "Samples,Name,Sequence,Type,Family,Carrier\n"
         "S1,AgA,AAAA,Target,Spike,Biotin\n"
@@ -793,14 +797,12 @@ def test_a_property_no_identity_agreed_on_is_left_out_rather_than_exported_blank
 
 
 def test_two_identities_that_disagree_the_same_way_do_not_share_a_label(bed):
-    # Both barcodes carry Family=Spike in S1 and Family=Nuc in S2. Under `panel-file-authority@3.0` the
-    # panel declares per tag AND sample, so that is not a disagreement to fall back from -- it is two
-    # declarations, and each barcode joins the family its own sample named. The identities are the two
-    # families, and neither barcode stands alone under its raw sequence.
+    # Both barcodes carry Family=Spike in S1 and Family=Nuc in S2. The panel declares per tag AND
+    # sample, so that is not a disagreement to fall back from -- it is two declarations, and each barcode
+    # joins the family its own sample named.
     #
-    # Do not invert this back to a fallback where each barcode stands alone under its raw sequence, labelled
-    # with its declared values joined ("Nuc / Spike"). That shape is only forced by a dataset-wide map,
-    # which cannot hold both declarations at once. The panel is read per tag AND sample.
+    # Do not invert this back to a fallback where each barcode stands alone under its raw sequence,
+    # labelled with its declared values joined. That shape is only forced by a dataset-wide map.
     (bed / "panel.csv").write_text(
         "Samples,Name,Sequence,Type,Family\n"
         "S1,AgA,AAAA,Target,Spike\n"
@@ -816,7 +818,7 @@ def test_two_identities_that_disagree_the_same_way_do_not_share_a_label(bed):
     (bed / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS2,c2,K2\n")
     _run(bed, *BASE, "--grouping", json.dumps({"by": "property", "column": "Family"}))
 
-    labels = dict(pl.read_csv(bed / "result_identity_labels.csv", infer_schema_length=0).iter_rows())
+    labels = _identities_only(bed)
     assert set(labels) == {"Spike", "Nuc"}, "each barcode joins the family its own sample declared"
     assert len(set(labels.values())) == 2, f"two identities under one label: {labels}"
     # A property grouping makes the identity the property's value, which is already the name a reader
@@ -829,9 +831,8 @@ def test_two_identities_that_disagree_the_same_way_do_not_share_a_label(bed):
 
 def test_a_flat_contending_list_is_refused_rather_than_read_as_characters(bed):
     # `["AgA","AgB"]` is valid JSON and the shape a hand-driven run reaches for first. Read as groups it
-    # makes `set("AgA")` -- a set of CHARACTERS -- so the run completes, no competitor note ever fires,
-    # every `wasCompeted` reads false, and the run record states a contention nothing tested. A silent
-    # wrong answer is the worst outcome available here, so the flag is refused instead.
+    # makes `set("AgA")` -- a set of CHARACTERS -- so the run completes, no competitor note fires, and the
+    # run record states a contention nothing tested.
     r = _run(bed, *BASE, "--contending", json.dumps(["AgA", "AgB"]), expect_failure=True)
     assert "--contending" in r.stderr
 
@@ -845,8 +846,7 @@ def test_a_flat_contending_list_is_refused_rather_than_read_as_characters(bed):
 
 def test_a_non_object_grouping_gets_the_usage_message_not_an_attribute_error(bed):
     # `--grouping '"tag"'` parses as JSON and is not a mapping. Reaching `.get` on it raises an
-    # AttributeError -- a stack trace about a str, where a usage message for this exact mistake is already
-    # written two lines away.
+    # AttributeError, where a usage message for this exact mistake is written two lines away.
     r = _run(bed, *BASE, "--grouping", json.dumps("tag"), expect_failure=True)
     assert "--grouping must be" in r.stderr
     assert "AttributeError" not in r.stderr
@@ -854,8 +854,7 @@ def test_a_non_object_grouping_gets_the_usage_message_not_an_attribute_error(bed
 
 def test_a_non_integer_umi_count_names_the_file_and_the_column(bed):
     # A blank or a decimal dies in the cast as a raw polars traceback naming neither the file nor the
-    # column -- the two things a reader needs. This module's convention is that a bad input exits with a
-    # message about the input.
+    # column. This module's convention is that a bad input exits with a message about the input.
     (bed / "counts.csv").write_text("sampleId,cellId,tag,umiCount\nS1,c1,AAAA,\nS1,c2,AAAA,3.5\n")
     r = _run(bed, *BASE, expect_failure=True)
     assert "counts.csv" in r.stderr
@@ -886,36 +885,32 @@ DECLARED_FLAGS = (
 
 
 def test_every_declared_flag_is_reachable_from_the_command_line(bed):
-    # Every parameter of the reading is threaded from the workflow, so a parameter that
-    # exists only as a module default is one a scientist cannot move. The help text is the
-    # cheapest place the whole set is visible at once.
+    # Every parameter of the reading is threaded from the workflow, so a parameter that exists only as a
+    # module default is one a scientist cannot move. The help text is the cheapest place the whole set is
+    # visible at once.
     help_text = _run(bed, "--help").stdout
     for flag in DECLARED_FLAGS:
         assert flag in help_text, flag
 
 
 def test_output_is_byte_stable_across_runs(bed):
-    # `combine_tags_to_identities` groups without maintaining order, so an unsorted frame
-    # varies run to run. A p-column's identity is content addressed, so an unstable byte
-    # order silently costs every downstream node its dedup.
+    # `combine_tags_to_identities` groups without maintaining order, so an unsorted frame varies run to
+    # run. A p-column's identity is content addressed, so an unstable byte order costs downstream dedup.
+    #
+    # Repeating the run is not enough on its own: polars groups deterministically for one input, so an
+    # unsorted frame reproduces itself byte for byte. Sortedness itself is asserted in
+    # `test_rows_are_sorted_on_a_bed_wide_enough_for_order_to_show`.
     _run(bed, *BASE)
     first = {p.name: p.read_bytes() for p in bed.glob("result_*")}
     _run(bed, *BASE)
     second = {p.name: p.read_bytes() for p in bed.glob("result_*")}
     assert first == second
 
-    # Repeating the run is not enough on its own: polars groups deterministically for one
-    # input, so an unsorted frame reproduces itself byte for byte and this passes while the
-    # sort is missing. Sortedness itself is asserted in
-    # `test_rows_are_sorted_on_a_bed_wide_enough_for_order_to_show`, which needs a bed this
-    # one is too narrow to provide.
-
 
 def test_a_computed_but_unjudged_measurement_is_not_reported_as_unchecked(bed):
-    # Both no-status cases now leave the status column empty, so the distinction they carry has
-    # to survive somewhere else: the VALUE and the coverage triple beside it. "Computed, and no
-    # line stands behind it" and "nothing computed this" are the one pair the status set exists
-    # to keep apart, and collapsing them reads "nothing was wrong" as "nobody looked".
+    # Both no-status cases leave the status column empty, so the distinction has to survive in the VALUE
+    # and the coverage triple beside it. "Computed, and no line stands behind it" and "nothing computed
+    # this" are the pair the status set exists to keep apart.
     _run(bed, *BASE)
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
 
@@ -925,8 +920,8 @@ def test_a_computed_but_unjudged_measurement_is_not_reported_as_unchecked(bed):
     assert floor_row["value"] is not None
     assert (floor_row["judged"], floor_row["unjudged"], floor_row["notEvaluated"]) == ("0", "1", "0")
 
-    # Nothing computed it: no number, the reason in its place, and the triple counts it
-    # not-evaluated. Same empty status column, opposite finding.
+    # Nothing computed it: no number, the reason in its place, and the triple counts it not-evaluated.
+    # Same empty status column, opposite finding.
     deferred = qc.filter(pl.col("measurement") == "aggregateBarcodeFraction").row(0, named=True)
     assert deferred["status"] is None
     assert deferred["value"] is None
@@ -935,11 +930,9 @@ def test_a_computed_but_unjudged_measurement_is_not_reported_as_unchecked(bed):
 
 
 def test_a_capture_map_is_accepted_and_changes_no_row(bed):
-    # The capture rollup was the only reader of this map, and only the sample carries an
-    # aggregated status now. The argument stays accepted because the capture axis ships on
-    # the QC columns: adding an axis to a released column changes that column's identity,
-    # where adding a value does not. So supplying a map must not fail, and must not put a row
-    # anywhere either.
+    # The capture rollup was the only reader of this map, and only the sample carries an aggregated
+    # status now. The argument stays accepted because the capture axis ships on the QC columns. So
+    # supplying a map must not fail, and must not put a row anywhere either.
     _run(bed, *BASE, "--capture-map", json.dumps({"S1": "C1"}))
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
     assert "capture" not in set(qc["level"].to_list())
@@ -947,10 +940,8 @@ def test_a_capture_map_is_accepted_and_changes_no_row(bed):
 
 
 def test_a_cell_list_of_its_own_overrides_the_linker_and_is_recorded(bed):
-    # The cell list is an input. The linker only says which set a cell belongs to. A list
-    # from gene expression covers cells whose receptor never assembled, which the linker
-    # structurally cannot, so which list a figure was computed against has to travel with the
-    # run.
+    # The cell list is an input. The linker only says which set a cell belongs to. A list from gene
+    # expression covers cells whose receptor never assembled, which the linker structurally cannot.
     (bed / "cells.csv").write_text("sampleId,cellId\nS1,c1\nS1,c2\n")
     r = _run(bed, *BASE, "--cells", "cells.csv")
     assert r.returncode == 0, r.stderr
@@ -970,9 +961,8 @@ def test_a_gate_sets_cells_aside_and_says_how_many(bed):
 
 
 def test_the_floor_runs_before_tags_combine(bed):
-    # Order is visible in the count: the floor works on the sparse per-tag frame, so two
-    # readings of one identity in one cell are two floored readings. Combining first would
-    # take the highest and floor one.
+    # Order is visible in the count: the floor works on the sparse per-tag frame, so two readings of one
+    # identity in one cell are two floored readings. Combining first would take the highest and floor one.
     (bed / "panel.csv").write_text(
         "Samples,Name,Sequence,Type,Family\n"
         "S1,AgA,AAAA,Target,Spike\n"
@@ -992,12 +982,10 @@ def test_the_floor_runs_before_tags_combine(bed):
 
 # ---- the committed fixture bed ---------------------------------------------------------------
 #
-# Every test above writes its own three-line bed, which keeps each one readable and keeps none of them
-# realistic: a run whose panel is one size, whose comparator is one tag and whose cells all come from one
-# sample cannot show what happens when four samples were stained differently. The committed bed at
-# software/test-data/fixtures/verdicts/ carries the awkward panel shapes at once -- panels of differing
-# size, barcodes recurring under different names, one antigen on two barcodes, one comparator and two, and
-# a barcode declared on one sample and read on another.
+# Every test above writes its own three-line bed, which keeps each one readable and none of them
+# realistic. The committed bed at software/test-data/fixtures/verdicts/ carries the awkward panel
+# shapes at once -- panels of differing size, barcodes recurring under different names, one antigen on
+# two barcodes, one comparator and two, and a barcode declared on one sample and read on another.
 
 VERDICT_BED = Path(__file__).resolve().parents[2] / "test-data" / "fixtures" / "verdicts"
 VERDICT_BED_FILES = (
@@ -1025,21 +1013,19 @@ def wide_bed(tmp_path):
 
 
 def _bed_args(panel_csv, *extra):
-    # The bed's column names are the ones BASE already names, so only the panel file varies across the three
-    # shapes: no comparator, one comparator, two.
-    # The gate is on for every bed run: it is what sets c11 aside and so what keeps *unreliable* reachable in
-    # the bed. 100 is above every other comparator here (6, and 60 on the two-control panel) and below c11's
-    # 400, so exactly one cell is set aside.
+    # The bed's column names are the ones BASE already names, so only the panel file varies across the
+    # three shapes: no comparator, one comparator, two. The gate is on for every bed run: it is what sets
+    # c11 aside and so what keeps *unreliable* reachable. 100 is above every other comparator here and
+    # below c11's 400, so exactly one cell is set aside.
     return ["counts.csv", panel_csv, *BASE[2:], "--gate-threshold", "100", *extra]
 
 
 def _bed_shape(bed):
     """The handles these tests need, recovered from the bed by the role each barcode plays.
 
-    Derived rather than written down because the sequences come from a seeded RNG. A bed regenerated under a
-    different seed still has four barcodes carrying two antigen names, one antigen carried on two barcodes
-    and one barcode declared by a single sample and read only in another. Spelling the sequences out here
-    would tie every assertion below to the seed instead of to the shape.
+    Derived rather than written down because the sequences come from a seeded RNG. A bed regenerated
+    under a different seed still has four barcodes carrying two antigen names, one antigen carried on two
+    barcodes and one barcode declared by a single sample and read only in another.
     """
     panel = pl.read_csv(bed / "panel_multi_reference.csv", infer_schema_length=0)
     counts = pl.read_csv(bed / "counts.csv", infer_schema_length=0)
@@ -1055,10 +1041,9 @@ def _bed_shape(bed):
     for row in panel.filter(pl.col("Type") != "Control").iter_rows(named=True):
         names.setdefault(row["Sequence"], set()).add(row["Name"])
         declared_in.setdefault(row["Sequence"], set()).add(row["Samples"])
-        # `offered` means what a cell could ANSWER at, which needs the declaration AND the
-        # reads. A tag the sample's reads never carry was declared and never measured, so its
-        # cells do not count toward that identity. The key is kept either way so a sample that
-        # measured nothing still appears.
+        # `offered` means what a cell could ANSWER at, which needs the declaration AND the reads. A tag
+        # the sample's reads never carry was declared and never measured. The key is kept either way so a
+        # sample that measured nothing still appears.
         offered.setdefault(row["Samples"], set())
         if row["Samples"] in read_in.get(row["Sequence"], set()):
             offered[row["Samples"]].add(row["Sequence"])
@@ -1074,8 +1059,8 @@ def _bed_shape(bed):
         sets_of_sample.setdefault(sample, set()).add(set_id)
         samples_of_set.setdefault(set_id, set()).add(sample)
 
-    # Declared by exactly one sample and read in none of that sample's cells: the only arrangement in which
-    # both directions of the panel-versus-reads check fire on the same barcode at once.
+    # Declared by exactly one sample and read in none of that sample's cells: the only arrangement in
+    # which both directions of the panel-versus-reads check fire on the same barcode at once.
     cross = [t for t, samples in declared_in.items() if len(samples) == 1 and not samples & read_in.get(t, set())]
     shared = [(name, sorted(tags)) for name, tags in tags_of_name.items() if len(tags) > 1]
     short_sample = min(offered, key=lambda s: (len(offered[s]), s))
@@ -1120,23 +1105,22 @@ def test_the_bed_keys_identity_by_barcode_where_the_names_would_split(wide_bed):
     identities = set(pl.read_csv(wide_bed / "result_verdicts.csv", infer_schema_length=0)["identity"].to_list())
     assert identities == shape["antigens"], "one identity per declared barcode, whatever it was named"
 
-    # The two keyings do not even agree on how many questions the run asks: keying on the name would split
-    # each renamed barcode in two and fuse the antigen carried on two barcodes into one.
+    # The two keyings do not even agree on how many questions the run asks: keying on the name would
+    # split each renamed barcode in two and fuse the antigen carried on two barcodes into one.
     assert len(shape["names"]) > len(shape["antigens"])
 
-    # A label is not an identity, and two identities under one label are two rows a reader cannot tell apart,
-    # so where two barcodes share a name the label has to carry the barcode as well.
-    labels = dict(pl.read_csv(wide_bed / "result_identity_labels.csv", infer_schema_length=0).iter_rows())
+    # A label is not an identity, and two identities under one label are two rows a reader cannot tell
+    # apart, so where two barcodes share a name the label has to carry the barcode as well.
+    labels = _identities_only(wide_bed)
     assert set(labels) == shape["antigens"]
     assert len(set(labels.values())) == len(labels)
 
-    # And from the other side: asked to group by the name, the run PLACES the renamed barcodes, one identity
-    # per name the panel declared. Nothing is left unplaced.
+    # And from the other side: asked to group by the name, the run PLACES the renamed barcodes, one
+    # identity per name the panel declared.
     #
     # A barcode named differently in two samples does NOT have "no one name that holds", and must not be
-    # reported in `tagsWithoutGroupingValue` or left standing alone under its raw sequence. Under
-    # `panel-file-authority@3.0` those are two declarations -- one reagent identifier carrying a different
-    # antigen in each sample -- so each is placed under the name its own sample gave it.
+    # reported in `tagsWithoutGroupingValue` or left standing alone under its raw sequence. Those are two
+    # declarations, so each is placed under the name its own sample gave it.
     r = _run(wide_bed, *_bed_args("panel_with_reference.csv", *NAME_GROUPING))
     assert r.returncode == 0, r.stderr
     meta = json.loads((wide_bed / "result_run_meta.json").read_text())
@@ -1168,14 +1152,12 @@ def test_the_short_panel_is_where_never_asked_appears(wide_bed):
     assert unasked == shape["antigens"] - shape["offered"][short]
     assert unasked
 
-    # A set spanning two samples could answer wherever either sample both declared and measured a tag, so a
-    # panel gap in one sample closes where the other covers it.
+    # A set spanning two samples could answer wherever either sample both declared and measured a tag, so
+    # a panel gap in one sample closes where the other covers it.
     #
-    # One barcode is offered nowhere and cannot close: the cross declaration, declared by a single sample and
-    # read only in another. The sample that declared it measured nothing for it, and the sample that measured
-    # it never declared it, so neither side put the question. That barcode is the bed's deliberate hole -- it
-    # exists so both directions of the panel-versus-reads check fire on one tag -- and it is exactly what the
-    # spanning set still reads never asked at.
+    # One barcode is offered nowhere and cannot close: the cross declaration, declared by a single sample
+    # and read only in another. That barcode is the bed's deliberate hole -- it exists so both directions
+    # of the panel-versus-reads check fire on one tag.
     spanning = shape["spanning"]
     assert spanning, "the bed needs one set drawn from two samples"
     covered = set().union(*(shape["offered"][s] for s in _samples_of(shape, spanning[0])))
@@ -1193,13 +1175,12 @@ def test_the_panel_mismatch_fires_per_sample_in_both_directions(wide_bed):
     declaring = next(iter(shape["declared_in"][tag]))
     reading = sorted(shape["read_in"][tag])
 
-    # Read against the two-comparator panel, the only one here declaring every barcode the counts carry: on
-    # the others the undeclared comparator adds rows and the table is no longer a clean statement about this
-    # one barcode.
+    # Read against the two-comparator panel, the only one here declaring every barcode the counts carry:
+    # on the others the undeclared comparator adds rows.
     #
     # On the panel rung, because this version refuses two declared comparators and this test is about the
-    # PANEL FILE rather than about the comparator. The minimum is lowered to the panel it has, for the same
-    # reason: neither number is the subject here.
+    # PANEL FILE rather than about the comparator. The minimum is lowered to the panel it has, for the
+    # same reason.
     size = pl.read_csv(wide_bed / "panel_multi_reference.csv", infer_schema_length=0)["Sequence"].n_unique()
     on_panel_rung = ["--reference-source", "panel", "--panel-min-members", str(size)]
     r = _run(wide_bed, *_bed_args("panel_multi_reference.csv", *on_panel_rung))
@@ -1211,21 +1192,18 @@ def test_the_panel_mismatch_fires_per_sample_in_both_directions(wide_bed):
     assert rows[(tag, "declared-never-seen")] == declaring
     assert rows[(tag, "undeclared-in-panel")] == ", ".join(reading)
 
-    # A global check would have cancelled these two against each other. The verdicts show why that matters:
-    # the sample that read the barcode never declared it, so its set reads never asked while a real count of
-    # 500 sits in the counts file -- the verdict follows the panel.
+    # A global check would have cancelled these two against each other. The sample that read the barcode
+    # never declared it, so its set reads never asked while a real count of 500 sits in the counts file.
     states = _states(wide_bed)
     assert states[(_only_set(shape, reading[0]), tag)] == "never asked"
 
     # And the sample that DECLARED it read nothing for it, so its cells leave that identity's denominator
-    # too: zero reads across a whole sample is a reagent that produced nothing, and none of the things that
-    # causes -- a reagent never added, a barcode mis-declared, a failed library -- put the question the file
-    # says was put. Both sides read never asked, for opposite reasons: one sample was never offered the
-    # barcode, the other was offered it and nobody measured it.
+    # too: zero reads across a whole sample is a reagent that produced nothing. Both sides read never
+    # asked, for opposite reasons: one sample was never offered the barcode, the other was offered it and
+    # nobody measured it.
     #
     # This is NOT the per-cell rule. A cell that read nothing for a tag its sample DID measure votes not
-    # bound, which is a reading that happened and failed. `test_a_silent_cell_votes_not_bound` pins that, and
-    # the off-target acceptance bed exercises both routes in one clonotype.
+    # bound. `test_a_silent_cell_votes_not_bound` pins that.
     assert states[(_only_set(shape, declaring), tag)] == "never asked"
 
 
@@ -1235,49 +1213,44 @@ def test_one_antigen_on_two_barcodes_is_read_by_its_highest_member(wide_bed):
     name, (first, second) = shape["shared"][0]
     spanning = shape["spanning"][0]
 
-    # Per barcode the two cells that carry them bind opposite ones, so each barcode splits its set one to one
-    # and reads unreliable on the tie.
+    # Per barcode the two cells that carry them bind opposite ones, so each barcode splits its set one to
+    # one and reads unreliable on the tie.
     r = _run(wide_bed, *_bed_args("panel_with_reference.csv"))
     assert r.returncode == 0, r.stderr
     per_tag = _states(wide_bed)
     assert per_tag[(spanning, first)] == "unreliable"
     assert per_tag[(spanning, second)] == "unreliable"
 
-    # Read as one antigen the two barcodes combine by the highest member, never by the sum and never by an
-    # arbitrary one: each cell's reading becomes 500, both cells bind, and the set is bound. Summing would
-    # reach the same verdict here by accident. What the highest rule buys is that a cell's answer does not
-    # depend on how many barcodes happened to carry the antigen.
+    # Read as one antigen the two barcodes combine by the highest member, never by the sum and never by
+    # an arbitrary one: each cell's reading becomes 500, both cells bind, and the set is bound. Summing
+    # would reach the same verdict here by accident. What the highest rule buys is that a cell's answer
+    # does not depend on how many barcodes happened to carry the antigen.
     r = _run(wide_bed, *_bed_args("panel_with_reference.csv", *NAME_GROUPING))
     assert r.returncode == 0, r.stderr
     assert _states(wide_bed)[(spanning, name)] == "bound"
 
 
-def test_two_declared_comparators_are_refused_rather_than_combined(wide_bed):
-    # Never take the higher of the two, and never combine comparator tags the way an identity's tags combine:
-    # `baseline-scope` states that references are never combined, and taking the highest is a combination.
-    # The atom's construct scopes each reference to a group of antigens by a declared property, and this
-    # version has no group-by half, so it cannot say which antigens a second comparator belongs to. It
-    # refuses rather than choosing a rule nobody wrote down, as the field does -- the ordinary antibody run
-    # rejects a second control outright.
-    #
-    # Refused loudly rather than degraded to no comparator: this is a panel a scientist fixes in a minute,
-    # and a silent fall to *unreliable* everywhere would not tell them how.
-    r = _run(wide_bed, *_bed_args("panel_multi_reference.csv"), expect_failure=True)
-    assert "declares 2 baseline tags" in r.stderr
-    assert "one baseline tag or none" in r.stderr
+def test_two_declared_comparators_serve_together(wide_bed):
+    # A panel declaring two undifferentiated comparators runs. `baseline-scope` makes them replicates of
+    # one group, since nothing declared separates them, and replicates combine by taking the highest.
+    # It used to be refused, which sent the scientist back to edit a panel file over a case the corpus
+    # had already decided.
+    r = _run(wide_bed, *_bed_args("panel_multi_reference.csv"))
+    assert r.returncode == 0, r.stderr
 
-    # The one-comparator panel over the same counts still serves, so the refusal is about the count of
-    # comparators and not about anything else in the bed.
+    meta = json.loads((wide_bed / "result_run_meta.json").read_text())
+    assert meta["referenceChoice"] == ReferenceChoice.DECLARED.value
+    assert len(meta["referenceTags"]) == 2, "both declared comparators have to be serving"
+
+    # The one-comparator panel over the same counts also serves, so nothing here turns on the count.
     assert _run(wide_bed, *_bed_args("panel_with_reference.csv")).returncode == 0
     assert any(state == "bound" for state in _states(wide_bed).values())
 
 
 def test_the_bed_panel_without_a_declared_comparator_serves_as_its_own(wide_bed):
-    # The bed's panel is eight antigens, below the shipped minimum of twenty-five, so the rung is asked for
-    # explicitly here. That is not the bed falling short: an eight-antigen panel is what this block's runs
-    # actually carry, and the test below this one is what pins the shipped default's answer for one. What
-    # this test is about is what the rung DOES once it serves -- which comparator it builds, and that the
-    # minimum count spares only a declared one.
+    # The bed's panel is eight antigens, below the shipped minimum of twenty-five, so the rung is asked
+    # for explicitly here. What this test is about is what the rung DOES once it serves -- which
+    # comparator it builds, and that the minimum count spares only a declared one.
     shape = _bed_shape(wide_bed)
     stands_in = ["--reference-source", "panel", "--panel-min-members", str(len(shape["antigens"]))]
 
@@ -1290,8 +1263,7 @@ def test_the_bed_panel_without_a_declared_comparator_serves_as_its_own(wide_bed)
     without = meta["readingsFloored"]
 
     # The floor spares a comparator's reading, and only a declared comparator has one to spare. With no
-    # declaration c08's comparator reading of 1 is floored like any other count, so this run floors strictly
-    # more than the same counts read against a declared comparator.
+    # declaration c08's comparator reading of 1 is floored like any other count.
     assert _run(wide_bed, *_bed_args("panel_with_reference.csv", *stands_in)).returncode == 0
     with_declared = json.loads((wide_bed / "result_run_meta.json").read_text())["readingsFloored"]
     assert without > with_declared > 0
@@ -1299,12 +1271,10 @@ def test_the_bed_panel_without_a_declared_comparator_serves_as_its_own(wide_bed)
 
 def test_a_panel_of_this_size_no_longer_stands_in_for_its_own_comparator(wide_bed):
     # The shipped minimum answers the bed's own panel, with nothing asked for. Eight antigens is under
-    # twenty-five, so the panel cannot be its own background and the run says so rather than comparing a
-    # count against seven other antigens and calling the result a background estimate.
+    # twenty-five, so the panel cannot be its own background.
     #
-    # This is what the minimum moving from 8 to 25 changed, and it is the whole point of the move: an
-    # antibody kit caps at fifteen tags, so no such panel reaches this rung. Such a run now asks for the
-    # tag-distribution rung instead.
+    # This is what the minimum moving from 8 to 25 changed: an antibody kit caps at fifteen tags, so no
+    # such panel reaches this rung. Such a run asks for the tag-distribution rung instead.
     shape = _bed_shape(wide_bed)
     assert len(shape["antigens"]) < DEFAULT_PANEL_MIN_MEMBERS, "the bed grew past the minimum"
 
@@ -1312,18 +1282,15 @@ def test_a_panel_of_this_size_no_longer_stands_in_for_its_own_comparator(wide_be
     assert r.returncode != 0
     assert f"below the {DEFAULT_PANEL_MIN_MEMBERS} that rung needs" in r.stderr
     # Refused before anything is read, rather than answered with a punchcard where every asked position
-    # reads unreliable. That output was honest and useless: it cost what a real run costs and looked like a
-    # result at a glance.
+    # reads unreliable -- honest and useless, costing what a real run costs.
     assert not (wide_bed / "result_verdicts.csv").exists()
 
 
 def test_a_reading_from_a_sample_that_never_offered_it_is_not_a_vote(bed):
-    # The denominator counts only members whose OWN sample offered the identity. If the
-    # numerator does not apply the same test, the two are drawn from different populations:
-    # a reading from a cell that was never asked displaces a silent cell's real vote.
-    # Reachable whenever a sample-keyed panel meets a set spanning two samples and a tag
-    # declared for one sample is read in the other -- which is the undeclared-in-panel case
-    # this block measures on purpose, not an exotic shape.
+    # The denominator counts only members whose OWN sample offered the identity. If the numerator does
+    # not apply the same test, the two are drawn from different populations. Reachable whenever a
+    # sample-keyed panel meets a set spanning two samples and a tag declared for one sample is read in
+    # the other.
     (bed / "panel.csv").write_text(
         "Samples,Name,Sequence,Type\nS1,Ctrl,CTRL,Control\nS2,Ctrl,CTRL,Control\nS2,AgX,XXXX,Target\n"
     )
@@ -1345,12 +1312,12 @@ def test_a_reading_from_a_sample_that_never_offered_it_is_not_a_vote(bed):
     # One bound and one not-bound among the two cells that were actually asked.
     assert row["state"] == "unreliable"
     assert row["unreliableReason"] == "tie"
-    assert (row["cellsCouldAnswer"], row["cellsAnswered"]) == ("2", "2")
+    assert (row["cellsAsked"], row["cellsAnswered"]) == ("2", "2")
 
 
 def test_every_asked_cell_reading_still_counts_when_both_samples_offered_it(bed):
-    # The guard above must not throw away legitimate cross-sample votes: with both samples
-    # offering the identity, all three cells vote as before.
+    # The guard above must not throw away legitimate cross-sample votes: with both samples offering the
+    # identity, all three cells vote as before.
     (bed / "panel.csv").write_text(
         "Samples,Name,Sequence,Type\n"
         "S1,Ctrl,CTRL,Control\nS1,AgX,XXXX,Target\nS2,Ctrl,CTRL,Control\nS2,AgX,XXXX,Target\n"
@@ -1367,20 +1334,18 @@ def test_every_asked_cell_reading_still_counts_when_both_samples_offered_it(bed)
         .filter(pl.col("identity") == "XXXX")
         .row(0, named=True)
     )
-    assert (row["cellsCouldAnswer"], row["cellsAnswered"]) == ("3", "3")
+    assert (row["cellsAsked"], row["cellsAnswered"]) == ("3", "3")
     assert row["state"] == "bound"  # two bound against one silent
 
 
 def test_no_qc_row_carries_a_null_panel_key(bed):
-    # panelId is an AXIS of the imported QC frame, and a null is not a usable p-column key.
-    # Sample-level and capture-level rows belong to no panel, so they carry an empty string,
-    # which is a key, never a null.
+    # panelId is an AXIS of the imported QC frame, and a null is not a usable p-column key. Sample-level
+    # and capture-level rows belong to no panel, so they carry an empty string.
     _run(bed, *BASE, "--capture-map", json.dumps({"S1": "C1"}))
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
     assert qc["panelId"].null_count() == 0
 
-    # Both kinds must be present, or the assertion above proves nothing: rows that belong to
-    # a panel carry its id, rows that belong to none carry an empty string.
+    # Both kinds must be present, or the assertion above proves nothing.
     panels = set(qc["panelId"].to_list())
     assert "" in panels, "sample and capture rows belong to no panel and must carry an empty key"
     assert any(p for p in panels), "tag and identity rows must carry a real panel id"
@@ -1388,28 +1353,25 @@ def test_no_qc_row_carries_a_null_panel_key(bed):
 
 # --- the shape a real panel file arrives in -----------------------------------------------------
 #
-# Every bed above declares a role column, so every bed above can name a comparator. A panel file observed
-# in the field carries three columns and no fourth: the sample, the barcode sequence, and the antigen's
-# name. There is no role column to point `--role-column` at, so the declared rung is not reachable on it at
-# all and the panel's own readings have to serve. It also reuses a barcode between samples under a
-# different antigen name, which is the tag-inventory reuse the per-sample keying of the panel exists for.
+# Every bed above declares a role column. A panel file observed in the field carries three columns and
+# no fourth: the sample, the barcode sequence, and the antigen's name. There is no role column to
+# point `--role-column` at, so the declared rung is not reachable on it and the panel's own readings
+# have to serve. It also reuses a barcode between samples under a different antigen name.
 #
-# These tests fix what that file does today. They deliberately do NOT assert that a set spanning two
-# samples should carry one verdict for a barcode that names two different antigens -- that question is
-# open, and a test asserting today's answer would have to be deleted to settle it.
+# These tests fix what that file does today. They deliberately do NOT assert what a set spanning two
+# samples should carry for a barcode that names two different antigens -- that question is open.
 
-# Twenty-six, against a shipped minimum of twenty-five. The count is the only thing this list carries that
-# the panel rung cares about. Every test below reads its members by position, so widening it changes what
-# serves and nothing else. Padded to two digits so the sorted identity list this bed's assertions compare
-# against is the list order.
+# Twenty-six, against a shipped minimum of twenty-five. The count is the only thing this list carries
+# that the panel rung cares about. Every test below reads its members by position. Padded to two
+# digits so the sorted identity list matches the list order.
 CUSTOMER_TAGS = [f"SEQ{i:02d}" for i in range(1, 27)]
 
 
 def _customer_bed(root, *, renamed=2, span_samples=True):
     """A three-column panel: sample, sequence, antigen. No role column, no grouping column.
 
-    `renamed` barcodes carry a different antigen name in the second sample. `span_samples` puts every cell
-    in one clonotype set, so the set's cells come from both panels.
+    `renamed` barcodes carry a different antigen name in the second sample. `span_samples` puts every
+    cell in one clonotype set, so the set's cells come from both panels.
     """
     rows = ["Sample,Sequence,Antigen"]
     for sample, offset in (("SmpA", 0), ("SmpB", 100)):
@@ -1419,8 +1381,7 @@ def _customer_bed(root, *, renamed=2, span_samples=True):
     (root / "panel.csv").write_text("\n".join(rows) + "\n")
 
     # SEQ01 is strong. The rest sit at 10, above the shipped floor of 4 so nothing is floored away and the
-    # panel median stays a real number. A background of 3 would floor to zero, drag the median to zero, and
-    # make every identity unreliable for a reason unrelated to the comparator.
+    # panel median stays a real number.
     counts = ["sampleId,cellId,tag,umiCount"]
     linker = ["sampleId,cellId,setId"]
     for sample in ("SmpA", "SmpB"):
@@ -1444,8 +1405,7 @@ CUSTOMER_ARGS = [
     "Antigen",
     "--sample-col",
     "Sample",
-    # This bed's panel carries no role column, so it has no comparator tag to declare and the rung it is
-    # about is the panel's own readings.
+    # This bed's panel carries no role column, so the rung it is about is the panel's own readings.
     "--reference-source",
     "panel",
     "--output-prefix",
@@ -1454,9 +1414,8 @@ CUSTOMER_ARGS = [
 
 
 def test_a_panel_with_no_role_column_still_produces_verdicts(bed):
-    # No --role-column and no --reference-values, because the file has no column to name. The run must not
-    # fail and must not read unreliable throughout: nine tags clear the minimum of eight, so the panel's own
-    # readings serve.
+    # No --role-column and no --reference-values, because the file has no column to name. The run must
+    # not fail and must not read unreliable throughout.
     _customer_bed(bed)
     r = _run(bed, *CUSTOMER_ARGS)
     assert r.returncode == 0, r.stderr
@@ -1477,36 +1436,32 @@ def test_a_panel_with_no_role_column_still_produces_verdicts(bed):
 
 
 def test_a_barcode_renamed_between_samples_is_labelled_with_both_names(bed):
-    # A barcode the two samples name differently carries no agreed antigen name. Rather than stand under the
-    # raw 15-mer -- which tells a scientist nothing about what happened, at the moment they most need to know
-    # -- it carries the names it DID declare, joined. The reagent stays recognisable and the conflict stays
-    # visible. This is the per-tag grouping: the panel has no grouping column at all.
+    # A barcode the two samples name differently carries no agreed antigen name. Rather than stand under
+    # the raw 15-mer it carries the names it DID declare, joined. This is the per-tag grouping: the panel
+    # has no grouping column at all.
     _customer_bed(bed, renamed=2)
     assert _run(bed, *CUSTOMER_ARGS).returncode == 0
 
     labels = pl.read_csv(bed / "result_identity_labels.csv", infer_schema_length=0)
     by_identity = dict(zip(labels["identity"].to_list(), labels["label"].to_list(), strict=True))
 
-    # The bed names tag i "Ag00i" in the first sample and "Ag10i" in the second, for the first two of them,
-    # so the joined label carries both in sorted order.
+    # The bed names tag i "Ag00i" in the first sample and "Ag10i" in the second, for the first two of
+    # them, so the joined label carries both in sorted order.
     for i, tag in enumerate(CUSTOMER_TAGS[:2]):
         assert by_identity[tag] == f"Ag{i:03d} / Ag{100 + i:03d}", f"{tag} disagrees across samples"
-    # The consistently-named barcodes keep their plain antigen name. Without this the assertion above would
-    # also pass on a build that had started joining names for every identity.
+    # The consistently-named barcodes keep their plain antigen name. Without this the assertion above
+    # would also pass on a build that had started joining names for every identity.
     for i, tag in enumerate(CUSTOMER_TAGS[2:], start=2):
         assert by_identity[tag] == f"Ag{i:03d}", f"{tag} agrees across samples and must show its name"
 
 
 def test_two_barcodes_disagreeing_about_the_same_pair_of_names_stay_tellable_apart(bed):
-    # The uniqueness promise applies to the joined labels too. Two barcodes can disagree about the SAME pair
-    # of names, which joins to one string -- so the rescue that exists to make a conflict readable would put
-    # two identities under one label, the one thing the labeller promises never to do. The per-tag path needs
-    # nothing added for this: its existing collision rule appends the barcode to any label that repeats,
-    # joined or plain. This test is what keeps that true.
+    # The uniqueness promise applies to the joined labels too. Two barcodes can disagree about the SAME
+    # pair of names, which joins to one string. The per-tag path needs nothing added: its existing
+    # collision rule appends the barcode to any label that repeats, joined or plain.
     _customer_bed(bed, renamed=0)
     rows = ["Sample,Sequence,Antigen"]
     for sample, name in (("SmpA", "Shared"), ("SmpB", "Conflict")):
-        # The first two barcodes carry the identical pair. The rest agree, as the bed built them.
         rows.extend(f"{sample},{tag},{name}" for tag in CUSTOMER_TAGS[:2])
         rows.extend(f"{sample},{tag},Ag{i:03d}" for i, tag in enumerate(CUSTOMER_TAGS[2:], start=2))
     (bed / "panel.csv").write_text("\n".join(rows) + "\n")
@@ -1523,8 +1478,7 @@ def test_two_barcodes_disagreeing_about_the_same_pair_of_names_stay_tellable_apa
 
 def test_the_label_fallback_is_caused_by_the_disagreement_and_nothing_else(bed):
     # Same bed with the renaming removed: every barcode now agrees across both samples, so no label falls
-    # back. This is what makes the previous test a statement about disagreement rather than about this bed's
-    # barcodes.
+    # back. This is what makes the previous test a statement about disagreement.
     _customer_bed(bed, renamed=0)
     assert _run(bed, *CUSTOMER_ARGS).returncode == 0
 
@@ -1539,17 +1493,15 @@ def test_the_label_fallback_is_caused_by_the_disagreement_and_nothing_else(bed):
 
 # --- the two shapes, run against the committed bed ----------------------------------------------
 #
-# The three tests further up use an inline bed to fix what a role-less panel does. These two run the
-# committed bed's own projections of the same slots, so they can be compared against each other and
-# against the four-column panels. The only thing that varies is the shape of the declaration.
+# The three tests further up use an inline bed. These two run the committed bed's own projections of
+# the same slots, so they can be compared against each other and against the four-column panels.
 
 NARROW_COLS = ["--barcode-col", "Sequence", "--feature-col", "Antigen", "--sample-col", "Sample"]
 WIDE_COLS = ["--barcode-col", "Sequence", "--feature-col", "Name", "--sample-col", "Samples"]
 
-# The seven-column bed is nine antigens, under the shipped minimum of twenty-five, so a run that wants the
-# panel rung asks for it and lowers the minimum to the panel it has. Neither number is the subject of the
-# tests below -- they are about the ROLE column -- but the CLI requires a rung to be named, and naming one
-# that cannot serve would leave every verdict unreliable and say nothing about roles.
+# The seven-column bed is nine antigens, under the shipped minimum of twenty-five, so a run that wants
+# the panel rung asks for it and lowers the minimum. Neither number is the subject of the tests below
+# -- they are about the ROLE column -- but the CLI requires a rung to be named.
 WIDE_PANEL_RUNG = ["--reference-source", "panel", "--panel-min-members", "9"]
 WIDE_DECLARED_RUNG = ["--reference-source", "declared"]
 
@@ -1565,12 +1517,11 @@ def _wide_roles(bed):
 
 def test_the_narrow_shape_labels_every_barcode_the_samples_name_differently_with_both_names(wide_bed):
     # No role column, so the panel's own readings serve and the grouping is the per-tag one. The panel is
-    # below the shipped minimum of twenty-five, so the rung is asked for explicitly: what this test is about
-    # is the LABEL a barcode gets, and it needs a run that produced verdicts to look at.
+    # below the shipped minimum, so the rung is asked for explicitly: this test is about the LABEL a
+    # barcode gets, and it needs a run that produced verdicts.
     #
-    # A barcode two samples name differently has no agreed name, and its label must never fall through to the
-    # raw 15-mer, which records the conflict on stderr and shows it nowhere a reader looks. It carries the
-    # names it DID declare, joined, exactly as a property grouping does.
+    # A barcode two samples name differently has no agreed name, and its label must never fall through to
+    # the raw 15-mer. It carries the names it DID declare, joined.
     narrow_size = pl.read_csv(wide_bed / "panel_narrow.csv", infer_schema_length=0)["Sequence"].n_unique()
     r = _run(
         wide_bed,
@@ -1591,9 +1542,8 @@ def test_the_narrow_shape_labels_every_barcode_the_samples_name_differently_with
     assert meta["referenceChoice"] == ReferenceChoice.PANEL.value
     assert meta["groupingId"] == "per-tag", "this test is about the per-tag label path"
 
-    # Read from the narrow panel itself rather than from the bed helper: its OWN feature column is what
-    # supplies the label here, and deriving keeps a bed regenerated under another seed asserting the same
-    # shape instead of the same sequences.
+    # Read from the narrow panel itself rather than from the bed helper: its OWN feature column supplies
+    # the label here, and deriving keeps a bed regenerated under another seed asserting the same shape.
     narrow = pl.read_csv(wide_bed / "panel_narrow.csv", infer_schema_length=0)
     declared: dict[str, set[str]] = {}
     for row in narrow.iter_rows(named=True):
@@ -1606,18 +1556,18 @@ def test_the_narrow_shape_labels_every_barcode_the_samples_name_differently_with
     assert len(renamed) < len(labels), "and must not rename all of them"
     for tag in renamed:
         assert labels[tag] == " / ".join(sorted(declared[tag])), tag
-    # And nothing is left standing under a bare barcode, which is the whole point: every identity here was
-    # named by the panel, whether the samples agreed about the name or not.
+    # And nothing is left standing under a bare barcode: every identity here was named by the panel,
+    # whether the samples agreed about the name or not.
     assert {i for i, label in labels.items() if i == label} == set()
 
 
 def test_naming_the_off_target_role_as_the_comparator_deletes_the_off_target_questions(wide_bed):
-    # The role column says what a member is TO THE QUESTION. The comparator is a different axis. Naming the
-    # off-target role as the comparator does not merely move a baseline -- reference tags are held out of the
-    # identity universe, so the off-targets stop being asked about at all.
-    # The role value that marks exactly ONE tag. This version of the block reads counts against one baseline
-    # tag or none, so a role value marking two is refused before it can demonstrate anything -- and what is
-    # demonstrated here is the ROLE axis, not how several comparators combine.
+    # The role column says what a member is TO THE QUESTION. The comparator is a different axis. Naming
+    # the off-target role as the comparator does not merely move a baseline -- reference tags are held out
+    # of the identity universe, so the off-targets stop being asked about at all.
+    #
+    # The role value below marks exactly ONE tag: this version reads counts against one baseline tag or
+    # none, and what is demonstrated here is the ROLE axis, not how several comparators combine.
     roles = _wide_roles(wide_bed)
     by_value: dict[str, set[str]] = {}
     for tag, values in roles.items():
@@ -1670,16 +1620,15 @@ def test_naming_the_off_target_role_as_the_comparator_deletes_the_off_target_que
 
 def test_a_role_value_differing_only_in_case_is_not_matched(wide_bed):
     # The observed file held six Type values that were three roles. A tag whose role is spelled
-    # `Off-target` is not selected by `Off-Target`, silently.
-    #
-    # The claim is now proved by WHICH tags the run names rather than by which stay questions, and it is a
-    # sharper proof: `Off-Target` marks two tags, so this version refuses the panel and says exactly which
-    # two it found. A matcher that ignored case would have found three and said so.
+    # `Off-target` is not selected by `Off-Target`, silently. The claim is proved by WHICH tags the run
+    # ends up reading against: the run record names them, `Off-Target` marks two, and a matcher that
+    # ignored case would have found three. The role column is asked for the off-target value here rather
+    # than the comparator one because that is where the observed file's case variant sits.
     roles = _wide_roles(wide_bed)
     agreed = {tag: next(iter(values)) for tag, values in roles.items() if len(values) == 1}
     exact = {tag for tag, value in agreed.items() if value == "Off-Target"}
     variant = {tag for tag, value in agreed.items() if value != "Off-Target" and value.lower() == "off-target"}
-    assert len(exact) > 1, "the bed must declare more than one off-target for the refusal to fire"
+    assert len(exact) > 1, "the bed must declare more than one off-target for the count to discriminate"
     assert variant, "the bed must carry a case variant of the off-target role"
 
     r = _run(
@@ -1696,13 +1645,12 @@ def test_a_role_value_differing_only_in_case_is_not_matched(wide_bed):
         "Off-Target",
         "--output-prefix",
         "named",
-        expect_failure=True,
     )
-    assert f"declares {len(exact)} baseline tags" in r.stderr
-    for tag in exact:
-        assert tag in r.stderr, "a tag the role value names must be in the refusal"
-    for tag in variant:
-        assert tag not in r.stderr, "the case-variant tag was matched, and it must not be"
+    assert r.returncode == 0, r.stderr
+
+    matched = set(json.loads((wide_bed / "named_run_meta.json").read_text())["referenceTags"])
+    assert matched == exact, "the role value must select exactly the tags spelling it exactly"
+    assert not (matched & variant), "the case-variant tag was matched, and it must not be"
 
 
 def _states_prefix(bed, prefix):
@@ -1713,17 +1661,13 @@ def _states_prefix(bed, prefix):
 # --- the punchcard's pivot ---------------------------------------------------------
 #
 # All of these run against the COMMITTED bed rather than the small inline one, and that is
-# load-bearing. On the inline bed every row has cellsAnswered == cellsCouldAnswer and the panel
-# yields a single identity, so swapping the two counts and shuffling the column order are both
-# invisible: mutating either passed the first version of these tests. The committed bed carries
-# several identities, readings whose support is short of what could have answered, and *never
-# asked* positions where couldAnswer is zero.
+# load-bearing. On the inline bed every row has cellsAnswered == cellsAsked and the panel yields
+# a single identity, so swapping the two counts and shuffling the column order are both invisible.
 #
-# Verified by mutation: swapping the two counts, dropping the state from the value, and changing
-# the separator are each caught. Dropping the `select(ordered)` that aligns the punch pivot with
-# the state pivot is NOT caught and cannot be here -- polars pivots columns in order of first
-# appearance, which on this bed already equals sorted order. That alignment is enforced by
-# construction rather than observed by a test.
+# Verified by mutation: swapping the two counts, dropping the state from the value, and changing the
+# separator are each caught. Dropping the `select(ordered)` that aligns the punch pivot with the state
+# pivot is NOT caught and cannot be here -- polars pivots columns in order of first appearance, which
+# on this bed already equals sorted order.
 
 
 def _punch_bed(bed):
@@ -1736,21 +1680,19 @@ def _punch_bed(bed):
 
 
 def test_punch_bed_can_tell_the_two_counts_apart(wide_bed):
-    # The guard on the tests below. If every row answered exactly as many cells as could have,
-    # swapping the two counts is undetectable and the agreement test below passes while the
-    # punch draws the wrong size everywhere.
+    # The guard on the tests below. If every row answered exactly as many cells as could have, swapping
+    # the two counts is undetectable and the agreement test below passes while the punch draws the wrong
+    # size everywhere.
     verdicts, punch = _punch_bed(wide_bed)
-    differing = verdicts.filter(pl.col("cellsAnswered") != pl.col("cellsCouldAnswer"))
+    differing = verdicts.filter(pl.col("cellsAnswered") != pl.col("cellsAsked"))
     assert differing.height > 0, "bed no longer distinguishes answered from could-answer"
     assert len([c for c in punch.columns if c != "setId"]) > 1, "bed no longer has several identities"
 
 
 def test_punch_pivot_agrees_with_the_long_verdicts(wide_bed):
-    # The punch cell is the only place its facts meet, so this is the one check that they are the SAME facts
-    # the long frame carries. A pivot that dropped a field, swapped the counts, or paired a state with another
-    # identity's numbers would still write a well-formed file. Every field is listed here on purpose: adding
-    # one to the value has to break this test, or the value's shape would be free to drift from the frame it
-    # is built from.
+    # The punch cell is the only place its facts meet, so this is the one check that they are the SAME
+    # facts the long frame carries. Every field is listed here on purpose: adding one to the value has to
+    # break this test, or the value's shape would be free to drift from the frame it is built from.
     verdicts, punch = _punch_bed(wide_bed)
     identities = sorted(set(verdicts["identity"].to_list()))
     assert punch.columns == ["setId", *identities]
@@ -1760,7 +1702,7 @@ def test_punch_pivot_agrees_with_the_long_verdicts(wide_bed):
             [
                 r["state"],
                 r["cellsAnswered"],
-                r["cellsCouldAnswer"],
+                r["cellsAsked"],
                 r["agreement"] or "",
                 r["unreliableReason"] or "",
                 r["cellsBound"],
@@ -1774,10 +1716,9 @@ def test_punch_pivot_agrees_with_the_long_verdicts(wide_bed):
 
 
 def test_punch_pivot_keys_and_order_match_the_state_pivot(wide_bed):
-    # Both pivots are gated together and ordered together: the punchcard reads one and lead
-    # selection reads the other, and a reader comparing them must not meet a set or an identity
-    # present in one and absent from the other -- or in a different column order, which is what
-    # makes the two frames comparable side by side at all.
+    # Both pivots are gated together and ordered together: the punchcard reads one and lead selection
+    # reads the other, and a reader comparing them must not meet a set or an identity present in one and
+    # absent from the other, or in a different column order.
     _punch_bed(wide_bed)
     states = pl.read_csv(wide_bed / "result_identity_summary.csv", infer_schema_length=0)
     punch = pl.read_csv(wide_bed / "result_identity_punch.csv", infer_schema_length=0)
@@ -1786,9 +1727,8 @@ def test_punch_pivot_keys_and_order_match_the_state_pivot(wide_bed):
 
 
 def test_punch_state_is_the_state_the_long_frame_gives(wide_bed):
-    # The state is the half of the cell that carries the answer, so it is asserted on its own:
-    # a punch whose counts are right and whose state is another identity's would still draw a
-    # glyph, in the wrong colour, with nothing to catch it.
+    # The state is the half of the cell that carries the answer, so it is asserted on its own: a punch
+    # whose counts are right and whose state is another identity's would still draw a glyph.
     verdicts, punch = _punch_bed(wide_bed)
     by_key = {(r["setId"], r["identity"]): r["state"] for r in verdicts.iter_rows(named=True)}
     for row in punch.iter_rows(named=True):
@@ -1799,24 +1739,18 @@ def test_punch_state_is_the_state_the_long_frame_gives(wide_bed):
 def test_cell_scalars_pairs_each_cell_with_its_own_admissibility(tmp_path):
     """Every cell's admissibility must be ITS OWN, not the row next to it.
 
-    The frame this comes from is built in one order and then joined twice before the
-    admissibility column is attached. Polars does not promise a left frame's row order
-    survives a join (`maintain_order` defaults to "none"), so a positional attach can hand
-    cells each other's labels -- and because the file is sorted on write, nothing downstream
-    can tell. The keyed assertion below is what makes the pairing observable at all: asserting
-    the column's PRESENCE, or the multiset of its values, passes just as happily when every
-    label has moved one row down.
+    The frame this comes from is built in one order and then joined twice before the admissibility column
+    is attached. Polars does not promise a left frame's row order survives a join (`maintain_order`
+    defaults to "none"), so a positional attach can hand cells each other's labels -- and because the file
+    is sorted on write, nothing downstream can tell. The keyed assertion below is what makes the pairing
+    observable at all.
 
-    Two distinct labels appear, which is every label this bed can reach. Since
-    `count-becomes-a-state` deleted the thin-reference branch the vocabulary is `admissible`,
-    `cell set aside by the admissibility gate`, and `no comparator for this cell` -- and the
-    third is unreachable here: with a declared comparator `reference_by_cell` zero-fills every
-    analysed cell it read nothing for, so no cell in this bed can lack one. That reason needs a
-    run with no comparator at all, where it is the answer for every cell and so distinguishes
-    nothing.
+    Two distinct labels appear, which is every label this bed can reach: `admissible` and `cell set aside
+    by the admissibility gate`. `no comparator for this cell` is unreachable here, because with a declared
+    comparator `reference_by_cell` zero-fills every analysed cell it read nothing for.
 
-    Three of the four cells carry one label and one carries the other, so any permutation that
-    moves the gated label is still caught.
+    Three of the four cells carry one label and one carries the other, so any permutation that moves the
+    gated label is still caught.
     """
     (tmp_path / "counts.csv").write_text(
         "sampleId,cellId,tag,umiCount\n"
@@ -1841,15 +1775,12 @@ def test_cell_scalars_pairs_each_cell_with_its_own_admissibility(tmp_path):
 
 # --- the panel's sample column is written in LABELS ---------------------------------
 #
-# Every other bed in this file uses one string on both sides: the panel's sample value IS the
-# counts' sampleId. That coincidence hid a defect that made every real run answer *never asked*
-# everywhere -- the panel file a scientist uploads names samples the way they do ("donor01"),
-# while counts, linker and every emitted axis are keyed by the platform's opaque sampleId.
-# Nothing joined, so nothing was offered to any sample that existed, and a question nobody was
-# asked is correctly answered *never asked*.
+# Every other bed in this file uses one string on both sides: the panel's sample value IS the counts'
+# sampleId. That coincidence hid a defect that made every real run answer *never asked* everywhere --
+# the panel file a scientist uploads names samples the way they do ("donor01"), while counts, linker
+# and every emitted axis are keyed by the platform's opaque sampleId.
 #
-# The two beds below therefore differ from each other ONLY in whether the two sides share a
-# namespace, which is the one variable that was never varied.
+# The two beds below differ from each other ONLY in whether the two sides share a namespace.
 
 OPAQUE = "3CXWCXJ3RU3UQD22B72OYXWL"
 
@@ -1869,31 +1800,29 @@ def labelled_bed(tmp_path):
 
 
 def _distinct_states(bed):
-    """The set of states a run produced. Deliberately not named `_states`, which already exists
-    in this file and returns a per-key mapping."""
+    """The set of states a run produced. Deliberately not named `_states`, which already exists in this
+    file and returns a per-key mapping."""
     v = pl.read_csv(bed / "result_verdicts.csv", infer_schema_length=0)
     return set(v["state"].to_list())
 
 
 def test_a_label_map_joins_the_panel_to_the_counts(labelled_bed):
-    # The fix: the run is told which sampleId each label belongs to, so the panel's
-    # declarations reach the cells they were written for.
+    # The fix: the run is told which sampleId each label belongs to, so the panel's declarations reach the
+    # cells they were written for.
     _run(labelled_bed, *BASE, "--sample-labels", json.dumps({OPAQUE: "donor01"}))
     assert _distinct_states(labelled_bed) == {"bound"}
 
 
 def test_without_the_map_a_labelled_panel_offers_nothing(labelled_bed):
-    # The defect, pinned so it cannot come back silently. This is not a claim that the
-    # behaviour is right -- it is the observable shape of the failure, and it is the reason a
-    # run can look finished and be empty of answers.
+    # The defect, pinned so it cannot come back silently. Not a claim that the behaviour is right -- it is
+    # the observable shape of the failure.
     _run(labelled_bed, *BASE)
     assert _distinct_states(labelled_bed) == {"never asked"}
 
 
 def test_a_panel_already_keyed_by_sample_id_is_unaffected(bed):
-    # The map must not become mandatory: a panel whose sample values already ARE sampleIds is
-    # the case every other bed here exercises, and it keeps working with no map and with an
-    # irrelevant one.
+    # The map must not become mandatory: a panel whose sample values already ARE sampleIds is the case
+    # every other bed here exercises.
     _run(bed, *BASE)
     without = _distinct_states(bed)
     _run(bed, *BASE, "--sample-labels", json.dumps({"someone-else": "unrelated"}))
@@ -1903,19 +1832,15 @@ def test_a_panel_already_keyed_by_sample_id_is_unaffected(bed):
 def test_a_barcode_named_differently_per_sample_becomes_one_identity_per_name(tmp_path):
     """A reused barcode is placed under each name its own sample declared.
 
-    Grouping by a property makes the identity the property's value. Under
-    `panel-file-authority@3.0` the panel declares per tag AND sample, so a barcode carrying one
-    name here and another there is not a tag that "has nothing to group on" -- it is a reagent
-    identifier reused to cover more antigens than the study has tags, and each declaration
-    places it in that sample.
+    Grouping by a property makes the identity the property's value. The panel declares per tag AND
+    sample, so a barcode carrying one name here and another there is not a tag that "has nothing to group
+    on" -- it is a reagent identifier reused to cover more antigens than the study has tags.
 
-    AAAA is named differently across the two samples and CCCC is not, so the same run shows both
-    the reuse case and the ordinary one.
+    AAAA is named differently across the two samples and CCCC is not, so the same run shows both cases.
 
-    Do not invert this back. AAAA must not stand alone under its raw sequence, labelled with the
-    two names joined ("SpikeWT / SpikeWT__alt"), nor be reported in `tagsWithoutGroupingValue`.
-    That shape is forced only by a dataset-wide tag->identity map, which cannot hold two
-    declarations for one barcode.
+    Do not invert this back. AAAA must not stand alone under its raw sequence, labelled with the two names
+    joined, nor be reported in `tagsWithoutGroupingValue`. That shape is forced only by a dataset-wide
+    tag->identity map, which cannot hold two declarations for one barcode.
     """
     (tmp_path / "counts.csv").write_text(
         "sampleId,cellId,tag,umiCount\n"
@@ -1933,11 +1858,7 @@ def test_a_barcode_named_differently_per_sample_becomes_one_identity_per_name(tm
     (tmp_path / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS2,c2,K2\n")
     _run(tmp_path, *BASE, *NAME_GROUPING)
 
-    labels = dict(
-        pl.read_csv(tmp_path / "result_identity_labels.csv", infer_schema_length=0)
-        .select("identity", "label")
-        .iter_rows()
-    )
+    labels = _identities_only(tmp_path)
     assert set(labels) == {"SpikeWT", "SpikeWT__alt", "Lysozyme"}
     assert labels["SpikeWT"] == "SpikeWT"
     assert labels["SpikeWT__alt"] == "SpikeWT__alt"
@@ -1956,15 +1877,14 @@ def test_a_barcode_named_differently_per_sample_becomes_one_identity_per_name(tm
 def test_the_linker_carries_every_identity_a_tag_feeds_exactly_once():
     # Many-to-many by design: under (tag, sample) grouping T1 feeds A in one sample and B in another, and
     # both pairs are real. Deliberately NOT keyed by sample -- the linker joins a tag-keyed figure to an
-    # identity-keyed verdict, and neither side has a sample axis. Verdicts are (set, identity) over clonotypes
-    # that span samples. The per-tag figures are run-level. An axis no joined table has makes the join
-    # malformed rather than more precise, and label discovery rejects it.
+    # identity-keyed verdict, and neither side has a sample axis. An axis no joined table has makes the
+    # join malformed rather than more precise, and label discovery rejects it.
     grouping = {("T1", "s1"): "A", ("T1", "s2"): "B", ("T2", "s1"): "A", ("T2", "s2"): "A"}
     frame = _linker_frame(grouping)
     rows = sorted(zip(frame["tag"].to_list(), frame["identity"].to_list()))
     assert rows == [("T1", "A"), ("T1", "B"), ("T2", "A")]
-    # T2 feeds A in both samples and appears once. Duplicate axis keys break a grid silently: one row and an
-    # ellipsis, no error anywhere.
+    # T2 feeds A in both samples and appears once. Duplicate axis keys break a grid silently: one row and
+    # an ellipsis, no error anywhere.
     assert len(rows) == len(set(rows))
     assert set(frame["1"].to_list()) == {1}
     assert "sample" not in frame.columns
@@ -1980,10 +1900,10 @@ def test_a_global_declaration_adds_no_pair_of_its_own():
 
 
 def test_a_grouped_on_column_travels_even_when_a_member_tag_is_reused():
-    # `panel-file-authority`: "The columns the scientist grouped on are declarations of it, unique by
-    # construction." Identity B exists only because T1 is reused with a different Identity per sample, so
-    # tag-grain agreement drops Identity for T1 -- and B carried no declaration of the very thing it was
-    # grouped on. A passed only because T2 happens to agree across its samples, which is luck.
+    # The columns the scientist grouped on are declarations, unique by construction. Identity B exists
+    # only because T1 is reused with a different Identity per sample, so tag-grain agreement drops Identity
+    # for T1 -- and B carried no declaration of the very thing it was grouped on. A passed only because T2
+    # happens to agree across its samples, which is luck.
     panel = pl.DataFrame(
         {
             "tag": ["T1", "T1", "T2", "T2"],
@@ -2032,16 +1952,13 @@ def _disagreements(inconsistent):
 def test_a_member_that_contradicts_itself_blocks_the_property():
     """The one that inverted a real panel, and the reason `disagreed` is threaded down at all.
 
-    T1 declares two Channels across its samples, so it has no agreed value of its own. T2
-    declares one. Before the fix T1 reached the agreement test as the empty string, was filtered
-    out exactly like a member whose cell was blank, and T2 then agreed with nobody but itself --
-    so the identity came back carrying T2's Channel as though it held of both.
+    T1 declares two Channels across its samples, so it has no agreed value of its own. T2 declares one.
+    Before the fix T1 reached the agreement test as the empty string, was filtered out exactly like a
+    member whose cell was blank, and T2 then agreed with nobody but itself.
 
-    Measured on a real sixteen-row panel grouped on its role column: an identity whose five
-    member tags declared six different antigen names between them came back carrying ONE
-    member's name, because four of the five had contradicted themselves into silence.
-
-    A member that contradicted itself is a disagreement, not a silence.
+    Measured on a real sixteen-row panel: an identity whose five member tags declared six different
+    antigen names came back carrying ONE member's name, because four had contradicted themselves into
+    silence. A member that contradicted itself is a disagreement, not a silence.
     """
     panel = pl.DataFrame(
         {
@@ -2069,8 +1986,7 @@ def test_a_member_that_contradicts_itself_blocks_the_property():
 def test_a_member_that_declares_nothing_still_does_not_block_its_neighbours():
     """The other silence, and it must keep behaving as it did.
 
-    T1 leaves the cell blank. It never declared anything to contradict, so it has no
-    disagreement to propagate and T2's value holds of the identity.
+    T1 leaves the cell blank. It never declared anything to contradict, so T2's value holds.
     """
     panel = pl.DataFrame(
         {
@@ -2093,9 +2009,8 @@ def test_a_member_that_declares_nothing_still_does_not_block_its_neighbours():
 def test_a_contradicting_member_does_not_block_the_column_it_was_grouped_on():
     """Grouped-on columns are settled by construction and stay that way.
 
-    A tag reaches an identity because of its value in the grouping column, so that value is not
-    open to an agreement test -- and a reused barcode has no tag-grain agreement to test in the
-    first place.
+    A tag reaches an identity because of its value in the grouping column, so that value is not open to
+    an agreement test -- and a reused barcode has no tag-grain agreement to test in the first place.
     """
     panel = pl.DataFrame(
         {
@@ -2132,8 +2047,8 @@ def test_the_per_tag_grouping_declares_nothing_of_its_identities():
 
 
 def test_two_grouping_columns_make_the_identity_the_combination():
-    # `grouping-belongs-to-the-question`: "Named antigen and concentration together, the identity is the
-    # pair, and the same antigen at two concentrations is two identities."
+    # Named antigen and concentration together, the identity is the pair, and the same antigen at two
+    # concentrations is two identities.
     panel = pl.DataFrame(
         {
             "tag": ["T1", "T2", "T3"],
@@ -2184,11 +2099,10 @@ def test_a_column_the_panel_does_not_declare_ends_the_run():
 
 
 def test_a_role_column_the_reader_consumes_as_a_key_ends_the_run_with_no_role_values(bed):
-    # `Sequence` is the barcode column, so panel.py strips it before the properties are read and it is never
-    # a property column. Naming it as the role column exited 0 whenever no role values came with it: the check
-    # was gated on the values, so no tag was designated and the baseline fell back to the panel's own readings
-    # in silence. A different number reported as the requested one is worse than a dead run, so this is the
-    # half of the mistake that had to stop being quiet.
+    # `Sequence` is the barcode column, so panel.py strips it before the properties are read and it is
+    # never a property column. Naming it as the role column exited 0 whenever no role values came with it:
+    # the check was gated on the values, so no tag was designated and the baseline fell back to the panel's
+    # own readings in silence.
     r = _run(
         bed,
         "counts.csv",
@@ -2222,9 +2136,8 @@ def test_a_value_carrying_the_join_separator_is_reported_and_the_run_continues(c
 
 
 def test_the_set_counts_carry_the_clonotype_cell_count(bed):
-    # `the-explore-readout` puts "the clonotype's own cell count beside its name" in the grid, so the grid
-    # needs it as a column. It is the set's cells, not its answering cells: it does not vary by identity,
-    # which is why it belongs beside the name rather than in every position.
+    # The clonotype's own cell count goes beside its name in the grid, so the grid needs it as a column.
+    # It is the set's cells, not its answering cells: it does not vary by identity.
     _run(bed, *BASE)
     counts = pl.read_csv(bed / "result_set_counts.csv", infer_schema_length=0)
     assert "cellCount" in counts.columns
@@ -2232,17 +2145,16 @@ def test_the_set_counts_carry_the_clonotype_cell_count(bed):
     # And it is not the answering count: that varies by identity, this one does not.
     verdicts = pl.read_csv(bed / "result_verdicts.csv", infer_schema_length=0)
     by_set = dict(zip(counts["setId"].to_list(), counts["cellCount"].to_list()))
-    for set_id, could in zip(verdicts["setId"].to_list(), verdicts["cellsCouldAnswer"].to_list()):
+    for set_id, could in zip(verdicts["setId"].to_list(), verdicts["cellsAsked"].to_list()):
         assert int(could) <= int(by_set[set_id]), "a set cannot answer with more cells than it has"
 
 
 def test_set_counts_carry_the_clonotype_s_own_set_aside_cells(bed):
-    # 206 states set-aside cells once for the clonotype, because a set-aside cell answers nothing at any
-    # identity -- repeating the subtraction at every position would imply a per-identity failure that did not
-    # happen. Run-level is the wrong grain for that: the expansion is about one clonotype.
+    # Set-aside cells are stated once for the clonotype, because a set-aside cell answers nothing at any
+    # identity. Run-level is the wrong grain: the expansion is about one clonotype.
     #
-    # The bed's baseline is CTRL at 6 UMIs in every cell, so a gate of 5 sets every cell aside. That gives a
-    # real non-zero to assert against rather than a vacuous 0 == 0.
+    # The bed's baseline is CTRL at 6 UMIs in every cell, so a gate of 5 sets every cell aside and gives a
+    # real non-zero to assert against.
     _run(bed, *BASE, "--gate-threshold", "5")
     counts = pl.read_csv(bed / "result_set_counts.csv")
     assert "cellsSetAside" in counts.columns
@@ -2260,20 +2172,18 @@ def test_set_counts_report_no_set_aside_cells_when_no_gate_is_declared(bed):
 
 
 def test_run_meta_carries_set_aside_cells_per_clonotype(bed):
-    # 206 states set-aside cells once for the clonotype, and the expansion reads them from the run record
+    # Set-aside cells are stated once for the clonotype, and the expansion reads them from the run record
     # rather than from a p-column: a Parquet column's values cannot be read in the model, and a set-grain
-    # number joined into the per-identity table would repeat down every row -- which the atom forbids, because
-    # it implies a per-identity failure that did not happen.
+    # number joined into the per-identity table would repeat down every row.
     #
-    # The bed's baseline is CTRL at 6 UMIs in every cell, so a gate of 5 sets every cell aside and the
-    # assertion has a real non-zero to bite on.
+    # The bed's baseline is CTRL at 6 UMIs in every cell, so a gate of 5 sets every cell aside.
     _run(bed, *BASE, "--gate-threshold", "5")
     meta = json.loads((bed / "result_run_meta.json").read_text())
     by_set = meta["cellsSetAsideBySet"]
     assert sum(by_set.values()) == meta["cellsSetAside"]
     assert meta["cellsSetAside"] > 0, "the gate set nothing aside, so this proves nothing"
-    # Sparse: the run record is parsed on every render, so a clonotype that lost nothing carries no entry. A
-    # reader takes an absent key as zero.
+    # Sparse: the run record is parsed on every render, so a clonotype that lost nothing carries no entry.
+    # A reader takes an absent key as zero.
     assert all(n > 0 for n in by_set.values())
     # The CSV keeps its own dense rendering, and the two cannot disagree -- one helper produces both.
     counts = pl.read_csv(bed / "result_set_counts.csv")
@@ -2282,12 +2192,11 @@ def test_run_meta_carries_set_aside_cells_per_clonotype(bed):
 
 
 def test_set_counts_carry_the_clonotype_s_cells_that_read_nothing(bed):
-    # `the-explore-readout` carries this per clonotype, not per identity: a cell with nothing left is empty at
-    # every identity, and repeating the subtraction per position would report a per-identity failure that did
-    # not happen.
+    # Carried per clonotype, not per identity: a cell with nothing left is empty at every identity, and
+    # repeating the subtraction per position would report a per-identity failure that did not happen.
     #
-    # At the shipped minimum nothing in this bed falls -- 500, 600 and the comparator's 6 all clear it -- so
-    # the column has to be present and zero rather than absent.
+    # At the shipped minimum nothing in this bed falls, so the column has to be present and zero rather
+    # than absent.
     _run(bed, *BASE)
     counts = pl.read_csv(bed / "result_set_counts.csv")
     assert "cellsReadingNothing" in counts.columns
@@ -2296,19 +2205,17 @@ def test_set_counts_carry_the_clonotype_s_cells_that_read_nothing(bed):
 
 def test_a_cell_carrying_only_its_comparator_has_not_read_nothing(bed):
     # c3 was asked about AgA and read nothing of it, while its comparator read 6. That cell took up reagent
-    # and none of it was antigen, which `support-travels-with-the-reading` calls a real negative and a real
-    # vote. A minimum of 7 removes its AgA reading -- there is none to remove -- and leaves the exempt
-    # comparator standing, so the cell is not empty.
+    # and none of it was antigen, which is a real negative and a real vote. A minimum of 7 removes its AgA
+    # reading -- there is none to remove -- and leaves the exempt comparator standing.
     _run(bed, *BASE, "--floor", "7")
     counts = pl.read_csv(bed / "result_set_counts.csv")
     assert counts["cellsReadingNothing"].to_list() == [0]
 
 
 def test_cells_that_read_nothing_change_no_verdict(bed):
-    # `support-travels-with-the-reading` forbids both shortcuts this number invites: dropping such cells from
-    # the vote shrinks the denominator and turns a minority into a majority, and filtering them out of the
-    # cell list is the same effect by another route. Raising the minimum changes which cells are counted as
-    # empty and must change nothing else in the run.
+    # Both shortcuts this number invites are forbidden: dropping such cells from the vote shrinks the
+    # denominator and turns a minority into a majority, and filtering them out of the cell list is the same
+    # effect by another route. Raising the minimum must change nothing else in the run.
     _run(bed, *BASE, "--floor", "1")
     low = (bed / "result_verdicts.csv").read_bytes()
     low_cells = (bed / "result_cell_counts.csv").read_bytes()
@@ -2319,8 +2226,8 @@ def test_cells_that_read_nothing_change_no_verdict(bed):
 
 def test_a_clonotype_never_reads_nothing_in_more_cells_than_it_has(bed):
     # The universe passed to the tally is the clonotype's own membership, so this cannot be violated by
-    # construction -- which is exactly why it is worth pinning: a later refactor that reads the population off
-    # the counts frame instead would break it silently.
+    # construction -- which is why it is worth pinning: a later refactor reading the population off the
+    # counts frame would break it silently.
     _run(bed, *BASE, "--floor", "7")
     counts = pl.read_csv(bed / "result_set_counts.csv")
     for empty, total in zip(counts["cellsReadingNothing"].to_list(), counts["cellCount"].to_list()):
@@ -2328,9 +2235,8 @@ def test_a_clonotype_never_reads_nothing_in_more_cells_than_it_has(bed):
 
 
 def test_run_meta_omits_set_aside_cells_per_clonotype_when_no_gate_is_declared(bed):
-    # 206 shows the count only where a gate is declared. The key is ABSENT rather than an empty object, so
-    # the UI branches on one thing -- was a gate declared -- and never has to tell "no gate" apart from "a
-    # gate that took nothing".
+    # The count shows only where a gate is declared. The key is ABSENT rather than an empty object, so the
+    # UI branches on one thing -- was a gate declared.
     _run(bed, *BASE)
     meta = json.loads((bed / "result_run_meta.json").read_text())
     assert "cellsSetAsideBySet" not in meta
@@ -2338,14 +2244,11 @@ def test_run_meta_omits_set_aside_cells_per_clonotype_when_no_gate_is_declared(b
 
 @pytest.fixture
 def two_set_bed(tmp_path):
-    # Two clonotypes whose cells read the comparator differently, so a gate can catch one and leave the other
-    # untouched. This is the ONLY shape that can falsify a dense map: with a single clonotype, an
-    # implementation that emitted every clonotype including the zeros passes every other assertion in this
-    # file.
+    # Two clonotypes whose cells read the comparator differently, so a gate can catch one and leave the
+    # other untouched. This is the ONLY shape that can falsify a dense map: with a single clonotype, an
+    # implementation that emitted every clonotype including the zeros passes every other assertion here.
     #
     # K1's cells read CTRL at 6, so a gate of 5 takes both. K2's read it at 2, so the same gate leaves both.
-    # The antigen counts clear the shipped cutoff in each case, so both clonotypes still produce verdicts and
-    # the run is not degenerate.
     (tmp_path / "counts.csv").write_text(
         "sampleId,cellId,tag,umiCount\n"
         "S1,c1,AAAA,500\nS1,c1,CTRL,6\n"
@@ -2359,16 +2262,15 @@ def two_set_bed(tmp_path):
 
 
 def test_run_meta_omits_a_clonotype_the_gate_did_not_touch(two_set_bed):
-    # The sparseness claim, tested where it can fail. The run record is parsed on every model render, so a
-    # clonotype that lost nothing carries NO entry and a reader takes an absent key as zero. A map that
-    # carried `"K2": 0` would defeat that and pass every relative assertion above.
+    # The sparseness claim, tested where it can fail. A clonotype that lost nothing carries NO entry and a
+    # reader takes an absent key as zero. A map that carried `"K2": 0` would defeat that and pass every
+    # relative assertion above.
     _run(two_set_bed, *BASE, "--gate-threshold", "5")
     meta = json.loads((two_set_bed / "result_run_meta.json").read_text())
-    # Exact, not relative: K1 has two cells and the gate takes both.
     assert meta["cellsSetAsideBySet"] == {"K1": 2}
     assert "K2" not in meta["cellsSetAsideBySet"], "a clonotype the gate did not touch must be absent"
     # The CSV stays DENSE, which is its own contract: a reader of a table must never have to tell "no gate"
-    # apart from "column missing". The contrast between the two renderings is the design.
+    # apart from "column missing".
     counts = pl.read_csv(two_set_bed / "result_set_counts.csv")
     dense = dict(zip(counts["setId"].to_list(), counts["cellsSetAside"].to_list()))
     assert dense == {"K1": 2, "K2": 0}
@@ -2377,10 +2279,9 @@ def test_run_meta_omits_a_clonotype_the_gate_did_not_touch(two_set_bed):
 @pytest.fixture
 def silent_position_bed(tmp_path):
     # One clonotype, two cells, two antigens, and the shape that separates "asked and silent" from "never
-    # asked": c1 carries counts for both antigens, c2 carries counts for AgA only. So (c2, AgB) has no row in
-    # `read_states` at all, and every antigen is on the sample's panel -- which makes it a SILENT position
-    # rather than an unasked one. An implementation that pivots the sparse frame and stops leaves that
-    # position blank, and blank is reserved for never-asked.
+    # asked": c1 carries counts for both antigens, c2 carries counts for AgA only. So (c2, AgB) has no row
+    # in `read_states`, and every antigen is on the sample's panel -- a SILENT position rather than an
+    # unasked one. An implementation that pivots the sparse frame and stops leaves it blank.
     (tmp_path / "counts.csv").write_text(
         "sampleId,cellId,tag,umiCount\nS1,c1,AAAA,500\nS1,c1,BBBB,400\nS1,c1,CTRL,2\nS1,c2,AAAA,600\nS1,c2,CTRL,2\n"
     )
@@ -2402,16 +2303,13 @@ def test_cell_punch_gives_every_cell_a_row_and_every_identity_a_column(silent_po
     assert set(rows) == {("S1", "c1"), ("S1", "c2")}, "one row per cell of the set"
     # The columns are the PANEL, not what this run happened to ask. The comparator is not an identity.
     for key in rows:
-        # Keyed by the BARCODE, not the display name: with no grouping column each tag stands alone under
-        # its own sequence, exactly as the set-level punch keys its columns.
         assert "AAAA" in rows[key] and "BBBB" in rows[key]
         assert rows[key]["setId"] == "K1", "the set travels as a column so the readout can filter on it"
 
 
 def test_cell_punch_resolves_a_silent_position_rather_than_leaving_it_blank(silent_position_bed):
     # The claim this fixture exists for. (c2, AgB) has no row in the states frame, its sample offered AgB,
-    # and c2 can be compared -- so it reads NOT BOUND, exactly as silent_tally counts it when it produces c2's
-    # contribution to K1's verdict at AgB. Blank here would contradict that arithmetic.
+    # and c2 can be compared -- so it reads NOT BOUND, exactly as silent_tally counts it.
     _run(silent_position_bed, *BASE)
     rows = _cell_punch(silent_position_bed)
     silent = rows[("S1", "c2")]["BBBB"]
@@ -2449,8 +2347,8 @@ def test_run_meta_says_whether_the_cell_punch_was_emitted(silent_position_bed):
 
 
 def test_run_meta_carries_both_gate_limits(silent_position_bed):
-    # Each gate's count is only readable against its own limit. The identity limit bounds the pivot's
-    # width and the cell limit bounds its rows, so one never stands in for the other.
+    # Each gate's count is only readable against its own limit. The identity limit bounds the pivot's width
+    # and the cell limit bounds its rows.
     _run(silent_position_bed, *BASE)
     meta = json.loads((silent_position_bed / "result_run_meta.json").read_text())
     assert meta["identitySummaryLimit"] == IDENTITY_SUMMARY_MAX_IDENTITIES
@@ -2460,14 +2358,12 @@ def test_run_meta_carries_both_gate_limits(silent_position_bed):
 def test_the_panel_comparator_is_built_from_raw_counts(tmp_path):
     """The production call site passes the raw frame, not the floored one.
 
-    The unit test in test_verdict.py pins what the two frames produce. This pins which one
-    production hands over, which is where the defect actually was and which no assertion in this
-    file reached: every fixture bed here reads well clear of the minimum, so flooring changed no
-    comparator and the suite stayed green either way.
+    The unit test in test_verdict.py pins what the two frames produce. This pins which one production
+    hands over, which no assertion in this file reached: every fixture bed here reads well clear of the
+    minimum, so flooring changed no comparator and the suite stayed green either way.
 
-    c1's five readings are 1, 1, 2, 9, 9. Raw they median to 2. Floored at the shipped minimum
-    of 4 they are 0, 0, 0, 9, 9 and median to 0 -- which would push every verdict in that cell
-    toward *bound*, since a comparator of zero is the easiest bar there is.
+    c1's five readings are 1, 1, 2, 9, 9. Raw they median to 2. Floored at the shipped minimum of 4 they
+    are 0, 0, 0, 9, 9 and median to 0 -- which would push every verdict in that cell toward *bound*.
     """
     tags = ["AAAA", "CCCC", "GGGG", "TTTT", "ACAC"]
     (tmp_path / "panel.csv").write_text(
@@ -2510,18 +2406,15 @@ DISTRIBUTION_ARGS = [
 def _distribution_bed(root, n_cells=400, binder_rate=300, seed=7):
     """A sample whose first tag separates and whose second does not.
 
-    Written from a seeded generator: the rung under test is a density, and a handful of
-    hand-written counts has no density. The seed is fixed, so the bed is the same bytes on every
-    run.
+    Written from a seeded generator: the rung under test is a density, and a handful of hand-written
+    counts has no density. The seed is fixed, so the bed is the same bytes on every run.
 
-    `SEPS` binds in a twentieth of the cells. `FLAT` reads the SAME count in every cell, which is
-    one population by construction and the shape that cannot be fitted at all.
+    `SEPS` binds in a twentieth of the cells. `FLAT` reads the SAME count in every cell, which is one
+    population by construction and the shape that cannot be fitted at all.
 
-    A flat tag is deliberately not a background-shaped one. `what-plays-the-baseline` accepts that
-    a tag nothing bound still fits and still calls its upper tail bound -- the method assumes two
-    components exist and no published test replaces the eye -- so a background-shaped tag no longer
-    demonstrates an unfittable one. Identical counts do, and they are still a tag the reads carry,
-    which keeps this apart from a dead reagent.
+    A flat tag is deliberately not a background-shaped one: a tag nothing bound still fits and still calls
+    its upper tail bound, so a background-shaped tag no longer demonstrates an unfittable one. Identical
+    counts do, and they are still a tag the reads carry.
     """
     import numpy as np
 
@@ -2538,8 +2431,8 @@ def _distribution_bed(root, n_cells=400, binder_rate=300, seed=7):
     (root / "counts.csv").write_text("\n".join(rows) + "\n")
     (root / "panel.csv").write_text("Sample,Antigen,Sequence\nS1,AgSep,SEPS\nS1,AgFlat,FLAT\n")
     (root / "linker.csv").write_text("sampleId,cellId,setId\n" + "".join(f"S1,c{i},K{i % 4}\n" for i in range(n_cells)))
-    # The cell list is what fixes the fit's population, including the cells that read nothing
-    # for a tag. Without it the universe is only the observed cells.
+    # The cell list is what fixes the fit's population, including the cells that read nothing for a
+    # tag. Without it the universe is only the observed cells.
     (root / "cells.csv").write_text("sampleId,cellId\n" + "".join(f"S1,c{i}\n" for i in range(n_cells)))
     return root
 
@@ -2554,11 +2447,171 @@ def test_the_tag_distribution_rung_serves_and_says_so(tmp_path):
     assert meta["distributionMinCells"] == 300
 
 
+def _distribution_bed_with_a_baseline_tag(root, n_cells=400, sticky=40, seed=7):
+    """The distribution bed, plus a declared baseline tag reading high in a few cells.
+
+    The rung's comparator is the fit. The baseline tag is here only in its other role, which is what
+    `reference-two-roles` keeps apart. Its readings sit either side of the gate used below, and the
+    minimum never touches a baseline tag, so the low ones survive as the measurement they are.
+    """
+    _distribution_bed(root, n_cells=n_cells, seed=seed)
+    rows = (root / "counts.csv").read_text().rstrip("\n").split("\n")
+    rows += [f"S1,c{i},CTRL,{200 if i < sticky else 3}" for i in range(n_cells)]
+    (root / "counts.csv").write_text("\n".join(rows) + "\n")
+    (root / "panel.csv").write_text(
+        "Sample,Antigen,Sequence,Role\nS1,AgSep,SEPS,Target\nS1,AgFlat,FLAT,Target\nS1,Ctrl,CTRL,Control\n"
+    )
+    return sticky
+
+
+def _distribution_bed_with_a_short_sample(root, n_cells=400, short_cells=250, seed=7):
+    """The distribution bed, plus a second sample too small for the rung to fit.
+
+    S2 holds fewer cells than the rung needs, so no tag fits there and none of its cells has a
+    comparator for any identity. One S2 cell reads SEPS so the tag is measured in that sample and the
+    question was put -- every other S2 cell is SILENT for it, which is the position under test.
+    """
+    _distribution_bed(root, n_cells=n_cells, seed=seed)
+    rows = (root / "counts.csv").read_text().rstrip("\n").split("\n")
+    cells = (root / "cells.csv").read_text().rstrip("\n").split("\n")
+    linker = (root / "linker.csv").read_text().rstrip("\n").split("\n")
+    for i in range(short_cells):
+        rows.append(f"S2,d{i},FLAT,5")
+        cells.append(f"S2,d{i}")
+        linker.append(f"S2,d{i},KS2")
+    rows.append("S2,d0,SEPS,50")
+    (root / "counts.csv").write_text("\n".join(rows) + "\n")
+    (root / "cells.csv").write_text("\n".join(cells) + "\n")
+    (root / "linker.csv").write_text("\n".join(linker) + "\n")
+    (root / "panel.csv").write_text(
+        "Sample,Antigen,Sequence\nS1,AgSep,SEPS\nS1,AgFlat,FLAT\nS2,AgSep,SEPS\nS2,AgFlat,FLAT\n"
+    )
+
+
+def test_cell_punch_marks_a_position_with_no_fitted_background_unreliable(tmp_path):
+    # A cell whose sample the rung could not fit has no comparator for any identity, so its silent
+    # positions are unreliable. They used to render *not bound*: the punchcard corrected a silent
+    # position only through a per-(sample, identity) comparator, which nothing in production sets, and
+    # never through the fitted rung's per-cell probabilities -- so every such position fell through to
+    # the not-bound default and contradicted the set verdict above it.
+    _distribution_bed_with_a_short_sample(tmp_path)
+    r = _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
+    assert r.returncode == 0, r.stderr
+
+    rows = _cell_punch(tmp_path)
+    silent = rows[("S2", "d1")]["SEPS"]
+    assert silent.split("|")[0] == "unreliable", silent
+    assert "no comparator" in silent
+
+    # S1 fitted, so the same identity resolves there. Without this the test would pass over a run where
+    # nothing resolved anywhere.
+    assert rows[("S1", "c0")]["SEPS"].split("|")[0] in ("bound", "not bound")
+
+
+def test_a_declared_gate_acts_under_the_tag_distribution_rung(tmp_path):
+    # The gate reads a declared baseline tag; the comparator is whatever rung was selected. They are
+    # separate roles, so which rung serves must not reach the gate. It used to: the fitted rung handed
+    # `gate_cells` an empty reading map, so a stored threshold set nothing aside and reported nothing,
+    # silently, from the moment a scientist switched the baseline source.
+    sticky = _distribution_bed_with_a_baseline_tag(tmp_path)
+    r = _run(
+        tmp_path,
+        *DISTRIBUTION_ARGS,
+        "--cells",
+        "cells.csv",
+        "--role-column",
+        "Role",
+        "--reference-values",
+        "Control",
+        "--gate-threshold",
+        "100",
+    )
+    assert r.returncode == 0, r.stderr
+
+    meta = json.loads((tmp_path / "result_run_meta.json").read_text())
+    assert meta["referenceChoice"] == ReferenceChoice.DISTRIBUTION.value, "the comparator is still the fit"
+    assert meta["cellsSetAside"] == sticky, "the gate has to have acted"
+
+    # And the exposure is a count rather than a reason, because the population now exists.
+    qc = pl.read_csv(tmp_path / "result_qc.csv", infer_schema_length=0)
+    row = qc.filter(pl.col("measurement") == "highReferenceCells").row(0, named=True)
+    assert float(row["value"]) == sticky
+    assert "gate=100" in row["detail"]
+
+
+def test_the_sticky_measurement_says_why_where_no_cell_carries_a_baseline_reading(tmp_path):
+    # Both forms of this measurement read a cell's own baseline reading, which only a declared baseline
+    # tag supplies. Under the tag-distribution rung no cell has one, so a gated count is taken over an
+    # empty population and comes out 0.0 -- reporting the sample as checked and clean on a question the
+    # run never asked. The run record already reports None for the same condition, so a zero here also
+    # makes the two artefacts disagree.
+    _distribution_bed(tmp_path)
+    _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv", "--gate-threshold", "50")
+
+    qc = pl.read_csv(tmp_path / "result_qc.csv", infer_schema_length=0)
+    rows = qc.filter(pl.col("measurement") == "highReferenceCells")
+    assert rows.height > 0, "the measurement keeps its row whether or not the run could compute it"
+    for row in rows.iter_rows(named=True):
+        assert not row["value"], "a zero would read as a sample carrying no sticky cells"
+        assert row["reason"] == "no cell in this sample carries a comparator reading"
+        assert row["detail"] == "cellsWithAComparator=0"
+
+
+@pytest.fixture
+def ambient_bed(tmp_path, n_cells=3, n_ambient=300, cell_count=40):
+    """Three cells reading a tag properly, beside a crowd of ambient barcodes reading it once.
+
+    The shape every droplet run has: ambient reagent reaches most barcodes, so observed barcodes
+    outnumber cells by one to two orders of magnitude while carrying one or two counts each. Which of
+    those barcodes held a cell is an input, and the cell list carries it.
+    """
+    counts = ["sampleId,cellId,tag,umiCount"]
+    cells = ["sampleId,cellId"]
+    linker = ["sampleId,cellId,setId"]
+    for i in range(n_cells):
+        counts += [f"S1,c{i},AAAA,{cell_count}", f"S1,c{i},CTRL,6"]
+        cells.append(f"S1,c{i}")
+        linker.append(f"S1,c{i},K1")
+    counts += [f"S1,amb{i},AAAA,1" for i in range(n_ambient)]
+    (tmp_path / "counts.csv").write_text("\n".join(counts) + "\n")
+    (tmp_path / "cells.csv").write_text("\n".join(cells) + "\n")
+    (tmp_path / "linker.csv").write_text("\n".join(linker) + "\n")
+    (tmp_path / "panel.csv").write_text("Samples,Name,Sequence,Type\nS1,AgA,AAAA,Target\nS1,Ctrl,CTRL,Control\n")
+    return tmp_path
+
+
+def test_the_reagent_figures_count_cells_rather_than_observed_barcodes(ambient_bed):
+    # The reagent table's two count columns and its median are about CELLS. Taken over every observed
+    # barcode instead, ambient droplets set the median -- and a median below the minimum is how this
+    # table reports a reagent delivering under the level at which anything is credited, so every tag in
+    # the panel reads as a failed reagent.
+    _run(ambient_bed, *BASE, "--cells", "cells.csv")
+    qc = pl.read_csv(ambient_bed / "result_qc.csv", infer_schema_length=0)
+    row = qc.filter((pl.col("measurement") == "perAntigen") & (pl.col("entity") == "AAAA")).row(0, named=True)
+
+    assert "cellsWithCount=3" in row["detail"], row["detail"]
+    assert "medianCountPerCell=40.0" in row["detail"], row["detail"]
+    # And the figure says which list it was computed against, since two runs whose lists came from
+    # different sources do not share a denominator.
+    assert "cellList=cell list" in row["detail"], row["detail"]
+
+
+def test_the_reagent_figures_fall_back_to_the_linker_as_the_cell_list(ambient_bed):
+    # With no `--cells` the clonotype linker supplies the list, which is the narrower of the two sources
+    # and the ordinary case for this block. The figures are scoped to it and say so, so a reader can
+    # tell a run counted against one list from a run counted against the other.
+    _run(ambient_bed, *BASE)
+    qc = pl.read_csv(ambient_bed / "result_qc.csv", infer_schema_length=0)
+    row = qc.filter((pl.col("measurement") == "perAntigen") & (pl.col("entity") == "AAAA")).row(0, named=True)
+
+    assert "cellsWithCount=3" in row["detail"], row["detail"]
+    assert "cellList=clonotype linker" in row["detail"], row["detail"]
+
+
 def test_the_sticky_measurement_is_a_spread_when_no_gate_is_declared(bed):
-    # The default, and therefore the first run every scientist sees. 290: where no threshold is
-    # declared there is no *high* to count, and the measurement is the distribution of those
-    # readings instead -- which is what a scientist reads in order to declare a gate. A count here
-    # would assert a boundary nobody drew.
+    # The default, and therefore the first run every scientist sees. Where no threshold is declared there
+    # is no *high* to count, and the measurement is the distribution of those readings instead -- which is
+    # what a scientist reads in order to declare a gate.
     _run(bed, *BASE)
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
     row = qc.filter(pl.col("measurement") == "highReferenceCells").row(0, named=True)
@@ -2571,8 +2624,8 @@ def test_the_sticky_measurement_is_a_spread_when_no_gate_is_declared(bed):
 
 
 def test_the_sticky_measurement_counts_the_cells_the_gate_set_aside(bed):
-    # With a gate declared the two jobs are one number: the cells counted high are the cells set
-    # aside, by construction. A second line used to let those two sets differ.
+    # With a gate declared the two jobs are one number: the cells counted high are the cells set aside, by
+    # construction. A second line used to let those two sets differ.
     _run(bed, *BASE, "--gate-threshold", "1")
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
     row = qc.filter(pl.col("measurement") == "highReferenceCells").row(0, named=True)
@@ -2586,8 +2639,8 @@ def test_the_sticky_measurement_counts_the_cells_the_gate_set_aside(bed):
 
 
 def test_no_observation_line_parameter_survives(bed):
-    # One threshold, not two. 060-parameter-set lists seven parameters and a sticky line is not
-    # among them, so a run must not accept one.
+    # One threshold, not two. The parameter set lists seven parameters and a sticky line is not among
+    # them, so a run must not accept one.
     assert "--high-reference-line" not in _run(bed, "--help").stdout
     meta_run = _run(bed, *BASE)
     assert meta_run.returncode == 0
@@ -2595,9 +2648,8 @@ def test_no_observation_line_parameter_survives(bed):
 
 
 def test_the_distributions_are_emitted_as_plottable_frames(bed):
-    # 330 puts three distributions last in the readout, and a scientist settles the cutoff and the
-    # gate by looking at them. A decile encoded inside a measurement's detail string is a number
-    # nobody can plot, so they also go out as frames.
+    # Three distributions go last in the readout, and a scientist settles the cutoff and the gate by
+    # looking at them. A decile encoded inside a measurement's detail string is a number nobody can plot.
     _run(bed, *BASE)
 
     deciles = pl.read_csv(bed / "result_qc_deciles.csv", infer_schema_length=0)
@@ -2607,8 +2659,8 @@ def test_the_distributions_are_emitted_as_plottable_frames(bed):
         points = deciles.filter(pl.col("distribution") == kind)["decile"].to_list()
         assert [int(p) for p in points] == list(range(0, 101, 10)), kind
 
-    # Header-only rather than absent where a run fitted no background: a consumer meeting a header
-    # knows the step ran and found nothing.
+    # Header-only rather than absent where a run fitted no background: a consumer meeting a header knows
+    # the step ran and found nothing.
     backgrounds = pl.read_csv(bed / "result_qc_backgrounds.csv", infer_schema_length=0)
     assert backgrounds.columns == [
         "sampleId",
@@ -2620,11 +2672,34 @@ def test_the_distributions_are_emitted_as_plottable_frames(bed):
     assert backgrounds.height == 0, "a declared baseline fits no background"
 
 
+def test_the_spreads_are_taken_over_the_cell_list_not_over_observed_barcodes(bed):
+    # The cutoff and the gate act on cells, and the count plots beside these two on the same page are
+    # already narrowed to the cell list. In droplet data observed barcodes outnumber cells by one to two
+    # orders of magnitude. `zzz` is observed and unlisted, and its reference reading of 999 is the only
+    # one in the run that is not 6, so an unnarrowed spread cannot pass.
+    (bed / "counts.csv").write_text((bed / "counts.csv").read_text() + "S1,zzz,AAAA,7\nS1,zzz,CTRL,999\n")
+    r = _run(bed, *BASE)
+    assert r.returncode == 0, r.stderr
+
+    meta = json.loads((bed / "result_run_meta.json").read_text())
+    assert meta["cellsInList"] == 3 and meta["cellsAnalysed"] == 4, "the bed no longer separates the two"
+
+    bins = json.loads((bed / "result_qc_tag_bins.json").read_text())
+    # Two scored positions, not three: a silent admissible cell carries no row, so c3 never reaches the
+    # score spread. Unnarrowed this would be three, c1 and c2 plus zzz.
+    assert sum(bins["spreads"]["score"]["weights"]) == 2
+    # Three readings: every listed cell carries a comparator whether or not it read an antigen.
+    assert sum(bins["spreads"]["referenceReading"]["weights"]) == 3
+
+    deciles = pl.read_csv(bed / "result_qc_deciles.csv", infer_schema_length=0)
+    readings = deciles.filter(pl.col("distribution") == "referenceReading")["value"].to_list()
+    assert {float(v) for v in readings} == {6.0}, readings
+
+
 @pytest.fixture
 def sample_decile_bed(tmp_path):
-    # Three samples: S1 and S2 each hold cells with an antigen count, at different scales so their
-    # decile series cannot coincide by accident. S3 is declared in the panel but carries no counted
-    # reading at all -- the "no antigen counts" case.
+    # Three samples: S1 and S2 each hold cells with an antigen count, at different scales so their decile
+    # series cannot coincide by accident. S3 is declared in the panel but carries no counted reading.
     (tmp_path / "counts.csv").write_text(
         "sampleId,cellId,tag,umiCount\n"
         "S1,c1,AAAA,500\nS1,c1,CTRL,6\nS1,c2,AAAA,900\nS1,c2,CTRL,6\n"
@@ -2641,8 +2716,8 @@ def sample_decile_bed(tmp_path):
 
 
 def test_sample_deciles_reach_a_frame_keyed_by_sample(sample_decile_bed):
-    # The distribution's deciles must reach a p-frame keyed by sample, not only a decile string
-    # buried in the measurement's detail field.
+    # The distribution's deciles must reach a p-frame keyed by sample, not only a decile string buried in
+    # the measurement's detail field.
     _run(sample_decile_bed, *BASE)
     deciles = pl.read_csv(sample_decile_bed / "result_qc_sample_deciles.csv", infer_schema_length=0)
     assert set(deciles.columns) == {"sampleId", "decile", "value"}
@@ -2650,8 +2725,8 @@ def test_sample_deciles_reach_a_frame_keyed_by_sample(sample_decile_bed):
 
 
 def test_two_samples_carry_different_decile_series(sample_decile_bed):
-    # S1's cells hold 500-900 antigen counts, S2's hold 50-80. Their decile series must differ --
-    # a plot showing this sample alone is the point.
+    # S1's cells hold 500-900 antigen counts, S2's hold 50-80. Their decile series must differ -- a plot
+    # showing this sample alone is the point.
     _run(sample_decile_bed, *BASE)
     deciles = pl.read_csv(sample_decile_bed / "result_qc_sample_deciles.csv")
     s1 = deciles.filter(pl.col("sampleId") == "S1").sort("decile")["value"].to_list()
@@ -2661,9 +2736,9 @@ def test_two_samples_carry_different_decile_series(sample_decile_bed):
 
 
 def test_a_sample_with_no_antigen_counts_yields_no_decile_rows(sample_decile_bed):
-    # S3 is declared in the panel but no read ever carried a count for it. A flat run of zeros
-    # would read as a real, narrow distribution; the right answer is no rows for S3 at all, with
-    # the sample's own measurement carrying the reason instead.
+    # S3 is declared in the panel but no read ever carried a count for it. A flat run of zeros would read
+    # as a real, narrow distribution; the right answer is no rows for S3 at all, with the sample's own
+    # measurement carrying the reason instead.
     _run(sample_decile_bed, *BASE)
     deciles = pl.read_csv(sample_decile_bed / "result_qc_sample_deciles.csv", infer_schema_length=0)
     assert deciles.filter(pl.col("sampleId") == "S3").height == 0
@@ -2677,8 +2752,8 @@ def test_a_sample_with_no_antigen_counts_yields_no_decile_rows(sample_decile_bed
 
 
 def test_the_fitted_backgrounds_are_emitted_at_the_fits_own_grain(tmp_path):
-    # One row per (sample, tag) the fit scored. Aggregating to the tag would hide a reagent that
-    # separated in one sample and not in another, which is the comparison a reader makes here.
+    # One row per (sample, tag) the fit scored. Aggregating to the tag would hide a reagent that separated
+    # in one sample and not in another.
     _distribution_bed(tmp_path)
     _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
 
@@ -2692,8 +2767,8 @@ def test_the_fitted_backgrounds_are_emitted_at_the_fits_own_grain(tmp_path):
 
 
 def test_a_population_baseline_emits_no_score_deciles(tmp_path):
-    # No score exists under that rung, so the frame carries the reference-reading rows and nothing
-    # claiming to be a score.
+    # No score exists under that rung, so the frame carries the reference-reading rows and nothing claiming
+    # to be a score.
     _distribution_bed(tmp_path)
     _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
 
@@ -2702,9 +2777,8 @@ def test_a_population_baseline_emits_no_score_deciles(tmp_path):
 
 
 def test_the_run_carries_its_score_spread(bed):
-    # 320 puts this at the run grain because the cutoff is one number for the run, and carries it
-    # so a scientist can move that cutoff to where their own scores separate. A cutoff set with no
-    # sight of the scores is set blind, which is what shipped until now.
+    # At the run grain because the cutoff is one number for the run, and carried so a scientist can move
+    # that cutoff to where their own scores separate. A cutoff set with no sight of the scores is blind.
     _run(bed, *BASE)
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
 
@@ -2720,23 +2794,22 @@ def test_the_run_carries_its_score_spread(bed):
     values = [float(p.split(":")[1]) for p in row["detail"].split("|")]
     assert values == sorted(values)
     assert 0.0 <= values[0] and values[-1] <= 100.0
-    # No line stands behind it: 320 carries it so a scientist places the cutoff, and a line here
+    # No line stands behind it: the spread is carried so a scientist places the cutoff, and a line here
     # would be the block placing it instead.
     assert row["status"] is None
 
 
 def test_the_run_score_spread_stays_out_of_every_sample_rollup(bed):
-    # It is emitted outside the sample loop, and a sample's rollup covers its OWN measurements.
-    # A run figure folded into a sample would say something about that sample it does not know.
+    # It is emitted outside the sample loop, and a sample's rollup covers its OWN measurements. A run
+    # figure folded into a sample would say something about that sample it does not know.
     _run(bed, *BASE)
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
     assert qc.filter((pl.col("measurement") == "rollup") & (pl.col("level") == "run")).height == 0
 
 
 def test_a_population_baseline_has_no_score_to_spread(tmp_path):
-    # The declared rung scores; the distribution rung yields a probability, which is not on the
-    # same scale and cannot be pooled with one. The row is there and says so, rather than going
-    # missing or printing a number from the wrong rule.
+    # The declared rung scores; the distribution rung yields a probability, which is not on the same scale.
+    # The row is there and says so, rather than going missing or printing a number from the wrong rule.
     _distribution_bed(tmp_path)
     _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
 
@@ -2747,10 +2820,9 @@ def test_a_population_baseline_has_no_score_to_spread(tmp_path):
 
 
 def test_the_fitted_background_reaches_the_measurement_set(tmp_path):
-    # The fit's parameters used to die inside the function that made them, so a scientist could
-    # not see whether a tag's counts separated -- which 330 wants read BEFORE the baseline is
-    # settled. SEPS separates and FLAT does not, so one row carries a number and the other
-    # carries why it has none. Both rows exist: absence and non-separation are different facts.
+    # The fit's parameters used to die inside the function that made them, so a scientist could not see
+    # whether a tag's counts separated -- which has to be read BEFORE the baseline is settled. SEPS
+    # separates and FLAT does not. Both rows exist: absence and non-separation are different facts.
     _distribution_bed(tmp_path)
     _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
 
@@ -2762,8 +2834,8 @@ def test_the_fitted_background_reaches_the_measurement_set(tmp_path):
     assert seps["value"] is not None
     assert "samplesFitted=1" in seps["detail"]
     assert "medianSignalMean=" in seps["detail"]
-    # The background sits below the signal it was separated from. Read together they are the
-    # finding: a background alone says nothing about whether the counts separated.
+    # The background sits below the signal it was separated from. Read together they are the finding: a
+    # background alone says nothing about whether the counts separated.
     signal = float(seps["detail"].split("medianSignalMean=")[1].split("|")[0])
     assert float(seps["value"]) < signal
 
@@ -2777,8 +2849,8 @@ def test_the_fitted_background_reaches_the_measurement_set(tmp_path):
 
 
 def test_a_declared_baseline_fits_no_background_and_the_rows_say_so(bed):
-    # Every declared measurement keeps its place. A reader must not have to tell "this run did
-    # not fit one" apart from "nothing here measures that" by the row being missing.
+    # Every declared measurement keeps its place. A reader must not have to tell "this run did not fit one"
+    # apart from "nothing here measures that" by the row being missing.
     _run(bed, *BASE)
 
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
@@ -2789,17 +2861,17 @@ def test_a_declared_baseline_fits_no_background_and_the_rows_say_so(bed):
 
 
 def test_a_tag_that_could_not_be_fitted_leaves_its_identity_alone_unreliable(tmp_path):
-    # The whole point of a comparator keyed by identity rather than by cell: one tag fails to
-    # fit and only the identities built from it lose their verdicts. Under a cell-keyed
-    # comparator this run would be all-or-nothing.
+    # The whole point of a comparator keyed by identity rather than by cell: one tag fails to fit and only
+    # the identities built from it lose their verdicts. Under a cell-keyed comparator this run would be
+    # all-or-nothing.
     _distribution_bed(tmp_path)
     _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
 
     meta = json.loads((tmp_path / "result_run_meta.json").read_text())
     assert list(meta["distributionUnfitted"]) == ["S1/FLAT"], meta["distributionUnfitted"]
 
-    # The panel declares no grouping column, so every barcode is its own identity and the
-    # identity names here are the barcodes.
+    # The panel declares no grouping column, so every barcode is its own identity and the identity names
+    # here are the barcodes.
     v = pl.read_csv(tmp_path / "result_verdicts.csv", infer_schema_length=0)
     states = {
         identity: set(v.filter(pl.col("identity") == identity)["state"].to_list()) for identity in ("FLAT", "SEPS")
@@ -2807,25 +2879,22 @@ def test_a_tag_that_could_not_be_fitted_leaves_its_identity_alone_unreliable(tmp
     assert states["FLAT"] == {"unreliable"}
     assert "unreliable" not in states["SEPS"], "the tag that separated must still be answerable"
 
-    # The set-level verdict is a majority of its cells, and only a twentieth of them bind, so
-    # every clonotype here reads *not bound* and reads it from a comparator that served. The
-    # binding is visible one level down, and the bed is worth nothing unless it is there.
+    # The set-level verdict is a majority of its cells, and only a twentieth of them bind, so every
+    # clonotype here reads *not bound* from a comparator that served. The binding is visible one level down.
     punch = pl.read_csv(tmp_path / "result_cell_punch.csv", infer_schema_length=0)
     assert any(x.startswith("bound|") for x in punch["SEPS"].to_list() if x is not None)
 
 
 def test_the_fit_is_per_tag_and_not_per_cell(tmp_path):
-    # It is fitted per (sample, tag), so whether a position can be answered turns on the TAG. A
-    # cell-keyed comparator would make a cell either comparable or not, and no run could then
-    # produce one all-unreliable column beside one with none.
+    # It is fitted per (sample, tag), so whether a position can be answered turns on the TAG. A cell-keyed
+    # comparator would make a cell either comparable or not, and no run could then produce one
+    # all-unreliable column beside one with none.
     _distribution_bed(tmp_path)
     _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
 
     v = pl.read_csv(tmp_path / "result_cell_punch.csv", infer_schema_length=0)
     assert v.height > 0
-    # Every position of the unfitted identity reads unreliable, and no position of the fitted
-    # one does. Under a cell-keyed comparator a cell is either comparable or not, so no run
-    # could produce this pair of columns.
+    # Every position of the unfitted identity reads unreliable, and no position of the fitted one does.
     flat = [x for x in v["FLAT"].to_list() if x is not None]
     fitted = [x for x in v["SEPS"].to_list() if x is not None]
     assert flat and all(x.startswith("unreliable|") for x in flat)
@@ -2834,9 +2903,8 @@ def test_the_fit_is_per_tag_and_not_per_cell(tmp_path):
 
 def test_a_sample_below_the_cell_condition_finishes_and_establishes_no_baseline(tmp_path):
     # 200 cells, against the three hundred this rung needs. This is the ONE refusal that cannot be caught
-    # from the settings: whether a sample holds enough cells whose counts separate is a property of the data,
-    # so the only way to learn it is to count. So the run FINISHES rather than refusing up front, and then
-    # says that no baseline could be established and draws no punchcard.
+    # from the settings: whether a sample holds enough cells whose counts separate is a property of the
+    # data. So the run FINISHES, says that no baseline could be established, and draws no punchcard.
     _distribution_bed(tmp_path, n_cells=200)
     r = _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
     assert r.returncode == 0, r.stderr
@@ -2844,8 +2912,8 @@ def test_a_sample_below_the_cell_condition_finishes_and_establishes_no_baseline(
     meta = json.loads((tmp_path / "result_run_meta.json").read_text())
     assert meta["baselineEstablished"] is False
     assert "no baseline could be established" in meta["noBaselineReason"]
-    # The rung that was asked for is still what is recorded. It served in the sense that nothing substituted
-    # for it -- there is no rung below to fall to.
+    # The rung that was asked for is still what is recorded. Nothing substituted for it -- there is no rung
+    # below to fall to.
     assert meta["referenceChoice"] == ReferenceChoice.DISTRIBUTION.value
     assert meta["referenceSourceRequested"] == ReferenceChoice.DISTRIBUTION.value
 
@@ -2855,15 +2923,15 @@ def test_a_sample_below_the_cell_condition_finishes_and_establishes_no_baseline(
     assert v.height == 0
     assert "state" in v.columns
 
-    # The structural frames are written in full: they describe the run rather than answering it, and a reader
-    # working out why no baseline could be established needs them.
+    # The structural frames are written in full: they describe the run rather than answering it, and a
+    # reader working out why no baseline could be established needs them.
     assert pl.read_csv(tmp_path / "result_tag_identity.csv", infer_schema_length=0).height > 0
 
 
 def test_the_gate_exposure_is_not_evaluated_where_no_cell_has_a_comparator(tmp_path):
-    # There is no per-cell comparator for a gate to read, so the count is not a measurement
-    # this run made. None, never 0 -- a zero would report a run with no high background rather
-    # than one where the question does not arise.
+    # There is no per-cell comparator for a gate to read, so the count is not a measurement this run made.
+    # None, never 0 -- a zero would report a run with no high background rather than one where the question
+    # does not arise.
     _distribution_bed(tmp_path)
     _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
 
@@ -2875,10 +2943,9 @@ def test_the_gate_exposure_is_not_evaluated_where_no_cell_has_a_comparator(tmp_p
 def test_the_minimum_never_reaches_the_comparator(wide_bed):
     """The exemption, checked end to end on a bed carrying a below-minimum comparator reading.
 
-    `minimum-count-before-any-reference` makes this a rule rather than a preference, so there is no
-    switch to compare against. Raising the minimum must remove antigen readings and leave every
-    comparator reading standing, because the minimum asks whether a count is evidence of binding and
-    a tag declared to be bound by nothing never is.
+    The exemption is a rule rather than a preference, so there is no switch to compare against. Raising
+    the minimum must remove antigen readings and leave every comparator reading standing, because the
+    minimum asks whether a count is evidence of binding and a tag declared to be bound by nothing never is.
     """
     assert (
         _run(wide_bed, *_bed_args("panel_with_reference.csv"), "--floor", "1", "--output-prefix", "low").returncode == 0
@@ -2894,8 +2961,8 @@ def test_the_minimum_never_reaches_the_comparator(wide_bed):
         "a comparator reading moved when the minimum rose, so the exemption is not holding"
     )
 
-    # The guard: without it this passes on a bed where the minimum reaches nothing, and proves only
-    # that nothing happened.
+    # The guard: without it this passes on a bed where the minimum reaches nothing, and proves only that
+    # nothing happened.
     low_meta = json.loads((wide_bed / "low_run_meta.json").read_text())
     high_meta = json.loads((wide_bed / "high_run_meta.json").read_text())
     assert high_meta["readingsFloored"] > low_meta["readingsFloored"]
@@ -2905,10 +2972,9 @@ def test_the_minimum_never_reaches_the_comparator(wide_bed):
 
 
 def test_a_tag_holding_no_cell_is_not_blamed_on_its_siblings(bed):
-    # Three tags on one identity. AAAA and BBBB agree in every cell; CCCC is declared and
-    # holds no row anywhere. Its siblings did reach a majority, so the row must not say they
-    # failed -- that sends a reader to re-prepare two working reagents instead of the missing
-    # one. The reason is the only thing separating the two absences: both carry no rate.
+    # Three tags on one identity. AAAA and BBBB agree in every cell; CCCC is declared and holds no row
+    # anywhere. Its siblings did reach a majority, so the row must not say they failed. The reason is the
+    # only thing separating the two absences: both carry no rate.
     (bed / "panel.csv").write_text(
         "Samples,Name,Sequence,Type,Family\n"
         "S1,AgA,AAAA,Target,Fam\n"
@@ -2935,8 +3001,8 @@ def test_a_tag_holding_no_cell_is_not_blamed_on_its_siblings(bed):
 
 
 def test_a_tag_that_is_the_only_one_on_its_identity_says_so(bed):
-    # The shipped bed groups per tag, so AAAA's identity is AAAA and carries nothing else.
-    # The reason has to name the missing sibling, not the siblings' failure to agree.
+    # The shipped bed groups per tag, so AAAA's identity is AAAA and carries nothing else. The reason has
+    # to name the missing sibling, not the siblings' failure to agree.
     _run(bed, *BASE)
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
     row = qc.filter((pl.col("measurement") == "siblingDisagreement") & (pl.col("entity") == "AAAA")).row(0, named=True)
@@ -2965,8 +3031,8 @@ REAGENT_COLUMNS = [
 
 
 def test_the_reagent_table_names_every_absent_figure(bed):
-    # 330-the-quality-readout fixes the columns and forbids a status. A blank and a zero are
-    # opposite findings, so a figure with no value says which case it is.
+    # The columns are fixed and a status is forbidden. A blank and a zero are opposite findings, so a
+    # figure with no value says which case it is.
     (bed / "panel.csv").write_text(
         "Samples,Name,Sequence,Type\nS1,AgA,AAAA,Target\nS1,AgD,DEAD,Target\nS1,Ctrl,CTRL,Control\n"
     )
@@ -2979,8 +3045,8 @@ def test_the_reagent_table_names_every_absent_figure(bed):
     assert control["cellsAboveTheLine"] is None
     assert "cellsAboveTheLine=none asked, this tag supplies the baseline" in control["reason"]
 
-    # A tag no read carried: zero under the counts, and the median names its own absence rather
-    # than leaving a blank beside them.
+    # A tag no read carried: zero under the counts, and the median names its own absence rather than
+    # leaving a blank beside them.
     dead = reagents.filter(pl.col("tag") == "DEAD").row(0, named=True)
     assert int(dead["cellsWithCount"]) == 0
     assert int(dead["samplesSeenIn"]) == 0
@@ -2996,9 +3062,9 @@ def test_the_reagent_table_names_every_absent_figure(bed):
 
 
 def test_the_reagent_table_prints_a_ratio_and_the_words_for_an_absent_rate(bed):
-    # The quality view's own table shows "1/4" under Seen in and "no sibling" under the sibling
-    # column. A blank there reads as a figure that failed to load, and a single-tag identity is the
-    # common case, so the shown column carries the words while the rate beside it stays numeric.
+    # The quality view's own table shows "1/4" under Seen in and "no sibling" under the sibling column. A
+    # blank there reads as a figure that failed to load, and a single-tag identity is the common case, so
+    # the shown column carries the words while the rate beside it stays numeric.
     (bed / "panel.csv").write_text(
         "Samples,Name,Sequence,Type\nS1,AgA,AAAA,Target\nS1,AgD,DEAD,Target\nS1,Ctrl,CTRL,Control\n"
     )
@@ -3006,12 +3072,9 @@ def test_the_reagent_table_prints_a_ratio_and_the_words_for_an_absent_rate(bed):
     reagents = pl.read_csv(bed / "result_reagents.csv", infer_schema_length=0)
     rows = {r["tag"]: r for r in reagents.iter_rows(named=True)}
 
-    # One sample in this panel, and the barcode is carried in it.
     assert rows["AAAA"]["seenIn"] == "1/1"
-    # A tag no read carried keeps its row and reads zero over the same denominator.
     assert rows["DEAD"]["seenIn"] == "0/1"
 
-    # Each identity carries one tag here, so every row says so in words rather than leaving a blank.
     assert rows["AAAA"]["siblingDisagreementShown"] == "no sibling"
     assert rows["DEAD"]["siblingDisagreementShown"] == "no sibling"
     # The reference tag is held out of the verdict read, which is a different cause and says so.
@@ -3020,7 +3083,6 @@ def test_the_reagent_table_prints_a_ratio_and_the_words_for_an_absent_rate(bed):
     # A tag no cell set could be read on has nothing to compare against itself either.
     assert rows["DEAD"]["selfDisagreementShown"] == "nothing to compare"
 
-    # Where a rate exists the shown column carries the number, to two places.
     rates = [r for r in reagents.iter_rows(named=True) if r["selfDisagreement"] is not None]
     assert rates, "at least one tag should carry a self-disagreement rate"
     for row in rates:
@@ -3028,10 +3090,9 @@ def test_the_reagent_table_prints_a_ratio_and_the_words_for_an_absent_rate(bed):
 
 
 def test_a_barcode_reused_for_two_antigens_takes_a_row_under_each(tmp_path):
-    # One row could not name both identities, and putting the two side by side is the comparison
-    # the table exists for: a barcode that worked where it carried one antigen and failed where it
-    # carried another. Each row's figures are scoped to the samples where the tag carried that
-    # identity, so the pair can differ.
+    # One row could not name both identities, and putting the two side by side is the comparison the table
+    # exists for: a barcode that worked where it carried one antigen and failed where it carried another.
+    # Each row's figures are scoped to the samples where the tag carried that identity.
     (tmp_path / "counts.csv").write_text(
         "sampleId,cellId,tag,umiCount\n"
         "S1,c1,AAAA,500\nS1,c1,CTRL,6\nS1,c2,AAAA,600\nS1,c2,CTRL,6\n"
@@ -3050,9 +3111,8 @@ def test_a_barcode_reused_for_two_antigens_takes_a_row_under_each(tmp_path):
     assert sorted(rows["identity"].to_list()) == ["AgA", "AgB"]
 
     figures = {r["identity"]: r for r in rows.iter_rows(named=True)}
-    # Two cells of S1 hold the barcode, one cell of S2 does. The figures are per (tag, identity)
-    # and not per tag, so the two rows carry the reagent's two behaviours rather than one number
-    # repeated.
+    # Two cells of S1 hold the barcode, one cell of S2 does. The figures are per (tag, identity) and not
+    # per tag, so the two rows carry the reagent's two behaviours rather than one number repeated.
     assert int(figures["AgA"]["cellsWithCount"]) == 2
     assert int(figures["AgB"]["cellsWithCount"]) == 1
     # The denominator is the roster for the identity, not the panel's.
@@ -3061,11 +3121,9 @@ def test_a_barcode_reused_for_two_antigens_takes_a_row_under_each(tmp_path):
 
 
 def test_a_staged_reagent_reads_apart_from_a_dead_one(tmp_path):
-    # STAGE is declared on S1 and S2 only, and carries a count on both -- staged into a
-    # two-sample study by design. DEAD is declared on all four samples and carries a count on
-    # none. Declaring DEAD on every sample splits it across two panels (S1+S2 share one
-    # declared tag set, S3+S4 share another), so it takes one row per panel; both must read
-    # empty under samplesSeenInNames, and neither reads like STAGE's row.
+    # STAGE is declared on S1 and S2 only, and carries a count on both. DEAD is declared on all four
+    # samples and carries a count on none. Declaring DEAD on every sample splits it across two panels, so
+    # it takes one row per panel; both must read empty under samplesSeenInNames.
     (tmp_path / "counts.csv").write_text(
         "sampleId,cellId,tag,umiCount\n"
         "S1,c1,STAGE,500\nS1,c1,CTRL,6\n"
@@ -3095,8 +3153,7 @@ def test_a_staged_reagent_reads_apart_from_a_dead_one(tmp_path):
 
 
 def test_reagent_sample_names_come_from_the_run_labels_not_the_id(labelled_bed):
-    # `label_of_sample` is reachable here, so a raw sampleId never has to reach this
-    # user-facing column.
+    # `label_of_sample` is reachable here, so a raw sampleId never has to reach this user-facing column.
     _run(labelled_bed, *BASE, "--sample-labels", json.dumps({OPAQUE: "donor01"}))
     reagents = pl.read_csv(labelled_bed / "result_reagents.csv", infer_schema_length=0)
     row = reagents.filter(pl.col("tag") == "AAAA").row(0, named=True)
@@ -3109,16 +3166,15 @@ def _sample_report(bed, sample: str = "S1") -> dict:
 
 
 def test_the_sample_report_lists_every_sample_measurement(bed):
-    # A measurement that did not run takes a row rather than being omitted, so a reader meets it
-    # instead of noticing an absence. The set is the declaration order of every sample-level
-    # measurement, deferred ones included.
+    # A measurement that did not run takes a row rather than being omitted, so a reader meets it instead of
+    # noticing an absence. The set is the declaration order of every sample-level measurement.
     _run(bed, *BASE)
     report = _sample_report(bed)
     listed = [m["id"] for m in report["measurements"]]
     assert listed == [m.id for m in MEASUREMENTS if m.level == "sample"]
 
-    # The shape both the model and the UI are typed against. A field renamed on this side reaches
-    # them as an undefined, which renders as a blank rather than as an error.
+    # The shape both the model and the UI are typed against. A field renamed on this side reaches them as
+    # an undefined, which renders as a blank rather than as an error.
     assert set(report) == {"status", "judged", "unjudged", "notEvaluated", "measurements"}
     for row in report["measurements"]:
         assert set(row) == {
@@ -3135,9 +3191,9 @@ def test_the_sample_report_lists_every_sample_measurement(bed):
 
 
 def test_a_sample_measurement_with_no_value_states_why(bed):
-    # This bed passes no --qc-summary, so panelAssignedFraction never arrived. A blank and a zero
-    # are opposite findings, so the row carries the reason where its number would have been. No
-    # line can be applied to a value that does not exist, so it carries no status either.
+    # This bed passes no --qc-summary, so panelAssignedFraction never arrived. A blank and a zero are
+    # opposite findings, so the row carries the reason where its number would have been. No line can be
+    # applied to a value that does not exist, so it carries no status either.
     _run(bed, *BASE)
     row = {m["id"]: m for m in _sample_report(bed)["measurements"]}["panelAssignedFraction"]
 
@@ -3147,8 +3203,8 @@ def test_a_sample_measurement_with_no_value_states_why(bed):
 
 
 def test_no_sample_measurement_is_blank_without_a_reason(bed):
-    # The invariant, over the whole set rather than one row: every entry either carries a number
-    # or says why it does not. Neither case is ever rendered as an absence.
+    # The invariant, over the whole set rather than one row: every entry either carries a number or says
+    # why it does not.
     _run(bed, *BASE)
     for row in _sample_report(bed)["measurements"]:
         if row["value"] is None:
@@ -3157,10 +3213,9 @@ def test_no_sample_measurement_is_blank_without_a_reason(bed):
 
 
 def test_a_valueless_measurement_names_the_input_that_is_actually_missing(bed):
-    # Truthiness is not the test. A measurement with more than one route to having no number has
-    # to name the one that happened, or the report sends a reader at the wrong input. This bed
-    # passes a linker, so a cell list exists and depth is missing its NUMERATOR, not its
-    # denominator -- and the row two above it says where the read counts were to come from.
+    # Truthiness is not the test. A measurement with more than one route to having no number has to name
+    # the one that happened. This bed passes a linker, so a cell list exists and depth is missing its
+    # NUMERATOR, not its denominator.
     _run(bed, *BASE)
     rows = {m["id"]: m for m in _sample_report(bed)["measurements"]}
 
@@ -3170,10 +3225,9 @@ def test_a_valueless_measurement_names_the_input_that_is_actually_missing(bed):
 
 
 def test_a_run_with_no_cell_list_gives_its_two_cell_rows_one_account(tmp_path):
-    # `in_list` is empty both when no list arrived and when one arrived holding nothing, so these
-    # two rows are reachable together on every run without a linker or a cell file. They named
-    # different causes: one said the list was absent, the other said the sample's listed cells
-    # held no reading. A reader cannot act on two accounts of one fact.
+    # `in_list` is empty both when no list arrived and when one arrived holding nothing, so these two rows
+    # are reachable together on every run without a linker or a cell file. They named different causes, and
+    # a reader cannot act on two accounts of one fact.
     (tmp_path / "counts.csv").write_text(
         "sampleId,cellId,tag,umiCount\nS1,c1,AAAA,500\nS1,c1,CTRL,6\nS1,c2,AAAA,600\nS1,c2,CTRL,6\n"
     )
@@ -3187,9 +3241,9 @@ def test_a_run_with_no_cell_list_gives_its_two_cell_rows_one_account(tmp_path):
 
 
 def test_an_empty_cell_list_is_the_zero_cells_finding_and_not_a_missing_read_count(tmp_path):
-    # A cell list that arrived and holds no cell of this sample is a different finding from no
-    # list at all, and `reads_per_cell` returns no number for both. Naming the read count would
-    # point a reader at an input that is present.
+    # A cell list that arrived and holds no cell of this sample is a different finding from no list at all,
+    # and `reads_per_cell` returns no number for both. Naming the read count would point a reader at an
+    # input that is present.
     (tmp_path / "counts.csv").write_text(
         "sampleId,cellId,tag,umiCount\nS1,c1,AAAA,500\nS1,c1,CTRL,6\nS2,c1,AAAA,500\nS2,c1,CTRL,6\n"
     )
@@ -3212,9 +3266,8 @@ def test_an_empty_cell_list_is_the_zero_cells_finding_and_not_a_missing_read_cou
 
 
 def test_the_sample_report_carries_the_rollup_the_qc_frame_carries(bed):
-    # The Main grid's tag is this rollup, and the report beside it lists the measurements it was
-    # taken over. One number in two places would let the tag and the list disagree about one
-    # sample, which is the defect this file exists to keep out.
+    # The Main grid's tag is this rollup, and the report beside it lists the measurements it was taken
+    # over. One number in two places would let the tag and the list disagree about one sample.
     _run(bed, *BASE)
     report = _sample_report(bed)
 
@@ -3233,10 +3286,9 @@ def test_the_sample_report_carries_the_rollup_the_qc_frame_carries(bed):
 
 
 def test_usable_read_fraction_reads_blank_where_the_counts_file_carries_no_total_weight(bed):
-    # `usableReadFraction` now has a call site (`qc_measures.usable_read_fraction`, wired from
-    # `counts.csv`'s `totalWeight` column). `bed`'s counts.csv predates that column, so the row
-    # reads a stated blank rather than a value -- never `UNSUPPLIED_REASON`, since a call site
-    # ran and found the column absent, which is a different fact from nothing having run.
+    # `usableReadFraction` has a call site wired from `counts.csv`'s `totalWeight` column. `bed`'s
+    # counts.csv predates that column, so the row reads a stated blank rather than a value -- never
+    # `UNSUPPLIED_REASON`, since a call site ran and found the column absent.
     _run(bed, *BASE)
     row = {m["id"]: m for m in _sample_report(bed)["measurements"]}["usableReadFraction"]
 
@@ -3246,8 +3298,8 @@ def test_usable_read_fraction_reads_blank_where_the_counts_file_carries_no_total
 
 
 def test_usable_read_fraction_computes_a_real_value_end_to_end(tmp_path):
-    # c1 and c2 are in the cell list; c3 is not. Only c1 and c2's totalWeight counts toward the
-    # numerator, over readsTotal from --qc-summary.
+    # c1 and c2 are in the cell list; c3 is not. Only c1 and c2's totalWeight counts toward the numerator,
+    # over readsTotal from --qc-summary.
     (tmp_path / "counts.csv").write_text(
         "sampleId,cellId,tag,umiCount,totalWeight\n"
         "S1,c1,AAAA,500,80\n"
@@ -3287,8 +3339,8 @@ def test_usable_read_fraction_with_no_cell_list_reads_a_stated_blank(tmp_path):
 
 
 def test_usable_read_fraction_with_an_empty_cell_list_reads_zero(tmp_path):
-    # A present cells.csv with a header and no rows is a checked, empty list -- distinct from
-    # no list at all, so the outcome is the real finding 0.0 rather than a blank.
+    # A present cells.csv with a header and no rows is a checked, empty list -- distinct from no list at
+    # all, so the outcome is the real finding 0.0 rather than a blank.
     (tmp_path / "counts.csv").write_text(
         "sampleId,cellId,tag,umiCount,totalWeight\nS1,c1,AAAA,500,80\nS1,c1,CTRL,6,3\n"
     )
@@ -3306,8 +3358,8 @@ def test_usable_read_fraction_with_an_empty_cell_list_reads_zero(tmp_path):
 
 def test_a_declared_sample_measurement_nothing_computes_still_takes_a_row(monkeypatch):
     # The walk is over the DECLARATION, not over the rows a run happened to emit. Every declared
-    # measurement has a call site today, so an implementation iterating the rows passes every
-    # other test in this file byte for byte. This is the one that separates them.
+    # measurement has a call site today, so an implementation iterating the rows passes every other test in
+    # this file byte for byte.
     extra = Measurement("neverComputed", "Never computed", "sample", "nothing computes this")
     monkeypatch.setattr(qc_rows, "MEASUREMENTS", MEASUREMENTS + (extra,))
 
@@ -3327,8 +3379,8 @@ def test_a_declared_sample_measurement_nothing_computes_still_takes_a_row(monkey
 
 
 def test_qc_frame_carries_the_line_and_route_for_an_inherited_measurement():
-    # cellBarcodeValidFraction is on the inherited route with a published warn/error pair. A
-    # reader who sees `warn` in the frame must be able to see the number it warned against.
+    # cellBarcodeValidFraction is on the inherited route with a published warn/error pair. A reader who
+    # sees `warn` in the frame must be able to see the number it warned against.
     rows = []
     qc_rows._add(rows, "sample", "S1", "cellBarcodeValidFraction", 0.6)
     frame = qc_rows._qc_frame(rows).row(0, named=True)
@@ -3339,8 +3391,8 @@ def test_qc_frame_carries_the_line_and_route_for_an_inherited_measurement():
 
 
 def test_qc_frame_leaves_the_numbers_null_for_the_categorical_route():
-    # cellsDetected carries a route -- its status is a fact, not a threshold -- but no numeric
-    # line: `route` is non-null while `lineWarn` and `lineAlert` stay null.
+    # cellsDetected carries a route -- its status is a fact, not a threshold -- but no numeric line:
+    # `route` is non-null while `lineWarn` and `lineAlert` stay null.
     rows = []
     qc_rows._add(rows, "sample", "S1", "cellsDetected", 12.0)
     frame = qc_rows._qc_frame(rows).row(0, named=True)
@@ -3362,8 +3414,8 @@ def test_qc_frame_leaves_all_three_null_where_no_line_backs_the_measurement():
 
 
 def test_qc_frame_reads_the_lines_it_was_given_not_the_shipped_default():
-    # `_qc_frame` renders whatever `lines` the caller passes, the same dict `_add` used to score
-    # the row -- an operator override must show up here, not the shipped default.
+    # `_qc_frame` renders whatever `lines` the caller passes, the same dict `_add` used to score the row --
+    # an operator override must show up here, not the shipped default.
     overridden = dict(DEFAULT_LINES)
     overridden["cellBarcodeValidFraction"] = Line(warn=0.9, error=0.6)
 
@@ -3378,8 +3430,8 @@ def test_qc_frame_reads_the_lines_it_was_given_not_the_shipped_default():
 
 
 def test_cli_flags_move_a_line_end_to_end(bed):
-    # 0.91 reads OK against the shipped 0.75 warn line, and alert against a raised 0.95 one.
-    # This is the CLI surface an operator actually reaches, not the Python function alone.
+    # 0.91 reads OK against the shipped 0.75 warn line, and alert against a raised 0.95 one. This is the
+    # CLI surface an operator actually reaches, not the Python function alone.
     (bed / "qc.csv").write_text(
         "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
         "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction,"
@@ -3409,8 +3461,8 @@ def test_qc_frame_rollup_row_carries_no_line_or_route():
 
 
 def test_a_value_that_is_not_a_finite_number_is_no_value_and_says_which(monkeypatch):
-    # A NaN is not the absence the caller's reason describes: that reason names a missing input,
-    # and here the input arrived. Reporting it would send a reader to fix something that is fine.
+    # A NaN is not the absence the caller's reason describes: that reason names a missing input, and here
+    # the input arrived.
     rows = []
     qc_rows._add(
         rows,
@@ -3431,9 +3483,8 @@ def test_a_value_that_is_not_a_finite_number_is_no_value_and_says_which(monkeypa
 
 
 def test_the_wide_summary_carries_every_sample_in_the_roster_including_one_with_nothing(tmp_path):
-    # S2 is declared on the panel and nowhere else: no counts row, no linker row, no cell-list
-    # entry. `main` still puts it in the sample roster (panel ∪ counts ∪ linker ∪ cell list), so
-    # the wide table must still carry its row rather than dropping the sample that has nothing.
+    # S2 is declared on the panel and nowhere else: no counts row, no linker row, no cell-list entry.
+    # `main` still puts it in the sample roster, so the wide table must still carry its row.
     (tmp_path / "counts.csv").write_text(
         "sampleId,cellId,tag,umiCount\nS1,c1,AAAA,500\nS1,c1,CTRL,6\nS1,c2,AAAA,600\nS1,c2,CTRL,6\n"
     )
@@ -3450,8 +3501,8 @@ def test_the_wide_summary_carries_every_sample_in_the_roster_including_one_with_
 
     s2 = summary.filter(pl.col("sampleId") == "S2")
     assert s2.height == 1
-    # Nothing computed a value for S2, so its cells read null rather than 0 or "OK" -- a blank
-    # and a zero are opposite findings.
+    # Nothing computed a value for S2, so its cells read null rather than 0 or "OK" -- a blank and a zero
+    # are opposite findings.
     assert s2["readsTotal"].item() is None
     assert s2["status"].item() is None
 
@@ -3462,8 +3513,8 @@ def test_the_wide_summary_carries_every_sample_level_measurement_as_a_column(bed
     declared = {m.id for m in MEASUREMENTS if m.level == "sample"}
     missing = declared - set(summary.columns)
     assert not missing, f"sample-level measurement(s) with no column: {missing}"
-    # The rename ban: these two ids are p-column names AND measurement-axis values elsewhere in
-    # the run, so they must survive under their own name rather than a fresh one.
+    # The rename ban: these two ids are p-column names AND measurement-axis values elsewhere in the run,
+    # so they must survive under their own name.
     assert "panelAssignedFraction" in summary.columns
     assert "cellBarcodeValidFraction" in summary.columns
 
@@ -3484,8 +3535,8 @@ def test_the_wide_summary_status_is_the_sample_rollup_and_is_not_recomputed(bed)
 
 
 def test_a_missing_read_qc_row_names_the_row_not_the_denominator(bed):
-    # No --qc-summary at all: no row reached this sample. Naming the denominator here would
-    # be false -- there is no row to read a denominator from.
+    # No --qc-summary at all: no row reached this sample. Naming the denominator here would be false --
+    # there is no row to read a denominator from.
     r = _run(bed, *BASE)
     assert r.returncode == 0, r.stderr
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
@@ -3495,8 +3546,8 @@ def test_a_missing_read_qc_row_names_the_row_not_the_denominator(bed):
 
 
 def test_a_present_read_qc_row_with_no_reads_names_the_denominator_not_the_row(bed):
-    # A row present with readsTotal zero, reachable through parse_gate.py's empty-input path.
-    # Naming the row as missing would be false -- the row is here, and readsTotal on it reads 0.
+    # A row present with readsTotal zero, reachable through parse_gate.py's empty-input path. Naming the
+    # row as missing would be false.
     (bed / "qc.csv").write_text(
         "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
         "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction,"
@@ -3513,10 +3564,9 @@ def test_a_present_read_qc_row_with_no_reads_names_the_denominator_not_the_row(b
 
 
 def test_a_present_read_qc_row_with_reads_but_no_figure_names_neither_the_row_nor_the_denominator(bed):
-    # A row present with nonzero readsTotal, but the aggregate-barcode columns absent -- the
-    # carrier defect this measurement guards against: a real figure computed upstream that did
-    # not survive into the combined QC summary. Neither NO_READ_QC nor NO_READS_TO_DIVIDE is
-    # true of this row, so a third reason is required.
+    # A row present with nonzero readsTotal, but the aggregate-barcode columns absent -- a real figure
+    # computed upstream that did not survive into the combined QC summary. Neither NO_READ_QC nor
+    # NO_READS_TO_DIVIDE is true of this row, so a third reason is required.
     (bed / "qc.csv").write_text(
         "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
         "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction\n"
@@ -3532,9 +3582,9 @@ def test_a_present_read_qc_row_with_reads_but_no_figure_names_neither_the_row_no
 
 
 def test_a_read_qc_row_with_no_read_count_names_the_missing_count(bed):
-    # A row present, the aggregate columns absent, and readsTotal blank. "reports nonzero reads" is
-    # false of this row and "reports no reads" states a count of zero it does not carry, so the
-    # fourth case names the absent count itself.
+    # A row present, the aggregate columns absent, and readsTotal blank. "reports nonzero reads" is false
+    # of this row and "reports no reads" states a count of zero it does not carry, so the fourth case names
+    # the absent count itself.
     (bed / "qc.csv").write_text(
         "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
         "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction\n"
@@ -3551,8 +3601,8 @@ def test_a_read_qc_row_with_no_read_count_names_the_missing_count(bed):
 
 
 def test_a_valueless_usable_fraction_carries_its_reason_and_no_detail(bed):
-    # QcRow's invariant: a detail rides alongside a number, a reason stands in place of one. A row
-    # with neither a value nor a number to describe must not carry the same string twice.
+    # QcRow's invariant: a detail rides alongside a number, a reason stands in place of one. A row with
+    # neither must not carry the same string twice.
     (bed / "qc.csv").write_text(
         "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
         "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction\n"
@@ -3570,9 +3620,9 @@ def test_a_valueless_usable_fraction_carries_its_reason_and_no_detail(bed):
 def test_a_reused_barcode_reads_as_its_joined_names_not_its_sequence(tmp_path):
     """A tag whose panels name it differently reads as both names, under any grouping.
 
-    The label rungs are: the agreed name, else the disagreeing names joined, else the barcode. A
-    property grouping labels its IDENTITIES from the grouped-on column, and reading the tag's name
-    from that scope dropped every reused barcode to the third rung.
+    The label rungs are: the agreed name, else the disagreeing names joined, else the barcode. A property
+    grouping labels its IDENTITIES from the grouped-on column, and reading the tag's name from that scope
+    dropped every reused barcode to the third rung.
     """
     (tmp_path / "panel.csv").write_text(
         "Samples,Name,Sequence,Type\n"

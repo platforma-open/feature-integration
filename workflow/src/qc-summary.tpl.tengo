@@ -1,9 +1,8 @@
-// Per-sample QC summary assembly (feature-integration).
+// Per-sample QC summary assembly.
 //
-// processColumn emits the per-sample QC CSV (fb-pipeline `qc` output) as a [sampleId] -> file resource map
-// (column-specs.lib.tengo qcFileMapOutput). This template concatenates the one-row CSVs into one file,
-// injecting the REAL sampleId per row from the map key over the constant "sample" the Python writes.
-// Its single output is that file. The verdict stage reads it through --qc-summary.
+// processColumn emits the per-sample QC CSV (fb-pipeline `qc` output) as a [sampleId] -> file resource map.
+// This template concatenates the one-row CSVs into one file, injecting the REAL sampleId per row from the
+// map key over the constant "sample" the Python writes. The verdict stage reads it through --qc-summary.
 //
 // It emits no p-frame. The across-samples table is built by verdict-import from result_qc_summary.csv,
 // which carries the measurement set and the rolled-up status this template cannot produce.
@@ -29,9 +28,7 @@ self.body(func(inputs) {
 
 	// Metric column names to carry through from each per-sample CSV. The CSV's own sampleId column is
 	// deliberately NOT selected: the real sampleId is injected from the resource-map key below.
-	// qcSummaryColumnsSpec is read for its column NAMES only. The across-samples p-frame is built by
-	// verdict-import from result_qc_summary.csv, which carries the measurement set and the rolled-up
-	// status this template cannot produce.
+	// qcSummaryColumnsSpec is read for its column NAMES only.
 	metricCols := []
 	for col in columnsSpec.columns {
 		metricCols = append(metricCols, col.column)
@@ -61,10 +58,9 @@ self.body(func(inputs) {
 	csvFile := wfResult.getFile("qc-summary.csv")
 
 	return {
-		// The combined table as a FILE. The verdict stage reads its read counts through --qc-summary.
-		// Returned here rather than concatenated a second time because the two must agree: the per-sample
-		// sampleId is injected from the resource-map key, so a second gather could key the rows differently,
-		// and the verdict stage would then match no sample and evaluate nothing.
+		// The combined table as a FILE. Returned here rather than concatenated a second time because the two
+		// must agree: the per-sample sampleId is injected from the resource-map key, so a second gather could
+		// key the rows differently, and the verdict stage would then match no sample and evaluate nothing.
 		qcSummaryCsv: csvFile
 	}
 })

@@ -4,22 +4,19 @@ import { PlBtnGroup, PlLogView } from "@platforma-sdk/ui-vue";
 import { computed, ref } from "vue";
 import { useApp } from "../app";
 
-// The Log tab of the per-sample report: the live per-step logs across the whole pipeline, meaning parse,
-// refine, tag-stat and the Python per-cell-metrics step. Mirrors blocks/peptide-extraction's SampleReportPanel
-// Logs tab.
+// The Log tab of the per-sample report: the live per-step logs across parse, refine, tag-stat and the
+// Python per-cell-metrics step.
 //
-// A plain prop rather than a model, because the log view only reads the selection. Nothing here can change
-// which sample the slide-over is showing.
+// A plain prop rather than a model, because the log view only reads the selection.
 const props = defineProps<{
   sampleId: string | undefined;
 }>();
 
 const app = useApp();
 
-// Log step selector. Refine and tag-stat run only where reads matched the pattern, so a no-match sample
-// carries its 1-parse log alone, since fb-refine-tagstat emits a variable key set, and those steps then show
-// "No log available". Order matches the pipeline. 4-metrics, the Python per-cell-metrics step, comes from a
-// separate [sampleId]-keyed model output (metricsLog) -- see logHandle.
+// Refine and tag-stat run only where reads matched the pattern, so a no-match sample carries its 1-parse
+// log alone and those steps show "No log available". Order matches the pipeline. 4-metrics comes from a
+// separate [sampleId]-keyed model output (metricsLog).
 type StepId = "1-parse" | "2-refine" | "3-tagstat" | "4-metrics";
 const stepOptions: SimpleOption<StepId>[] = [
   { value: "1-parse", text: "Parse" },

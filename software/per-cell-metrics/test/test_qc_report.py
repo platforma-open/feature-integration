@@ -68,8 +68,9 @@ def test_qc_metrics_from_parse_report_and_tagstat(tmp_path):
 def test_qc_survives_header_only_tagstat(tmp_path):
     # Regression: a sample whose reads are all off-panel (or a wrong read geometry) yields a header-only
     # tag-stat TSV. polars then infers every column as String, and the old code crashed on
-    # `stat[umi_col].sum()` / `.median()`. QC must instead report zeros without crashing -- the sibling
-    # per_cell_metrics._load handles the same file (test_cli_empty_join_writes_header_only_not_crash).
+    # `stat[umi_col].sum()` / `.median()`. QC must report the row without crashing -- counts as the zeros
+    # they are, and the median as BLANK, since no cell carries a reading to take one over and a blank and
+    # a zero are opposite findings.
     tagstat = tmp_path / "tagstat.tsv"
     tagstat.write_text("CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\n")  # header only, zero data rows
     parse_report = tmp_path / "parse.json"
@@ -78,7 +79,7 @@ def test_qc_survives_header_only_tagstat(tmp_path):
     assert int(row["cellsDetected"]) == 0
     assert int(row["featuresDetected"]) == 0
     assert int(row["totalUniqueUmis"]) == 0
-    assert float(row["medianUmisPerCell"]) == 0.0
+    assert row["medianUmisPerCell"] == "", "no cell holds a reading, so there is no median to print"
     assert int(row["readsTotal"]) == 1000
 
 
@@ -97,8 +98,8 @@ def test_qc_survives_missing_refine_report(tmp_path):
     ids=["90pct-kept", "all-kept", "quarter-kept"],
 )
 def test_panel_assigned_fraction_from_feature_step(tmp_path, input_count, output_count, expected):
-    # The FEATURE refine step's outputCount/inputCount is the fraction of reads kept after correcting
-    # the feature barcode against the panel whitelist -- i.e. assigned to a panel feature.
+    # The FEATURE refine step's outputCount/inputCount is the fraction of reads kept after correcting the
+    # feature barcode against the panel whitelist.
     tagstat = tmp_path / "tagstat.tsv"
     tagstat.write_text("CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\ncell1\tAAAA\t1\t1\t1\n")
     parse_report = tmp_path / "parse.json"
@@ -127,9 +128,8 @@ def _tagstat_lines(umi_by_cell: dict[str, int], read_by_cell: dict[str, int]) ->
 
 
 def test_aggregate_barcode_fraction_flags_a_clear_outlier(tmp_path):
-    # 20 cells spread 600..790 antigen UMIs, one at 5000. q1=650, q3=750, threshold=1050 --
-    # above the 1000-UMI floor -- so only the 5000 barcode is flagged. Its reads are 10000 of
-    # a 100000 total, so the fraction is 0.1.
+    # 20 cells spread 600..790 antigen UMIs, one at 5000. q1=650, q3=750, threshold=1050 -- above the
+    # 1000-UMI floor -- so only the 5000 barcode is flagged. Its reads are 10000 of a 100000 total.
     normal = {f"c{i}": 600 + i * 10 for i in range(20)}
     umi = {**normal, "agg": 5000}
     reads = {c: v * 2 for c, v in umi.items()}
@@ -146,8 +146,8 @@ def test_aggregate_barcode_fraction_flags_a_clear_outlier(tmp_path):
 
 
 def test_aggregate_barcode_fraction_below_the_floor_is_zero(tmp_path):
-    # q1=12, q3=20, threshold=44 -- under the 1000-UMI floor, so nothing is flagged even
-    # though one barcode (400) clears 44 on its own.
+    # q1=12, q3=20, threshold=44 -- under the 1000-UMI floor, so nothing is flagged even though one
+    # barcode (400) clears 44 on its own.
     umi = {"c0": 10, "c1": 12, "c2": 15, "c3": 20, "c4": 400}
     reads = {c: v for c, v in umi.items()}
     tagstat = tmp_path / "tagstat.tsv"
@@ -162,8 +162,8 @@ def test_aggregate_barcode_fraction_below_the_floor_is_zero(tmp_path):
 
 
 def test_aggregate_barcode_knobs_are_cli_flags(tmp_path):
-    # Same bed as the below-the-floor case, but a lowered --aggregate-min-umi-threshold lets
-    # the 44 threshold clear the floor, so the 400-UMI barcode is now flagged.
+    # Same bed as the below-the-floor case, but a lowered --aggregate-min-umi-threshold lets the 44
+    # threshold clear the floor, so the 400-UMI barcode is now flagged.
     umi = {"c0": 10, "c1": 12, "c2": 15, "c3": 20, "c4": 400}
     reads = {c: v for c, v in umi.items()}
     tagstat = tmp_path / "tagstat.tsv"

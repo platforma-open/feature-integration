@@ -1,16 +1,16 @@
 """Offline viability suite for a full multiomics run (antigen + VDJ + GEX arms, colocated under one run
 dir).
 
-Proves the synthetic data will actually flow through the pipeline BEFORE any backend run. The number one
-failure is the convergence inner-join producing empty output because cell barcodes do not line up across
-arms. Runs three things:
+Proves the synthetic data will flow through the pipeline BEFORE any backend run. The number one failure
+is the convergence inner-join producing empty output because cell barcodes do not line up across arms.
+Runs three things:
 
   1. Per-arm schema/geometry checks (antigen FASTQ, VDJ AIRR-sc TSV, panel, GEX matrix).
   2. Barcode alignment across arms (the load-bearing test).
   3. JOIN SIMULATION -- emulate vdj-multiomic-integration end to end, offline: derive per-(cell, antigen)
      distinct-UMI from the antigen FASTQ, build the cell->clonotype linker from the VDJ pairing,
-     inner-join on cellId, group by clonotype, take the dominant antigen, and assert every
-     clear-antigen clonotype's dominant == the planted antigen, and that output is non-empty.
+     inner-join on cellId, group by clonotype, take the dominant antigen, and assert every clear-antigen
+     clonotype's dominant == the planted antigen, and that output is non-empty.
 """
 
 import csv
@@ -23,7 +23,7 @@ from .common import CELL_LEN, CONTROL_NAME, FEAT_LEN, UMI_LEN
 
 ENSG_RE = re.compile(r"^ENSG\d{11}$")
 # Verified plasma-cell markers (from the pipeline's homo_sapiens gene map): MZB1, XBP1, PRDM1, CD38,
-# TNFRSF17. High in antigen-specific (plasmablast) cells, low in naive — the GEX coherence signal.
+# TNFRSF17. High in antigen-specific (plasmablast) cells, low in naive -- the GEX coherence signal.
 PLASMA_ENSG = {"ENSG00000170476", "ENSG00000100219", "ENSG00000057657", "ENSG00000004468", "ENSG00000048462"}
 
 

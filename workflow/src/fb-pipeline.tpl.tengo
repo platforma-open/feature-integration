@@ -1,18 +1,17 @@
 // Per-sample feature-barcode pipeline (processColumn body).
 //
 // One invocation per sample group, since the FASTQ column is aggregated over lane and readIndex. Runs the
-// mitool chain -- parse -> refine-tags -> tag-stat -u -- for per-(cell, feature-barcode) distinct-UMI counts,
-// then hands that table plus the user's tag->feature CSV to the per-cell-metrics Python software, which
-// collapses to the (cell x feature) outputs. Also runs tag-stat -t FEATURE (no -u) on the pre-refine
-// parsedMic, surfaced as rawFeatureCounts: refine-tags snaps FEATURE onto the panel whitelist, so this is
-// the only point in the chain where an undeclared barcode is still visible.
+// mitool chain -- parse -> refine-tags -> tag-stat -u -- for per-(cell, feature-barcode) distinct-UMI
+// counts, then hands that table plus the user's tag->feature CSV to the per-cell-metrics Python software.
+// Also runs tag-stat -t FEATURE (no -u) on the pre-refine parsedMic, surfaced as rawFeatureCounts:
+// refine-tags snaps FEATURE onto the panel whitelist, so this is the only point in the chain where an
+// undeclared barcode is still visible.
 //
-// Every exec runs inside a render.create sub-template, so this body returns only render outputs. fb-parse,
-// fb-refine and fb-tagstat produce the mitool files, and fb-downstream runs the QC and per-cell-metrics
-// consumers. The mitool execs deliberately do NOT capture a stdout progress stream: saveStdoutStream puts
-// the rate-dependent stdout in the exec's content-hashed files map, drifts every getFile off it, and throws
-// CIDConflictError on a stale re-render. Per-step progress is derived deterministically instead, from which
-// stage reports have settled (stepReports -> the model's sampleStep). Mirrors blocks/peptide-extraction.
+// Every exec runs inside a render.create sub-template, so this body returns only render outputs. The mitool
+// execs deliberately do NOT capture a stdout progress stream: saveStdoutStream puts the rate-dependent
+// stdout in the exec's content-hashed files map, drifts every getFile off it, and throws CIDConflictError
+// on a stale re-render. Per-step progress is derived deterministically instead, from which stage reports
+// have settled (stepReports -> the model's sampleStep).
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 assets := import("@platforma-sdk/workflow-tengo:assets")
@@ -48,12 +47,16 @@ self.body(func(inputs) {
 	combineColumn := is_undefined(inputs.combineColumn) ? "" : inputs.combineColumn
 	minUmi := is_undefined(inputs.minUmi) ? 1 : inputs.minUmi
 	cellWhitelist := inputs.cellWhitelist // "" = de-novo CELL correction, the default. Else a 10x built-in.
+	// Undefined where the scientist left the knob alone, and passed through as undefined: fb-downstream
+	// adds a flag only where one is set, so the exec's own argparse default stands.
+	aggregateBarcodeIqrMultiplier := inputs.aggregateBarcodeIqrMultiplier
+	aggregateBarcodeMinUmiThreshold := inputs.aggregateBarcodeMinUmiThreshold
+	aggregateBarcodeTopN := inputs.aggregateBarcodeTopN
 	memBaseGB := inputs.mitoolBaseMemGB
 
 	// mitool memory override (Advanced Settings), passed to the parse and refine sub-templates. 0 = no
 	// override, so RAM is sized from the input blob on a floor. >0 = a fixed request. A sentinel keeps the
-	// render.create input a plain number: the model sets metaExtra.mitoolMemOverrideGB only where the user
-	// configures one, so inputs.mitoolMemOverrideGB is otherwise undefined.
+	// render.create input a plain number, because inputs.mitoolMemOverrideGB is otherwise undefined.
 	memOverrideGB := is_undefined(inputs.mitoolMemOverrideGB) ? 0 : inputs.mitoolMemOverrideGB
 	// Preview read cap. 0 = full run, with no --limit. >0 = mitool parse processes only the first N reads.
 	limitInput := is_undefined(inputs.limitInput) ? 0 : inputs.limitInput
@@ -163,9 +166,9 @@ self.body(func(inputs) {
 		saveFile("refine_report_empty.json").
 		run()
 
-	// Step 3: gated refine-tags -> tag-stat (fb-refine-tagstat boundary). On a match it runs the normal chain.
-	// On no-match it returns the gate's header-only tag-stat and empty refine report, skipping the mitool
-	// steps that would crash on the empty parsed.mic. Either way it yields tagstatTsv and refineReport.
+	// Step 3: gated refine-tags -> tag-stat (fb-refine-tagstat boundary). On no-match it returns the gate's
+	// header-only tag-stat and empty refine report, skipping the mitool steps that would crash on the empty
+	// parsed.mic. Either way it yields tagstatTsv and refineReport.
 	refineTagstatRun := render.create(fbRefineTagstatTpl, {
 		decision: gate.getFileContent("decision.json"),
 		parsedMic: parsedMic,
@@ -189,9 +192,9 @@ self.body(func(inputs) {
 	// whitelist. Carries any sequence the panel does not declare, which a post-refine counts frame cannot.
 	rawFeatureCounts := refineTagstatRun.output("rawFeatureCounts")
 
-	// Step 4: QC report and per-cell metrics (fb-downstream boundary). These consume the drifting mitool
-	// files -- tagstat.tsv plus the parse and refine reports -- so they run inside a render boundary and
-	// return their per-sample outputs as render outputs. See the file header for the inline-consumer clash.
+	// Step 4: QC report and per-cell metrics (fb-downstream boundary). These consume the drifting mitool files
+	// -- tagstat.tsv plus the parse and refine reports -- so they run inside a render boundary and return their
+	// per-sample outputs as render outputs.
 	downstreamRun := render.create(fbDownstreamTpl, {
 		tagstatTsv: tagstatTsv,
 		parseReport: parseReport,
@@ -201,7 +204,14 @@ self.body(func(inputs) {
 		barcodeSeqColumn: barcodeSeqColumn,
 		featureNameColumn: featureNameColumn,
 		combineColumn: combineColumn,
-		minUmi: minUmi
+		minUmi: minUmi,
+		// The aggregate-barcode knobs. fb-downstream adds each as a flag only where it is set, and
+		// qc_report.py's own argparse default applies otherwise. They reached this body through
+		// `extra` and stopped here, so every one of them was part of a per-sample body's identity --
+		// costing a full re-parse of every sample on a change -- while reaching no command line.
+		aggregateBarcodeIqrMultiplier: aggregateBarcodeIqrMultiplier,
+		aggregateBarcodeMinUmiThreshold: aggregateBarcodeMinUmiThreshold,
+		aggregateBarcodeTopN: aggregateBarcodeTopN
 	})
 
 	// The body must return exactly the defineOutputs set and no output may be undefined.
@@ -215,28 +225,24 @@ self.body(func(inputs) {
 		// [sampleId], and the UI's per-step Logs panel reads it under the "4-metrics" step.
 		metricsLogStream: downstreamRun.output("metricsLogStream"),
 		// Per-sample step-report map of the parse, refine and tag-stat output files. The model derives the
-		// sample's current step from which are present, which is deterministic.
+		// sample's current step from which are present.
 		stepReports: stepReports,
-		// Per-sample [step] map of live stdout streams (parse / refine / tag-stat) -> the model's per-step log
-		// handles and live parse %. The key set is variable: a no-match sample carries parse alone.
+		// Per-sample [step] map of live stdout streams (parse / refine / tag-stat). The key set is variable: a
+		// no-match sample carries parse alone.
 		stepLogs: stepLogs,
 		// Flat parse stdout stream, also the 1-parse entry of stepLogs -> live parse % and early roster.
 		parseLogStream: parseLogStream,
-		// mitool intermediates surfaced so main.tpl can persist them by content hash. These are the
-		// deterministic parse, refine and tag-stat outputs the downstream consumers resolve through:
-		// parseReport and refineReport feed qc, and parsedMic and tagstatTsv feed the metrics chain. Once
-		// content-hash-persisted their CIDs stop drifting across re-renders, which keeps a getFile off a
-		// streaming exec stable and prevents CIDConflictError. It also lets downstream reuse them instead of
-		// re-running the whole block on a settings change. No model or UI consumer: the persistence is the
-		// point. Mirrors blocks/peptide-extraction.
+		// mitool intermediates surfaced so main.tpl can persist them by content hash. Once content-hash-persisted
+		// their CIDs stop drifting across re-renders, which keeps a getFile off a streaming exec stable and
+		// prevents CIDConflictError. It also lets downstream reuse them instead of re-running the whole block on
+		// a settings change. No model or UI consumer: the persistence is the point.
 		parsedMic: parsedMic,
 		parseReport: parseReport,
 		refineReport: refineReport,
 		tagstatTsv: tagstatTsv,
 		// rawFeatureCounts' own exec calls neither saveStdoutStream() nor printErrStreamToStdout(), so the
-		// CIDConflictError mechanism above does not apply to it, and it is not in main.tpl.tengo's
-		// content-hash persist loop. Currently unpersisted and unconsumed; whoever wires it into a
-		// consumer decides then whether that consumer's resolution needs the same treatment.
+		// CIDConflictError mechanism above does not apply to it, and it is not in main.tpl.tengo's content-hash
+		// persist loop. Currently unpersisted and unconsumed.
 		rawFeatureCounts: rawFeatureCounts
 	}
 })

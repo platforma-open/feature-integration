@@ -7,21 +7,20 @@ import SampleReportPanelLogs from "./SampleReportPanelLogs.vue";
 import SampleReportPanelQc from "./SampleReportPanelQc.vue";
 import SampleReportPanelVisualReport from "./SampleReportPanelVisualReport.vue";
 
-// Per-sample report, opened from the Main grid on row double-click. Mirrors blocks/mixcr-clonotyping's
-// SampleReportPanel: this file is the host that picks what the reader is looking at, and each view lives in
-// its own child component.
+// Per-sample report, opened from the Main grid on row double-click. This file is the host that picks what
+// the reader is looking at, and each view lives in its own child component.
 const sampleId = defineModel<string | undefined>();
 
 // The panel reads the same per-sample view model the grid renders, rather than going back to the raw model
-// outputs. That is what keeps the panel's numbers and the grid's Quality and Read recovery columns from being
-// two independent derivations of one QC row.
+// outputs, so the panel's numbers and the grid's Quality and Read recovery columns are not two independent
+// derivations of one QC row.
 const sampleData = computed(() => {
   if (sampleId.value === undefined) return undefined;
   return sampleResults.value?.find((result) => result.sampleId === sampleId.value);
 });
 
-// Visual Report is the default tab, as in mixcr-clonotyping. Opening a finished sample should land on what
-// happened to its reads, not on a log the reader has no reason to open once the sample is green.
+// Visual Report is the default tab. Opening a finished sample should land on what happened to its reads,
+// not on a log the reader has no reason to open once the sample is green.
 type TabId = "visualReport" | "qc" | "logs";
 const currentTab = ref<TabId>("visualReport");
 const tabOptions: SimpleOption<TabId>[] = [

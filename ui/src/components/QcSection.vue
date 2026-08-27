@@ -18,6 +18,20 @@ const data = reactive({
 
 const tag = computed(() => qcStatusTag(props.value.status));
 
+// What went into the number, folded with the description. Two measurements take more than one form and
+// the value alone cannot say which: the sticky count is a count of cells above a declared gate OR the
+// median of the readings where none is declared, and every distribution-shaped measurement prints its
+// median while its deciles ride here. A reader who cannot see this reads one form as the other.
+//
+// Rendered as written, only re-joined: the parts are `key=value` pairs and bare markers such as
+// `noGateDeclared`, which say what they mean without a second vocabulary here to keep in step.
+const detailParts = computed(() =>
+  (props.value.detail ?? "")
+    .split("|")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0),
+);
+
 // One rule for every measurement: the set carries no unit, so nothing here can format per measurement without
 // keeping a second copy of the software's set. Magnitude sets the precision -- no fractional part at a hundred
 // and above, three places below it. A non-zero value under a thousandth goes out in exponential form; rounded
@@ -54,8 +68,8 @@ const notes = computed(() => {
   <div class="qc-section" :class="{ expanded: data.expanded }">
     <div class="qc-section__status" @click.stop="data.expanded = !data.expanded">
       <PlStatusTag v-if="tag" :type="tag" />
-      <!-- No line stands behind this measurement, so it carries no status, and there is no fourth word for
-           that. The em-dash marks the absence; the value or the reason beside it says which case it is. -->
+      <!-- No line stands behind this measurement, so it carries no status. The em-dash marks the absence;
+                 the value or the reason beside it says which case it is. -->
       <span v-else class="qc-section__no-status">—</span>
     </div>
     <div class="qc-section__text">
@@ -64,6 +78,7 @@ const notes = computed(() => {
       </div>
       <div v-for="(note, i) in notes" :key="i" class="qc-section__note">{{ note }}</div>
       <div class="qc-section__description">{{ props.value.counts }}</div>
+      <div v-if="detailParts.length" class="qc-section__detail">{{ detailParts.join(" · ") }}</div>
     </div>
   </div>
 </template>
@@ -130,6 +145,18 @@ const notes = computed(() => {
   color: var(--color-txt-03);
   line-height: 20px;
   white-space: pre-wrap;
+  margin-top: 4px;
+}
+
+/* Folded with the description, so the row stays one line until a reader opens it. */
+.qc-section__detail {
+  display: var(--display);
+  font-family: var(--font-family-monospace, monospace);
+  font-size: 12px;
+  color: var(--color-txt-03);
+  line-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   margin-top: 4px;
 }
 

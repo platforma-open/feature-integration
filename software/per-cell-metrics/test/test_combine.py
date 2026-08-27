@@ -15,8 +15,8 @@ from verdict import Admissibility, State, combine_tags_to_identities, gate_cells
 B, N, U, NA = (State.BOUND.value, State.NOT_BOUND.value, State.UNRELIABLE.value, State.NEVER_ASKED.value)
 
 
-# No setId column: `combine_cells` derives which set a row belongs to from
-# `cells_by_set` alone, matching `read_states`' actual output shape.
+# No setId column: `combine_cells` derives which set a row belongs to from `cells_by_set` alone,
+# matching `read_states`' actual output shape.
 _STATES_SCHEMA = {
     "sampleId": pl.String,
     "cellId": pl.String,
@@ -34,8 +34,7 @@ def _row(out, identity):
 
 
 # A permissive admissibility used by every test whose cells all have an explicit row in `states`. No
-# cell is silent, so asked == observed for every identity and the silent terms are 0 regardless of
-# what this holds.
+# cell is silent, so asked == observed for every identity and the silent terms are 0 regardless.
 _NEUTRAL = Admissibility({}, set())
 
 
@@ -66,9 +65,8 @@ def test_a_tie_cannot_be_settled():
 
 
 def test_a_three_way_split_that_ties_at_the_top_is_also_unreliable():
-    # Not just the minimal 1-vs-1 tie: three cells settle bound, three settle
-    # not bound. The tie check must compare the leading counts, not special-
-    # case a count of one.
+    # Not just the minimal 1-vs-1 tie: three cells settle bound, three settle not bound. The tie check
+    # must compare the leading counts, not special-case a count of one.
     df = _states([("S1", f"b{i}", "A", B) for i in range(3)] + [("S1", f"n{i}", "A", N) for i in range(3)])
     cells_by_set = {"s1": [("S1", f"b{i}") for i in range(3)] + [("S1", f"n{i}") for i in range(3)]}
     r = _row(combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL), "A")
@@ -85,13 +83,12 @@ def test_never_asked_comes_only_from_not_being_offered():
     )
     r = _row(out, "Z")
     assert r["state"] == NA
-    assert r["cellsCouldAnswer"] == 0
+    assert r["cellsAsked"] == 0
     assert r["unreliableReason"] == SetUnreliableReason.NEVER_OFFERED.value
 
 
 def test_an_offered_identity_nobody_bound_is_not_bound_not_never_asked():
-    # Explicit rows, every one not-bound: offered, everybody read zero, so
-    # the verdict is not bound, never never-asked.
+    # Explicit rows, every one not-bound: offered, everybody read zero, so the verdict is not bound.
     df = _states([("S1", "c1", "A", N), ("S1", "c2", "A", N)])
     cells_by_set = {"s1": [("S1", "c1"), ("S1", "c2")]}
     r = _row(combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL), "A")
@@ -99,11 +96,9 @@ def test_an_offered_identity_nobody_bound_is_not_bound_not_never_asked():
 
 
 def test_silent_cells_vote_an_antigen_every_cell_failed_still_reads_not_bound():
-    # The defect this reduction exists to avoid: five cells asked about A, none has a row in `states`
-    # at all, because tag-stat never observed a reading for any of them, and all five are admissible.
-    # Silent admissible cells resolve not bound, so the set must read not bound with all five voting.
-    # Never unreliable, which is what happens if silent cells are simply excluded from the tally, and
-    # never never-asked.
+    # The defect this reduction exists to avoid: five cells asked about A, none has a row in `states` at
+    # all, and all five are admissible. Silent admissible cells resolve not bound, so the set must read not
+    # bound with all five voting -- never unreliable, which is what happens if silent cells are excluded.
     df = _states([])
     members = [("S1", f"c{i}") for i in range(5)]
     cells_by_set = {"s1": members}
@@ -111,15 +106,20 @@ def test_silent_cells_vote_an_antigen_every_cell_failed_still_reads_not_bound():
     r = _row(combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility), "A")
     assert r["state"] == N
     assert r["cellsAnswered"] == 5
-    assert r["cellsCouldAnswer"] == 5
+    assert r["cellsAsked"] == 5
     assert r["agreement"] == 1.0
 
 
-def test_unsettled_cells_do_not_vote_but_do_count_as_could_answer():
+def test_unsettled_cells_do_not_vote_but_were_still_asked():
+    # Two different sets. The question was put to three cells, and one of them could answer.
     df = _states([("S1", "c1", "A", B), ("S1", "c2", "A", U), ("S1", "c3", "A", U)])
     cells_by_set = {"s1": [("S1", "c1"), ("S1", "c2"), ("S1", "c3")]}
     r = _row(combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL), "A")
-    assert r["state"] == B and r["cellsAnswered"] == 1 and r["cellsCouldAnswer"] == 3
+    assert r["state"] == B and r["cellsAnswered"] == 1 and r["cellsAsked"] == 3
+    # Agreement is the share of the VOTING cells holding the state the verdict took, so the denominator
+    # is the one cell that could answer and not the three that were asked. This is the only row in the
+    # suite where the two differ, so it is the only place the denominator can be pinned at all.
+    assert r["agreement"] == 1.0
 
 
 def test_a_verdict_may_rest_on_one_cell_and_says_so():
@@ -139,8 +139,7 @@ def test_below_min_voters_is_unreliable_when_raised():
 
 
 def test_exactly_min_voters_settles():
-    # The named value satisfies the condition it names, as elsewhere in this
-    # project: two settled votes with min_voters=2 must settle, not fail.
+    # The named value satisfies the condition it names: two settled votes with min_voters=2 must settle.
     df = _states([("S1", "c1", "A", B), ("S1", "c2", "A", B)])
     cells_by_set = {"s1": [("S1", "c1"), ("S1", "c2")]}
     r = _row(combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL, min_voters=2), "A")
@@ -155,8 +154,8 @@ def test_narrow_majority_stands_and_reports_how_narrow():
 
 
 def test_exactly_min_agreement_settles_when_raised():
-    # 3 bound, 1 not bound -> agreement 0.75. Raising min_agreement to
-    # exactly 0.75 must still settle: the boundary belongs to the pass side.
+    # 3 bound, 1 not bound -> agreement 0.75. Raising min_agreement to exactly 0.75 must still settle:
+    # the boundary belongs to the pass side.
     df = _states([("S1", f"b{i}", "A", B) for i in range(3)] + [("S1", "n0", "A", N)])
     cells_by_set = {"s1": [("S1", f"b{i}") for i in range(3)] + [("S1", "n0")]}
     r = _row(combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL, min_agreement=0.75), "A")
@@ -164,9 +163,8 @@ def test_exactly_min_agreement_settles_when_raised():
 
 
 def test_just_below_min_agreement_is_below_agreement_floor_not_tie():
-    # A real majority exists here (3 of 4) -- it is refused only because the
-    # operator raised min_agreement above it. That is a different reason
-    # than a tie, which has no majority to refuse.
+    # A real majority exists here (3 of 4) -- it is refused only because the operator raised
+    # min_agreement above it. That is a different reason than a tie, which has no majority to refuse.
     df = _states([("S1", f"b{i}", "A", B) for i in range(3)] + [("S1", "n0", "A", N)])
     cells_by_set = {"s1": [("S1", f"b{i}") for i in range(3)] + [("S1", "n0")]}
     r = _row(combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL, min_agreement=0.76), "A")
@@ -175,11 +173,9 @@ def test_just_below_min_agreement_is_below_agreement_floor_not_tie():
 
 
 def test_a_genuine_tie_still_reads_tie_even_when_min_agreement_would_also_fail_it():
-    # A fixture-coincidence trap: a tie's agreement is exactly 0.5, so any min_agreement above 0.5
-    # would ALSO fail it, and a fixture where both conditions hold cannot tell which branch produced
-    # the answer. Raise min_agreement to 0.6 on the same 1-vs-1 tie from test_a_tie_cannot_be_settled
-    # and confirm the reason is still TIE, not BELOW_AGREEMENT_FLOOR. The tie check must run and win
-    # regardless of where the floor sits.
+    # A fixture-coincidence trap: a tie's agreement is exactly 0.5, so any min_agreement above 0.5 would
+    # ALSO fail it. Raising min_agreement to 0.6 on the same 1-vs-1 tie confirms the reason is still TIE.
+    # The tie check must run and win regardless of where the floor sits.
     df = _states([("S1", "c1", "A", B), ("S1", "c2", "A", N)])
     cells_by_set = {"s1": [("S1", "c1"), ("S1", "c2")]}
     r = _row(combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL, min_agreement=0.6), "A")
@@ -188,10 +184,9 @@ def test_a_genuine_tie_still_reads_tie_even_when_min_agreement_would_also_fail_i
 
 
 def test_set_with_every_cell_set_aside_is_unreliable_through_the_real_pipeline():
-    # Driven through read_states, not fed a synthetic UNRELIABLE row. A gate excludes both of this
-    # set's cells, read_states produces the real UNRELIABLE rows from that, and combine_cells must
-    # still resolve the set to unreliable with reason all-cells-gated -- derived from the cells' own
-    # UnreliableReason.GATED, not hard-coded.
+    # Driven through read_states, not fed a synthetic UNRELIABLE row. A gate excludes both of this set's
+    # cells, and combine_cells must resolve the set to unreliable with reason all-cells-gated -- derived
+    # from the cells' own UnreliableReason.GATED, not hard-coded.
     counts = pl.DataFrame(
         [("S1", "c1", "TAG", 500), ("S1", "c2", "TAG", 500)],
         orient="row",
@@ -203,19 +198,17 @@ def test_set_with_every_cell_set_aside_is_unreliable_through_the_real_pipeline()
     admissibility = Admissibility(reference, gated)
     per_cell = read_states(identities, admissibility, cutoff=75.0)
 
-    # No setId to attach: which set these rows belong to comes from
-    # cells_by_set below, not from a column on states.
+    # No setId to attach: which set these rows belong to comes from cells_by_set below.
     states = per_cell.select("sampleId", "cellId", "identity", "state")
     cells_by_set = {"s1": [("S1", "c1"), ("S1", "c2")]}
     r = _row(combine_cells(states, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility), "A")
-    assert r["state"] == U and r["cellsCouldAnswer"] == 2 and r["cellsAnswered"] == 0
+    assert r["state"] == U and r["cellsAsked"] == 2 and r["cellsAnswered"] == 0
     assert r["unreliableReason"] == SetUnreliableReason.ALL_CELLS_GATED.value
 
 
 def test_all_cells_gated_is_not_reported_when_the_reason_mix_is_not_unanimous():
-    # One cell gated, one with no comparator at all: the set-wide reason is
-    # not "all cells gated" (it is not true) but the comparator failure that
-    # is present, per _dominant_reason's documented priority.
+    # One cell gated, one with no comparator at all: the set-wide reason is not "all cells gated" (it is
+    # not true) but the comparator failure that is present, per _dominant_reason's priority.
     df = _states([])
     members = [("S1", "c1"), ("S1", "c2")]
     cells_by_set = {"s1": members}
@@ -226,24 +219,22 @@ def test_all_cells_gated_is_not_reported_when_the_reason_mix_is_not_unanimous():
 
 
 def test_cellscouldanswer_is_not_a_row_count():
-    # THE defect this reduction exists to fix. 40 cells. Only 3 have a row in
-    # `states`, the other 37 are silent and admissible. cellsCouldAnswer must
-    # reflect all 40 cells asked (their sample offered A), never the 3 rows.
+    # THE defect this reduction exists to fix. 40 cells. Only 3 have a row in `states`, the other 37 are
+    # silent and admissible. cellsAsked must reflect all 40 cells asked, never the 3 rows.
     explicit = [("S1", "c0", "A", B), ("S1", "c1", "A", B), ("S1", "c2", "A", N)]
     df = _states(explicit)
     members = [("S1", "c0"), ("S1", "c1"), ("S1", "c2")] + [("S1", f"s{i}") for i in range(37)]
     cells_by_set = {"s1": members}
     admissibility = Admissibility({k: 5 for k in members}, set())
     r = _row(combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility), "A")
-    assert r["cellsCouldAnswer"] == 40  # not 3
+    assert r["cellsAsked"] == 40  # not 3
     assert r["cellsAnswered"] == 40  # 2 explicit bound + 1 explicit not-bound + 37 silent not-bound
     assert r["state"] == N  # 38 not-bound votes beat 2 bound
 
 
 def test_a_set_spanning_two_panels_counts_only_the_asked_cells_and_does_not_inflate_silent_unreliable():
-    # S1 offers A, S2 offers B (not A). The set holds cells from both. For
-    # identity A: cellsCouldAnswer must count only S1's cells, and S2's gated
-    # cell -- which never offered A -- must not inflate silentUnreliable at A.
+    # S1 offers A, S2 offers B (not A). The set holds cells from both. For identity A: cellsAsked
+    # must count only S1's cells, and S2's gated cell must not inflate silentUnreliable at A.
     df = _states([])
     members = [("S1", "c1"), ("S1", "c2"), ("S2", "c3"), ("S2", "c4")]
     cells_by_set = {"s1": members}
@@ -253,58 +244,49 @@ def test_a_set_spanning_two_panels_counts_only_the_asked_cells_and_does_not_infl
     out = combine_cells(df, {"A", "B"}, {"S1": {"A"}, "S2": {"B"}}, cells_by_set, admissibility)
 
     row_a = _row(out, "A")
-    assert row_a["cellsCouldAnswer"] == 2  # only S1's two cells, not all four
+    assert row_a["cellsAsked"] == 2  # only S1's two cells, not all four
     assert row_a["state"] == N  # both S1 cells silent and admissible -> not bound
     assert row_a["cellsAnswered"] == 2
 
     row_b = _row(out, "B")
-    assert row_b["cellsCouldAnswer"] == 2  # only S2's two cells
-    # S2's gated cell counts against B (which S2 offers), and its silent
-    # not-bound cell (c4) settles: one voter, one vote, not bound.
+    assert row_b["cellsAsked"] == 2  # only S2's two cells
+    # S2's gated cell counts against B (which S2 offers), and its silent not-bound cell (c4) settles.
     assert row_b["cellsAnswered"] == 1
     assert row_b["state"] == N
 
 
 def test_a_row_for_a_cell_no_set_lists_is_ignored():
-    # A stray row for a cell absent from every set's membership must not
-    # vote: cellsAnswered must never exceed cellsCouldAnswer. Before the fix,
-    # a stray row like this counted toward the set it happened to name in a
-    # setId column. There is no such column now, only cells_by_set, and this
-    # cell is not in it.
+    # A stray row for a cell absent from every set's membership must not vote: cellsAnswered must never
+    # exceed cellsAsked. Before the fix, a stray row counted toward the set it happened to name in a
+    # setId column. There is no such column now, only cells_by_set.
     df = _states([("S1", "c1", "A", B), ("S1", "stray", "A", B)])
     cells_by_set = {"s1": [("S1", "c1")]}
     r = _row(combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL), "A")
-    assert r["cellsCouldAnswer"] == 1
+    assert r["cellsAsked"] == 1
     assert r["cellsAnswered"] == 1
-    assert r["cellsAnswered"] <= r["cellsCouldAnswer"]
+    assert r["cellsAnswered"] <= r["cellsAsked"]
 
 
 def test_a_cell_in_two_sets_fails_naming_cells_by_set():
-    # A cell listed under two different set ids is a malformed cells_by_set,
-    # not a silent_tally precondition violation: the failure must name the
-    # thing that is actually wrong.
+    # A cell listed under two different set ids is a malformed cells_by_set, not a silent_tally
+    # precondition violation: the failure must name the thing that is actually wrong.
     cells_by_set = {"s1": [("S1", "c1")], "s2": [("S1", "c1")]}
     df = _states([])
-    # ValueError rather than AssertionError, and the type is the point: an `assert` is stripped
-    # under -O, and this guard stripped does not crash -- it returns a wrong answer. Pinning the
-    # type here is what keeps it from quietly becoming strippable again.
+    # ValueError rather than AssertionError, and the type is the point: an `assert` is stripped under -O,
+    # and this guard stripped does not crash -- it returns a wrong answer.
     with pytest.raises(ValueError, match="cells_by_set"):
         combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL)
 
 
 def test_dominant_reason_raises_rather_than_falling_through_to_thin_comparator():
-    # A malformed but constructible input: `states` claims this cell is
-    # UNRELIABLE while `admissibility` says it is fine -- a real comparator,
-    # not gated, not thin. That contradiction is what lets an admissible key
-    # reach _dominant_reason and fall through to NO_COMPARATOR. It must raise
-    # instead of reporting a comparator problem for a cell whose comparator is
-    # fine.
+    # A malformed but constructible input: `states` claims this cell is UNRELIABLE while `admissibility`
+    # says it is fine. That contradiction is what lets an admissible key reach _dominant_reason and fall
+    # through to NO_COMPARATOR.
     df = _states([("S1", "c1", "A", U)])
     cells_by_set = {"s1": [("S1", "c1")]}
     admissibility = Admissibility({("S1", "c1"): 10}, set())
-    # ValueError rather than AssertionError, and the type is the point: an `assert` is stripped
-    # under -O, and this guard stripped does not crash -- it returns a wrong answer. Pinning the
-    # type here is what keeps it from quietly becoming strippable again.
+    # ValueError rather than AssertionError, and the type is the point: an `assert` is stripped under -O,
+    # and this guard stripped does not crash -- it returns a wrong answer.
     with pytest.raises(ValueError):
         combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility)
 
@@ -355,26 +337,24 @@ def test_several_bound_competitors_are_all_named():
 
 
 def test_was_competed_is_the_string_false_never_null_with_no_declared_groups():
-    # wasCompeted is the predicate a downstream statement filters on. With no contending groups at
-    # all, every row's flag must still be the literal string "false". A null here would make
-    # "wasCompeted == false" fail to match the exact rows the flag exists to describe.
+    # wasCompeted is the predicate a downstream statement filters on. With no contending groups at all,
+    # every row's flag must still be the literal string "false". A null would make "wasCompeted == false"
+    # fail to match the exact rows the flag exists to describe.
     out = attach_competitor_notes(_verdicts([("s1", "A", B), ("s1", "C", N)]), [])
     assert out["wasCompeted"].to_list() == ["false", "false"]
     assert out["wasCompeted"].dtype == pl.String
 
 
 def test_was_competed_is_the_string_false_never_null_with_declared_groups_present():
-    # Same requirement, but with a declared group in play and a row that simply has no bound rival:
-    # the flag column must not switch to null just because contention was possible elsewhere in the
-    # frame.
+    # Same requirement, with a declared group in play and a row that has no bound rival: the flag column
+    # must not switch to null just because contention was possible elsewhere in the frame.
     out = attach_competitor_notes(_verdicts([("s1", "A", N), ("s1", "C", N)]), [{"A", "C"}])
     assert out["wasCompeted"].to_list() == ["false", "false"]
 
 
 def test_no_note_on_an_unreliable_reading():
-    # An UNRELIABLE identity made no settled comparison, so it has no
-    # negative for a competitor to sit beside -- naming one would assert a
-    # comparison this run never made.
+    # An UNRELIABLE identity made no settled comparison, so it has no negative for a competitor to sit
+    # beside.
     out = attach_competitor_notes(_verdicts([("s1", "A", B), ("s1", "C", U)]), [{"A", "C"}])
     r = _competitor_row(out, "C")
     assert r["competedWith"] is None
@@ -389,10 +369,8 @@ def test_no_note_on_a_never_asked_reading():
 
 
 def test_overlapping_declared_groups_union_their_bound_competitors():
-    # C sits in two declared groups, {A, C} and {C, D}, with A and D each
-    # bound in only one of them. The note names both: the union of bound
-    # competitors across every group that contains the identity, not just
-    # the first matching group.
+    # C sits in two declared groups, {A, C} and {C, D}, with A and D each bound in only one of them. The
+    # note names the union of bound competitors across every group that contains the identity.
     out = attach_competitor_notes(
         _verdicts([("s1", "A", B), ("s1", "D", B), ("s1", "C", N)]),
         [{"A", "C"}, {"C", "D"}],
@@ -401,9 +379,8 @@ def test_overlapping_declared_groups_union_their_bound_competitors():
 
 
 def test_competitor_names_are_joined_in_sorted_order():
-    # Three bound rivals whose declared-group and bound-set iteration order
-    # is not alphabetical. Only a sorted join reliably reads "Bee, Mango,
-    # Zebra" run after run. A byte-stable column depends on this.
+    # Three bound rivals whose declared-group and bound-set iteration order is not alphabetical. Only a
+    # sorted join reliably reads "Bee, Mango, Zebra" run after run.
     out = attach_competitor_notes(
         _verdicts([("s1", "Zebra", B), ("s1", "Mango", B), ("s1", "Bee", B), ("s1", "C", N)]),
         [{"Zebra", "Mango", "Bee", "C"}],
@@ -449,12 +426,9 @@ def test_each_set_counted_separately():
 
 
 def test_offered_equals_settled_plus_unsettled_with_all_four_states_present():
-    # A fixture carrying BOUND, NOT_BOUND, UNRELIABLE, and NEVER_ASKED at
-    # once, so the arithmetic relationship is pinned rather than incidentally
-    # true because some state never appeared. A predicate that counts the
-    # wrong states (say offeredCount including NEVER_ASKED, or settledCount
-    # including UNRELIABLE) passes every test above that uses only two or
-    # three states. This one does not let that slip through.
+    # A fixture carrying BOUND, NOT_BOUND, UNRELIABLE, and NEVER_ASKED at once, so the arithmetic
+    # relationship is pinned rather than incidentally true. A predicate that counts the wrong states passes
+    # every test above that uses only two or three states.
     v = _v([("s1", "a", B), ("s1", "b", N), ("s1", "c", U), ("s1", "d", NA)])
     r = set_counts(v).row(0, named=True)
     assert r["offeredCount"] == r["settledCount"] + r["unsettledCount"]
@@ -466,11 +440,9 @@ def test_offered_equals_settled_plus_unsettled_with_all_four_states_present():
 
 
 def test_a_set_asked_nothing_reports_all_zero_and_a_reader_must_guard_the_divide():
-    # Every position NEVER_ASKED: offeredCount is 0, so a downstream reader
-    # computing boundCount / offeredCount would divide by zero. This pins
-    # what the row emits -- all zeros -- rather than leaving the shape
-    # undocumented. The guard against the zero is the caller's job, since
-    # this function cannot produce a rate for a set that was asked nothing.
+    # Every position NEVER_ASKED: offeredCount is 0, so a downstream reader computing
+    # boundCount / offeredCount would divide by zero. This pins what the row emits -- all zeros. The guard
+    # against the zero is the caller's job.
     v = _v([("s1", "a", NA), ("s1", "b", NA)])
     r = set_counts(v).row(0, named=True)
     assert r["boundCount"] == 0
@@ -481,9 +453,8 @@ def test_a_set_asked_nothing_reports_all_zero_and_a_reader_must_guard_the_divide
 
 def test_a_set_entirely_unreliable_reads_as_nothing_settled_not_as_a_bind_failure():
     # All positions UNRELIABLE: boundCount=0, settledCount=0, unsettledCount=N. This is the shape a
-    # fully-gated or comparator-less set produces, and it is the one most likely to be misread
-    # downstream as "bound none of N". The honest reading is that nothing settled, since no comparison
-    # was ever made.
+    # fully-gated or comparator-less set produces, and the one most likely to be misread downstream as
+    # "bound none of N".
     v = _v([("s1", "a", U), ("s1", "b", U), ("s1", "c", U)])
     r = set_counts(v).row(0, named=True)
     assert r["boundCount"] == 0
@@ -493,9 +464,8 @@ def test_a_set_entirely_unreliable_reads_as_nothing_settled_not_as_a_bind_failur
 
 
 def test_output_row_order_is_deterministic_regardless_of_input_row_order():
-    # This becomes a p-column, so it must be byte-stable: the same verdicts
-    # fed in several shuffled row orders must produce one identical output,
-    # including row order, not merely equal counts.
+    # This becomes a p-column, so it must be byte-stable: the same verdicts fed in several shuffled row
+    # orders must produce one identical output, including row order.
     rows = (
         [("s3", "a", B), ("s3", "b", N)]
         + [("s1", "a", B), ("s1", "b", U), ("s1", "c", NA)]
@@ -513,7 +483,7 @@ def test_output_row_order_is_deterministic_regardless_of_input_row_order():
 
 # self_disagreement's states frame is keyed by `key`, an identity or a tag according to `level`, and
 # never by `identity`. It is the same sparse per-cell shape `combine_cells` reads, minus a setId
-# column: set membership comes only from `cells_by_set`, matching that function's own rule.
+# column: set membership comes only from `cells_by_set`.
 _KEY_STATES_SCHEMA = {"sampleId": pl.String, "cellId": pl.String, "key": pl.String, "state": pl.String}
 
 
@@ -539,8 +509,7 @@ def test_a_set_whose_cells_differ_disagrees():
     states = _key_states([("S1", "c1", "A", B), ("S1", "c2", "A", N)])
     cells_by_set = {"s1": [("S1", "c1"), ("S1", "c2")]}
     out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL)
-    # Two cells splitting one against one: one of them is the minority. Two
-    # states cap the rate at half, so an even split is the worst attainable.
+    # Two cells splitting one against one: one of them is the minority. Two states cap the rate at half.
     assert _row_for_key(out, "A")["disagreementRate"] == 0.5
 
 
@@ -554,10 +523,8 @@ def test_singletons_do_not_contribute():
 
 
 def test_unsettled_cells_are_not_evaluable():
-    # c2's row is UNRELIABLE, not silent: it has an explicit row and so is
-    # not asked through `silent_tally`, but UNRELIABLE never counts as a
-    # settled vote either. One evaluable cell remains -- a singleton -- so
-    # the position does not contribute.
+    # c2's row is UNRELIABLE, not silent: it has an explicit row and so is not asked through
+    # `silent_tally`, but UNRELIABLE never counts as a settled vote either. One evaluable cell remains.
     states = _key_states([("S1", "c1", "A", B), ("S1", "c2", "A", U)])
     cells_by_set = {"s1": [("S1", "c1"), ("S1", "c2")]}
     out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL)
@@ -565,10 +532,8 @@ def test_unsettled_cells_are_not_evaluable():
 
 
 def test_pooled_disagreement_counts_cells_not_sets():
-    # Two sets at one tag. s1 splits 4 bound and 1 not bound, so one cell sits in
-    # the minority. s2 splits 1 and 1, so one cell does too. Pooled: 2 minority
-    # cells over 7 compared. A per-set share would read 2 of 2 -- every set
-    # disagrees -- which says nothing about how much of the tag is affected.
+    # Two sets at one tag. s1 splits 4 bound and 1 not bound, s2 splits 1 and 1, so one cell of each sits
+    # in the minority. Pooled: 2 minority cells over 7 compared. A per-set share would read 2 of 2.
     states = _key_states(
         [("S1", f"a{i}", "T1", B) for i in range(4)]
         + [("S1", "a4", "T1", N), ("S1", "b1", "T1", B), ("S1", "b2", "T1", N)]
@@ -584,8 +549,8 @@ def test_pooled_disagreement_counts_cells_not_sets():
 
 
 def test_pooled_disagreement_caps_at_half():
-    # A minority is the smaller side by definition, and there are two states, so
-    # an even split is the worst value attainable. Nothing can exceed one half.
+    # A minority is the smaller side by definition, and there are two states, so an even split is the
+    # worst value attainable.
     states = _key_states([("S1", f"c{i}", "T1", B) for i in range(3)] + [("S1", f"d{i}", "T1", N) for i in range(3)])
     cells_by_set = {"s1": [("S1", f"c{i}") for i in range(3)] + [("S1", f"d{i}") for i in range(3)]}
     out = self_disagreement(states, {"T1"}, {"S1": {"T1"}}, cells_by_set, _NEUTRAL)
@@ -593,8 +558,7 @@ def test_pooled_disagreement_caps_at_half():
 
 
 def test_a_tag_no_set_could_compare_says_so_rather_than_reading_zero():
-    # Every set is a singleton, so nothing can be compared. Zero would read as
-    # agreement, which is the opposite of what is known.
+    # Every set is a singleton, so nothing can be compared. Zero would read as agreement.
     states = _key_states([("S1", "c1", "T1", B), ("S1", "c2", "T1", B)])
     cells_by_set = {"s1": [("S1", "c1")], "s2": [("S1", "c2")]}
     out = self_disagreement(states, {"T1"}, {"S1": {"T1"}}, cells_by_set, _NEUTRAL)
@@ -604,8 +568,8 @@ def test_a_tag_no_set_could_compare_says_so_rather_than_reading_zero():
 
 
 def test_the_figure_is_measured_at_the_tag_and_marked_diagnostic_only():
-    # One level only. The identity-level figure has nothing to compare against,
-    # so it cannot separate a faulty reagent from a panel of weak binders.
+    # One level only. The identity-level figure has nothing to compare against, so it cannot separate a
+    # faulty reagent from a panel of weak binders.
     states = _key_states([("S1", "c1", "AAAA", B)])
     cells_by_set = {"s1": [("S1", "c1")]}
     tag = self_disagreement(states, {"AAAA"}, {"S1": {"AAAA"}}, cells_by_set, _NEUTRAL)
@@ -616,9 +580,8 @@ def test_the_figure_is_measured_at_the_tag_and_marked_diagnostic_only():
 
 
 def test_a_set_too_small_to_compare_is_left_out_of_both_counts():
-    # s1 contributes both its cells and one minority cell. s2 is a singleton at
-    # A: it has no minority of its own, so it enters neither term. Pooling needs
-    # no cutoff for that -- the two-cell condition does the whole job.
+    # s1 contributes both its cells and one minority cell. s2 is a singleton at A: it has no minority of
+    # its own, so it enters neither term. The two-cell condition does the whole job.
     states = _key_states([("S1", "c1", "A", B), ("S1", "c2", "A", N), ("S1", "c3", "A", B)])
     cells_by_set = {"s1": [("S1", "c1"), ("S1", "c2")], "s2": [("S1", "c3")]}
     out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL)
@@ -629,27 +592,23 @@ def test_a_set_too_small_to_compare_is_left_out_of_both_counts():
 
 def test_silent_cells_flip_agreement_into_disagreement():
     # THE defect this generalisation exists to fix: a set with 2 observed bound cells and 38 silent,
-    # admissible not-bound cells. Counting rows on the sparse frame sees only the 2 bound rows and
-    # calls this agreement. The 38 silent cells are settled not-bound votes, and the set actually
-    # disagrees as badly as it is possible to.
+    # admissible not-bound cells. Counting rows on the sparse frame sees only the 2 bound rows and calls
+    # this agreement.
     members = [("S1", "c0"), ("S1", "c1")] + [("S1", f"s{i}") for i in range(38)]
     states = _key_states([("S1", "c0", "A", B), ("S1", "c1", "A", B)])
     cells_by_set = {"s1": members}
     admissibility = Admissibility({k: 5 for k in members}, set())
     out = self_disagreement(states, {"A"}, {"S1": {"A"}}, cells_by_set, admissibility)
     r = _row_for_key(out, "A")
-    # 40 evaluable cells: 38 silent not-bound and 2 observed bound. The majority
-    # is the 38, so the 2 bound cells are the minority. Counting rows on the
-    # sparse frame instead would see only those 2, call them a set that agrees,
-    # and report nothing to compare at all.
+    # 40 evaluable cells: 38 silent not-bound and 2 observed bound. The majority is the 38, so the 2
+    # bound cells are the minority.
     assert (r["minorityCells"], r["cellsCompared"]) == (2, 40)
     assert r["disagreementRate"] == pytest.approx(0.05)
 
 
 def test_one_observed_positive_among_many_silent_negatives_is_evaluable():
-    # A single explicit row is a singleton by row count alone, but 19 silent,
-    # admissible cells settle not-bound alongside it: 20 evaluable cells, not
-    # a discarded singleton.
+    # A single explicit row is a singleton by row count alone, but 19 silent, admissible cells settle
+    # not-bound alongside it: 20 evaluable cells, not a discarded singleton.
     members = [("S1", "c0")] + [("S1", f"s{i}") for i in range(19)]
     states = _key_states([("S1", "c0", "A", B)])
     cells_by_set = {"s1": members}
@@ -662,10 +621,9 @@ def test_one_observed_positive_among_many_silent_negatives_is_evaluable():
 
 
 def test_all_silent_not_bound_cells_agree():
-    # The mirror of the defect test: every cell of the set is silent and
-    # admissible, so every one settles not-bound. All evaluable cells give
-    # the same settled state, so the set agrees with itself -- this must not
-    # be over-corrected into calling every silent set a disagreement.
+    # The mirror of the defect test: every cell of the set is silent and admissible, so every one settles
+    # not-bound and the set agrees with itself. This must not be over-corrected into calling every silent
+    # set a disagreement.
     members = [("S1", f"s{i}") for i in range(5)]
     states = _key_states([])
     cells_by_set = {"s1": members}
@@ -703,10 +661,9 @@ def test_self_disagreement_output_is_deterministic_regardless_of_input_row_order
 
 
 def test_a_position_reports_its_bound_cells_even_when_the_majority_is_not_bound():
-    # 206's expansion shows "at each identity, how many of its cells read bound". That is neither the
-    # majority nor cellsAnswered: a 3-of-10 minority is exactly what a reader opens the expansion to
-    # see, and it has to survive a "not bound" verdict on the same row. Deriving it from
-    # `agreement * cellsAnswered` would give 7 here -- the majority's share, of the wrong state.
+    # The expansion shows "at each identity, how many of its cells read bound". That is neither the
+    # majority nor cellsAnswered: a 3-of-10 minority is what a reader opens the expansion to see, and it
+    # has to survive a "not bound" verdict. Deriving it from `agreement * cellsAnswered` would give 7.
     df = _states([("S1", f"c{i}", "A", B) for i in range(3)] + [("S1", f"c{i}", "A", N) for i in range(3, 10)])
     cells_by_set = {"s1": [("S1", f"c{i}") for i in range(10)]}
     out = combine_cells(df, {"A"}, {"S1": {"A"}}, cells_by_set, _NEUTRAL)
@@ -717,8 +674,8 @@ def test_a_position_reports_its_bound_cells_even_when_the_majority_is_not_bound(
 
 
 def test_a_never_asked_position_reports_no_bound_cells():
-    # No tally exists for a position the experiment never put to the clonotype, and 0 is the honest
-    # count rather than a null the punch value would render as an unreadable field.
+    # No tally exists for a position the experiment never put to the clonotype, and 0 is the honest count
+    # rather than a null the punch value would render as an unreadable field.
     df = _states([("S1", "c1", "A", B)])
     out = combine_cells(df, {"A", "Z"}, {"S1": {"A"}}, {"s1": [("S1", "c1")]}, _NEUTRAL)
     r = _row(out, "Z")
@@ -727,11 +684,9 @@ def test_a_never_asked_position_reports_no_bound_cells():
 
 
 def test_cells_not_bound_completes_cells_answered_on_every_row():
-    # cellsNotBound is not a free-standing count. SETTLED holds only BOUND and NOT_BOUND (see the
-    # module docstring's four-state model), so it is the other half of the same pair cellsBound already
-    # reports. This checks the pairing across every shape combine_cells produces -- a settled majority
-    # either way, a tie, a floor refusal, too few voters, a position with no tally at all, and a
-    # position never offered -- over every row of each frame, not one identity picked out by `_row`.
+    # cellsNotBound is not a free-standing count. SETTLED holds only BOUND and NOT_BOUND, so it is the
+    # other half of the same pair cellsBound already reports. This checks the pairing across every shape
+    # combine_cells produces, over every row of each frame.
     def _assert_invariant(out: pl.DataFrame) -> None:
         for row in out.iter_rows(named=True):
             assert row["cellsBound"] + row["cellsNotBound"] == row["cellsAnswered"], row

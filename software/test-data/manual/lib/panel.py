@@ -22,8 +22,7 @@ REAL_ANTIGENS = [
 CONTROL_BC = "CTATCTACCGGCTCG"
 
 # Per-antigen "Class" vocabulary, matching the Class column a real panel carries. The real anchors carry
-# a biologically meaningful class. Synthetic antigens default to "synthetic", and the negative control
-# is "control".
+# a biologically meaningful class. Synthetic antigens default to "synthetic", the control to "control".
 ANCHOR_CLASS = {
     "SARS-TRI-S_WT": "viral",
     "Anti-Hen_Egg_Lysozyme": "enzyme",
@@ -35,15 +34,13 @@ SPECIES_CYCLE = ("Human", "Cyno")
 
 
 def classify_antigens(names, offtarget_count):
-    """Classify an ORDERED list of non-control antigen names into the per-antigen Type / Species / Class
-    a real panel declares. The first `offtarget_count` become Off-Target and the rest become Target.
-    Species alternate Human/Cyno. Class comes from ANCHOR_CLASS for the real anchors, else "synthetic".
+    """Classify an ORDERED list of non-control antigen names into the per-antigen Type / Species / Class a
+        real panel declares. The first `offtarget_count` become Off-Target and the rest become Target. Species
+        alternate Human/Cyno. Class comes from ANCHOR_CLASS for the real anchors, else "synthetic".
 
-    Single source of the classification and the offtarget-count validation rule, shared by `build_panel`
-    and the beam-exact path so the two never drift. The negative control is NOT included -- callers add
-    it (Decoy / "" / control). Raises SystemExit if `offtarget_count` is out of range.
-
-    Returns (types, species, classes), each a dict keyed by antigen name."""
+        Single source of the classification and the offtarget-count validation rule, shared by `build_panel`
+        and the beam-exact path. The negative control is NOT included -- callers add it. Raises SystemExit if
+        `offtarget_count` is out of range. Returns (types, species, classes), each keyed by antigen name."""
     if not 0 <= offtarget_count <= len(names):
         raise SystemExit(
             f"--offtarget-count must be between 0 and the antigen count ({len(names)}); got {offtarget_count}"
@@ -57,19 +54,16 @@ def classify_antigens(names, offtarget_count):
 
 
 class Panel:
-    """An antigen panel: ordered antigen names + a name -> 15 bp barcode map that INCLUDES the
-    negative control. Replaces the old module-level ANTIGEN_NAMES / FEATURES globals so a generator
-    run is fully described by its arguments.
+    """An antigen panel: ordered antigen names + a name -> 15 bp barcode map that INCLUDES the negative
+        control.
 
-    Carries the per-antigen metadata a real panel declares — `types` (Target/Off-Target/Decoy),
-    `species` (Human/Cyno/""), `classes` (viral/enzyme/synthetic/control) — each a dict keyed by
-    feature name and INCLUDING the control. They default to sensible values so `Panel(names, feats)`
-    stays valid for any legacy construction.
+        Carries the per-antigen metadata a real panel declares -- `types` (Target/Off-Target/Decoy), `species`
+        (Human/Cyno/""), `classes` (viral/enzyme/synthetic/control) -- each keyed by feature name and INCLUDING
+        the control. They default to sensible values so `Panel(names, feats)` stays valid.
 
-    A feature may map to a LIST of barcodes (multi-barcode antigens); a bare `str` is coerced to a
-    1-element list so single-barcode construction stays backward-compatible. `combine` (feature ->
-    "sum" | "all") says how the block reads the members: "sum" adds the per-barcode UMIs, "all" (AND)
-    requires every member barcode to fire. Defaults to "sum" for every feature."""
+        A feature may map to a LIST of barcodes (multi-barcode antigens); a bare `str` is coerced to a
+        1-element list. `combine` (feature -> "sum" | "all") says how the block reads the members: "sum" adds
+        the per-barcode UMIs, "all" (AND) requires every member barcode to fire. Defaults to "sum"."""
 
     def __init__(
         self, names, features, control_name=CONTROL_NAME, types=None, species=None, classes=None, combine=None
@@ -94,11 +88,9 @@ class Panel:
 
 def _double_space_name(name):
     """Return `name` with a stray INTERNAL double space, reproducing a quirk real panels carry in antigen
-    names. Replaces the first separator ("_" / "-" / " ") with two spaces. If the name has none, injects
-    "  " near the middle. Injected at the panel SOURCE, so the name is used consistently across
-    tags.csv, feature_reference.csv, the truth tables and the VDJ/GEX name joins. A messy *label*, not
-    broken data: nothing in generation is left mismatched, and the block's whitespace-normalization
-    collapses it back."""
+        names. Replaces the first separator ("_" / "-" / " ") with two spaces, or injects "  " near the middle
+        where the name has none. Injected at the panel SOURCE, so the name is used consistently across
+        tags.csv, feature_reference.csv, the truth tables and the VDJ/GEX name joins."""
     for sep in ("_", "-", " "):
         i = name.find(sep)
         if i != -1:
@@ -108,25 +100,20 @@ def _double_space_name(name):
 
 
 def build_panel(panel_size, seed=common.ANTIGEN_SEED, offtarget_count=0, multibarcode=False, messy=False):
-    """Build a Panel of `panel_size` antigens plus 1 control. The first min(panel_size, 4) antigens are
-    the real 10x anchors. The rest are synthetic 15-mers, Hamming >= 3 from each other and the anchors
-    and control. Uses an independent RNG so the panel is identical regardless of sample or cell scale.
+    """Build a Panel of `panel_size` antigens plus 1 control. The first min(panel_size, 4) antigens are the
+        real 10x anchors. The rest are synthetic 15-mers, Hamming >= 3 from each other and the anchors and
+        control. Uses an independent RNG so the panel is identical regardless of sample or cell scale.
 
-    Per-antigen Type/Species/Class match the shape a real panel carries. The control becomes
-    Decoy/control. The first `offtarget_count` antigens become Off-Target and the rest become Target.
-    Species alternate Human/Cyno, and class comes from ANCHOR_CLASS for the real anchors, else
-    "synthetic".
+        Per-antigen Type/Species/Class match the shape a real panel carries. The control becomes Decoy/control.
+        The first `offtarget_count` antigens become Off-Target and the rest become Target.
 
-    With `multibarcode=True` the first antigen gets a SECOND barcode read out under combine="all", where
-    both members must fire, and the second antigen a second barcode under combine="sum", where the
-    per-barcode UMIs add up. Every other antigen stays single-barcode "sum". This is the shared-path
-    analogue of the libraseq fixture, so the FI multi-barcode combine logic is exercisable inside a full
-    multiomic run. The extra barcodes come from the panel RNG and are ONLY drawn in this branch, so a
-    default single-barcode panel is byte-identical to before.
+        With `multibarcode=True` the first antigen gets a SECOND barcode read out under combine="all", where
+        both members must fire, and the second antigen a second barcode under combine="sum". Every other
+        antigen stays single-barcode "sum". The extra barcodes come from the panel RNG and are ONLY drawn in
+        this branch, so a default single-barcode panel is byte-identical to before.
 
-    With `messy=True`, from --messy-metadata, the first antigen NAME gets a stray double space, so the
-    emitted metadata reproduces the whitespace inconsistency real panels carry for the normalization
-    tasks. Off by default, and byte-identical."""
+        With `messy=True`, from --messy-metadata, the first antigen NAME gets a stray double space. Off by
+        default, and byte-identical."""
     if panel_size < 1:
         raise SystemExit("panel size must be >= 1")
     prng = new_rng(seed + 7)
@@ -138,11 +125,9 @@ def build_panel(panel_size, seed=common.ANTIGEN_SEED, offtarget_count=0, multiba
         for i, bc in enumerate(extra):
             antigens.append((f"antigen_{n_real + i + 1:03d}", bc))
     if messy:
-        # --messy-metadata: give the FIRST antigen NAME a stray double space (see _double_space_name).
-        # Applied at the source so every consumer (tags.csv, feature_reference.csv, truth, the VDJ/GEX
-        # name joins) uses the same messy name and generation stays coherent. Off by default -> a clean
-        # panel is byte-identical to before. (A double-spaced real anchor no longer matches ANCHOR_CLASS,
-        # so its Class falls back to "synthetic" — fine for messy test data; Class is not asserted.)
+        # --messy-metadata: give the FIRST antigen NAME a stray double space (see _double_space_name). Applied
+        # at the source so every consumer uses the same messy name and generation stays coherent. A
+        # double-spaced real anchor no longer matches ANCHOR_CLASS, so its Class falls back to "synthetic".
         n0, bc0 = antigens[0]
         antigens[0] = (_double_space_name(n0), bc0)
     names = [n for n, _ in antigens]
@@ -171,8 +156,8 @@ def build_panel(panel_size, seed=common.ANTIGEN_SEED, offtarget_count=0, multiba
 
 def load_clear_antigens(tags_csv):
     """Clear (real) antigens = every feature in a panel CSV (tags.csv) except the negative control.
-    Panel-derived so it scales with the panel size instead of a hardcoded set. The VDJ and GEX arms
-    both build coherence on top of this, so the definition lives here in one place."""
+        Panel-derived so it scales with the panel size. The VDJ and GEX arms both build coherence on top of
+        this, so the definition lives here in one place."""
     if not os.path.exists(tags_csv):
         raise SystemExit(f"panel not found: {tags_csv}\nGenerate the antigen arm first.")
     names = set()

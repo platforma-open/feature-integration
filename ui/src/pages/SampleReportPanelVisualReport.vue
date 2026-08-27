@@ -7,15 +7,12 @@ import type { SampleResult } from "../results";
 // import { useApp } from "../app";
 // import CountHistogram from "../components/CountHistogram.vue";
 
-// The Visual Report tab: where this sample's reads went. The antigen-count half is deferred, so the
-// tab carries the read-recovery breakdown alone. RecoveryBar is already the settings object a stacked
-// bar wants ({ title, data: [{ label, value, color, description }] }), so the read-recovery half
-// presents data results.ts builds for the grid anyway.
+// The Visual Report tab: where this sample's reads went. The antigen-count half is deferred, so the tab
+// carries the read-recovery breakdown alone. RecoveryBar is already the settings object a stacked bar wants
+// ({ title, data: [{ label, value, color, description }] }).
 //
 // PlChartStackedBar, never PlAgChartStackedBarCell. The Ag* one is an ag-grid cell renderer taking
 // ICellRendererParams, so using it outside a grid would mean fabricating a fake cell params object.
-// PlChartStackedBar is the same chart's standalone form, and the grid's cell renderer is a thin wrapper
-// around its compact variant.
 const props = defineProps<{
   sampleData: SampleResult | undefined;
 }>();
@@ -30,10 +27,9 @@ const settings = computed(() => {
   return recovery === undefined ? undefined : { ...recovery, showLegends: false };
 });
 
-// Read counts and shares per segment, for the written breakdown under the chart. The descriptions results.ts
-// attaches to each segment are otherwise reachable only by hovering the bar, and the equivalent prose in the
-// grid only by hovering the column header. A reader who does neither should still learn what the segments
-// mean.
+// Read counts and shares per segment, for the written breakdown under the chart. The descriptions
+// results.ts attaches to each segment are otherwise reachable only by hovering the bar, and the equivalent
+// prose in the grid only by hovering the column header.
 const segments = computed(() => {
   const recovery = props.sampleData?.recovery;
   if (recovery === undefined) return undefined;
@@ -55,17 +51,15 @@ const segments = computed(() => {
 //
 // DEFERRED, with the template block and the three imports above. Uncomment all of them together.
 //
-// `330-the-quality-readout` asks for the shape of the antigen counts as a plot about ONE sample, so it
-// belongs with that sample rather than on the run's own page. Per TAG, because a total pools a tag that
-// bound nothing with one that bound everything and draws one hump from the two.
+// The shape of the antigen counts is a plot about ONE sample, so it belongs with that sample rather than on
+// the run's own page. Per TAG, because a total pools a tag that bound nothing with one that bound
+// everything and draws one hump from the two.
 //
-// Drawn with PlChartHistogram from precomputed bins, never the chart builder: a reader here is asked what
-// this sample's counts look like, and every axis picker is a way to stop answering that. The bins come off
-// the RAW counts, before the minimum, which is what makes this readable on a first run -- the minimum is
-// one of the things it is read in order to set.
+// Drawn with PlChartHistogram from precomputed bins, never the chart builder. The bins come off the RAW
+// counts, before the minimum, which is one of the things the plot is read in order to set.
 //
 // The model output, the `tagCountBins` JSON behind it and the `.visual-report__tag*` styles below are all
-// untouched and still live. Run quality's own fitted-background grid reads the same output.
+// untouched and still live.
 //
 // const tagBins = computed(() => app.model.outputs.tagCountBins);
 //
@@ -104,14 +98,13 @@ const segments = computed(() => {
     </div>
 
     <!-- DEFERRED: the antigen counts for this sample, one plot per barcode. Uncomment this block
-         together with `tagBins`, `panels` and the three imports in the script above.
+             together with `tagBins`, `panels` and the three imports in the script above.
 
-         Two states are told apart here. The first alert is the run having reported nothing yet. The
-         second is a report in which this sample held no counted reading on any barcode.
+             Two states are told apart here. The first alert is the run having reported nothing yet. The
+             second is a report in which this sample held no counted reading on any barcode.
 
-         `compact` drew bars only, at the same grain as the Run quality grid. This grid has no enlarge
-         action, so no panel showed an axis. Restore an enlarge action or drop `compact` if a reader
-         has to read a count off one of these.
+             `compact` drew bars only. This grid has no enlarge action, so no panel showed an axis. Restore an
+             enlarge action or drop `compact` if a reader has to read a count off one of these.
 
     <div class="visual-report__block">
       <div class="visual-report__title">Antigen count per cell, by barcode</div>

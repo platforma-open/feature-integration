@@ -3,10 +3,10 @@
 // Runs mitool parse and returns parsed.mic, parse_report.json and a live stdout stream (parseLogStream).
 // Capturing stdout through saveStdoutStream injects the rate-dependent stdout into the exec's
 // content-hashed files map and drifts every getFile off it, which throws CIDConflictError on a stale
-// re-render. It is safe here only because main.tpl persists parsedMic and parseReport, and the refine and
-// tag-stat intermediates, by content hash, pinning their CIDs so getFile resolutions stay stable across
-// re-renders. MI_PROGRESS_PREFIX makes mitool prefix its progress lines with [==PROGRESS==], which the model
-// scrapes for a live 0-100% parse bar (getProgressLogWithInfo). Mirrors blocks/peptide-extraction.
+// re-render. It is safe here only because main.tpl persists parsedMic, parseReport and the refine and
+// tag-stat intermediates by content hash, pinning their CIDs. MI_PROGRESS_PREFIX makes mitool prefix its
+// progress lines with [==PROGRESS==], which the model scrapes for a live 0-100% parse bar
+// (getProgressLogWithInfo).
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
@@ -18,11 +18,11 @@ json := import("json")
 self.defineOutputs("parsedMic", "parseReport", "parseLogStream")
 
 // :memory-from-limits sizes the JVM heap from the granted limits, which avoids an end-of-parse OOM as many
-// tag writers flush. See demultiplex-fastq.
+// tag writers flush.
 mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
 
 // mitool prefixes its progress lines with this marker (MI_PROGRESS_PREFIX) so the model can scrape a live
-// per-sample parse %. The same value peptide-extraction uses.
+// per-sample parse %.
 progressPrefix := "[==PROGRESS==]"
 
 self.body(func(inputs) {
@@ -32,8 +32,8 @@ self.body(func(inputs) {
 	mitoolCPUs := inputs.mitoolCPUs
 	memBaseGB := inputs.mitoolBaseMemGB
 	// 0 = no user override in Advanced Settings, so RAM is sized from the input reads' blob size on a floor.
-	// >0 = a fixed request. parse OOMs at end-of-parse as tag writers flush, which scales with input volume,
-	// as mixcr-clonotyping and demultiplex-fastq do. size("reads") reads only blob metadata.
+	// >0 = a fixed request. parse OOMs at end-of-parse as tag writers flush, which scales with input volume.
+	// size("reads") reads only blob metadata.
 	memOverrideGB := inputs.mitoolMemOverrideGB
 	// Preview read cap. 0 = full run. >0 = mitool parse reads only the first N reads, through --limit.
 	limitInput := is_undefined(inputs.limitInput) ? 0 : inputs.limitInput

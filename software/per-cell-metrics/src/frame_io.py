@@ -15,10 +15,9 @@ import polars as pl
 def _write_sorted(frame: pl.DataFrame, path: str, by: list[str]) -> None:
     """Write a frame in a fixed row order, header-only when it has no rows.
 
-    Every frame reaching here is built with an explicit schema, so an empty one still
-    carries its columns and writes a header. A consumer meeting a header-only frame knows
-    the step ran and found nothing. One meeting an empty file cannot tell that from a step
-    that never ran.
+    Every frame reaching here is built with an explicit schema, so an empty one still carries its
+    columns and writes a header. A consumer meeting a header-only frame knows the step ran and found
+    nothing. One meeting an empty file cannot tell that from a step that never ran.
     """
     frame.sort(by).write_csv(path)
 
@@ -41,15 +40,13 @@ def _read_columns(path: str, columns: tuple[str, ...], what: str) -> pl.DataFram
 def _read_counts(path: str) -> pl.DataFrame:
     """The counts frame, with umiCount as an integer, or a curated exit naming the bad value.
 
-    `_read_columns` reads every column as a string and fills nulls with "", so a blank cell
-    and a decimal both survive to the cast. A bare `.cast` dies there as a raw polars
-    traceback naming neither the file nor the column, the one thing a reader needs.
+    `_read_columns` reads every column as a string and fills nulls with "", so a blank cell and a
+    decimal both survive to the cast. A bare `.cast` dies there as a raw polars traceback naming
+    neither the file nor the column.
 
-    `totalWeight` -- the post-refine tag-stat's read-weight column, gathered by
-    gather-counts.tpl.tengo alongside the distinct-UMI count -- is read when the file carries
-    it and left off the returned frame otherwise. Its absence means the run predates this
-    column, not a bad file: `usable_read_fraction`'s caller checks for the column rather than
-    crashing on it.
+    `totalWeight` -- the post-refine tag-stat's read-weight column -- is read when the file carries it
+    and left off the returned frame otherwise. Its absence means the run predates this column, not a
+    bad file.
     """
     counts = _read_columns(path, ("sampleId", "cellId", "tag", "umiCount"), "counts file")
     umi = counts["umiCount"].cast(pl.Int64, strict=False)
@@ -99,9 +96,8 @@ def undeclared_feature_counts(raw_counts: pl.DataFrame, declared: Collection[str
 def _read_raw_feature_counts(path: str) -> pl.DataFrame:
     """The gathered pre-refine FEATURE tag-stat table, across every sample.
 
-    Columns `sampleId`, `FEATURE`, `totalWeight` -- the workflow's per-sample gather step
-    injects `sampleId` from the resource-map key the same way `_read_counts` documents for the
-    (cell, tag) counts. Read as strings and stripped, same join-safety reason as
+    Columns `sampleId`, `FEATURE`, `totalWeight` -- the workflow's per-sample gather step injects
+    `sampleId` from the resource-map key. Read as strings and stripped, same join-safety reason as
     `_read_columns`, then `totalWeight` cast to a whole number.
     """
     frame = _read_columns(path, ("sampleId", "FEATURE", "totalWeight"), "raw feature counts file")

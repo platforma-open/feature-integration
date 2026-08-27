@@ -49,9 +49,9 @@ class AntigenConfig:
 
 def load_whitelist_cells(rng, count, assets_dir):
     """Draw `count` distinct real 737K-august-2016 cell barcodes. Prefers the full 10x inclusion list
-    (737K-august-2016.txt, ~737k barcodes, fetched on demand — gitignored); falls back to the small
-    harvested pool (whitelist_cells.txt, ~800). Every barcode is a 737K member, so the whitelist737k
-    profile can be corrected against the real 10x list without dropping cells."""
+        (737K-august-2016.txt, ~737k barcodes, fetched on demand, gitignored); falls back to the small
+        harvested pool (whitelist_cells.txt, ~800). Every barcode is a 737K member, so the whitelist737k
+        profile can be corrected against the real 10x list without dropping cells."""
     big = os.path.join(assets_dir, "737K-august-2016.txt")
     small = os.path.join(assets_dir, "whitelist_cells.txt")
     path = big if os.path.exists(big) else small
@@ -73,9 +73,9 @@ def load_whitelist_cells(rng, count, assets_dir):
 
 
 def add_ambient(rng, panel, reads, frac=0.15):
-    """Append ambient reads with random OFF-737K cell barcodes (low count), on-panel features. Models
-    the ambient/error barcode tail of a real run: a 737K cell-whitelist drops them, while de-novo keeps
-    them as phantom low-count cells. NOT added to the truth tables."""
+    """Append ambient reads with random OFF-737K cell barcodes (low count), on-panel features. A 737K
+        cell-whitelist drops them, while de-novo keeps them as phantom low-count cells. NOT added to the
+        truth tables."""
     n = int(len(reads) * frac)
     base = len(reads)
     feats = panel.barcodes
@@ -91,14 +91,13 @@ def add_ambient(rng, panel, reads, frac=0.15):
 def assign_features(rng, panel, nonbinder=False, crossreactive=False):
     """Plant the per-feature distinct-UMI counts for one cell. Returns (per_feature, consensus_label).
 
-    One dominant antigen (high), an optional ambiguous second, 0-2 ambient antigens (low), and control
-    background. `nonbinder=True`, the control scenario, plants a TRUE non-binder: every antigen at
-    ~control level. `crossreactive=True` plants a co-dominant pair of two ON-TARGET antigens at ~equal
-    UMIs, the second at 0.85-1.0x the first. Neither passes the dominance threshold alone but their
-    on-target sum does, so the block calls the cell "cross-reactive" rather than "ambiguous".
-    Magnitudes are calibrated to the real 5k BEAM-T library: dominant ~600 UMIs (right-skewed, with a
-    low-signal tail), near-mono dominance (median ~1.0, p10 ~0.79), and tight background
-    (~3 UMIs/cell)."""
+        One dominant antigen (high), an optional ambiguous second, 0-2 ambient antigens (low), and control
+        background. `nonbinder=True` plants a TRUE non-binder: every antigen at ~control level.
+        `crossreactive=True` plants a co-dominant pair of two ON-TARGET antigens at ~equal UMIs, the second at
+        0.85-1.0x the first -- neither passes the dominance threshold alone but their on-target sum does.
+
+        Magnitudes are calibrated to the real 5k BEAM-T library: dominant ~600 UMIs (right-skewed, with a
+        low-signal tail), near-mono dominance (median ~1.0, p10 ~0.79), and tight background (~3 UMIs/cell)."""
     antigen_names = panel.names
     control = panel.control_name
     per_feature = {}
@@ -110,17 +109,16 @@ def assign_features(rng, panel, nonbinder=False, crossreactive=False):
         per_feature[control] = rng.randint(1, bg_hi)
         return per_feature, "ambiguous"
     if crossreactive:
-        # Co-dominant on-TARGET pair. Both must be Type=Target, so neither the control nor an
-        # Off-Target, which means the block's dominant call excludes neither. With two on-targets
-        # sharing the signal near 50/50 it lands on "cross-reactive" rather than a single dominant
-        # antigen or "ambiguous".
+        # Co-dominant on-TARGET pair. Both must be Type=Target, so neither the control nor an Off-Target.
+        # With two on-targets sharing the signal near 50/50 it lands on "cross-reactive" rather than a
+        # single dominant antigen or "ambiguous".
         on_target = [a for a in antigen_names if panel.types.get(a) == "Target"]
         if len(on_target) >= 2:
             first, second = rng.sample(on_target, 2)
             dom_umis = rng.randint(10, 60) if rng.random() < 0.1 else rng.randint(300, 1100)
             per_feature[first] = dom_umis
-            # near-equal second keeps both above threshold-share of the on-target sum while denying
-            # either a unique-dominant call (each ~50% of the total, below the 0.6 threshold)
+            # near-equal second keeps both above threshold-share of the on-target sum while denying either a
+            # unique-dominant call (each ~50% of the total, below the 0.6 threshold)
             per_feature[second] = max(1, int(dom_umis * rng.uniform(0.85, 1.0)))
             others = [a for a in antigen_names if a not in per_feature]
             rng.shuffle(others)
@@ -140,7 +138,7 @@ def assign_features(rng, panel, nonbinder=False, crossreactive=False):
     if ambiguous:
         second = rng.choice([a for a in antigen_names if a != dominant])
         # cross-reactive but still below dominant (keeps dominance in the real p10~0.79 tail);
-        # cross-reactivity is a BEAM-Ab feature — the BEAM-T sample itself showed ~none
+        # cross-reactivity is a BEAM-Ab feature -- the BEAM-T sample itself showed ~none
         per_feature[second] = max(1, int(dom_umis * rng.uniform(0.3, 0.9)))
 
     others = [a for a in antigen_names if a not in per_feature]
@@ -156,10 +154,10 @@ def assign_features(rng, panel, nonbinder=False, crossreactive=False):
 
 
 def build_sample(rng, panel, sample, cells, nonbinder_frac=0.0, crossreactive_frac=0.0):
-    """Clean per-sample reads (no scenario perturbation). Returns (reads, truth_ab, truth_con,
-    truth_class). reads = list of [name, r1, r2, lane(=1)]. The `frac > 0 and ...` short-circuits mean
-    both fracs at 0 consume NO extra RNG, so the baselines stay reproducible. A cell is at most one of
-    nonbinder / crossreactive (nonbinder wins the roll)."""
+    """Clean per-sample reads (no scenario perturbation). Returns (reads, truth_ab, truth_con, truth_class).
+        reads = list of [name, r1, r2, lane(=1)]. The `frac > 0 and ...` short-circuits mean both fracs at 0
+        consume NO extra RNG, so the baselines stay reproducible. A cell is at most one of nonbinder /
+        crossreactive (nonbinder wins the roll)."""
     features = panel.features
     reads = []
     truth_ab = []
@@ -189,8 +187,8 @@ def build_sample(rng, panel, sample, cells, nonbinder_frac=0.0, crossreactive_fr
                 umis = set()
                 while len(umis) < k:
                     umis.add(rand_seq(rng, UMI_LEN))
-                # sorted(): set iteration order of strings varies per process (PYTHONHASHSEED), which
-                # would make the emitted read order non-reproducible. Sorting keeps the output byte-stable.
+                # sorted(): set iteration order of strings varies per process (PYTHONHASHSEED), which would
+                # make the emitted read order non-reproducible.
                 for umi in sorted(umis):
                     # real PCR dup: median ~1.3 reads/UMI, p90 ~2
                     dups = 1 if rng.random() < 0.75 else (2 if rng.random() < 0.8 else 3)
@@ -198,10 +196,9 @@ def build_sample(rng, panel, sample, cells, nonbinder_frac=0.0, crossreactive_fr
                         read_no += 1
                         reads.append([f"{sample}_read{read_no}", cell + umi, fbc + R2_FILLER, 1])
             else:
-                # Multi-barcode antigen (only present in a --multibarcode panel; single-barcode runs
-                # never take this branch, so they stay byte-identical). combine="all" fires EVERY
-                # member barcode at ~k UMIs (AND / dual-probe). Combine="sum" splits the k UMIs across
-                # the members so the per-feature sum stays ~k. Same UMI/dup shape as the single path.
+                # Multi-barcode antigen (only present in a --multibarcode panel, so single-barcode runs stay
+                # byte-identical). combine="all" fires EVERY member barcode at ~k UMIs (AND / dual-probe).
+                # combine="sum" splits the k UMIs across the members so the per-feature sum stays ~k.
                 mode = panel.combine.get(feat, "sum")
                 if mode == "all":
                     shares = [k] * len(fbcs)
@@ -316,9 +313,8 @@ def write_fastqs(outdir, sample, reads, multilane):
 
 def _messify(value, rng):
     """Return a casing or whitespace variant of a panel LABEL, mimicking the label inconsistency a real
-    panel carries, such as "Off-Target" -> "Off-target". Used ONLY for emitted CSV label columns under
-    --messy-metadata. It never touches the barcode join keys or the truth tables, so generation stays
-    coherent while the block-facing labels carry the mess the normalization tasks must resolve."""
+        panel carries, such as "Off-Target" -> "Off-target". Used ONLY for emitted CSV label columns under
+        --messy-metadata: it never touches the barcode join keys or the truth tables."""
     if rng.random() < 0.5:
         # case variant: lower-case the segment after the last hyphen ("Off-Target" -> "Off-target")
         head, sep, tail = value.rpartition("-")
@@ -330,10 +326,9 @@ def _messify(value, rng):
 
 def _messy_types(panel, rng):
     """Per-antigen Type overrides that GUARANTEE a mixed-case off-target set, the `Off-Target` against
-    `Off-target` bug. The first off-target stays canonical `Off-Target`, the second is forced to
-    `Off-target`, and any further off-targets get a seeded `_messify` variant. Targets and the control
-    keep their canonical Type. Returns {name: type} for the off-targets only, and callers fall back to
-    panel.types for everything else."""
+        `Off-target` bug. The first off-target stays canonical `Off-Target`, the second is forced to
+        `Off-target`, and any further off-targets get a seeded `_messify` variant. Returns {name: type} for
+        the off-targets only; callers fall back to panel.types for everything else."""
     offtargets = [n for n in panel.names if panel.types.get(n) == "Off-Target"]
     override = {}
     for idx, n in enumerate(offtargets):
@@ -348,9 +343,8 @@ def _messy_types(panel, rng):
 
 def write_metadata(shared_dir, panel, samples, multibarcode=False, messy=False):
     # --messy-metadata: inject the inconsistent Type casing real panels carry into the EMITTED tags.csv
-    # values only (the feature-name double space is injected upstream in build_panel). A dedicated
-    # constant-seed RNG keeps the mess deterministic without perturbing the read/truth streams (which are
-    # already generated by the time write_metadata runs). Off by default -> byte-identical to before.
+    # values only. A dedicated constant-seed RNG keeps the mess deterministic without perturbing the
+    # read/truth streams. Off by default -> byte-identical to before.
     type_override = _messy_types(panel, new_rng(ANTIGEN_SEED + 7777)) if messy else {}
 
     def type_of(name):
@@ -358,9 +352,8 @@ def write_metadata(shared_dir, panel, samples, multibarcode=False, messy=False):
 
     with open(os.path.join(shared_dir, "tags.csv"), "w", newline="") as f:
         w = csv.writer(f)
-        # tag,feature stay first (backward-compatible role mapping); Type/Species/Class mirror a real
-        # panel so downstream off-target-call and species-grouping have synthetic inputs. A
-        # --multibarcode panel adds `combine` (between feature and Type) and emits one row PER member
+        # tag,feature stay first (backward-compatible role mapping); Type/Species/Class mirror a real panel.
+        # A --multibarcode panel adds `combine` (between feature and Type) and emits one row PER member
         # barcode. Single-barcode runs keep the exact prior header + one row per feature (byte-stable).
         if multibarcode:
             w.writerow(["tag", "feature", "combine", "Type", "Species", "Class"])
@@ -385,8 +378,8 @@ def write_metadata(shared_dir, panel, samples, multibarcode=False, messy=False):
         w.writerow(["id", "name", "read", "pattern", "sequence", "feature_type"])
         for name, bcs in panel.features.items():
             for j, bc in enumerate(bcs):
-                # per-member id `<feat>_<n>` when a feature has >1 barcode. Bare feature name otherwise
-                # (so single-barcode feature_reference.csv is byte-identical to before).
+                # per-member id `<feat>_<n>` when a feature has >1 barcode. Bare feature name otherwise (so
+                # single-barcode feature_reference.csv is byte-identical to before).
                 bc_id = f"{name}_{j + 1}" if len(bcs) > 1 else name
                 w.writerow([bc_id, name, "R2", "^(BC)", bc, "Antigen Capture"])
     with open(os.path.join(shared_dir, "samples-metadata.tsv"), "w", newline="") as f:
@@ -412,8 +405,8 @@ def write_truth(truth_dir, truth_ab, truth_con):
 
 def write_specificity(truth_dir, truth_class):
     """Specificity ground truth for the `control` scenario: per-cell binder/non-binder class + intended
-    dominant antigen. With a negative control set, EXPECT binder cells -> high specificityScore on their
-    dominantAntigen, non-binders low everywhere."""
+        dominant antigen. With a negative control set, EXPECT binder cells -> high specificityScore on their
+        dominantAntigen, non-binders low everywhere."""
     truth_class.sort()
     with open(os.path.join(truth_dir, "expected-specificity.tsv"), "w", newline="") as f:
         w = csv.writer(f, delimiter="\t")
@@ -448,7 +441,7 @@ def build(
         s: all_cells[i * cfg.cells_per_sample : (i + 1) * cfg.cells_per_sample] for i, s in enumerate(samples)
     }
 
-    # Off-panel barcodes: one shared set across samples, from an independent RNG so it doesn't perturb
+    # Off-panel barcodes: one shared set across samples, from an independent RNG so it does not perturb
     # the per-sample build stream.
     off_bcs = (
         gen_distinct(new_rng(cfg.seed + 99), 3, FEAT_LEN, min_dist=5, avoid=panel.barcodes)
@@ -494,16 +487,14 @@ def build(
 
 
 def build_libraseq(cfg, out_dir):
-    """LIBRA-seq / dual-probe fixture: one antigen (BG505) read out by TWO feature barcodes that must
-    BOTH fire, alongside a single-barcode antigen (gp120) and a negative control. Exercises Feature
-    Barcode Analysis's multi-barcode combine mode "all" (AND): cells where only one BG505 probe barcode
-    fires must NOT be called BG505.
+    """LIBRA-seq / dual-probe fixture: one antigen (BG505) read out by TWO feature barcodes that must BOTH
+        fire, alongside a single-barcode antigen (gp120) and a negative control. Exercises the multi-barcode
+        combine mode "all" (AND): cells where only one BG505 probe barcode fires must NOT be called BG505.
 
-    Antigen-only, with no VDJ or GEX arm, because FI is antigen-only and this alone drives the per-cell
-    antigen call. Writes tags.csv WITH a `combine` column (BG505=all, gp120/control=sum). Read geometry
-    is the BEAM default -- R1 = 16 bp cell + 10 bp UMI, R2 = 15 bp feature at position 0 -- so the
-    block's default preset plus a de-novo cell whitelist parse it directly.
-    """
+        Antigen-only, with no VDJ or GEX arm. Writes tags.csv WITH a `combine` column (BG505=all,
+        gp120/control=sum). Read geometry is the BEAM default -- R1 = 16 bp cell + 10 bp UMI, R2 = 15 bp
+        feature at position 0 -- so the block's default preset plus a de-novo cell whitelist parse it
+        directly."""
     rng = new_rng(cfg.seed)
     os.makedirs(out_dir, exist_ok=True)
 
@@ -594,8 +585,8 @@ def build_libraseq(cfg, out_dir):
 
 
 def build_degraded(cfg, panel, out_dir):
-    """QC-visualisation fixture (NOT a behavioural assertion): a few samples degraded to different
-    levels so the block's Quality tag (OK/WARN/ALERT) and Read-recovery bar show a full spread."""
+    """QC-visualisation fixture (NOT a behavioural assertion): a few samples degraded to different levels so
+        the block's Quality tag (OK/WARN/ALERT) and Read-recovery bar show a full spread."""
     rng = new_rng(cfg.seed)
     os.makedirs(out_dir, exist_ok=True)
 

@@ -1,22 +1,20 @@
 // One sparse count table for the whole run, gathered from the per-sample tag-stat tables.
 //
-// emit_verdicts.py reads every sample at once: a panel is a property of the declared tag set rather than of
-// one sample, the panel-versus-reads check runs in both directions across the run, and the QC rollup spans
-// samples. So the per-sample [sampleId] -> tag-stat file map the fan-out produces is concatenated here into
-// one (sampleId, cellId, tag, umiCount, totalWeight) CSV. `totalWeight` is the post-refine tag-stat's
-// read-weight column, carried through for `usable_read_fraction` (`qc_measures.py`): every row here already
-// passed refine-tags' FEATURE correction, so restricting `cellId` to the cell list is the only condition
-// `usable_read_fraction` still has to apply.
+// emit_verdicts.py reads every sample at once, so the per-sample [sampleId] -> tag-stat file map the
+// fan-out produces is concatenated here into one (sampleId, cellId, tag, umiCount, totalWeight) CSV.
+// `totalWeight` is the post-refine tag-stat's read-weight column, carried through for
+// `usable_read_fraction` (`qc_measures.py`): every row here already passed refine-tags' FEATURE
+// correction, so restricting `cellId` to the cell list is the only condition that measure still applies.
 //
-// The real sampleId is injected from the resource-map key, exactly as qc-summary.tpl.tengo does. The
-// per-sample execs are handed a constant sample id, so the tables cannot say which sample they came from.
+// The real sampleId is injected from the resource-map key. The per-sample execs are handed a constant
+// sample id, so the tables cannot say which sample they came from.
 //
-// Rendered as a separate template because the resource map must be awaited before its per-sample keys can be
-// iterated, which main's body cannot do.
+// Rendered as a separate template because the resource map must be awaited before its per-sample keys can
+// be iterated, which main's body cannot do.
 //
-// The keys are taken through maps.getKeys, which returns them sorted. A bare `for k, v in` over a map has no
-// defined order in Tengo, so the concatenated file's resource handle would vary from run to run, and every
-// node downstream of it would silently lose deduplication.
+// The keys are taken through maps.getKeys, which returns them sorted. A bare `for k, v in` over a map has
+// no defined order in Tengo, so the concatenated file's resource handle would vary from run to run, and
+// every node downstream of it would silently lose deduplication.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 ll := import("@platforma-sdk/workflow-tengo:ll")
@@ -37,12 +35,10 @@ self.body(func(inputs) {
 	// The gather reads every sample's distinct-UMI table, which scales with the run rather than with one
 	// sample, so it is not a light-queue job.
 	//
-	// A FLAT grant on a step whose input grows with the sample count, the shape that OOMs late and on someone
-	// else's run. It is flat because the sizing formulas `exec.builder().resources()` takes are not reachable
-	// from this builder: `pt.workflow().mem()` hands a plain amount to the process template. Raised to the
-	// same 16 GiB floor that exec uses rather than left at 8, which buys headroom without pretending to be a
-	// formula. Not observed failing, and the risk is stated so the next run that does fail has somewhere to
-	// land.
+	// A FLAT grant on a step whose input grows with the sample count. It is flat because the sizing formulas
+	// `exec.builder().resources()` takes are not reachable from this builder: `pt.workflow().mem()` hands a
+	// plain amount to the process template. Raised to the same 16 GiB floor that exec uses. Not observed
+	// failing, and the risk is stated so the next run that does fail has somewhere to land.
 	wf := pt.workflow().cpu(2).mem("16GiB")
 
 	dfs := []

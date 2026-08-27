@@ -1,15 +1,13 @@
 // The verdict exec, and nothing else.
 //
 // Split from the import (verdict-import.tpl.tengo) because the software decides which comparator SERVED the
-// run, not the request: reference_by_cell degrades a declared choice to none where the panel carries no
-// reference tag, and a panel choice to none below the minimum membership. That choice belongs in the emitted
-// columns' domain, so the specs have to be built from the run record, and reading a value an exec has not
-// yet produced needs a template boundary.
+// run, not the request. That choice belongs in the emitted columns' domain, so the specs have to be built
+// from the run record, and reading a value an exec has not yet produced needs a template boundary.
 //
-// Ephemeral rather than pure because it resolves a PColumnBundle, whose data this template awaits. That wait
-// happens HERE and not in main's prepare: prepare's bundle is awaited in full, spec and data, before the
-// body runs, so a linker there would hold the entire per-sample mitool fan-out behind the whole clonotyping
-// chain -- two chains that run concurrently, serialized, with nothing surfacing it until a real dataset.
+// Ephemeral rather than pure because it resolves a PColumnBundle, whose data this template awaits. That
+// wait happens HERE and not in main's prepare: prepare's bundle is awaited in full, spec and data, before
+// the body runs, so a linker there would hold the entire per-sample mitool fan-out behind the whole
+// clonotyping chain.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 exec := import("@platforma-sdk/workflow-tengo:exec")
@@ -80,14 +78,13 @@ self.body(func(inputs) {
 	linkerCsv.cpu(1)
 	// Flat, and it scales with the total cell count of the run: every cell of every sample appears once. The
 	// csv builder's `mem` takes a plain amount rather than one of the sizing formulas the exec below uses, so
-	// this cannot track its input. Raised to the exec's own 16 GiB floor rather than left at 8. Not observed
-	// failing, and stated so a future OOM here is recognised rather than re-diagnosed.
+	// this cannot track its input. Raised to the exec's own 16 GiB floor. Not observed failing, and stated so
+	// a future OOM here is recognised rather than re-diagnosed.
 	linkerCsv.mem("16GiB")
 	linkerCsvFile := linkerCsv.build()
 
 	// The reading holds one entry per analysed cell and one per (cell, tag) count, so it scales with the
-	// gathered counts table rather than with any one sample. The same sizing shape the per-cell metrics step
-	// uses, on the same floor.
+	// gathered counts table rather than with any one sample.
 	formula := exec.formula
 	memFormula := formula.gib(16).
 		plus(formula.size("counts").times(8)).
@@ -111,13 +108,12 @@ self.body(func(inputs) {
 
 	// The per-sample read QC. Without it readsTotal, panelAssignedFraction and readsPerCell have no source and
 	// carry no status and no value, silently, because that is a legitimate state rather than an error.
-	// readsPerCell is the only sequencing-depth alert the block ships.
 	if params.hasQcSummary {
 		b = b.addFile(va.FILE_QC_SUMMARY, inputs.qcSummaryFile)
 	}
-	// The pre-refine pass: without it the undeclared-barcode table stays the ordinary empty
-	// case rather than raising, because a run wired without this file has not checked for an
-	// undeclared barcode, which is a different fact from having checked and found none.
+	// The pre-refine pass: without it the undeclared-barcode table stays the ordinary empty case rather than
+	// raising, because a run wired without this file has not checked for an undeclared barcode, which is a
+	// different fact from having checked and found none.
 	if params.hasRawFeatureCounts {
 		b = b.addFile(va.FILE_RAW_FEATURE_COUNTS, inputs.rawFeatureCountsFile)
 	}
@@ -138,12 +134,12 @@ self.body(func(inputs) {
 	// result object is not serializable as a template output, so each table is returned on its own field.
 	result := {
 		runMeta: run.getFileContent("result_run_meta.json"),
-		// The sample-level measurements keyed by sample, for the sample detail view's Quality Checks tab.
-		// That view holds one sample at a time and resolves it synchronously. result_qc.csv carries the
-		// same measurements for every other reader.
+		// The sample-level measurements keyed by sample, for the sample detail view's Quality Checks tab. That
+		// view holds one sample at a time and resolves it synchronously. result_qc.csv carries the same
+		// measurements for every other reader.
 		qcBySample: run.getFileContent("result_qc_by_sample.json"),
-		// Binned count distributions per (sample, tag), and the one edge list they share. Content rather
-		// than a file, because the chart that draws them takes its bins as values in the UI.
+		// Binned count distributions per (sample, tag), and the one edge list they share. Content rather than a
+		// file, because the chart that draws them takes its bins as values in the UI.
 		qcTagBins: run.getFileContent("result_qc_tag_bins.json")
 	}
 	for table in RESULT_TABLES {

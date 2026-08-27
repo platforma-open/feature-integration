@@ -1,13 +1,10 @@
 // The verdict import: every table emit_verdicts.py wrote, turned into p-columns.
 //
 // Separate from the exec (verdict-run.tpl.tengo) because the run record has to be read as a VALUE before
-// any of these specs can be built. The software resolves `referenceChoice` and `cellListSource`: a declared
-// comparator degrades to none where the panel carries no reference tag, and a panel comparator degrades
-// below the minimum membership. Both sit in the emitted columns' DOMAIN, because a verdict read against a
-// declared reference is not the same reading as one read against the panel's own signal. As an annotation
-// the choice would be excluded from column identity, and two incomparable runs would emit columns of
-// identical identity and be unioned in a pool holding both. Specs built inside the exec's own template
-// would record the choice that was REQUESTED.
+// any of these specs can be built. The software resolves `referenceChoice` and `cellListSource`, and both
+// sit in the emitted columns' DOMAIN: as an annotation the choice would be excluded from column identity,
+// and two incomparable runs would emit columns of identical identity and be unioned in a pool holding
+// both. Specs built inside the exec's own template would record the choice that was REQUESTED.
 //
 // Ephemeral: it awaits the bundle, for the clonotype axis taken verbatim from the linker, and the run
 // record. It receives the bundle UNRESOLVED from main.tpl.tengo, because a resolved bundle is a map with
@@ -24,11 +21,8 @@ verdictLinker := import(":verdict-linker")
 
 json := import("json")
 
-// Returns five frames: antigenVerdicts (exported), and punchcard, cellReference, qcTable and
-// cellReference holds one row per cell, carrying the reference
-// reading and the gate outcome, and deliberately not the per-cell per-tag counts. defineOutputs is
-// deliberately absent: an ephemeral template takes its output names from what the body returns and never
-// checks a declared list, so declaring one would be inert.
+// defineOutputs is deliberately absent: an ephemeral template takes its output names from what the body
+// returns and never checks a declared list, so declaring one would be inert.
 self.awaitState("columns", "PColumnBundle")
 self.awaitState("runMeta", "ResourceReady")
 
@@ -52,9 +46,9 @@ self.body(func(inputs) {
 	panelAxis := columnSpecs.panelAxis(blockId)
 
 	// Seeded from the FASTQ dataset spec, because these columns' subject is the antigen readout that dataset
-	// produced. Seeding from the linker would label them after the clonotyping run instead. The clonotyping
-	// root is already recorded where it belongs: pl7.app/vdj/scClonotypeKey carries its clonotyping run id in
-	// its own domain. makeTrace is variadic, and the linker is deliberately not one of its steps.
+	// produced. Seeding from the linker would label them after the clonotyping run instead, whose id already
+	// travels in pl7.app/vdj/scClonotypeKey's own domain. makeTrace is variadic, and the linker is
+	// deliberately not one of its steps.
 	trace := pSpec.makeTrace(inputs.traceSeedSpec, {
 		type: "milaboratories.feature-integration",
 		id: blockId,
@@ -75,9 +69,8 @@ self.body(func(inputs) {
 	// space, so downstream joins would return wrong rows rather than fail.
 	addTo := func(fb, name, file, spec) {
 		// An input the caller forgot to pass arrives here as undefined and fails eleven frames down in
-		// xsv.importFile as "frameInput must be provided", naming neither the frame nor this block. Adding
-		// an output in verdict-run without also passing it in main is the mistake that produces it, and
-		// the two files are far enough apart to make it easy.
+		// xsv.importFile as "frameInput must be provided", naming neither the frame nor this block. Adding an
+		// output in verdict-run without also passing it in main is the mistake that produces it.
 		ll.assert(!is_undefined(file), "verdict-import: no file was passed for %v; check that main.tpl.tengo forwards it from verdict-run", name)
 		columnSpecs.guardNoLegacyFeatureAxis(spec.axes)
 		imported := xsv.importFile(file, "csv", spec, { splitDataAndSpec: true })
@@ -95,10 +88,10 @@ self.body(func(inputs) {
 		columnSpecs.setCountsImportSpec(setAxis, served))
 
 	// The pivoted per-identity summary is the only per-antigen state lead selection can see: a column carrying
-	// an axis the clonotype anchor does not have is dropped there with no error, so nothing keyed
-	// (set, identity) reaches it. The pivot costs one column per identity, so the software gates it on an
-	// identity count and records the limit and whether it emitted. Where it did not, the CSV carries only the
-	// key column, and an empty identity list yields no columns rather than a failed import.
+	// an axis the clonotype anchor does not have is dropped there with no error. The pivot costs one column per
+	// identity, so the software gates it on an identity count and records the limit and whether it emitted.
+	// Where it did not, the CSV carries only the key column, and an empty identity list yields no columns
+	// rather than a failed import.
 	summaryIdentities := []
 	if !is_undefined(served.identitySummaryEmitted) && served.identitySummaryEmitted {
 		ll.assert(!is_undefined(served.identities),
@@ -112,15 +105,13 @@ self.body(func(inputs) {
 
 	// --- the punchcard's own frame, as an OUTPUT --------------------------------------------------------
 	//
-	// The punchcard is the view `block-set` calls this block's own: every clonotype against every identity,
-	// each position in one of the four states. It needs the pivoted shape, because a table cannot pivot a
-	// (set, identity) frame into columns, and it needs it as an output rather than an export, because a
-	// block's own exports are not in its own result pool.
+	// Every clonotype against every identity, each position in one of the four states. It needs the pivoted
+	// shape, because a table cannot pivot a (set, identity) frame into columns, and it needs it as an output
+	// rather than an export, because a block's own exports are not in its own result pool.
 	//
 	// Its cell carries the state, the two support counts, the agreement among them and, where the verdict did
-	// not settle, which of the seven ways it failed to, as one five-field value. No glyph on that page states
-	// a verdict without what it rests on. Gated on the same identity count as the summary above, so either
-	// both pivots are present or neither is, and the page says which rather than rendering an empty grid.
+	// not settle, which of the seven ways it failed to, as one five-field value. Gated on the same identity
+	// count as the summary above, so either both pivots are present or neither is.
 	punchFb := pframes.pFrameBuilder()
 	if len(summaryIdentities) > 0 {
 		addTo(punchFb, "identityPunch", inputs.identityPunch,
@@ -128,46 +119,38 @@ self.body(func(inputs) {
 	}
 
 	// The clonotype's own cell count, beside its name. Imported into THIS frame and not only into the export,
-	// because a block's own exports are not in its own result pool and the copy in the exported setCounts
-	// family is unreadable by this grid. Ungated by the identity count: a card with no identity columns still
-	// says how many cells each clonotype has.
+	// because a block's own exports are not in its own result pool. Ungated by the identity count: a card with
+	// no identity columns still says how many cells each clonotype has.
 	addTo(punchFb, "setCellCount", inputs.setCounts,
 		columnSpecs.setCellCountImportSpec(setAxis, served))
 
-	// The per-cell material stays INSIDE the block: an output, never an export. Reading the same experiment
-	// under another grouping is another execution of this block rather than a re-derivation a reader performs,
-	// and labelling and lead selection read verdicts, never cells.
+	// The per-cell material stays INSIDE the block: an output, never an export. Labelling and lead selection
+	// read verdicts, never cells.
 	//
 	// This frame carries one row per cell: the reference reading, and whether a declared gate set the cell
-	// aside. Those keep their place among the run's own measurements, because a reader checks here why a cell
-	// could or could not be compared, and because the block must report the cells carrying a high reference
-	// reading whether or not a gate was declared.
+	// aside. A reader checks here why a cell could or could not be compared, and the block must report the
+	// cells carrying a high reference reading whether or not a gate was declared.
 	//
 	// The per-cell per-TAG counts are deliberately NOT imported, so they are never built as columns. They are
 	// the largest table the run produces -- a cell x tag grain, 11-20x the rows of the sparse reads they came
-	// from -- and nothing reads them at either side of the boundary: not this block's model, not its UI, not
-	// another template here, no downstream block. Importing them would build the run's biggest p-frame for no
-	// reader on every verdict run.
+	// from -- and nothing reads them at either side of the boundary.
 	//
-	// The states themselves are not unwanted. emit_verdicts writes result_cell_counts.csv and
-	// verdict-run.tpl.tengo collects it, so they are computed and exist within the run. What stops here is
-	// turning them into p-columns. cellTagCountsImportSpec stays in column-specs.lib.tengo as the spec to
-	// reuse if a consumer at that grain appears, because rebuilding it would risk a lookalike tag axis that
-	// joins to nothing.
+	// emit_verdicts writes result_cell_counts.csv and verdict-run.tpl.tengo collects it, so the states are
+	// computed and exist within the run. What stops here is turning them into p-columns.
+	// cellTagCountsImportSpec stays in column-specs.lib.tengo as the spec to reuse if a consumer at that grain
+	// appears, because rebuilding it would risk a lookalike tag axis that joins to nothing.
 	cellRefFb := pframes.pFrameBuilder()
 	addTo(cellRefFb, "cellScalars", inputs.cellScalars,
 		columnSpecs.cellScalarsImportSpec(sampleAxis, cellAxis, served))
 
 	// The per-cell punchcard, into the SAME frame: one row per cell, one column per identity, that cell's own
-	// reading. This is the by-cell face of the expansion, and the one place the block shows WHY a clonotype's
-	// verdict came out as it did rather than only what it came out as. It is also why the paragraph above
-	// argues from the absence of a consumer rather than from the grain: this frame carries a
-	// per-cell-per-identity grid, and only the cell x tag table has no reader.
+	// reading. The by-cell face of the expansion, and the one place the block shows WHY a clonotype's verdict
+	// came out as it did. It is also why the paragraph above argues from the absence of a consumer rather than
+	// from the grain: only the cell x tag table has no reader.
 	//
-	// Gated the same way as the identity pivots, and additionally on a cell count in the software, which is
-	// the gate that matters here: the rows are cells rather than clonotypes, so the same panel width costs an
-	// order of magnitude more. The run record says whether it emitted, and the page reads that rather than
-	// inferring it from an absent frame.
+	// Gated the same way as the identity pivots, and additionally on a cell count in the software, which is the
+	// gate that matters here: the rows are cells rather than clonotypes. The run record says whether it
+	// emitted, and the page reads that rather than inferring it from an absent frame.
 	cellPunchIdentities := []
 	if !is_undefined(served.cellPunchEmitted) && served.cellPunchEmitted {
 		ll.assert(!is_undefined(served.identities),
@@ -185,8 +168,7 @@ self.body(func(inputs) {
 		columnSpecs.offeredImportSpec(sampleAxis, identityAxis))
 
 	// The tag -> identity linker. It lets a reader put a tag's count beside its verdict, and neither layer
-	// needs to know about the other. It carries no sample axis, because neither side of the join has one. See
-	// tagIdentityLinkerImportSpec.
+	// needs to know about the other. It carries no sample axis, because neither side of the join has one.
 	addTo(exportFb, "tagIdentity", inputs.tagIdentity,
 		columnSpecs.tagIdentityLinkerImportSpec(tagAxis, identityAxis))
 
@@ -196,13 +178,13 @@ self.body(func(inputs) {
 	addTo(exportFb, "identityLabels", inputs.identityLabels,
 		columnSpecs.identityLabelsImportSpec(identityAxis))
 
-	// The declarations that hold of each identity, keyed the way its verdicts are. `panel-file-authority`
-	// requires them to travel with the reading, and a downstream reader has no other route to them: the
-	// per-feature property columns key on the feature NAME axis, which no verdict-stage column carries.
+	// The declarations that hold of each identity, keyed the way its verdicts are. A downstream reader has no
+	// other route to them: the per-feature property columns key on the feature NAME axis, which no
+	// verdict-stage column carries.
 	//
 	// The column names are panel data, so they come from the run record. A panel declaring nothing beyond the
-	// barcode and the name emits none, leaving the CSV key-only, which imports as nothing. Skipped rather
-	// than built empty.
+	// barcode and the name emits none, leaving the CSV key-only, which imports as nothing. Skipped rather than
+	// built empty.
 	if !is_undefined(served.identityProperties) && len(served.identityProperties) > 0 {
 		addTo(exportFb, "identityProperties", inputs.identityProperties,
 			columnSpecs.identityPropertyImportSpec(
@@ -212,8 +194,8 @@ self.body(func(inputs) {
 		columnSpecs.panelLabelsImportSpec(panelAxis))
 
 	// sample -> panel, so per-tag QC keyed (panel, tag) can be read back to the samples it covers. Where one
-	// panel covers every sample this column is constant, and still renders on every row: the SDK suppresses
-	// no column for being constant.
+	// panel covers every sample this column is constant, and still renders on every row: the SDK suppresses no
+	// column for being constant.
 	addTo(exportFb, "samplePanel", inputs.samplePanel,
 		columnSpecs.samplePanelImportSpec(sampleAxis))
 
@@ -225,36 +207,35 @@ self.body(func(inputs) {
 		columnSpecs.qcMeasurementAxis(blockId),
 		columnSpecs.panelAxis(blockId)))
 
-	// 330-the-quality-readout's across-samples table: one row per sample, one column per
-	// sample-level measurement, plus the sample's own rolled-up status. Its own frame, because
-	// its columns are per-measurement rather than per (level, entity, measurement) like qcFb above.
+	// The across-samples table: one row per sample, one column per sample-level measurement, plus the
+	// sample's own rolled-up status. Its own frame, because its columns are per-measurement rather than per
+	// (level, entity, measurement) like qcFb above.
 	qcSummaryFb := pframes.pFrameBuilder()
 	addTo(qcSummaryFb, "qcSummary", inputs.qcSummary, columnSpecs.qcSampleSummaryImportSpec(sampleAxis))
 
-	// The distributions 330 puts last in the readout, as plots rather than table rows. A number
-	// encoded in a detail string is one nobody can draw.
+	// The distributions the readout puts last, as plots rather than table rows. A number encoded in a
+	// detail string is one nobody can draw.
 	distributionFb := pframes.pFrameBuilder()
 	addTo(distributionFb, "qcDeciles", inputs.qcDeciles, columnSpecs.qcDecileImportSpec(
 		columnSpecs.qcDistributionAxis(blockId),
 		columnSpecs.qcDecileAxis(blockId)))
-	// The antigen-count distribution's own deciles, kept per sample beside the two pooled decile
-	// sets above. Its own column: adding a sample axis to `qcDecileValue` would re-identify that
-	// column rather than mint a new one.
+	// The antigen-count distribution's own deciles, kept per sample beside the two pooled decile sets
+	// above. Its own column: adding a sample axis to `qcDecileValue` would re-identify that column rather
+	// than mint a new one.
 	addTo(distributionFb, "qcSampleDeciles", inputs.qcSampleDeciles, columnSpecs.qcSampleDecileImportSpec(
 		sampleAxis,
 		columnSpecs.qcDecileAxis(blockId)))
 	addTo(distributionFb, "qcBackgrounds", inputs.qcBackgrounds,
 		columnSpecs.qcBackgroundImportSpec(sampleAxis, tagAxis))
 
-	// One row per (panel, tag, identity). Its own frame, at its own grain: the measurement table is
-	// keyed (level, entity, measurement) and cannot hold a row per reagent.
+	// One row per (panel, tag, identity). Its own frame, at its own grain: the measurement table is keyed
+	// (level, entity, measurement) and cannot hold a row per reagent.
 	reagentFb := pframes.pFrameBuilder()
 	addTo(reagentFb, "reagents", inputs.reagents,
 		columnSpecs.qcReagentImportSpec(panelAxis, tagAxis, identityAxis))
-	// One label column per axis. A label column REPLACES its axis in the grid -- `table-source-v2.js`
-	// drops an axis that has one -- and every label column sorts leftmost. Without all three, an axis
-	// renders its raw id, and under the per-tag grouping an identity id IS a barcode sequence, so the
-	// table showed a name beside the same reagent's 15-mer.
+	// One label column per axis. A label column REPLACES its axis in the grid -- `table-source-v2.js` drops
+	// an axis that has one -- and every label column sorts leftmost. Without all three, an axis renders its
+	// raw id, and under the per-tag grouping an identity id IS a barcode sequence.
 	//
 	// Added to THIS frame: a block's own exports are not in its own result pool, so the copies travelling
 	// with the verdicts are unreadable here. Added in reading order, which is the order they render in.
@@ -265,16 +246,14 @@ self.body(func(inputs) {
 	addTo(reagentFb, "reagentPanelLabels", inputs.panelLabels,
 		columnSpecs.panelLabelsImportSpec(panelAxis))
 
-	// The panel-versus-reads check is no longer imported. Its one reachable direction -- a declared barcode
-	// no read carried -- is the reagent table's `Seen in 0/N`, on the surface the quality readout designs for
-	// reagent findings. emit_verdicts.py still writes result_panel_mismatch.csv and panel.py still computes
-	// it: potentially dead, left for a separate pass.
+	// The panel-versus-reads check is no longer imported. Its one reachable direction -- a declared barcode no
+	// read carried -- is the reagent table's `Seen in 0/N`. emit_verdicts.py still writes
+	// result_panel_mismatch.csv and panel.py still computes it: potentially dead, left for a separate pass.
 	//
-	// 330's own table: barcodes the reads carried that no panel declares, keyed by sequence. Its own
-	// frame, because it keys on (sampleId, tag) rather than any axis the tables above use, and because the
-	// retired check's "undeclared-in-panel" direction was structurally unreachable there -- refine-tags
-	// has already snapped every barcode onto the panel before that check's counts are built, which is
-	// exactly why this table reads the pre-refine pass instead.
+	// Barcodes the reads carried that no panel declares get their own frame, because it keys on
+	// (sampleId, tag) rather than any axis the tables above use, and because the retired check's
+	// "undeclared-in-panel" direction was structurally unreachable there -- refine-tags has already snapped
+	// every barcode onto the panel before that check's counts are built.
 	undeclaredFb := pframes.pFrameBuilder()
 	addTo(undeclaredFb, "undeclaredBarcodes", inputs.undeclaredBarcodes,
 		columnSpecs.undeclaredBarcodeImportSpec(sampleAxis, tagAxis))

@@ -23,9 +23,16 @@ required-version = ">=0.11.16"
 
 [tool.pytest.ini_options]
 # rootdir == software/. pythonpath puts the package src on sys.path so tests `import per_cell_metrics`.
-testpaths = ["per-cell-metrics/test"]
+# The generator tests are listed too. They are excluded from ruff (committed fixtures, not ours to
+# format) but they are ours to RUN: one of them is the only place the specificity score's published
+# values are pinned, and while the path went uncollected that test had never executed.
+testpaths = ["per-cell-metrics/test", "test-data/manual/tests"]
 pythonpath = ["per-cell-metrics/src"]
-addopts = "-ra --strict-markers"
+# importlib import mode, because the two test roots each carry a `test_panel.py`. Under the default
+# prepend mode pytest derives a module name from the basename alone and the second one collides with the
+# first at collection. importlib names each module by its full path instead, so the two coexist without
+# renaming a file or adding __init__.py to a fixture tree.
+addopts = "-ra --strict-markers --import-mode=importlib"
 markers = [
     "slow: end-to-end CLI run over the committed fixture bed; deselect with -m 'not slow'",
 ]

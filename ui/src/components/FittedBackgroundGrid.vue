@@ -10,20 +10,15 @@ import CountHistogram from "./CountHistogram.vue";
 // Ordered by TAG first, so one reagent's samples sit side by side and the row is the comparison. A panel is
 // titled `tag · sample` in the same order.
 //
-// A grid rather than a selector, with any panel enlargeable on click: the judgement asked for -- do these
-// two humps stand apart -- reads at thumbnail size, and behind a selector nobody looks at all of them.
+// A grid rather than a selector, with any panel enlargeable on click: the judgement asked for reads at
+// thumbnail size, and behind a selector nobody looks at all of them.
 //
 // No marker is drawn. The threshold slot means "the declared gate" on the reference-reading plot and "the
 // bound cutoff" on the scores plot, so a third meaning here would make one marker say three things.
 //
 // A panel carries its title, its plot, and the fit's own three numbers. No separated / does-not-separate
-// label: no criterion for it exists, and `what-plays-the-baseline` states that none is invented here. The
-// numbers are the fit's own output, not a verdict on it.
-//
-// `what-plays-the-baseline` makes this panel the substitute for the check nobody has built -- "the run
-// shows the fit instead of judging it" -- so withholding the fit leaves the rung with no safeguard at all.
-// A background sitting on top of its signal, or a background holding almost every cell, is what a reader
-// is here to catch.
+// label: no criterion for it exists. This panel is the substitute for the check nobody has built, so
+// withholding the fit leaves the rung with no safeguard at all.
 const props = defineProps<{
   bins: TagCountBins;
   /** Sample id -> the label a reader knows it by. A sample with no label renders as its own id. */
@@ -83,7 +78,7 @@ const isOpen = computed({
 <template>
   <div :class="$style.grid">
     <!-- Enlarging is a button rather than a click handler on the panel: the affordance has to be reachable
-         without a pointer, and a thumbnail nobody can tell is clickable is a thumbnail nobody clicks. -->
+             without a pointer. -->
     <button
       v-for="panel in panels"
       :key="panel.key"
@@ -97,7 +92,7 @@ const isOpen = computed({
         <span :class="$style.enlarge">⤢</span>
       </div>
       <!-- `compact`: bars only. The thumbnail is scanned for whether two humps stand apart, and the
-           enlarged panel below is where a value gets read off an axis. -->
+                 enlarged panel below is where a value gets read off an axis. -->
       <CountHistogram :edges="bins.edges" :weights="panel.weights" :total-height="140" compact />
       <span v-if="panel.fit" :class="$style.fit">
         bg {{ fmt(panel.fit.backgroundMean) }} · signal {{ fmt(panel.fit.signalMean) }} ·
