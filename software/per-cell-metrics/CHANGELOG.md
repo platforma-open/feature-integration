@@ -1,5 +1,211 @@
 # @platforma-open/milaboratories.feature-integration.per-cell-metrics
 
+## 3.0.2
+
+### Patch Changes
+
+- acfde14: Pin the reading defaults that actually ship, and collect the generator tests.
+
+  The five numbers that decide verdicts — the minimum count, the cutoff, the fewest voting cells, the
+  panel-member floor and the fitted-baseline cell floor — were written independently in three places. The
+  Python copies were pinned by tests and the Tengo copies were pinned by a Tengo test; the model's copies
+  were pinned by nothing. That is the wrong one to leave loose: `verdict-args.lib.tengo` adds `--floor`,
+  `--cutoff`, `--min-voters`, `--panel-min-members` and `--distribution-min-cells` unconditionally,
+  substituting the model's value wherever the stored one is undefined, so on any workflow-driven run the
+  model's copy is the number in force and the Python's argparse default never governs. A cutoff of 90 in
+  the model would have scored every run at 90 and passed the whole suite.
+
+  The five are now one exported `VERDICT_DEFAULTS` map, and `qcDefaults.test.ts` asserts each value
+  against the Tengo file and against the Python module that owns it — the device it already applied to the
+  nine QC lines, which are the numbers nobody tunes.
+
+  A run with no `--cutoff` is now asserted through the CLI as well as through the module constant. Every
+  count in the acceptance beds scored either about zero or about one hundred, so the cutoff had no
+  reachable neighbourhood and a bed could not tell 50 from 75 from 90. Two counts either side of it —
+  scoring 69.02 and 79.36 against the beds' comparator — bracket the entrypoint's default to the band it
+  belongs in.
+
+  `software/test-data/manual/tests` is now collected. It had never run: `testpaths` named only the package
+  test directory, and among the 43 tests it holds is the one place the specificity score's published
+  values are pinned. Collecting it needed importlib import mode, because both test roots carry a
+  `test_panel.py` and the default import mode names a module by its basename alone.
+
+- 91891bc: The baseline reagent's row in the reagent table names its role.
+
+  A declared baseline tag is held out of every identity, and the reagent table gives a tag absent from
+  the grouping a row keyed on its own barcode. The identity label table was written over the identity
+  universe alone, so that row asked for a name nothing had emitted and rendered blank — a table whose
+  every other row names an antigen, with one row naming nothing, beside a Barcode axis showing the raw
+  15-mer. The sibling tag-label table already covers reference tags, which is why the same row's Tag
+  column reads correctly; the reasoning was applied to one of the two tables and not the other.
+
+  The label is the ROLE, `baseline reagent`. Not the reagent's own name, which the same row already
+  carries in its Tag column. Not the value it holds in the grouping column — `Decoy` beside
+  `Off-Target` and two targets reads as a fourth identity, and the run scores three.
+
+  The row itself stays. It is where a run shows what its comparator delivered, and a baseline reagent
+  present in a few percent of cells is a fact about every verdict the run read against it.
+
+  `result_identity_labels.csv` now carries a row per identity plus one per reference tag. The two key
+  sets are disjoint, since the grouping builder excludes reference tags. The run record's
+  `identityLabels` is unchanged and still spans the identity universe alone: it titles the punchcard's
+  columns, which must not gain one.
+
+- a7e7d04: The fitted rung honours the minimum count and the gate, and its unfitted positions read _unreliable_.
+
+  **A count below the minimum is not evidence on this rung either.** `read_states` branched on the fitted
+  probabilities before it read the count, so the state came from the probability alone and the floored
+  reading was emitted beside it without ever being consulted. A weak reagent — a signal population around
+  five counts beside a near-silent background — fits a distribution that calls a count of three bound with
+  near certainty, so with the shipped floor of four a position could read _bound_ on a row carrying a
+  count of zero. The fit is still taken over the raw counts, which is what the rung is specified on; what
+  changed is that each cell is scored on the reading the minimum left it, which is how a floored count
+  contributes everywhere else. A declared baseline tag stays exempt, as it is in `apply_floor`.
+
+  **A silent position in a sample the rung could not fit reads _unreliable_.** The punchcard corrected a
+  silent position only through a per-(sample, identity) comparator, which nothing in production sets — the
+  fitted rung's comparator is keyed per (sample, cell, identity) and had no branch, so every such position
+  fell through to the not-bound default. A clonotype's cells in a sample below the 300-cell floor were
+  counted as unreliable in the verdict and drawn as _not bound_ on the card beneath it.
+
+  **A declared admissibility gate acts under every rung.** The gate reads a declared baseline tag and the
+  comparator is whatever rung was selected; they are separate roles and which rung serves must not reach
+  the gate. The fitted rung handed `gate_cells` an empty reading map, so a stored threshold set nothing
+  aside and reported nothing from the moment a scientist switched the baseline source. The gate's readings
+  are now built wherever the panel declares a baseline tag, and the exposure count is withheld on the
+  absence of readings rather than on the rung.
+
+  **Two declared baseline tags serve together, by the highest of them.** `baseline-scope` combines
+  replicates within one group that way, and with no scope construct nothing declared separates two
+  references, so the whole panel is one group. Refusing the panel sent the scientist back to edit a file
+  over a case the corpus had already settled. Taking the highest is also what stops a dead reference from
+  making the background look cleaner than it was.
+
+  **The gate sets aside a cell above its threshold, not at it**, and `silent_tally` refuses a
+  position-keyed comparator on its sample-keyed path rather than hoisting a term that is not a fact about
+  the cell.
+
+- 40844b3: The reagent table counts cells, and an unreadable sibling does not vote.
+
+  **The per-tag figures are scoped to the cell list.** How many cells held any count of a tag, how many
+  it called bound, and the median over the cells holding one were taken over every observed barcode.
+  Ambient reagent reaches most barcodes, so observed barcodes outnumber cells by one to two orders of
+  magnitude while carrying one or two counts each — and the median a reagent delivers is how this table
+  reports a reagent working under the level at which anything is credited. On a real run every tag in the
+  panel read as a failed reagent. The figures now say which cell list they were computed against, since
+  two runs whose lists came from different sources do not share a denominator.
+
+  **A sibling with no settled reading no longer votes.** The rule is to put every tag of an identity in
+  bound or not bound on its own count, and a cell whose reading was gated or had no comparator is in
+  neither. Counting _unreliable_ as a state let it form a sibling majority, so a tag that fitted where its
+  siblings did not read as differing from all of them — reported as the panel's worst reagent, and its
+  only working one in fact. With a gate on, the same bug diluted every real rate by the share of cells the
+  gate set aside.
+
+  **A fraction with no denominator prints blank rather than zero.** The matched-read fraction of a sample
+  whose reads never arrived, and the median UMIs per cell of a sample holding no cell, both printed
+  `0.00` — beside a neighbour's `0.98` that reads as a library that failed rather than one that is
+  missing.
+
+  **Two QC descriptions said the wrong denominator.** The usable-antigen-read fraction and the
+  aggregate-barcode read fraction are both taken over the sample's total reads, and both column
+  descriptions said _over reads matched_; the first also asserted a UMI-validity condition it does not
+  carry. Both are measurements with published alert lines, so a reader hovering the column that alerted
+  was told to divide by the wrong number.
+
+  **The sample report shows each measurement's detail.** It was declared and populated and never
+  rendered — which is what made the sticky measurement unreadable, since a count of cells above a declared
+  gate and the median of the readings where none is declared arrive in the same column and only the
+  detail says which. Every distribution-shaped measurement's deciles ride there too.
+
+- ec31fb9: The fitted rung labels its signal component by median, the gate sets aside above its line, and a
+  sticky count is not reported over no readings.
+
+  **The signal component is the higher-median one.** It was the higher-mean one, justified by a comment
+  saying a negative binomial's medians are ordered by its means. They are not: the median depends on the
+  size as much as the mean, at mean 50 and size 0.05 it is 0 while at mean 5 and size 1e6 it is 5, and
+  sizes are re-estimated per component from that component's own variance every round. An ambient
+  population — mostly zero with a few enormous counts — fits a component whose mean sits far above a real
+  binder population's while its median sits far below, so the two orderings pick opposite components.
+  Labelling the wrong one inverts the tag: on the bed now committed, ordering by mean calls four hundred
+  cells that read nothing bound, at a probability of exactly one. Where both medians are zero, which is
+  the mostly-silent case, the mean breaks the tie.
+
+  **The admissibility gate sets aside a cell above its threshold, not at it.** `reference-two-roles` says
+  above, and says a cell is set aside where a reading exceeds the threshold — the same direction the
+  minimum takes from the other side, where a count of four survives a minimum of four. The code, its
+  CLI help, the QC column and the settings tooltip all said _reaches_. A cell reading exactly the gate
+  value now stays in and answers.
+
+  **Neither form of the sticky measurement reports a number over no readings.** Both are taken over the
+  cells' own baseline readings, which only a declared baseline tag supplies. Under the tag-distribution
+  rung no cell has one, and a gated count over an empty population came out `0.0` — a sample reported as
+  checked and clean on a question the run never put, and disagreeing with the run record, which already
+  reported nothing for the same condition.
+
+- c66820b: The score and reference spreads read the cell list, like every other per-cell figure.
+
+  The two plots a scientist places the cutoff and the gate from were computed over every analysed
+  barcode, while the per-tag count histograms beside them on the same page were narrowed to the cell
+  list. On a run with 378,163 analysed barcodes against a 2,553-cell list, the cutoff plot was 99.3%
+  ambient and unusable, and two populations sat side by side in one `_qc_tag_bins.json`.
+
+  Both spreads and both decile series now go through `_listed`, the same narrowing the count plots use.
+  The reference readings are narrowed by key rather than by join, because the comparator is a dict keyed
+  by cell; where a list arrived and no listed cell carries a comparator, no rows are written rather than
+  an all-zero spread. A run with no cell list is unchanged — every barcode is kept, and `cellListSource`
+  in the run record says which case a figure was computed under.
+
+  `bin_counts` now calls `_listed` instead of repeating its join inline.
+
+- 817a04b: The support pair names the set it counts, an antigen cannot be dropped by an id collision, and the
+  aggregate-barcode knobs reach a command line.
+
+  **`cellsCouldAnswer` carried the cells the question was put to.** `four-state-verdict` names two sets
+  and keeps them apart: the cells a question was _put to_ is a fact about the experiment, and the cells
+  that _could answer_ is that set narrowed by what the data and the settings allow. The column labelled
+  _Cells that could answer_ held the first. With a gate setting seven of ten cells aside, a clonotype whose
+  three survivors all read bound reported ten — so a scientist reading the spec's pair saw three of ten and
+  inferred seven negatives that never existed. With no gate declared and a comparator for every cell the
+  two numbers agree, which is why it went unnoticed.
+
+  `pl7.app/antigen/cellsCouldAnswer` is now `pl7.app/antigen/cellsAsked`, labelled _Cells the question was
+  put to_. `pl7.app/antigen/cellsAnswered` keeps its name and is labelled _Cells that could answer_ — every
+  cell that could answer did, so it is one set under two true descriptions, and it is the number the vote
+  limit acts on. The punch value's field order is unchanged, so a project stored before this still decodes.
+  **A consumer reading `pl7.app/antigen/cellsCouldAnswer` must move to `cellsAnswered`, not to
+  `cellsAsked`.**
+
+  The punch tooltip now shows both counts wherever they differ, not only where the run carried panels that
+  differ, and shows how many cells read bound — which is the whole split where a tie or a refused majority
+  leaves no agreement figure.
+
+  **An identity id collision could drop an antigen silently.** Column ids ran through
+  `substituteSpecialCharacters`, which collapses every run of punctuation to a single `_`, so `SARS-CoV-2`,
+  `SARS CoV 2` and `SARS.CoV.2` produced one id — and the importer writes ids into a map with no duplicate
+  check, so the second column overwrote the first and an antigen left the answer with no error raised
+  anywhere. Unreachable under the shipped per-tag grouping, where identities are barcodes; reachable under
+  a property grouping, where they are the scientist's own antigen names. Ids are disambiguated by position
+  now, deterministically, and the column header is still the identity itself.
+
+  **Every parameter travels with the verdicts.** Only the minimum count and the cutoff were carried, on the
+  verdict column alone. The gate and the agreement floor decide _which verdicts exist_, and two runs
+  differing on them emitted columns of identical identity and identical annotations, with the record only
+  in a block-local output that labelling and lead selection never see. All of them now ride the verdicts,
+  the set counts and the exported identity pivot, with an unset parameter carrying no note rather than a
+  zero.
+
+  **The three aggregate-barcode knobs reach a command line.** `fb-pipeline` never passed them to
+  `fb-downstream`, which is written to read exactly those three, so the guards there could never fire and
+  `qc_report.py`'s own defaults always applied. They still travelled in the per-sample body's identity, so
+  moving one re-ran parse, refine-tags and tag-stat for every sample and changed no number. A test now
+  asserts that fb-pipeline hands fb-downstream everything it reads.
+
+  **`argsValid` bounds three parameters it did not.** An agreement floor at or below half can never fire,
+  since a majority is above half by construction, so the run recorded a limit that did nothing. A
+  fitted-baseline cell condition below one has no population. A gate stored as a fraction rounded to zero on
+  projection and reached the workflow as _off_ while the settings field still showed a number.
+
 ## 3.0.1
 
 ### Patch Changes

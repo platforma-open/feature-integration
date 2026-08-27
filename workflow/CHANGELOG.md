@@ -1,5 +1,139 @@
 # @platforma-open/milaboratories.feature-integration.workflow
 
+## 3.0.2
+
+### Patch Changes
+
+- fd74062: The block's description says what the block does.
+
+  It still described the shipped feature-integration block: which antigen each cell bound "and how
+  strongly", the dominant (consensus) antigen, and a per-antigen specificity score. The block emits none of
+  those, and two of them are refused outright — `verdict-at-every-identity` forbids a dominant antigen
+  standing in for the set, and `binary-narrowing` forbids a magnitude leaving as the answer. The catalogue
+  entry promised a reader exactly the two things they cannot have, and said nothing about the four-state
+  verdict that replaced them.
+
+  Four smaller corrections. The punch legend said an unsettled reading has _seven_ ways to fail and the
+  tooltip said six; there are five, the sixth reason belonging to _never asked_. The per-sample count
+  distribution was labelled as a median and described as deciles. The model cited a `resolve_default_source`
+  in `verdict.py` that deliberately does not exist and that a test pins as absent. And the workflow's
+  no-dataset branch carried a comment describing a run the model refuses.
+
+- 40844b3: The reagent table counts cells, and an unreadable sibling does not vote.
+
+  **The per-tag figures are scoped to the cell list.** How many cells held any count of a tag, how many
+  it called bound, and the median over the cells holding one were taken over every observed barcode.
+  Ambient reagent reaches most barcodes, so observed barcodes outnumber cells by one to two orders of
+  magnitude while carrying one or two counts each — and the median a reagent delivers is how this table
+  reports a reagent working under the level at which anything is credited. On a real run every tag in the
+  panel read as a failed reagent. The figures now say which cell list they were computed against, since
+  two runs whose lists came from different sources do not share a denominator.
+
+  **A sibling with no settled reading no longer votes.** The rule is to put every tag of an identity in
+  bound or not bound on its own count, and a cell whose reading was gated or had no comparator is in
+  neither. Counting _unreliable_ as a state let it form a sibling majority, so a tag that fitted where its
+  siblings did not read as differing from all of them — reported as the panel's worst reagent, and its
+  only working one in fact. With a gate on, the same bug diluted every real rate by the share of cells the
+  gate set aside.
+
+  **A fraction with no denominator prints blank rather than zero.** The matched-read fraction of a sample
+  whose reads never arrived, and the median UMIs per cell of a sample holding no cell, both printed
+  `0.00` — beside a neighbour's `0.98` that reads as a library that failed rather than one that is
+  missing.
+
+  **Two QC descriptions said the wrong denominator.** The usable-antigen-read fraction and the
+  aggregate-barcode read fraction are both taken over the sample's total reads, and both column
+  descriptions said _over reads matched_; the first also asserted a UMI-validity condition it does not
+  carry. Both are measurements with published alert lines, so a reader hovering the column that alerted
+  was told to divide by the wrong number.
+
+  **The sample report shows each measurement's detail.** It was declared and populated and never
+  rendered — which is what made the sticky measurement unreadable, since a count of cells above a declared
+  gate and the median of the readings where none is declared arrive in the same column and only the
+  detail says which. Every distribution-shaped measurement's deciles ride there too.
+
+- ec31fb9: The fitted rung labels its signal component by median, the gate sets aside above its line, and a
+  sticky count is not reported over no readings.
+
+  **The signal component is the higher-median one.** It was the higher-mean one, justified by a comment
+  saying a negative binomial's medians are ordered by its means. They are not: the median depends on the
+  size as much as the mean, at mean 50 and size 0.05 it is 0 while at mean 5 and size 1e6 it is 5, and
+  sizes are re-estimated per component from that component's own variance every round. An ambient
+  population — mostly zero with a few enormous counts — fits a component whose mean sits far above a real
+  binder population's while its median sits far below, so the two orderings pick opposite components.
+  Labelling the wrong one inverts the tag: on the bed now committed, ordering by mean calls four hundred
+  cells that read nothing bound, at a probability of exactly one. Where both medians are zero, which is
+  the mostly-silent case, the mean breaks the tie.
+
+  **The admissibility gate sets aside a cell above its threshold, not at it.** `reference-two-roles` says
+  above, and says a cell is set aside where a reading exceeds the threshold — the same direction the
+  minimum takes from the other side, where a count of four survives a minimum of four. The code, its
+  CLI help, the QC column and the settings tooltip all said _reaches_. A cell reading exactly the gate
+  value now stays in and answers.
+
+  **Neither form of the sticky measurement reports a number over no readings.** Both are taken over the
+  cells' own baseline readings, which only a declared baseline tag supplies. Under the tag-distribution
+  rung no cell has one, and a gated count over an empty population came out `0.0` — a sample reported as
+  checked and clean on a question the run never put, and disagreeing with the run record, which already
+  reported nothing for the same condition.
+
+- 817a04b: The support pair names the set it counts, an antigen cannot be dropped by an id collision, and the
+  aggregate-barcode knobs reach a command line.
+
+  **`cellsCouldAnswer` carried the cells the question was put to.** `four-state-verdict` names two sets
+  and keeps them apart: the cells a question was _put to_ is a fact about the experiment, and the cells
+  that _could answer_ is that set narrowed by what the data and the settings allow. The column labelled
+  _Cells that could answer_ held the first. With a gate setting seven of ten cells aside, a clonotype whose
+  three survivors all read bound reported ten — so a scientist reading the spec's pair saw three of ten and
+  inferred seven negatives that never existed. With no gate declared and a comparator for every cell the
+  two numbers agree, which is why it went unnoticed.
+
+  `pl7.app/antigen/cellsCouldAnswer` is now `pl7.app/antigen/cellsAsked`, labelled _Cells the question was
+  put to_. `pl7.app/antigen/cellsAnswered` keeps its name and is labelled _Cells that could answer_ — every
+  cell that could answer did, so it is one set under two true descriptions, and it is the number the vote
+  limit acts on. The punch value's field order is unchanged, so a project stored before this still decodes.
+  **A consumer reading `pl7.app/antigen/cellsCouldAnswer` must move to `cellsAnswered`, not to
+  `cellsAsked`.**
+
+  The punch tooltip now shows both counts wherever they differ, not only where the run carried panels that
+  differ, and shows how many cells read bound — which is the whole split where a tie or a refused majority
+  leaves no agreement figure.
+
+  **An identity id collision could drop an antigen silently.** Column ids ran through
+  `substituteSpecialCharacters`, which collapses every run of punctuation to a single `_`, so `SARS-CoV-2`,
+  `SARS CoV 2` and `SARS.CoV.2` produced one id — and the importer writes ids into a map with no duplicate
+  check, so the second column overwrote the first and an antigen left the answer with no error raised
+  anywhere. Unreachable under the shipped per-tag grouping, where identities are barcodes; reachable under
+  a property grouping, where they are the scientist's own antigen names. Ids are disambiguated by position
+  now, deterministically, and the column header is still the identity itself.
+
+  **Every parameter travels with the verdicts.** Only the minimum count and the cutoff were carried, on the
+  verdict column alone. The gate and the agreement floor decide _which verdicts exist_, and two runs
+  differing on them emitted columns of identical identity and identical annotations, with the record only
+  in a block-local output that labelling and lead selection never see. All of them now ride the verdicts,
+  the set counts and the exported identity pivot, with an unset parameter carrying no note rather than a
+  zero.
+
+  **The three aggregate-barcode knobs reach a command line.** `fb-pipeline` never passed them to
+  `fb-downstream`, which is written to read exactly those three, so the guards there could never fire and
+  `qc_report.py`'s own defaults always applied. They still travelled in the per-sample body's identity, so
+  moving one re-ran parse, refine-tags and tag-stat for every sample and changed no number. A test now
+  asserts that fb-pipeline hands fb-downstream everything it reads.
+
+  **`argsValid` bounds three parameters it did not.** An agreement floor at or below half can never fire,
+  since a majority is above half by construction, so the run recorded a limit that did nothing. A
+  fitted-baseline cell condition below one has no population. A gate stored as a fraction rounded to zero on
+  projection and reached the workflow as _off_ while the settings field still showed a number.
+
+- Updated dependencies [acfde14]
+- Updated dependencies [91891bc]
+- Updated dependencies [a7e7d04]
+- Updated dependencies [40844b3]
+- Updated dependencies [ec31fb9]
+- Updated dependencies [c66820b]
+- Updated dependencies [817a04b]
+  - @platforma-open/milaboratories.feature-integration.per-cell-metrics@3.0.2
+
 ## 3.0.1
 
 ### Patch Changes

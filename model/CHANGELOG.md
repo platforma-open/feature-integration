@@ -1,5 +1,98 @@
 # @platforma-open/milaboratories.feature-integration.model
 
+## 3.0.2
+
+### Patch Changes
+
+- acfde14: Pin the reading defaults that actually ship, and collect the generator tests.
+
+  The five numbers that decide verdicts — the minimum count, the cutoff, the fewest voting cells, the
+  panel-member floor and the fitted-baseline cell floor — were written independently in three places. The
+  Python copies were pinned by tests and the Tengo copies were pinned by a Tengo test; the model's copies
+  were pinned by nothing. That is the wrong one to leave loose: `verdict-args.lib.tengo` adds `--floor`,
+  `--cutoff`, `--min-voters`, `--panel-min-members` and `--distribution-min-cells` unconditionally,
+  substituting the model's value wherever the stored one is undefined, so on any workflow-driven run the
+  model's copy is the number in force and the Python's argparse default never governs. A cutoff of 90 in
+  the model would have scored every run at 90 and passed the whole suite.
+
+  The five are now one exported `VERDICT_DEFAULTS` map, and `qcDefaults.test.ts` asserts each value
+  against the Tengo file and against the Python module that owns it — the device it already applied to the
+  nine QC lines, which are the numbers nobody tunes.
+
+  A run with no `--cutoff` is now asserted through the CLI as well as through the module constant. Every
+  count in the acceptance beds scored either about zero or about one hundred, so the cutoff had no
+  reachable neighbourhood and a bed could not tell 50 from 75 from 90. Two counts either side of it —
+  scoring 69.02 and 79.36 against the beds' comparator — bracket the entrypoint's default to the band it
+  belongs in.
+
+  `software/test-data/manual/tests` is now collected. It had never run: `testpaths` named only the package
+  test directory, and among the 43 tests it holds is the one place the specificity score's published
+  values are pinned. Collecting it needed importlib import mode, because both test roots carry a
+  `test_panel.py` and the default import mode names a module by its basename alone.
+
+- fd74062: The block's description says what the block does.
+
+  It still described the shipped feature-integration block: which antigen each cell bound "and how
+  strongly", the dominant (consensus) antigen, and a per-antigen specificity score. The block emits none of
+  those, and two of them are refused outright — `verdict-at-every-identity` forbids a dominant antigen
+  standing in for the set, and `binary-narrowing` forbids a magnitude leaving as the answer. The catalogue
+  entry promised a reader exactly the two things they cannot have, and said nothing about the four-state
+  verdict that replaced them.
+
+  Four smaller corrections. The punch legend said an unsettled reading has _seven_ ways to fail and the
+  tooltip said six; there are five, the sixth reason belonging to _never asked_. The per-sample count
+  distribution was labelled as a median and described as deciles. The model cited a `resolve_default_source`
+  in `verdict.py` that deliberately does not exist and that a test pins as absent. And the workflow's
+  no-dataset branch carried a comment describing a run the model refuses.
+
+- 817a04b: The support pair names the set it counts, an antigen cannot be dropped by an id collision, and the
+  aggregate-barcode knobs reach a command line.
+
+  **`cellsCouldAnswer` carried the cells the question was put to.** `four-state-verdict` names two sets
+  and keeps them apart: the cells a question was _put to_ is a fact about the experiment, and the cells
+  that _could answer_ is that set narrowed by what the data and the settings allow. The column labelled
+  _Cells that could answer_ held the first. With a gate setting seven of ten cells aside, a clonotype whose
+  three survivors all read bound reported ten — so a scientist reading the spec's pair saw three of ten and
+  inferred seven negatives that never existed. With no gate declared and a comparator for every cell the
+  two numbers agree, which is why it went unnoticed.
+
+  `pl7.app/antigen/cellsCouldAnswer` is now `pl7.app/antigen/cellsAsked`, labelled _Cells the question was
+  put to_. `pl7.app/antigen/cellsAnswered` keeps its name and is labelled _Cells that could answer_ — every
+  cell that could answer did, so it is one set under two true descriptions, and it is the number the vote
+  limit acts on. The punch value's field order is unchanged, so a project stored before this still decodes.
+  **A consumer reading `pl7.app/antigen/cellsCouldAnswer` must move to `cellsAnswered`, not to
+  `cellsAsked`.**
+
+  The punch tooltip now shows both counts wherever they differ, not only where the run carried panels that
+  differ, and shows how many cells read bound — which is the whole split where a tie or a refused majority
+  leaves no agreement figure.
+
+  **An identity id collision could drop an antigen silently.** Column ids ran through
+  `substituteSpecialCharacters`, which collapses every run of punctuation to a single `_`, so `SARS-CoV-2`,
+  `SARS CoV 2` and `SARS.CoV.2` produced one id — and the importer writes ids into a map with no duplicate
+  check, so the second column overwrote the first and an antigen left the answer with no error raised
+  anywhere. Unreachable under the shipped per-tag grouping, where identities are barcodes; reachable under
+  a property grouping, where they are the scientist's own antigen names. Ids are disambiguated by position
+  now, deterministically, and the column header is still the identity itself.
+
+  **Every parameter travels with the verdicts.** Only the minimum count and the cutoff were carried, on the
+  verdict column alone. The gate and the agreement floor decide _which verdicts exist_, and two runs
+  differing on them emitted columns of identical identity and identical annotations, with the record only
+  in a block-local output that labelling and lead selection never see. All of them now ride the verdicts,
+  the set counts and the exported identity pivot, with an unset parameter carrying no note rather than a
+  zero.
+
+  **The three aggregate-barcode knobs reach a command line.** `fb-pipeline` never passed them to
+  `fb-downstream`, which is written to read exactly those three, so the guards there could never fire and
+  `qc_report.py`'s own defaults always applied. They still travelled in the per-sample body's identity, so
+  moving one re-ran parse, refine-tags and tag-stat for every sample and changed no number. A test now
+  asserts that fb-pipeline hands fb-downstream everything it reads.
+
+  **`argsValid` bounds three parameters it did not.** An agreement floor at or below half can never fire,
+  since a majority is above half by construction, so the run recorded a limit that did nothing. A
+  fitted-baseline cell condition below one has no population. A gate stored as a fraction rounded to zero on
+  projection and reached the workflow as _off_ while the settings field still showed a number.
+
 ## 3.0.1
 
 ### Patch Changes
