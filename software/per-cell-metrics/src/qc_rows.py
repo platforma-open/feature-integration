@@ -287,15 +287,17 @@ _REAGENT_SCHEMA = {
 }
 
 # One row per (sampleId, tag) the pre-refine pass saw and the sample's panel does not declare.
-# `readShare` and `status` are the SAMPLE's undeclared-read share, repeated on every one of that
-# sample's rows: the field publishes a line for the share of a sample's reads landing in barcodes
-# nobody declared, and that status is the barcode's, never the sample's -- so it is computed at the
-# sample and carried on the barcode's own row. Usually there are no rows for a sample at all, which
-# is the wanted outcome.
+# Two shares, at two levels, and neither substitutes for the other. `barcodeShare` is this one
+# sequence's weight over every pre-refine read of its sample. `readShare` and `status` are the
+# SAMPLE's undeclared-read share, repeated on every one of that sample's rows: the field publishes a
+# line for the share of a sample's reads landing in barcodes nobody declared, and that status is the
+# barcode's, never the sample's -- so it is computed at the sample and carried on the barcode's own
+# row. Usually there are no rows for a sample at all, which is the wanted outcome.
 _UNDECLARED_BARCODE_SCHEMA = {
     "sampleId": pl.String,
     "tag": pl.String,
     "totalWeight": pl.Int64,
+    "barcodeShare": pl.Float64,
     "readShare": pl.Float64,
     "status": pl.String,
 }
@@ -406,6 +408,30 @@ def _number(row: dict, column: str) -> float | None:
     if raw is None or str(raw).strip() == "":
         return None
     return float(raw)
+
+
+# A rescued share below this reads as the two sources disagreeing rather than as a quantity.
+_RESCUE_TOLERANCE = -1e-9
+
+
+def rescued_share(undeclared: float | None, panel_assigned: float | None) -> float | None:
+    """The share of a sample's reads that correction moved from off the panel onto it.
+
+    `undeclared` is the pre-refine tag-stat's undeclared weight over that sample's whole weight.
+    `panel_assigned` is the refine-tags report's FEATURE `outputCount / inputCount`, so its
+    complement is the reads that step dropped. Both are over reads matched, and the difference is
+    the reads a sequence the panel never declared carried that correction snapped onto a panel entry.
+
+    None where either side is absent. Also None where the difference comes out below
+    `_RESCUE_TOLERANCE`: the two figures come from different files, and a drop count exceeding the
+    undeclared count is those files disagreeing, not a negative quantity of reads.
+    """
+    if undeclared is None or panel_assigned is None:
+        return None
+    value = undeclared - (1.0 - panel_assigned)
+    if value < _RESCUE_TOLERANCE:
+        return None
+    return max(value, 0.0)
 
 
 # The sample-level measurements, in MEASUREMENTS' own declaration order -- the same walk

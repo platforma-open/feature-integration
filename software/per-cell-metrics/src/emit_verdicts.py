@@ -46,12 +46,13 @@ from combine import (
     set_counts,
 )
 from frame_io import (
+    UNDECLARED_BARCODES_KEPT,
+    UndeclaredTally,
     _json_arg,
     _read_columns,
     _read_counts,
-    _read_raw_feature_counts,
     _write_sorted,
-    undeclared_feature_counts,
+    raw_feature_summary,
 )
 from identity_tables import (
     CELL_PUNCH_MAX_CELLS,
@@ -115,6 +116,7 @@ from qc_rows import (
     _sample_decile_rows,
     _score_spread,
     _sticky_measure,
+    rescued_share,
     sample_report_rows,
     sample_summary_rows,
 )
@@ -408,11 +410,17 @@ def main() -> None:
     # The floor is applied per sample, so the counters it returns land in each sample's own QC row. A
     # cell key carries its sample, so partitioning is exact on both counters and the run totals are
     # their sums.
+    # Partitioned once. A filter per sample is a full scan of the whole run's counts per sample, and
+    # this loop and the QC loop below each ran one.
+    counts_by_sample: dict[str, pl.DataFrame] = {
+        key[0]: part for key, part in counts.partition_by("sampleId", as_dict=True).items()
+    }
+    empty_counts = counts.head(0)
     floor_stats: dict[str, dict[str, int]] = {}
     parts = []
     for sample in samples:
         floored_part = apply_floor(
-            counts.filter(pl.col("sampleId") == sample),
+            counts_by_sample.get(sample, empty_counts),
             args.floor,
             reference_tags,
         )
@@ -906,26 +914,38 @@ def main() -> None:
     NO_READS_TO_DIVIDE = "this sample's read QC reports no reads, so the share has no denominator"
     NO_AGGREGATE_FIGURE = "this sample's read QC reports nonzero reads but no aggregate-barcode figure"
     NO_READ_COUNT = "this sample's read QC row carries no read count, so the share has no denominator"
+    # Both sides of the subtraction, since either can be the missing one and the reader cannot tell
+    # which from the row.
+    NO_RESCUED_FIGURE = (
+        "this sample has no pre-refine pass, no panel-assigned fraction, or the two disagree, so what "
+        "correction rescued cannot be read"
+    )
 
     # The pre-refine pass: one FEATURE tag-stat row per sequence the reads carried, before refine-tags
     # snaps each one onto the panel. Without this file the table below stays the ordinary empty case
     # rather than raising, because a run wired without it has not checked for an undeclared barcode,
     # which is a different fact from having checked and found none.
-    raw_feature_counts = _read_raw_feature_counts(args.raw_feature_counts) if args.raw_feature_counts else None
-    undeclared_barcode_rows: list[dict] = []
+    raw_tallies = raw_feature_summary(args.raw_feature_counts, declared) if args.raw_feature_counts else None
+    undeclared_barcode_frames: list[pl.DataFrame] = []
     sample_decile_rows: list[dict] = []
 
     # `totalWeight` reaches `counts` only from a gather step built after this column existed. Checked
     # once, not per sample: its presence is a property of the file, not of any one sample's rows.
     has_total_weight = "totalWeight" in counts.columns
 
+    # Bucketed once, in one sorted pass. Sorting the whole cell list inside the loop below is
+    # O(samples x cells log cells) over a set that reaches millions of cells on a real run.
+    listed_by_sample: dict[str, list[CellKey]] = {}
+    for key in sorted(listed):
+        listed_by_sample.setdefault(key[0], []).append(key)
+
     rows: list[QcRow] = []
     sample_coverage: dict[str, Coverage] = {}
     sample_report: dict[str, dict] = {}
     for sample in samples:
         first = len(rows)
-        sample_counts = counts.filter(pl.col("sampleId") == sample)
-        listed_here = [key for key in sorted(listed) if key[0] == sample] if cell_list is not None else None
+        sample_counts = counts_by_sample.get(sample, empty_counts)
+        listed_here = listed_by_sample.get(sample, []) if cell_list is not None else None
         qc = read_qc.get(sample, {})
 
         reads_matched = _number(qc, "readsMatched")
@@ -971,23 +991,39 @@ def main() -> None:
         # undeclared barcode has no row in the panel to sit beside. Read on the PRE-refine pass, where
         # a sequence the panel never declared can still be seen -- `counts` above has already been
         # snapped onto the panel by refine-tags.
-        if raw_feature_counts is not None:
-            sample_raw = raw_feature_counts.filter(pl.col("sampleId") == sample).select("FEATURE", "totalWeight")
-            undeclared, undeclared_share = undeclared_feature_counts(sample_raw, declared[sample])
-            # The share is the SAMPLE's, computed once and carried on every one of that sample's rows.
-            # The status is the barcode's and never the sample's, so it is written here rather than added
-            # to `rows` / `sample_report_rows`.
-            undeclared_status = status_for("undeclaredBarcodeShare", undeclared_share, lines)
-            for undeclared_row in undeclared.iter_rows(named=True):
-                undeclared_barcode_rows.append(
-                    {
-                        "sampleId": sample,
-                        "tag": undeclared_row["tag"],
-                        "totalWeight": int(undeclared_row["totalWeight"]),
-                        "readShare": undeclared_share,
-                        "status": None if undeclared_status is None else undeclared_status.value,
-                    }
+        if raw_tallies is not None:
+            tally = raw_tallies.get(sample, UndeclaredTally())
+            # Two shares at two levels. `barcodeShare` is the row's own weight over every pre-refine
+            # read of this sample. `readShare` is the SAMPLE's, computed once over every row of that
+            # sample -- kept or elided by the tally's cap -- and carried on every row written. The
+            # status reads `readShare`; it is the barcode's and never the sample's, so it is written
+            # here rather than added to `rows` / `sample_report_rows`.
+            undeclared_status = status_for("undeclaredBarcodeShare", tally.share, lines)
+            barcode_share = (
+                (pl.col("totalWeight") / tally.total_weight) if tally.total_weight > 0 else pl.lit(None, pl.Float64)
+            )
+            undeclared_barcode_frames.append(
+                tally.heaviest.select(
+                    pl.lit(sample, pl.String).alias("sampleId"),
+                    "tag",
+                    "totalWeight",
+                    barcode_share.cast(pl.Float64).alias("barcodeShare"),
+                    pl.lit(tally.share, pl.Float64).alias("readShare"),
+                    pl.lit(None if undeclared_status is None else undeclared_status.value, pl.String).alias("status"),
                 )
+            )
+            # What correction then recovered. `tally.share` counts every pre-refine read the panel does
+            # not declare; `1 - panelAssignedFraction` counts the reads refine-tags went on to drop, over
+            # the same denominator. The difference is the reads a sequence off the panel carried that
+            # refine-tags snapped onto a panel entry -- the rows of this table that cost the run nothing.
+            add(
+                rows,
+                "sample",
+                sample,
+                "refineRescuedShare",
+                rescued_share(tally.share, _number(qc, "panelAssignedFraction")),
+                reason=NO_RESCUED_FIGURE,
+            )
         add(
             rows,
             "sample",
@@ -1516,7 +1552,7 @@ def main() -> None:
     )
 
     _write_sorted(
-        pl.DataFrame(undeclared_barcode_rows, schema=_UNDECLARED_BARCODE_SCHEMA),
+        pl.concat([pl.DataFrame(schema=_UNDECLARED_BARCODE_SCHEMA), *undeclared_barcode_frames]),
         f"{prefix}_undeclared_barcodes.csv",
         ["sampleId", "tag"],
     )
@@ -1590,6 +1626,10 @@ def main() -> None:
         "cellPunchCells": len(cell_punch),
         "identitySummaryLimit": IDENTITY_SUMMARY_MAX_IDENTITIES,
         "cellPunchLimit": CELL_PUNCH_MAX_CELLS,
+        # The undeclared-barcode table holds the heaviest sequences per sample, not every one. The
+        # share carries every row either way, so a run with an elided count still measures exactly.
+        "undeclaredBarcodeLimit": UNDECLARED_BARCODES_KEPT,
+        "undeclaredBarcodesElided": sum(t.elided for t in (raw_tallies or {}).values()),
         "readingsFloored": readings_floored,
         "cellsEmptied": cells_emptied,
         "cellsHighReference": cells_high_reference,

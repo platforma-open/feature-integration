@@ -1266,17 +1266,32 @@ undeclaredBarcodeImportSpec := func(sampleAxisSpec, tagAxisSpec) {
 				}
 			},
 			{
+				column: "barcodeShare",
+				id: "undeclaredBarcodeOwnShare",
+				spec: {
+					name: "pl7.app/antigen/undeclaredBarcodeOwnShare",
+					valueType: "Double",
+					annotations: a(78500, true, {
+						"pl7.app/label": "Share of the sample's reads",
+						"pl7.app/format": ".2p",
+						"pl7.app/min": "0",
+						"pl7.app/max": "1",
+						"pl7.app/description": "This one sequence's reads over every read the pre-refine pass saw for this sample. Reads here are not reads the run lost -- refine-tags snaps a sequence close enough to a panel barcode onto it, and the sample's own quality page carries the share it rescued that way."
+					})
+				}
+			},
+			{
 				column: "readShare",
 				id: "undeclaredBarcodeShare",
 				spec: {
 					name: "pl7.app/antigen/undeclaredBarcodeShare",
 					valueType: "Double",
 					annotations: a(78000, true, {
-						"pl7.app/label": "Share of the sample's reads",
+						"pl7.app/label": "Undeclared share (whole sample)",
 						"pl7.app/format": ".2p",
 						"pl7.app/min": "0",
 						"pl7.app/max": "1",
-						"pl7.app/description": "The share of this SAMPLE's reads landing in barcodes nobody declared, repeated on every one of that sample's rows here. Not this one sequence's own share."
+						"pl7.app/description": "The share of this SAMPLE's reads landing in barcodes nobody declared -- every undeclared sequence together, whether or not it has a row here. Repeated on every one of that sample's rows, and the number the Status column reads. For this one sequence's own share, read the column beside it."
 					})
 				}
 			},
@@ -1290,7 +1305,7 @@ undeclaredBarcodeImportSpec := func(sampleAxisSpec, tagAxisSpec) {
 						"pl7.app/label": "Status",
 						"pl7.app/isDiscreteFilter": "true",
 						"pl7.app/discreteValues": QC_STATUSES,
-						"pl7.app/description": "Warns above a 0.50 share and alerts at 1.0 (inherited from the field). This status is the barcode's, never a sample's: it never rolls into any sample's own status. No row here is the outcome to want -- an empty table means every barcode the reads carried was declared."
+						"pl7.app/description": "Reads the undeclared share of the whole sample, not this one sequence's: warns above a 0.50 share and alerts at 1.0 (inherited from the field), so it is the same on every row of a sample. This status is the barcode's, never a sample's: it never rolls into any sample's own status. No row here is the outcome to want -- an empty table means every barcode the reads carried was declared."
 					})
 				}
 			}
@@ -1605,6 +1620,8 @@ qcSampleSummaryImportSpec := func(sampleAxisSpec) {
 			num("medianUmisPerCell", "medianUmisPerCell", "Median UMIs / cell", 89000, ".1f", undefined),
 			num("panelAssignedFraction", "panelAssignedFraction", "Panel-assigned fraction", 88000, ".2p",
 				"Reads whose corrected barcode is on the panel, over reads matched."),
+			num("refineRescuedShare", "refineRescuedShare", "Reads correction rescued onto the panel", 87500, ".2p",
+				"Reads on a sequence the panel does not declare that refine-tags then snapped onto a panel entry, over reads matched. Read it against the undeclared-barcode table, whose rows are the pre-refine pass: this is the part of that table the run did not lose."),
 			num("cellBarcodeValidFraction", "cellBarcodeValidFraction", "Valid cell-barcode fraction", 87000, ".2p",
 				"Reads whose cell barcode corrects onto the chemistry's whitelist, over reads entering correction."),
 			num("usableReadFraction", "usableReadFraction", "Usable antigen-read fraction", 86000, ".2p",

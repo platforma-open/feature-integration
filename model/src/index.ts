@@ -1413,9 +1413,11 @@ export const platforma = BlockModelV3.create(dataModel)
       // (set, identity). One table over all of them is a malformed join, and the SDK answers `discoverColumns
       // failed` out of `discoverLabelColumns`. Only the (set, identity) family belongs here.
       //
-      // The identity's readable name comes FIRST, and has to be named here rather than left to `columns: null`.
-      // That option resolves label columns from the result pool, and this label lives in `exportFb`. A block's own
-      // exports are not in its own result pool.
+      // The identity's readable name is NOT named here. It is emitted twice under one spec -- `identityLabels`
+      // into `exportFb`, and `reagentIdentityLabels` into `reagentFb` -- and `reagentFb` reaches this block as
+      // the `antigenReagentTable` output, so `columns: null` discovers it. Supplying the `exportFb` copy as well
+      // rendered two identical "Antigen" columns. The two specs carry no domain, so no visibility rule separates
+      // them; dropping one supplier is the only route. `reagentFb` is built unconditionally beside the verdicts.
       //
       // Could-answer is CONDITIONAL. Under one panel it is the clonotype's own cell count at every identity, which
       // the grid already carries beside its name.
@@ -1429,30 +1431,13 @@ export const platforma = BlockModelV3.create(dataModel)
       // Not-bound is absent by design. A cell's vote is exactly one of bound or not-bound, so a third column is
       // `answered - bound` printed out. It is not in the export either.
       const WANTED = [
-        "pl7.app/label",
         "pl7.app/antigen/verdict",
         ...(panelsDiffer ? ["pl7.app/antigen/cellsAsked"] : []),
         "pl7.app/antigen/cellsAnswered",
         "pl7.app/antigen/cellsBound",
       ];
-      // One axis, the identity axis, is what makes `pl7.app/label` a label column rather than a name collision.
-      // The frame carries other one-axis labels, for the panel and for the tag. Filtered on the axis, and never
-      // trusted by name.
-      const identityAxisName = "pl7.app/antigen/identityId";
-      const pCols = WANTED.flatMap((name) =>
-        frame.filter(
-          (c) =>
-            c.spec.name === name &&
-            (name !== "pl7.app/label" ||
-              (c.spec.axesSpec.length === 1 && c.spec.axesSpec[0].name === identityAxisName)),
-        ),
-      );
-      // A count cannot prove the identity's name is among the matched columns. An axis name that drifts at export
-      // time renders anonymous rows, with nothing to report the regression.
-      if (!pCols.some((c) => c.spec.name === "pl7.app/label")) return undefined;
-      // Taken from the verdict column and not from `pCols[0]`. The identity label column sorts first and carries
-      // the identity axis alone, so `pCols[0].spec.axesSpec[0]` hands the filter that axis and resolves nothing.
-      // An axis assembled here would be a lookalike with a different identity, and would filter nothing.
+      const pCols = WANTED.flatMap((name) => frame.filter((c) => c.spec.name === name));
+      // Named, never positional. The filter above preserves WANTED's order, and a conditional member shifts it.
       const verdictCol = pCols.find((c) => c.spec.name === "pl7.app/antigen/verdict");
       // Checked directly, and before `setAxis` is derived from it. The filter below reads `verdictCol.id`.
       if (verdictCol === undefined) return undefined;
@@ -1462,9 +1447,8 @@ export const platforma = BlockModelV3.create(dataModel)
         primaryColumns: pCols.map((c) => DataColumn.fromColumn(c)),
         columns: null,
         tableState: ctx.data.expansionTableState,
-        // SUPPLIED here as a primary column, and filtered out of the frame above. Nothing discovers it from a pool.
         // `PlAgDataTableV2` drops any axis that has a label column, and renders the label column in that axis's
-        // place.
+        // place. The identity's label arrives by discovery, not as a primary column.
         //
         // Both columns the table would show as a name are called `pl7.app/label`, and the axis each one labels tells
         // them apart. The FIRST match wins, so the order of these two rules matters.
@@ -1610,8 +1594,9 @@ export const platforma = BlockModelV3.create(dataModel)
     },
     { retentive: true, withStatus: true },
   )
-  // Carries the share of a sample's reads that land in undeclared barcodes. That status is the barcode's, and
-  // never rolled into any sample's own. Usually empty, which is the wanted outcome.
+  // Carries two shares: each sequence's own, and the sample's whole undeclared share, which is what the status
+  // reads. That status is the barcode's, and never rolled into any sample's own. Rows are the pre-refine pass,
+  // so they include sequences correction later snapped onto the panel. Usually empty, which is the wanted outcome.
   .output(
     "undeclaredBarcodesTable",
     (ctx) => {

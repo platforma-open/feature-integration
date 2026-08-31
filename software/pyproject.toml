@@ -34,7 +34,7 @@ pythonpath = ["per-cell-metrics/src"]
 # renaming a file or adding __init__.py to a fixture tree.
 addopts = "-ra --strict-markers --import-mode=importlib"
 markers = [
-    "slow: end-to-end CLI run over the committed fixture bed; deselect with -m 'not slow'",
+    "slow: spawns a subprocess -- an end-to-end CLI run over the committed fixture bed, or a synthetic run out of test-data/manual/generate.py; deselect with -m 'not slow'",
 ]
 
 [tool.coverage.run]
