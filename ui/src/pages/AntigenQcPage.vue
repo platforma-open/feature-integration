@@ -224,6 +224,11 @@ const VIEW_TABS = computed(() => [
 
 const activeView = ref<ViewTab>("reagents");
 
+// VIEW_TABS is derived from the rung, and the rung is unreported until the run settles, so a strip drawn
+// mid-run offers every plot and then drops the ones that rung cannot draw. It stays hidden until then. The
+// open view's body keeps rendering and draws its own processing placeholder.
+const isRunning = computed(() => app.model.outputs.isRunning === true);
+
 // The open tab can stop existing: the run reports its rung, and the plot that tab held cannot be drawn.
 // Falling back keeps the page showing something rather than an empty body under a tab strip that no longer
 // offers the tab. Watching an output and writing a LOCAL ref is not a hairpin: nothing here reaches
@@ -267,7 +272,7 @@ const tagBins = computed(() => app.model.outputs.tagCountBins);
       <!-- Every figure says which cell list it was computed against. One list serves the whole run, so it is
            stated once here rather than repeated on each measurement. -->
 
-      <PlTabs v-model="activeView" :options="VIEW_TABS" />
+      <PlTabs v-if="!isRunning" v-model="activeView" :options="VIEW_TABS" />
 
       <!-- DEFERRED with its tab above, potentially to be deleted. Uncomment both together; `qcSettings`,
            `qcCellRenderer` and the sheet fetch behind them are all still live.
