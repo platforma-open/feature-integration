@@ -24,6 +24,7 @@ from qc_measures import (
     reads_per_cell,
     roll_up,
     sibling_disagreement,
+    status_expr,
     status_for,
     usable_read_fraction,
 )
@@ -693,6 +694,32 @@ def test_two_thresholds_give_three_levels():
     assert status_for("aggregateBarcodeFraction", 0.04, DEFAULT_LINES) is Status.OK
     assert status_for("aggregateBarcodeFraction", 0.06, DEFAULT_LINES) is Status.WARN
     assert status_for("aggregateBarcodeFraction", 1.0, DEFAULT_LINES) is Status.ALERT
+
+
+def test_status_expr_agrees_with_status_for():
+    # Two evaluators over one set of thresholds. The column form exists because the undeclared-barcode
+    # table's row cap accepts None, so a scalar loop there is a loop over every distinct pre-refine
+    # sequence. Splitting the evaluator is only safe while the two cannot disagree, so every registered
+    # measurement is run against both -- over its own thresholds, either side of each, and over the four
+    # values that are not numbers.
+    not_numbers = [None, float("nan"), float("inf"), float("-inf")]
+    ids = sorted(set(DEFAULT_LINES) | {m.id for m in MEASUREMENTS})
+    for measurement in ids:
+        probes = [*not_numbers, 0.0, 0.5, 1.0, 5000.0]
+        line = DEFAULT_LINES.get(measurement)
+        if line is not None:
+            for threshold in (line.warn, line.error):
+                if threshold is not None:
+                    probes += [threshold, threshold - 1e-9, threshold + 1e-9, threshold - 0.01, threshold + 0.01]
+        frame = pl.DataFrame({"v": probes}, schema={"v": pl.Float64})
+        # `with_columns`, not `select`: a measurement with no line yields a scalar literal, and `select`
+        # would return one row of it rather than one per probe.
+        got = frame.with_columns(status_expr(measurement, pl.col("v"), DEFAULT_LINES).alias("s"))["s"].to_list()
+        want = [
+            None if (status := status_for(measurement, value, DEFAULT_LINES)) is None else status.value
+            for value in probes
+        ]
+        assert got == want, measurement
 
 
 def test_error_is_tested_before_warn(monkeypatch):

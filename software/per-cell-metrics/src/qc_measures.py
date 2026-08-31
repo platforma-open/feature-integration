@@ -435,6 +435,19 @@ def _breaches(value: float, threshold: float, comparison: str) -> bool:
     return value == threshold
 
 
+def _breaches_expr(value: pl.Expr, threshold: float, comparison: str) -> pl.Expr:
+    """`_breaches` over a column. Every branch mirrors the scalar above, line for line.
+
+    `test_status_expr_agrees_with_status_for` runs the two against one another over the boundary
+    values and every registered measurement, so a branch changed on one side alone fails there.
+    """
+    if comparison == "at-least":
+        return value < threshold
+    if comparison == "at-most":
+        return value > threshold
+    return value == threshold
+
+
 _ORDINAL = {Status.OK: 0, Status.WARN: 1, Status.ALERT: 2}
 
 _DEFERRED: frozenset[str] = frozenset(m.id for m in MEASUREMENTS if m.deferred_reason)
@@ -480,6 +493,52 @@ def status_for(measurement: str, value: float | None, lines: dict[str, Line]) ->
     if _breaches(value, line.warn, warn_comparison):
         return Status.WARN
     return Status.OK
+
+
+def status_expr(measurement: str, value: pl.Expr, lines: dict[str, Line]) -> pl.Expr:
+    """`status_for` over a column, returning the status string or null.
+
+    For a per-row status on a frame with no bound on its height. The undeclared-barcode table is the
+    caller: its row cap is a parameter that accepts `None`, so a Python loop there is a loop over every
+    distinct pre-refine sequence -- 10.2M per sample on a measured 44-sample run -- and materialising
+    the column to drive it undoes the memory work this stage carries.
+
+    Thresholds and directions are read from the SAME `lines` and `_COMPARISON` this module's scalar
+    reads. Only the evaluator differs, and a test pins the two together.
+    """
+    null = pl.lit(None, pl.String)
+    if measurement in _DEFERRED:
+        return null
+    # `is_computed` over a column: a null, a NaN or an infinity is not a number. Kleene `&` makes a
+    # null value read False here rather than propagating a null into the branch below.
+    computed = (value.is_not_null() & value.is_finite()).fill_null(False)  # noqa: FBT003
+    if measurement in _CATEGORICAL:
+        return (
+            pl.when(~computed)
+            .then(null)
+            .when(value == 0)
+            .then(pl.lit(Status.ALERT.value, pl.String))
+            .otherwise(pl.lit(Status.OK.value, pl.String))
+        )
+    if measurement not in lines:
+        return null
+    line = lines[measurement]
+    warn_comparison, error_comparison = _COMPARISON[measurement]
+    alerts = (
+        _breaches_expr(value, line.error, error_comparison)
+        if line.error is not None and error_comparison is not None
+        else pl.lit(False)  # noqa: FBT003
+    )
+    # Error first, exactly as the scalar orders it: a value past both boundaries reads alert.
+    return (
+        pl.when(~computed)
+        .then(null)
+        .when(computed & alerts)
+        .then(pl.lit(Status.ALERT.value, pl.String))
+        .when(computed & _breaches_expr(value, line.warn, warn_comparison))
+        .then(pl.lit(Status.WARN.value, pl.String))
+        .otherwise(pl.lit(Status.OK.value, pl.String))
+    )
 
 
 def roll_up(readings: list[Reading]) -> Coverage:
