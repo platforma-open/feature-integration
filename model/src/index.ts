@@ -64,8 +64,8 @@ export const QC_LINE_DEFAULTS = {
   readsPerCellWarn: 5000,
   aggregateBarcodeWarn: 0.05,
   aggregateBarcodeError: 1.0,
-  undeclaredBarcodeWarn: 0.5,
-  undeclaredBarcodeError: 1.0,
+  undeclaredBarcodeWarn: 0.01,
+  undeclaredBarcodeError: 0.05,
   usableReadWarn: 0.2,
   usableReadError: 0.0,
 } as const;

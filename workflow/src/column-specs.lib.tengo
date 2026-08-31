@@ -1240,8 +1240,9 @@ panelMismatchImportSpec := func(panelAxisSpec, tagAxisSpec) {
 //
 // Barcodes the reads carried that no panel declares get their own table, keyed by sequence, because they
 // have no row above -- they are not in the panel. It is the one thing on this surface that carries a
-// status: the share of a sample's reads landing in undeclared barcodes. That status stays the barcode's
-// and never the sample's, so it sits here rather than on any row of qcImportSpec's per-sample list.
+// status, and that status reads the ROW's own share of its sample's pre-refine reads. It stays the
+// barcode's and never the sample's, so it sits here rather than on any row of qcImportSpec's per-sample
+// list. The sample-level share keeps its own column beside it and carries no status.
 //
 // Usually this table has no row for a sample at all, and that is the wanted outcome. The description
 // below says so, since an empty grid otherwise reads as a check that never ran.
@@ -1261,7 +1262,7 @@ undeclaredBarcodeImportSpec := func(sampleAxisSpec, tagAxisSpec) {
 					annotations: a(79000, true, {
 						"pl7.app/label": "Reads",
 						"pl7.app/min": "0",
-						"pl7.app/description": "Reads carrying this sequence, from the pre-refine pass -- before refine-tags would have snapped or dropped it."
+						"pl7.app/description": "Reads that carry this sequence. The pre-refine pass supplies the count. It is taken before refine-tags snapped the sequence onto a panel barcode, or dropped it."
 					})
 				}
 			},
@@ -1276,7 +1277,7 @@ undeclaredBarcodeImportSpec := func(sampleAxisSpec, tagAxisSpec) {
 						"pl7.app/format": ".2p",
 						"pl7.app/min": "0",
 						"pl7.app/max": "1",
-						"pl7.app/description": "This one sequence's reads over every read the pre-refine pass saw for this sample. Reads here are not reads the run lost -- refine-tags snaps a sequence close enough to a panel barcode onto it, and the sample's own quality page carries the share it rescued that way."
+						"pl7.app/description": "The reads of this one sequence, divided by every read the pre-refine pass saw for this sample. The Status column reads this number. A read here is not always a read the run lost. refine-tags snaps a sequence close enough to a panel barcode onto that barcode. The sample's own quality page gives the share that refine-tags rescued."
 					})
 				}
 			},
@@ -1287,11 +1288,11 @@ undeclaredBarcodeImportSpec := func(sampleAxisSpec, tagAxisSpec) {
 					name: "pl7.app/antigen/undeclaredBarcodeShare",
 					valueType: "Double",
 					annotations: a(78000, true, {
-						"pl7.app/label": "Undeclared share (whole sample)",
+						"pl7.app/label": "Sample Undeclared (%)",
 						"pl7.app/format": ".2p",
 						"pl7.app/min": "0",
 						"pl7.app/max": "1",
-						"pl7.app/description": "The share of this SAMPLE's reads landing in barcodes nobody declared -- every undeclared sequence together, whether or not it has a row here. Repeated on every one of that sample's rows, and the number the Status column reads. For this one sequence's own share, read the column beside it."
+						"pl7.app/description": "The share of this sample's reads that land in barcodes nobody declared. It counts every undeclared sequence together. It includes sequences that have no row in this table. The same number shows on every row of the sample. It carries no status. For the share of one sequence, read the column beside this one."
 					})
 				}
 			},
@@ -1305,7 +1306,7 @@ undeclaredBarcodeImportSpec := func(sampleAxisSpec, tagAxisSpec) {
 						"pl7.app/label": "Status",
 						"pl7.app/isDiscreteFilter": "true",
 						"pl7.app/discreteValues": QC_STATUSES,
-						"pl7.app/description": "Reads the undeclared share of the whole sample, not this one sequence's: warns above a 0.50 share and alerts at 1.0 (inherited from the field), so it is the same on every row of a sample. This status is the barcode's, never a sample's: it never rolls into any sample's own status. No row here is the outcome to want -- an empty table means every barcode the reads carried was declared."
+						"pl7.app/description": "How this one sequence reads against its own share of the sample's reads. By default it warns above 1% and alerts above 5%. This status belongs to the barcode. It never rolls up into the status of a sample. No row in this table is the outcome to want. An empty table means every barcode the reads carried was declared."
 					})
 				}
 			}

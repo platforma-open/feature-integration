@@ -996,21 +996,28 @@ def main() -> None:
             # Two shares at two levels. `barcodeShare` is the row's own weight over every pre-refine
             # read of this sample. `readShare` is the SAMPLE's, computed once over every row of that
             # sample -- kept or elided by the tally's cap -- and carried on every row written. The
-            # status reads `readShare`; it is the barcode's and never the sample's, so it is written
-            # here rather than added to `rows` / `sample_report_rows`.
-            undeclared_status = status_for("undeclaredBarcodeShare", tally.share, lines)
+            # status reads `barcodeShare`, so it differs down the table; `readShare` carries no status.
+            # It is the barcode's and never the sample's, so it is written here rather than added to
+            # `rows` / `sample_report_rows`.
             barcode_share = (
                 (pl.col("totalWeight") / tally.total_weight) if tally.total_weight > 0 else pl.lit(None, pl.Float64)
             )
+            undeclared_frame = tally.heaviest.select(
+                pl.lit(sample, pl.String).alias("sampleId"),
+                "tag",
+                "totalWeight",
+                barcode_share.cast(pl.Float64).alias("barcodeShare"),
+                pl.lit(tally.share, pl.Float64).alias("readShare"),
+            )
+            # Row by row through the SAME scalar rule every other status goes through, rather than a
+            # polars expression rebuilding the thresholds and their directions. `heaviest` is capped at
+            # UNDECLARED_BARCODES_KEPT rows per sample, so the loop cannot grow with the library.
+            undeclared_statuses = [
+                None if (s := status_for("undeclaredBarcodeShare", value, lines)) is None else s.value
+                for value in undeclared_frame["barcodeShare"].to_list()
+            ]
             undeclared_barcode_frames.append(
-                tally.heaviest.select(
-                    pl.lit(sample, pl.String).alias("sampleId"),
-                    "tag",
-                    "totalWeight",
-                    barcode_share.cast(pl.Float64).alias("barcodeShare"),
-                    pl.lit(tally.share, pl.Float64).alias("readShare"),
-                    pl.lit(None if undeclared_status is None else undeclared_status.value, pl.String).alias("status"),
-                )
+                undeclared_frame.with_columns(pl.Series("status", undeclared_statuses, dtype=pl.String))
             )
             # What correction then recovered. `tally.share` counts every pre-refine read the panel does
             # not declare; `1 - panelAssignedFraction` counts the reads refine-tags went on to drop, over

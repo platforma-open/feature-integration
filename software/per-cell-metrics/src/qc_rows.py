@@ -289,10 +289,10 @@ _REAGENT_SCHEMA = {
 # One row per (sampleId, tag) the pre-refine pass saw and the sample's panel does not declare.
 # Two shares, at two levels, and neither substitutes for the other. `barcodeShare` is this one
 # sequence's weight over every pre-refine read of its sample. `readShare` and `status` are the
-# SAMPLE's undeclared-read share, repeated on every one of that sample's rows: the field publishes a
-# line for the share of a sample's reads landing in barcodes nobody declared, and that status is the
-# barcode's, never the sample's -- so it is computed at the sample and carried on the barcode's own
-# row. Usually there are no rows for a sample at all, which is the wanted outcome.
+# SAMPLE's undeclared-read share, repeated on every one of that sample's rows and carrying no status.
+# `status` reads `barcodeShare`, so it is the row's own and differs down the table. That status is the
+# barcode's, never the sample's, and never rolls into a sample's. Usually there are no rows for a
+# sample at all, which is the wanted outcome.
 _UNDECLARED_BARCODE_SCHEMA = {
     "sampleId": pl.String,
     "tag": pl.String,

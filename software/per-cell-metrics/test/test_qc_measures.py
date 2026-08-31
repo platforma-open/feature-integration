@@ -595,14 +595,25 @@ def test_the_categorical_route_carries_cells_detected_and_nothing_else():
     assert categorical_routed.isdisjoint(_COMPARISON)
 
 
-def test_the_undeclared_barcode_line_is_read_direct_not_as_a_complement():
-    # The line is published on the undeclared share itself: warn above 0.50, error at 1.0. The barcode
-    # table measures that share directly, so the thresholds are not mirrored.
+def test_the_undeclared_barcode_line_is_per_barcode_and_operator_set():
+    # Judged on ONE sequence's share of its sample's pre-refine reads, not on the sample's aggregate.
+    # The field's 0.50/1.0 is published for the aggregate and does not transfer: an aggregate reaches
+    # 0.50 while no single sequence comes near it, so that line would never fire on a row.
     line = DEFAULT_LINES["undeclaredBarcodeShare"]
-    assert (line.warn, line.error) == (0.50, 1.0)
-    assert status_for("undeclaredBarcodeShare", 0.60, DEFAULT_LINES) is Status.WARN
+    assert (line.warn, line.error) == (0.01, 0.05)
+    assert status_for("undeclaredBarcodeShare", 0.02, DEFAULT_LINES) is Status.WARN
+    assert status_for("undeclaredBarcodeShare", 0.10, DEFAULT_LINES) is Status.ALERT
+    assert status_for("undeclaredBarcodeShare", 0.005, DEFAULT_LINES) is Status.OK
+
+
+def test_the_undeclared_barcode_line_alerts_above_its_error_not_only_at_it():
+    # Both ends face the same way, unlike the four inherited shares. `alerting-at` on the error end
+    # would fire only at exactly 0.05 and let every larger share read warn -- the worse finding being
+    # the one that never showed.
+    assert _COMPARISON["undeclaredBarcodeShare"] == ("at-most", "at-most")
+    assert status_for("undeclaredBarcodeShare", 0.05, DEFAULT_LINES) is Status.WARN
+    assert status_for("undeclaredBarcodeShare", 0.0501, DEFAULT_LINES) is Status.ALERT
     assert status_for("undeclaredBarcodeShare", 1.0, DEFAULT_LINES) is Status.ALERT
-    assert status_for("undeclaredBarcodeShare", 0.40, DEFAULT_LINES) is Status.OK
 
 
 def test_panel_assigned_fraction_carries_no_line_any_more():
@@ -677,11 +688,11 @@ def test_a_stated_recommendation_warns_and_never_alerts():
 def test_two_thresholds_give_three_levels():
     # The distinction collapsing them lost. Three of the four inherited lines put error at total failure,
     # so a low-but-non-zero share warns and only a wholly failed one alerts.
-    line = DEFAULT_LINES["undeclaredBarcodeShare"]
-    assert (line.warn, line.error) == (0.5, 1.0)
-    assert status_for("undeclaredBarcodeShare", 0.4, DEFAULT_LINES) is Status.OK
-    assert status_for("undeclaredBarcodeShare", 0.6, DEFAULT_LINES) is Status.WARN
-    assert status_for("undeclaredBarcodeShare", 1.0, DEFAULT_LINES) is Status.ALERT
+    line = DEFAULT_LINES["aggregateBarcodeFraction"]
+    assert (line.warn, line.error) == (0.05, 1.0)
+    assert status_for("aggregateBarcodeFraction", 0.04, DEFAULT_LINES) is Status.OK
+    assert status_for("aggregateBarcodeFraction", 0.06, DEFAULT_LINES) is Status.WARN
+    assert status_for("aggregateBarcodeFraction", 1.0, DEFAULT_LINES) is Status.ALERT
 
 
 def test_error_is_tested_before_warn(monkeypatch):
@@ -705,8 +716,8 @@ def test_at_least_is_acceptable_exactly_at_the_line():
 def test_at_most_is_acceptable_exactly_at_the_line():
     # `undeclaredBarcodeShare` reads `at-most`: the warn line itself satisfies the condition it names, and
     # only strictly above it warns.
-    assert status_for("undeclaredBarcodeShare", 0.5, DEFAULT_LINES) is Status.OK
-    assert status_for("undeclaredBarcodeShare", 0.51, DEFAULT_LINES) is Status.WARN
+    assert status_for("undeclaredBarcodeShare", 0.01, DEFAULT_LINES) is Status.OK
+    assert status_for("undeclaredBarcodeShare", 0.011, DEFAULT_LINES) is Status.WARN
 
 
 def test_the_undeclared_barcode_fraction_ships_unjudged():

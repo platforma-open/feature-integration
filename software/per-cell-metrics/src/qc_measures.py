@@ -375,6 +375,9 @@ _CATEGORICAL: frozenset[str] = frozenset(m.id for m in MEASUREMENTS if m.line ==
 # `Measurement`: that status is the barcode's, never a sample's, so it is computed and carried where
 # the barcode rows are, in emit_verdicts.py, and reaches `status_for` under this id. It is the one
 # exception to "every line backs a declared measurement", and a test names it.
+#
+# It reads the ROW's own share, `barcodeShare`, not the sample-level `readShare` the id is named for.
+# The sample-level share keeps its column and carries no status.
 DEFAULT_LINES: dict[str, Line] = {
     # Both thresholds step the same way. This is the line with a real gradient at the far end.
     "cellBarcodeValidFraction": Line(warn=0.75, error=0.50),
@@ -383,9 +386,11 @@ DEFAULT_LINES: dict[str, Line] = {
     # Published values for the aggregate-barcode read fraction: warn above 0.05, error at total
     # failure (1.0).
     "aggregateBarcodeFraction": Line(warn=0.05, error=1.0),
-    # Published values for the undeclared-barcode read fraction, read direct rather than as a
-    # complement: warn above 0.50, error at total failure (1.0).
-    "undeclaredBarcodeShare": Line(warn=0.5, error=1.0),
+    # ONE BARCODE's share of its sample's pre-refine reads: warn above 0.01, alert above 0.05.
+    # Operator-set, not inherited. The field publishes 0.50/1.0 for a sample's AGGREGATE undeclared
+    # share, and that line does not transfer to a single sequence: the aggregate reaches 0.50 while no
+    # single sequence comes near it. Needs an atom on 315 before it can be called inherited.
+    "undeclaredBarcodeShare": Line(warn=0.01, error=0.05),
     # Published values for the usable antigen-read fraction: warn below 0.20, error at total
     # failure (0.0).
     "usableReadFraction": Line(warn=0.20, error=0.0),
@@ -413,7 +418,9 @@ _COMPARISON: dict[str, tuple[str, str | None]] = {
     # inherited share sits at either "at least" or "at most" with error at the catastrophe end, and
     # this is one of the two upward-facing members of that set.
     "aggregateBarcodeFraction": ("at-most", "alerting-at"),
-    "undeclaredBarcodeShare": ("at-most", "alerting-at"),
+    # Both ends face the same way, unlike the four inherited shares: this line alerts ABOVE its error
+    # threshold rather than at a catastrophe value, so `alerting-at` would fire only at exactly 0.05.
+    "undeclaredBarcodeShare": ("at-most", "at-most"),
     # Error at total failure (`alerting-at` 0.0), the downward-facing member of that same set.
     "usableReadFraction": ("at-least", "alerting-at"),
 }

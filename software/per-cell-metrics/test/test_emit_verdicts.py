@@ -586,7 +586,7 @@ def test_undeclared_barcode_table_is_keyed_by_sequence_with_the_samples_share(be
     # is the only undeclared sequence; the next test separates them.
     assert row["readShare"] == pytest.approx(10 / 60)
     assert row["barcodeShare"] == pytest.approx(10 / 60)
-    assert row["status"] == "OK"  # 10/60 is well under the 0.50 warn line
+    assert row["status"] == "alert"  # this sequence is 16.7% of the sample, above the 5% alert line
 
 
 def test_each_undeclared_barcode_carries_its_own_share_beside_the_samples(bed):
@@ -612,11 +612,25 @@ def test_the_own_share_denominator_is_every_pre_refine_read_not_the_undeclared_o
     assert sum(t["barcodeShare"].to_list()) == pytest.approx(0.10)
 
 
-def test_undeclared_barcode_share_warns_above_half(bed):
-    _write_raw_feature_counts(bed, [("S1", "AAAA", 10), ("S1", "ZZZZ", 15)])
+def test_undeclared_barcode_status_warns_above_one_percent(bed):
+    _write_raw_feature_counts(bed, [("S1", "AAAA", 980), ("S1", "ZZZZ", 20)])
     _run(bed, *BASE, "--raw-feature-counts", "raw_feature_counts.csv")
     t = pl.read_csv(bed / "result_undeclared_barcodes.csv")
-    assert t.row(0, named=True)["status"] == "warn"
+    assert t.row(0, named=True)["status"] == "warn"  # 20/1000 = 2%
+
+
+def test_undeclared_barcode_status_is_the_rows_own_not_the_samples(bed):
+    # The status reads `barcodeShare`, so two rows of one sample can read differently. Read from
+    # `readShare` it would be one word repeated, and a sample carrying one heavy sequence among many
+    # light ones would say nothing about which sequence to look at.
+    _write_raw_feature_counts(bed, [("S1", "AAAA", 900), ("S1", "ZZZZ", 80), ("S1", "YYYY", 20)])
+    _run(bed, *BASE, "--raw-feature-counts", "raw_feature_counts.csv")
+    t = pl.read_csv(bed / "result_undeclared_barcodes.csv")
+    by_tag = {r["tag"]: r for r in t.iter_rows(named=True)}
+    assert by_tag["ZZZZ"]["status"] == "alert"  # 8%, above the 5% alert line
+    assert by_tag["YYYY"]["status"] == "warn"  # 2%, above the 1% warn line
+    # One sample-level number on both rows, and it is no longer what the status reads.
+    assert [r["readShare"] for r in by_tag.values()] == [pytest.approx(0.10)] * 2
 
 
 def test_undeclared_barcode_share_alerts_when_every_read_is_undeclared(bed):
