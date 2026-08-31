@@ -353,22 +353,33 @@ def combine_tags_to_identities(counts: pl.DataFrame, grouping: Grouping) -> pl.D
     """
     star = {tag: identity for (tag, sample), identity in grouping.items() if sample == ANY_SAMPLE}
     keyed = [(tag, sample, identity) for (tag, sample), identity in grouping.items() if sample != ANY_SAMPLE]
-    mapped = counts.join(
-        pl.DataFrame(
-            keyed,
-            orient="row",
-            schema={"tag": pl.String, "sampleId": pl.String, "identity": pl.String},
-        ),
-        on=["tag", "sampleId"],
-        how="left",
+    # Lazy and projected to the four columns the group_by reads. Eagerly, the joined frame carries
+    # every column of `counts` plus `identity` at one row per (cell, tag), which measured 7.4 GB
+    # across this function's two calls on a 28.5M-row run.
+    mapped = (
+        counts.lazy()
+        .select(*CELL_KEY, "tag", "umiCount")
+        .join(
+            pl.LazyFrame(
+                keyed,
+                orient="row",
+                schema={"tag": pl.String, "sampleId": pl.String, "identity": pl.String},
+            ),
+            on=["tag", "sampleId"],
+            how="left",
+        )
     )
     if star:
         # A panel with no sample dimension declares one mapping over every sample, so star
         # rows fill where the keyed join found nothing. Checked second, so an explicit
         # per-sample declaration always wins.
         mapped = mapped.with_columns(pl.col("identity").fill_null(pl.col("tag").replace_strict(star, default=None)))
-    mapped = mapped.filter(pl.col("identity").is_not_null())
-    return mapped.group_by([*CELL_KEY, "identity"]).agg(pl.col("umiCount").max().alias("umiCount"))
+    return (
+        mapped.filter(pl.col("identity").is_not_null())
+        .group_by([*CELL_KEY, "identity"])
+        .agg(pl.col("umiCount").max().alias("umiCount"))
+        .collect(engine="streaming")
+    )
 
 
 def densify(identities: pl.DataFrame, cells: pl.DataFrame, offered_by_sample: dict[str, set[str]]) -> pl.DataFrame:

@@ -409,11 +409,17 @@ def main() -> None:
     # The floor is applied per sample, so the counters it returns land in each sample's own QC row. A
     # cell key carries its sample, so partitioning is exact on both counters and the run totals are
     # their sums.
+    # Partitioned once. A filter per sample is a full scan of the whole run's counts per sample, and
+    # this loop and the QC loop below each ran one.
+    counts_by_sample: dict[str, pl.DataFrame] = {
+        key[0]: part for key, part in counts.partition_by("sampleId", as_dict=True).items()
+    }
+    empty_counts = counts.head(0)
     floor_stats: dict[str, dict[str, int]] = {}
     parts = []
     for sample in samples:
         floored_part = apply_floor(
-            counts.filter(pl.col("sampleId") == sample),
+            counts_by_sample.get(sample, empty_counts),
             args.floor,
             reference_tags,
         )
@@ -920,13 +926,19 @@ def main() -> None:
     # once, not per sample: its presence is a property of the file, not of any one sample's rows.
     has_total_weight = "totalWeight" in counts.columns
 
+    # Bucketed once, in one sorted pass. Sorting the whole cell list inside the loop below is
+    # O(samples x cells log cells) over a set that reaches millions of cells on a real run.
+    listed_by_sample: dict[str, list[CellKey]] = {}
+    for key in sorted(listed):
+        listed_by_sample.setdefault(key[0], []).append(key)
+
     rows: list[QcRow] = []
     sample_coverage: dict[str, Coverage] = {}
     sample_report: dict[str, dict] = {}
     for sample in samples:
         first = len(rows)
-        sample_counts = counts.filter(pl.col("sampleId") == sample)
-        listed_here = [key for key in sorted(listed) if key[0] == sample] if cell_list is not None else None
+        sample_counts = counts_by_sample.get(sample, empty_counts)
+        listed_here = listed_by_sample.get(sample, []) if cell_list is not None else None
         qc = read_qc.get(sample, {})
 
         reads_matched = _number(qc, "readsMatched")

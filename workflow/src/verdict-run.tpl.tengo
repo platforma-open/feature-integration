@@ -85,9 +85,17 @@ self.body(func(inputs) {
 
 	// The reading holds one entry per analysed cell and one per (cell, tag) count, so it scales with the
 	// gathered counts table rather than with any one sample.
+	//
+	// The multiplier is measured, not assumed: peak RSS on a 44-sample / 28.5M-row synthetic is 614 bytes
+	// per counts row against 64 bytes per row on the wire, so 9.6x the file. A narrower row is a higher
+	// ratio at the same peak, and a run whose linker covers more of its barcodes is a higher peak: 24x
+	// covers both with headroom and keeps a 2 GiB counts file inside the 64 GiB an install grants.
+	//
+	// It was 8x, which no run reached only because the 16 GiB floor covered every counts file below
+	// ~0.8 GiB. The first run past that knee, at a 1.83 GB counts file, was killed at 6 minutes.
 	formula := exec.formula
 	memFormula := formula.gib(16).
-		plus(formula.size("counts").times(8)).
+		plus(formula.size("counts").times(24)).
 		between(formula.gib(16), formula.gib(256)).
 		staticFallback(formula.gib(16))
 
