@@ -46,12 +46,13 @@ from combine import (
     set_counts,
 )
 from frame_io import (
+    UNDECLARED_BARCODES_KEPT,
+    UndeclaredTally,
     _json_arg,
     _read_columns,
     _read_counts,
-    _read_raw_feature_counts,
     _write_sorted,
-    undeclared_feature_counts,
+    raw_feature_summary,
 )
 from identity_tables import (
     CELL_PUNCH_MAX_CELLS,
@@ -911,8 +912,8 @@ def main() -> None:
     # snaps each one onto the panel. Without this file the table below stays the ordinary empty case
     # rather than raising, because a run wired without it has not checked for an undeclared barcode,
     # which is a different fact from having checked and found none.
-    raw_feature_counts = _read_raw_feature_counts(args.raw_feature_counts) if args.raw_feature_counts else None
-    undeclared_barcode_rows: list[dict] = []
+    raw_tallies = raw_feature_summary(args.raw_feature_counts, declared) if args.raw_feature_counts else None
+    undeclared_barcode_frames: list[pl.DataFrame] = []
     sample_decile_rows: list[dict] = []
 
     # `totalWeight` reaches `counts` only from a gather step built after this column existed. Checked
@@ -971,23 +972,22 @@ def main() -> None:
         # undeclared barcode has no row in the panel to sit beside. Read on the PRE-refine pass, where
         # a sequence the panel never declared can still be seen -- `counts` above has already been
         # snapped onto the panel by refine-tags.
-        if raw_feature_counts is not None:
-            sample_raw = raw_feature_counts.filter(pl.col("sampleId") == sample).select("FEATURE", "totalWeight")
-            undeclared, undeclared_share = undeclared_feature_counts(sample_raw, declared[sample])
-            # The share is the SAMPLE's, computed once and carried on every one of that sample's rows.
-            # The status is the barcode's and never the sample's, so it is written here rather than added
-            # to `rows` / `sample_report_rows`.
-            undeclared_status = status_for("undeclaredBarcodeShare", undeclared_share, lines)
-            for undeclared_row in undeclared.iter_rows(named=True):
-                undeclared_barcode_rows.append(
-                    {
-                        "sampleId": sample,
-                        "tag": undeclared_row["tag"],
-                        "totalWeight": int(undeclared_row["totalWeight"]),
-                        "readShare": undeclared_share,
-                        "status": None if undeclared_status is None else undeclared_status.value,
-                    }
+        if raw_tallies is not None:
+            tally = raw_tallies.get(sample, UndeclaredTally())
+            # The share is the SAMPLE's, computed once over every row of that sample -- kept or elided
+            # by the tally's cap -- and carried on every row written. The status is the barcode's and
+            # never the sample's, so it is written here rather than added to `rows` /
+            # `sample_report_rows`.
+            undeclared_status = status_for("undeclaredBarcodeShare", tally.share, lines)
+            undeclared_barcode_frames.append(
+                tally.heaviest.select(
+                    pl.lit(sample, pl.String).alias("sampleId"),
+                    "tag",
+                    "totalWeight",
+                    pl.lit(tally.share, pl.Float64).alias("readShare"),
+                    pl.lit(None if undeclared_status is None else undeclared_status.value, pl.String).alias("status"),
                 )
+            )
         add(
             rows,
             "sample",
@@ -1516,7 +1516,7 @@ def main() -> None:
     )
 
     _write_sorted(
-        pl.DataFrame(undeclared_barcode_rows, schema=_UNDECLARED_BARCODE_SCHEMA),
+        pl.concat([pl.DataFrame(schema=_UNDECLARED_BARCODE_SCHEMA), *undeclared_barcode_frames]),
         f"{prefix}_undeclared_barcodes.csv",
         ["sampleId", "tag"],
     )
@@ -1590,6 +1590,10 @@ def main() -> None:
         "cellPunchCells": len(cell_punch),
         "identitySummaryLimit": IDENTITY_SUMMARY_MAX_IDENTITIES,
         "cellPunchLimit": CELL_PUNCH_MAX_CELLS,
+        # The undeclared-barcode table holds the heaviest sequences per sample, not every one. The
+        # share carries every row either way, so a run with an elided count still measures exactly.
+        "undeclaredBarcodeLimit": UNDECLARED_BARCODES_KEPT,
+        "undeclaredBarcodesElided": sum(t.elided for t in (raw_tallies or {}).values()),
         "readingsFloored": readings_floored,
         "cellsEmptied": cells_emptied,
         "cellsHighReference": cells_high_reference,

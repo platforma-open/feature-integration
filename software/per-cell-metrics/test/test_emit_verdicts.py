@@ -7,7 +7,8 @@ from pathlib import Path
 import polars as pl
 import pytest
 import qc_rows
-from emit_verdicts import _build_grouping, _identity_properties, _linker_frame, undeclared_feature_counts
+from emit_verdicts import _build_grouping, _identity_properties, _linker_frame
+from frame_io import undeclared_feature_counts
 from identity_tables import CELL_PUNCH_MAX_CELLS, IDENTITY_SUMMARY_MAX_IDENTITIES, REFERENCE_IDENTITY_LABEL
 from panel import ANY_SAMPLE, consistent_properties, property_columns
 from qc_measures import DEFAULT_LINES, MEASUREMENTS, Line, Measurement

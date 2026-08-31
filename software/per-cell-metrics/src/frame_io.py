@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Collection
+from dataclasses import dataclass, field
 
 import polars as pl
 
@@ -109,6 +110,67 @@ def _read_counts(path: str) -> pl.DataFrame:
     )
 
 
+# Undeclared sequences kept per sample for the undeclared-barcode table. The table holds one row per
+# distinct PRE-refine sequence, which is sequencing-error diversity: 10.2M per sample and 240.7M over
+# the run on a measured 44-sample BEAM run, against a panel of 9. Only the share is read as a number,
+# and it is computed over every row regardless of this cap.
+UNDECLARED_BARCODES_KEPT = 1000
+
+_TALLY_SCHEMA = {"tag": pl.String, "totalWeight": pl.Int64}
+
+
+@dataclass(frozen=True)
+class UndeclaredTally:
+    """A sample's pre-refine read weight, split by whether the panel declared the sequence.
+
+    `heaviest` holds at most `UNDECLARED_BARCODES_KEPT` undeclared rows, the heaviest by weight and
+    tag-ordered within a tie so the kept set cannot vary between runs on the same input.
+    `undeclared_distinct` counts every undeclared sequence, kept or not.
+    """
+
+    total_weight: int = 0
+    undeclared_weight: int = 0
+    undeclared_distinct: int = 0
+    heaviest: pl.DataFrame = field(default_factory=lambda: pl.DataFrame(schema=_TALLY_SCHEMA))
+
+    @property
+    def share(self) -> float | None:
+        """The undeclared share of every row's weight. `None` over zero total weight."""
+        if self.total_weight <= 0:
+            return None
+        return self.undeclared_weight / self.total_weight
+
+    @property
+    def elided(self) -> int:
+        """Undeclared sequences left out of `heaviest`."""
+        return self.undeclared_distinct - self.heaviest.height
+
+
+def _tally(before: UndeclaredTally, rows: pl.DataFrame, declared: Collection[str], keep: int | None) -> UndeclaredTally:
+    """`before` extended by `rows`, one slice of one sample's pre-refine table.
+
+    `rows`: columns `FEATURE` and `totalWeight`, one row per distinct observed sequence.
+    `declared`: that sample's panel tag set. `keep`: cap on `heaviest`, or `None` to keep every
+    undeclared row.
+    """
+    ordered = rows.rename({"FEATURE": "tag"}).select("tag", "totalWeight")
+    undeclared = ordered.filter(~pl.col("tag").is_in(set(declared)))
+    heaviest = pl.concat([before.heaviest, undeclared])
+    if keep is not None:
+        heaviest = heaviest.sort(["totalWeight", "tag"], descending=[True, False]).head(keep)
+        # Rebuilt, not kept as the head of the sorted frame. That head shares the frame's string
+        # buffers, so retaining it across batches retains every batch it was cut from: measured 1.50 GB
+        # against 0.50 GB over 44M rows, and growing with the file either way. `rechunk` does not
+        # release them; only a copy through Python does.
+        heaviest = pl.DataFrame({c: heaviest[c].to_list() for c in heaviest.columns}, schema=_TALLY_SCHEMA)
+    return UndeclaredTally(
+        total_weight=before.total_weight + int(ordered["totalWeight"].sum() or 0),
+        undeclared_weight=before.undeclared_weight + int(undeclared["totalWeight"].sum() or 0),
+        undeclared_distinct=before.undeclared_distinct + undeclared.height,
+        heaviest=heaviest,
+    )
+
+
 def undeclared_feature_counts(raw_counts: pl.DataFrame, declared: Collection[str]) -> tuple[pl.DataFrame, float | None]:
     """Undeclared FEATURE barcodes in a pre-refine tag-stat table, and their read share.
 
@@ -119,24 +181,51 @@ def undeclared_feature_counts(raw_counts: pl.DataFrame, declared: Collection[str
     Returns the undeclared rows, renamed to `tag` and sorted by it, and the share of
     every row's `totalWeight` they carry. Share is `None` over zero total weight. With
     no undeclared row the frame is empty and the share is `0.0`.
+
+    Uncapped, and the whole frame at once. `raw_feature_summary` is the production path.
     """
-    ordered = raw_counts.rename({"FEATURE": "tag"}).select("tag", "totalWeight").sort("tag")
-    undeclared = ordered.filter(~pl.col("tag").is_in(set(declared)))
-    total_weight = float(ordered["totalWeight"].sum()) if ordered.height else 0.0
-    if total_weight <= 0:
-        return undeclared, None
-    undeclared_weight = float(undeclared["totalWeight"].sum()) if undeclared.height else 0.0
-    return undeclared, undeclared_weight / total_weight
+    tally = _tally(UndeclaredTally(), raw_counts, declared, keep=None)
+    return tally.heaviest.sort("tag"), tally.share
 
 
-def _read_raw_feature_counts(path: str) -> pl.DataFrame:
-    """The gathered pre-refine FEATURE tag-stat table, across every sample.
+def raw_feature_summary(
+    path: str,
+    declared_by_sample: dict[str, Collection[str]],
+    keep: int | None = UNDECLARED_BARCODES_KEPT,
+) -> dict[str, UndeclaredTally]:
+    """One batched pass over the gathered pre-refine FEATURE table: a tally per sample.
 
-    Columns `sampleId`, `FEATURE`, `totalWeight` -- the workflow's per-sample gather step injects
-    `sampleId` from the resource-map key. Read as strings and stripped, same join-safety reason as
-    `_read_columns`, then `totalWeight` cast to a whole number.
+    Batched rather than read whole. The table carries one row per distinct pre-refine sequence per
+    sample and cost 187 B/row measured, so a 240.7M-row run needs ~45 GB to hold it -- more than the
+    step is ever granted, and every row of it is read per sample and then dropped.
+
+    A sample absent from the file gets no entry. A sample whose rows span batches accumulates across
+    them: every field of the tally is additive, and `heaviest` is re-capped on each extension.
     """
-    return _read_typed(path, "raw feature counts file", ("sampleId", "FEATURE"), ("totalWeight",))
+    reader = pl.read_csv_batched(
+        path,
+        columns=["sampleId", "FEATURE", "totalWeight"],
+        schema_overrides={"sampleId": pl.String(), "FEATURE": pl.String(), "totalWeight": pl.Int64()},
+        ignore_errors=True,
+    )
+    tallies: dict[str, UndeclaredTally] = {}
+    while (batches := reader.next_batches(4)) is not None:
+        for batch in batches:
+            if batch["totalWeight"].null_count():
+                _name_the_bad_values(path, "raw feature counts file", ["totalWeight"], {})
+            stripped = batch.select(
+                pl.col("sampleId").str.strip_chars().fill_null(""),
+                pl.col("FEATURE").str.strip_chars().fill_null(""),
+                pl.col("totalWeight"),
+            )
+            for (sample,), rows in stripped.group_by("sampleId"):
+                tallies[sample] = _tally(
+                    tallies.get(sample, UndeclaredTally()),
+                    rows,
+                    declared_by_sample.get(sample, ()),
+                    keep,
+                )
+    return tallies
 
 
 def _json_arg(raw: str | None, flag: str):
