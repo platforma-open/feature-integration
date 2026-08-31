@@ -1,5 +1,59 @@
 # @platforma-open/milaboratories.feature-integration.workflow
 
+## 3.1.0
+
+### Minor Changes
+
+- 1791309: Give each undeclared barcode its own share, and publish what correction rescued
+
+  The undeclared-barcode table carried one share, labelled "Share of the sample's reads",
+  and it was the SAMPLE's whole undeclared share repeated on every row. On a real BEAM run
+  that read as the same percentage against 153,106 different barcodes, which reads as a bug
+  whether or not the number is right.
+
+  - Each row now carries its own share as well: that sequence's weight over every pre-refine
+    read of its sample. On the run above the two heaviest sequences read 16.51% and 10.22%
+    instead of 31.39% each. The sample-level figure stays, relabelled "Undeclared share
+    (whole sample)", because the field publishes a line for it and the Status column reads it.
+  - The table is the PRE-refine pass, so a row is not a read the run lost: refine-tags snaps a
+    sequence close enough to a panel barcode onto it. That was nowhere on the page, so a heavy
+    near-neighbour row read as loss. Each sample now reports the share correction rescued --
+    the undeclared share less the reads refine-tags dropped. On the run above that is 1.18% of
+    the library, ~394k reads, against 258 sequences one substitution from a panel barcode.
+
+### Patch Changes
+
+- 56e001a: Cut the memory the antigen reading needs, and size its request from a measurement
+
+  The reading was killed by the OOM handler on a 44-sample BEAM run. Three causes, all
+  measured on a synthetic of that run's shape (28.5M counts rows, 1.83 GB counts.csv):
+
+  - The input tables were read a column at a time as strings and then re-scanned value by
+    value in Python. Now projected and typed in one pass: 11.04 GB -> 6.48 GB, 5.9s -> 1.0s.
+  - The pre-refine FEATURE table carries one row per distinct sequence per sample --
+    sequencing-error diversity, 240.7M rows on that run -- and was read whole at 187 B/row,
+    ~45 GB. Now tallied in one batched pass at a flat ~0.5 GB. The undeclared-barcode table
+    carries the heaviest 1000 sequences per sample instead of every one; the undeclared share
+    is still computed over every row, so the QC measure is unchanged. The run record reports
+    the limit and how many rows were elided.
+  - Combining tags into identities joined and grouped the whole run eagerly. Now lazy and
+    projected: 7.4 GB -> 0.1 GB across its two calls.
+
+  Peak for the step falls from 26.2 GB to 17.5 GB with the pre-refine table no longer able to
+  add 45 GB, and wall time from 377s to 314s.
+
+  The RAM formula asked for `16 GiB + 8 x size(counts)`. The 8 was never reached because the
+  16 GiB floor covered any counts file below ~0.8 GiB; the first run past that knee died. It
+  is now 24x, measured from 614 bytes of peak per counts row against 64 bytes per row on the
+  wire, with room for a narrower row and a denser cell linker.
+
+  Also bumps the two pins the require-latest CI gate reads: block-tools 2.14.0 -> 2.14.3 and
+  tengo-builder 4.0.22 -> 4.0.23. The lock file moves for those two packages and nothing else.
+
+- Updated dependencies [56e001a]
+- Updated dependencies [1791309]
+  - @platforma-open/milaboratories.feature-integration.per-cell-metrics@3.1.0
+
 ## 3.0.2
 
 ### Patch Changes

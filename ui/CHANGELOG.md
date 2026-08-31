@@ -1,5 +1,13 @@
 # @platforma-open/milaboratories.feature-integration.ui
 
+## 2.3.3
+
+### Patch Changes
+
+- Updated dependencies [82a0c86]
+- Updated dependencies [1791309]
+  - @platforma-open/milaboratories.feature-integration.model@3.0.3
+
 ## 2.3.2
 
 ### Patch Changes

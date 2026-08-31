@@ -1,5 +1,38 @@
 # @platforma-open/milaboratories.feature-integration.model
 
+## 3.0.3
+
+### Patch Changes
+
+- 82a0c86: Explore readout: one Antigen column, not two
+
+  The by-identity table rendered the identity's name twice. The label is emitted under one spec into
+  two frames -- `identityLabels` into the verdict export, and `reagentIdentityLabels` into the reagent
+  frame -- and the reagent frame reaches the block as its own `antigenReagentTable` output, so
+  `columns: null` discovers that copy. The model also supplied the export's copy as a primary column,
+  so both rendered.
+
+  Neither carries a domain, so no visibility rule tells them apart: the rule that makes the identity's
+  name visible matches both. Dropping one supplier is the only route, and the discovered copy is the
+  one that survives -- the reagent frame is built unconditionally beside the verdicts.
+
+- 1791309: Give each undeclared barcode its own share, and publish what correction rescued
+
+  The undeclared-barcode table carried one share, labelled "Share of the sample's reads",
+  and it was the SAMPLE's whole undeclared share repeated on every row. On a real BEAM run
+  that read as the same percentage against 153,106 different barcodes, which reads as a bug
+  whether or not the number is right.
+
+  - Each row now carries its own share as well: that sequence's weight over every pre-refine
+    read of its sample. On the run above the two heaviest sequences read 16.51% and 10.22%
+    instead of 31.39% each. The sample-level figure stays, relabelled "Undeclared share
+    (whole sample)", because the field publishes a line for it and the Status column reads it.
+  - The table is the PRE-refine pass, so a row is not a read the run lost: refine-tags snaps a
+    sequence close enough to a panel barcode onto it. That was nowhere on the page, so a heavy
+    near-neighbour row read as loss. Each sample now reports the share correction rescued --
+    the undeclared share less the reads refine-tags dropped. On the run above that is 1.18% of
+    the library, ~394k reads, against 258 sequences one substitution from a panel barcode.
+
 ## 3.0.2
 
 ### Patch Changes
