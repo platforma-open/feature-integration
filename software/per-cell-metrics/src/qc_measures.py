@@ -812,36 +812,61 @@ def deciles_of(values: np.ndarray) -> pl.DataFrame:
     )
 
 
-# How many log-spaced buckets a count distribution is drawn in. Enough bars for two humps to read
-# apart at thumbnail size, few enough that a sparse tag does not dissolve into single-cell spikes.
+# The MOST buckets a count distribution is drawn in. `count_bin_edges` returns fewer where the run's
+# range cannot fill them at integer width. Enough bars for two humps to read apart at thumbnail size,
+# few enough that a sparse tag does not dissolve into single-cell spikes.
 COUNT_BIN_COUNT = 24
 
 
 def count_bin_edges(counts: pl.DataFrame) -> list[float]:
-    """Log-spaced bin edges spanning every count in the frame, shared by every plot drawn from it.
+    """INTEGER bin edges spanning every count in the frame, shared by every plot drawn from it.
 
     The caller passes the counts of the CELL LIST where one arrived, so the domain ends at the
     highest count among cells. Observed barcodes outnumber cells by one to two orders of magnitude.
 
-    ONE edge set for the whole run, not one per tag. A reader judges whether a tag's counts fall into
-    two separated humps by scanning a grid of tags side by side, and per-tag edges would rescale
-    every panel to its own range, so a tag whose counts span 1-4 and one spanning 1-4000 would draw
-    identical pictures.
+    ONE edge set for the whole run, not one per tag: a reader compares a grid of tags side by side,
+    and per-tag edges would draw a tag spanning 1-4 and one spanning 1-4000 alike.
 
-    Log-spaced because UMI counts per cell span orders of magnitude: on a linear axis the ambient
-    population occupies one bar and everything above it is empty.
+    Four invariants, and every one of them is load-bearing:
+
+    - **Edges are whole numbers.** A UMI count is a whole number. Geometric edges are not, so a bin
+      can fall strictly between two counts and stand empty at every weight the run could produce.
+      `np.geomspace(1, 5155, 25)` puts one at [2.039, 2.911), which held nothing on all 15 tags of a
+      real run and read as a missing bar.
+    - **Strictly increasing, so every bin holds at least one whole number.** Rounding alone does not
+      give this: below a step of 1 the geometric ideal repeats an edge.
+    - **Bins are half-open `[a, b)`, and the last edge is `top + 1`.** A bin holds `b - a` counts,
+      including the top one. An edge at `top` would instead close the last bin and give it one count
+      more than its width.
+    - **Unit width at the low end, geometric above it.** The step is `max(previous + 1, geometric)`,
+      so the ambient population near 1 draws one count per bar. Above the crossover a bar covers
+      several counts and its height carries that width -- the shape is weight, never density.
+
+    At most `COUNT_BIN_COUNT` bins, and fewer where the range cannot fill them. Nothing reads the
+    count: `bin_values`, `per_tag_count_bins` and the UI all take it from `len(edges) - 1`.
 
     Edges start at 1, the smallest count that exists -- a row is only written for an observed
     reading, so zero never appears. `[]` where the frame holds no counts at all.
     """
     if counts.height == 0:
         return []
-    top = float(counts["umiCount"].max() or 0)
+    top = int(counts["umiCount"].max() or 0)
     if top < 1:
         return []
-    # `top` lands on the last edge, so the largest count falls inside the last bin rather than
-    # outside every bin.
-    return [float(x) for x in np.geomspace(1.0, max(top, 2.0), COUNT_BIN_COUNT + 1)]
+    # Unit bins already reach the top, so a geometric step would only throw resolution away.
+    if top <= COUNT_BIN_COUNT:
+        return [float(x) for x in range(1, top + 2)]
+    # `top + 1` is the last edge, so the ratio is taken against it rather than against `top`.
+    ratio = (top + 1) ** (1.0 / COUNT_BIN_COUNT)
+    edges = [1]
+    while len(edges) < COUNT_BIN_COUNT:
+        nxt = max(edges[-1] + 1, round(edges[-1] * ratio))
+        # `>=`, not `>`: an edge at `top` would leave the last bin holding only the top count.
+        if nxt >= top:
+            break
+        edges.append(nxt)
+    edges.append(top + 1)
+    return [float(x) for x in edges]
 
 
 def linear_bin_edges(values: np.ndarray, count: int = COUNT_BIN_COUNT) -> list[float]:

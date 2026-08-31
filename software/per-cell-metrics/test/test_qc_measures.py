@@ -5,6 +5,7 @@ import polars as pl
 import pytest
 from qc_measures import (
     _COMPARISON,
+    COUNT_BIN_COUNT,
     DEFAULT_LINES,
     LINE_ROUTES,
     MEASUREMENTS,
@@ -1060,9 +1061,47 @@ def test_one_edge_set_spans_the_whole_run():
     counts = _bin_counts([("S1", "c1", "AAAA", 2), ("S1", "c2", "BBBB", 4000)])
     edges = count_bin_edges(counts)
     assert edges[0] == 1.0
-    assert edges[-1] == 4000.0
-    # Log-spaced, so the ambient population does not collapse into one bar.
-    assert edges[2] - edges[1] > edges[1] - edges[0]
+    # One past the top count, so the last bin is half-open like every other one.
+    assert edges[-1] == 4001.0
+    # Widening, so the ambient population does not collapse into one bar.
+    assert edges[-1] - edges[-2] > edges[1] - edges[0]
+
+
+def test_every_edge_is_a_whole_number():
+    # A UMI count is a whole number. A fractional edge can put a bin strictly between two counts, and
+    # that bin then stands empty at every weight the run could produce.
+    counts = _bin_counts([("S1", f"c{i}", "AAAA", n) for i, n in enumerate([1, 2, 3, 40, 5155])])
+    edges = count_bin_edges(counts)
+    assert all(edge == float(int(edge)) for edge in edges)
+
+
+def test_no_bin_is_empty_by_construction():
+    # The defect this replaced: geomspace(1, 5155, 25) puts a bin at [2.039, 2.911), which holds no
+    # count at all. On a real 15-tag run it read as a missing bar on every panel.
+    for top in (2, 5, 24, 25, 30, 100, 5155, 23466):
+        edges = count_bin_edges(_bin_counts([("S1", "c1", "AAAA", top)]))
+        widths = [int(edges[i + 1]) - int(edges[i]) for i in range(len(edges) - 1)]
+        assert min(widths) >= 1, top
+        assert len(edges) == len(set(edges)), top
+
+
+def test_the_low_end_draws_one_count_per_bar():
+    # Where the geometric step falls below 1 the step is forced to 1 instead. Without it the first
+    # bars carry two counts each while their neighbours carry one, and the difference reads as a hump.
+    edges = count_bin_edges(_bin_counts([("S1", "c1", "AAAA", 5155)]))
+    assert edges[:4] == [1.0, 2.0, 3.0, 4.0]
+
+
+def test_a_run_that_fits_in_unit_bins_gets_them():
+    # Below the bin budget a geometric step only throws resolution away.
+    edges = count_bin_edges(_bin_counts([("S1", "c1", "AAAA", 5)]))
+    assert edges == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+
+
+def test_the_bin_budget_is_a_ceiling():
+    for top in (1, 5, 24, 25, 5155, 23466, 200000):
+        edges = count_bin_edges(_bin_counts([("S1", "c1", "AAAA", top)]))
+        assert 1 <= len(edges) - 1 <= COUNT_BIN_COUNT, top
 
 
 def test_a_frame_with_no_counts_has_no_edges_and_no_bins():
