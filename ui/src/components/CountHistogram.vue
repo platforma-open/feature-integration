@@ -31,6 +31,20 @@ const props = defineProps<{
   /** Drawn as a marker. Undefined draws none, which is the statement that no gate is declared. */
   threshold?: number;
   /**
+   * Divides each bin's weight by the number of whole counts it spans, so bar height is cells per count
+   * rather than cells. `log-bins` only.
+   *
+   * Bin width in counts is not constant: `count_bin_edges` steps by 1 near a count of 1 and
+   * geometrically above it, so one real edge set spans 1, 1, 2, 3, 4, 6, 9, 14, 21 counts. Drawn as
+   * weight, a bin spanning 4 counts stands about four times a neighbour spanning 1 at equal density,
+   * and that step reads as a hump the data does not hold.
+   *
+   * COSTS THE HOVER READOUT. `PlChartHistogram` prints the weight it was handed and labels it `count:`,
+   * with no way to supply either, so a hovered bar reports the density. Callers that need the magnitude
+   * put it beside the plot.
+   */
+  density?: boolean;
+  /**
    * Zeroes every margin, which drops the axes, the axis labels and the title. Without it the fixed 85px
    * left and 40px bottom margins take most of a small panel, leaving a plot narrower than its own axis
    * gutter.
@@ -76,7 +90,7 @@ const settings = computed(() => {
     ...(threshold.value === undefined ? {} : { threshold: threshold.value }),
     ...(props.title === undefined ? {} : { title: props.title }),
     xAxisLabel: props.xAxisLabel ?? "Counts per cell",
-    yAxisLabel: props.yAxisLabel ?? "Cells",
+    yAxisLabel: props.yAxisLabel ?? (props.density ? "Cells per count" : "Cells"),
     totalWidth: width.value,
     totalHeight: props.totalHeight,
     compact: props.compact,
@@ -95,11 +109,14 @@ const settings = computed(() => {
     ...common,
     type: "log-bins" as const,
     // A bin's own bounds travel with its weight, since this form bins nothing itself.
-    bins: props.weights.map((weight, i) => ({
-      from: props.edges[i]!,
-      to: props.edges[i + 1]!,
-      weight,
-    })),
+    bins: props.weights.map((weight, i) => {
+      const from = props.edges[i]!;
+      const to = props.edges[i + 1]!;
+      // `count_bin_edges` returns whole, strictly increasing numbers, so the span is at least 1. The
+      // guard holds for a caller that sets `density` against edges from somewhere else.
+      const span = Math.max(to - from, 1);
+      return { from, to, weight: props.density === true ? weight / span : weight };
+    }),
   };
 });
 </script>

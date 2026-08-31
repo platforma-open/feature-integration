@@ -16,9 +16,17 @@ import CountHistogram from "./CountHistogram.vue";
 // No marker is drawn. The threshold slot means "the declared gate" on the reference-reading plot and "the
 // bound cutoff" on the scores plot, so a third meaning here would make one marker say three things.
 //
-// A panel carries its title, its plot, and the fit's own three numbers. No separated / does-not-separate
-// label: no criterion for it exists. This panel is the substitute for the check nobody has built, so
-// withholding the fit leaves the rung with no safeguard at all.
+// A panel carries its title, its plot, its cell count, and the fit's own three numbers. No separated /
+// does-not-separate label: no criterion for it exists. This panel is the substitute for the check nobody
+// has built, so withholding the fit leaves the rung with no safeguard at all.
+//
+// Bars are DENSITY, cells per count. Bin width in counts rises across the edge set, so weight makes a
+// wide bin stand above a narrow one at equal density and puts a hump where the data holds none. The
+// panel's own question is whether two humps stand apart, so a hump the bins invented is the one error
+// this surface cannot carry.
+//
+// Density costs the hover readout, which reports the number the chart was handed. The cell count sits in
+// the caption instead.
 const props = defineProps<{
   bins: TagCountBins;
   /** Sample id -> the label a reader knows it by. A sample with no label renders as its own id. */
@@ -66,6 +74,10 @@ const panels = computed<Panel[]>(() => {
 // nothing. Three significant figures reads the same at 0.33 and at 930.
 const fmt = (value: number) => Number(value.toPrecision(3)).toLocaleString();
 
+// Cells holding any count of this tag in this sample. The bins are taken over the cell list, so the sum
+// is that population and nothing wider.
+const cellsIn = (panel: Panel) => panel.weights.reduce((total, weight) => total + weight, 0);
+
 const enlarged = ref<Panel | undefined>(undefined);
 const isOpen = computed({
   get: () => enlarged.value !== undefined,
@@ -93,19 +105,28 @@ const isOpen = computed({
       </div>
       <!-- `compact`: bars only. The thumbnail is scanned for whether two humps stand apart, and the
                  enlarged panel below is where a value gets read off an axis. -->
-      <CountHistogram :edges="bins.edges" :weights="panel.weights" :total-height="140" compact />
-      <span v-if="panel.fit" :class="$style.fit">
-        bg {{ fmt(panel.fit.backgroundMean) }} · signal {{ fmt(panel.fit.signalMean) }} ·
-        {{ (panel.fit.backgroundWeight * 100).toFixed(0) }}% of cells background
+      <CountHistogram
+        :edges="bins.edges"
+        :weights="panel.weights"
+        :total-height="140"
+        density
+        compact
+      />
+      <span :class="$style.fit">
+        {{ cellsIn(panel).toLocaleString() }} cells
+        <template v-if="panel.fit">
+          · bg {{ fmt(panel.fit.backgroundMean) }} · signal {{ fmt(panel.fit.signalMean) }} ·
+          {{ (panel.fit.backgroundWeight * 100).toFixed(0) }}% background
+        </template>
+        <template v-else> · no fit for this pair</template>
       </span>
-      <span v-else :class="$style.fit">no fit for this pair</span>
     </button>
   </div>
 
   <PlDialogModal v-model="isOpen" width="720px">
     <template #title>{{ enlarged?.title }}</template>
     <template v-if="enlarged">
-      <CountHistogram :edges="bins.edges" :weights="enlarged.weights" :total-height="420" />
+      <CountHistogram :edges="bins.edges" :weights="enlarged.weights" :total-height="420" density />
     </template>
   </PlDialogModal>
 </template>
