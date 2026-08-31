@@ -571,7 +571,7 @@ def test_undeclared_barcode_table_is_empty_without_the_raw_feature_counts_input(
     _run(bed, *BASE)
     t = pl.read_csv(bed / "result_undeclared_barcodes.csv")
     assert t.height == 0
-    assert set(t.columns) == {"sampleId", "tag", "totalWeight", "readShare", "status"}
+    assert set(t.columns) == {"sampleId", "tag", "totalWeight", "barcodeShare", "readShare", "status"}
 
 
 def test_undeclared_barcode_table_is_keyed_by_sequence_with_the_samples_share(bed):
@@ -582,8 +582,34 @@ def test_undeclared_barcode_table_is_keyed_by_sequence_with_the_samples_share(be
     assert t["tag"].to_list() == ["ZZZZ"]
     row = t.row(0, named=True)
     assert row["totalWeight"] == 10
+    # The sample's whole undeclared share, and this one sequence's own. Here they coincide because ZZZZ
+    # is the only undeclared sequence; the next test separates them.
     assert row["readShare"] == pytest.approx(10 / 60)
+    assert row["barcodeShare"] == pytest.approx(10 / 60)
     assert row["status"] == "OK"  # 10/60 is well under the 0.50 warn line
+
+
+def test_each_undeclared_barcode_carries_its_own_share_beside_the_samples(bed):
+    # Two undeclared sequences of different weight. The sample's share is one number on both rows; each
+    # row's own share is its own weight. A table that carried only the first cannot tell them apart.
+    _write_raw_feature_counts(bed, [("S1", "AAAA", 50), ("S1", "ZZZZ", 30), ("S1", "YYYY", 20)])
+    _run(bed, *BASE, "--raw-feature-counts", "raw_feature_counts.csv")
+    t = pl.read_csv(bed / "result_undeclared_barcodes.csv")
+    by_tag = {r["tag"]: r for r in t.iter_rows(named=True)}
+    assert set(by_tag) == {"ZZZZ", "YYYY"}
+    assert by_tag["ZZZZ"]["barcodeShare"] == pytest.approx(30 / 100)
+    assert by_tag["YYYY"]["barcodeShare"] == pytest.approx(20 / 100)
+    # One sample-level number, repeated -- 50 of 100 reads are undeclared.
+    assert [r["readShare"] for r in by_tag.values()] == [pytest.approx(50 / 100)] * 2
+
+
+def test_the_own_share_denominator_is_every_pre_refine_read_not_the_undeclared_ones(bed):
+    # The share is of the SAMPLE's reads, so declared weight stays in the denominator. Dividing by the
+    # undeclared weight alone would make these two sum to 1 and hide how small they are.
+    _write_raw_feature_counts(bed, [("S1", "AAAA", 90), ("S1", "ZZZZ", 6), ("S1", "YYYY", 4)])
+    _run(bed, *BASE, "--raw-feature-counts", "raw_feature_counts.csv")
+    t = pl.read_csv(bed / "result_undeclared_barcodes.csv")
+    assert sum(t["barcodeShare"].to_list()) == pytest.approx(0.10)
 
 
 def test_undeclared_barcode_share_warns_above_half(bed):
@@ -3642,3 +3668,53 @@ def test_a_reused_barcode_reads_as_its_joined_names_not_its_sequence(tmp_path):
     labels = dict(pl.read_csv(tmp_path / "result_tag_labels.csv", infer_schema_length=0).iter_rows())
     assert labels["AAAA"] == "AgA / AgA_alt", f"the reused barcode fell back to its sequence: {labels}"
     assert labels["CTRL"] == "Ctrl", "a tag its panels agree on keeps its plain name"
+
+
+# `rescued_share`: the reads a sequence off the panel carried that refine-tags then snapped onto it.
+# The undeclared-barcode table is the PRE-refine pass, so its rows are not reads the run lost, and this
+# is how much of that table was recovered.
+
+
+def test_rescued_share_is_the_undeclared_reads_correction_recovered():
+    # 30% of reads sat on an undeclared sequence; refine-tags kept 80%, so it dropped 20%. The 10%
+    # between them corrected onto a panel entry.
+    assert qc_rows.rescued_share(0.30, 0.80) == pytest.approx(0.10)
+
+
+def test_rescued_share_is_zero_where_correction_recovered_nothing():
+    # Every undeclared read was too far from the panel to correct. Zero is a measurement, not an absence.
+    assert qc_rows.rescued_share(0.30, 0.70) == pytest.approx(0.0)
+
+
+def test_rescued_share_has_no_value_without_both_sides():
+    # No pre-refine pass, or no refine-tags report. Either way the subtraction has no second term.
+    assert qc_rows.rescued_share(None, 0.80) is None
+    assert qc_rows.rescued_share(0.30, None) is None
+
+
+def test_rescued_share_refuses_a_negative_rather_than_publishing_one():
+    # The two figures come from different files. A drop count exceeding the undeclared count means they
+    # disagree, and a negative share of reads would read as a quantity rather than as that disagreement.
+    assert qc_rows.rescued_share(0.10, 0.70) is None
+
+
+def test_the_rescued_share_reaches_the_samples_own_report(bed):
+    # It is a sample's measurement, unlike the undeclared share beside it, so it belongs in the sample's
+    # report. It carries no line, so it is computed and unjudged rather than green.
+    _write_raw_feature_counts(bed, [("S1", "AAAA", 40), ("S1", "CTRL", 10), ("S1", "ZZZZ", 10)])
+    r = _run(bed, *BASE, "--raw-feature-counts", "raw_feature_counts.csv")
+    assert r.returncode == 0, r.stderr
+    report = json.loads((bed / "result_qc_by_sample.json").read_text())
+    entry = next(m for m in report["S1"]["measurements"] if m["id"] == "refineRescuedShare")
+    assert entry["status"] is None
+
+
+def test_the_rescued_share_says_why_where_no_pre_refine_pass_reached_the_run(bed):
+    # Without the pre-refine input the row stays and carries its reason, so "nothing checked this" never
+    # reads like "checked and found nothing rescued".
+    r = _run(bed, *BASE)
+    assert r.returncode == 0, r.stderr
+    report = json.loads((bed / "result_qc_by_sample.json").read_text())
+    entry = next(m for m in report["S1"]["measurements"] if m["id"] == "refineRescuedShare")
+    assert entry["value"] is None
+    assert entry["reason"]

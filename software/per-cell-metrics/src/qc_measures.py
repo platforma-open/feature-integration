@@ -124,6 +124,18 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "sample",
         "Reads whose corrected barcode is on the panel, over reads matched.",
     ),
+    # No line. The four inherited numbers do not include this one, and nothing published says what a
+    # low or high rescued share means -- a panel whose barcodes sit far apart rescues little because
+    # little needs rescuing, and one whose barcodes sit close rescues more. The number is here to be
+    # read against the undeclared-barcode table, whose rows are the PRE-refine pass: a row of that
+    # table is not a read the run lost, and this says how much of it was not.
+    Measurement(
+        "refineRescuedShare",
+        "Fraction of reads correction rescued onto the panel",
+        "sample",
+        "Reads on a sequence the panel does not declare that refine-tags then snapped onto a panel "
+        "entry, over reads matched.",
+    ),
     # Ported from Cell Ranger `main`, `lib/python/cellranger/rna/report_matrix.py`,
     # `_report_genome_agnostic_metrics::frac_feature_reads_usable`: conf-mapped, barcoded reads
     # restricted to the called-cell partition, over the whole library's read count.

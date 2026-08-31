@@ -1610,8 +1610,9 @@ export const platforma = BlockModelV3.create(dataModel)
     },
     { retentive: true, withStatus: true },
   )
-  // Carries the share of a sample's reads that land in undeclared barcodes. That status is the barcode's, and
-  // never rolled into any sample's own. Usually empty, which is the wanted outcome.
+  // Carries two shares: each sequence's own, and the sample's whole undeclared share, which is what the status
+  // reads. That status is the barcode's, and never rolled into any sample's own. Rows are the pre-refine pass,
+  // so they include sequences correction later snapped onto the panel. Usually empty, which is the wanted outcome.
   .output(
     "undeclaredBarcodesTable",
     (ctx) => {

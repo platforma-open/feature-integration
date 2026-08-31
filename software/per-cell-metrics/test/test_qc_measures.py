@@ -34,6 +34,7 @@ EXPECTED_LEVEL_BY_ID = {
     "cellsDetected": "sample",
     "usableReadFraction": "sample",
     "panelAssignedFraction": "sample",
+    "refineRescuedShare": "sample",
     "cellBarcodeValidFraction": "sample",
     "readsPerCell": "sample",
     "antigenCountDistribution": "sample",

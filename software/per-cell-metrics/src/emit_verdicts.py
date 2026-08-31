@@ -116,6 +116,7 @@ from qc_rows import (
     _sample_decile_rows,
     _score_spread,
     _sticky_measure,
+    rescued_share,
     sample_report_rows,
     sample_summary_rows,
 )
@@ -913,6 +914,12 @@ def main() -> None:
     NO_READS_TO_DIVIDE = "this sample's read QC reports no reads, so the share has no denominator"
     NO_AGGREGATE_FIGURE = "this sample's read QC reports nonzero reads but no aggregate-barcode figure"
     NO_READ_COUNT = "this sample's read QC row carries no read count, so the share has no denominator"
+    # Both sides of the subtraction, since either can be the missing one and the reader cannot tell
+    # which from the row.
+    NO_RESCUED_FIGURE = (
+        "this sample has no pre-refine pass, no panel-assigned fraction, or the two disagree, so what "
+        "correction rescued cannot be read"
+    )
 
     # The pre-refine pass: one FEATURE tag-stat row per sequence the reads carried, before refine-tags
     # snaps each one onto the panel. Without this file the table below stays the ordinary empty case
@@ -986,19 +993,36 @@ def main() -> None:
         # snapped onto the panel by refine-tags.
         if raw_tallies is not None:
             tally = raw_tallies.get(sample, UndeclaredTally())
-            # The share is the SAMPLE's, computed once over every row of that sample -- kept or elided
-            # by the tally's cap -- and carried on every row written. The status is the barcode's and
-            # never the sample's, so it is written here rather than added to `rows` /
-            # `sample_report_rows`.
+            # Two shares at two levels. `barcodeShare` is the row's own weight over every pre-refine
+            # read of this sample. `readShare` is the SAMPLE's, computed once over every row of that
+            # sample -- kept or elided by the tally's cap -- and carried on every row written. The
+            # status reads `readShare`; it is the barcode's and never the sample's, so it is written
+            # here rather than added to `rows` / `sample_report_rows`.
             undeclared_status = status_for("undeclaredBarcodeShare", tally.share, lines)
+            barcode_share = (
+                (pl.col("totalWeight") / tally.total_weight) if tally.total_weight > 0 else pl.lit(None, pl.Float64)
+            )
             undeclared_barcode_frames.append(
                 tally.heaviest.select(
                     pl.lit(sample, pl.String).alias("sampleId"),
                     "tag",
                     "totalWeight",
+                    barcode_share.cast(pl.Float64).alias("barcodeShare"),
                     pl.lit(tally.share, pl.Float64).alias("readShare"),
                     pl.lit(None if undeclared_status is None else undeclared_status.value, pl.String).alias("status"),
                 )
+            )
+            # What correction then recovered. `tally.share` counts every pre-refine read the panel does
+            # not declare; `1 - panelAssignedFraction` counts the reads refine-tags went on to drop, over
+            # the same denominator. The difference is the reads a sequence off the panel carried that
+            # refine-tags snapped onto a panel entry -- the rows of this table that cost the run nothing.
+            add(
+                rows,
+                "sample",
+                sample,
+                "refineRescuedShare",
+                rescued_share(tally.share, _number(qc, "panelAssignedFraction")),
+                reason=NO_RESCUED_FIGURE,
             )
         add(
             rows,
