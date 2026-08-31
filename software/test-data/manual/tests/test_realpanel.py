@@ -156,6 +156,7 @@ def test_the_line_sits_where_the_tiers_assume(tmp_path):
 
 # --- a whole run ---------------------------------------------------------------------------------
 
+@pytest.mark.slow
 def test_a_run_generates_and_validates(panel_csv, tmp_path):
     out = tmp_path / "run"
     res = run_generator(panel_csv, out)
@@ -170,6 +171,7 @@ def test_a_run_generates_and_validates(panel_csv, tmp_path):
         assert (out / "vdj" / f"{sample}.tsv").exists()
 
 
+@pytest.mark.slow
 def test_the_uploaded_panel_is_the_source_file_byte_for_byte(panel_csv, tmp_path):
     """The block must read the panel as it arrived, not a re-serialisation of it."""
     out = tmp_path / "run"
@@ -177,6 +179,7 @@ def test_the_uploaded_panel_is_the_source_file_byte_for_byte(panel_csv, tmp_path
     assert (out / "panel.csv").read_bytes() == panel_csv.read_bytes()
 
 
+@pytest.mark.slow
 def test_every_tier_a_sample_can_support_is_present(panel_csv, tmp_path):
     out = tmp_path / "run"
     assert run_generator(panel_csv, out).returncode == 0
@@ -185,6 +188,7 @@ def test_every_tier_a_sample_can_support_is_present(panel_csv, tmp_path):
     assert tiers == set(realpanel.TIER_NAMES), f"missing {set(realpanel.TIER_NAMES) - tiers}"
 
 
+@pytest.mark.slow
 def test_no_negative_control_is_planted(panel_csv, tmp_path):
     """A real role column declares no comparator, so the run must not invent one -- otherwise the
         declared-reference path is exercised and the panel-reference path never is."""
@@ -196,6 +200,7 @@ def test_no_negative_control_is_planted(panel_csv, tmp_path):
     assert features <= {name for _s, name, _b, _q, _c, _r, _t in PANEL_ROWS}
 
 
+@pytest.mark.slow
 def test_the_run_is_reproducible(panel_csv, tmp_path):
     a, b = tmp_path / "a", tmp_path / "b"
     assert run_generator(panel_csv, a).returncode == 0
@@ -205,6 +210,7 @@ def test_the_run_is_reproducible(panel_csv, tmp_path):
         assert (a / rel).read_bytes() == (b / rel).read_bytes(), rel
 
 
+@pytest.mark.slow
 def test_library_quality_profiles_change_the_expected_tag(panel_csv, tmp_path):
     out = tmp_path / "run"
     assert run_generator(panel_csv, out, "--library-quality", "spread").returncode == 0
@@ -217,6 +223,7 @@ def test_library_quality_profiles_change_the_expected_tag(panel_csv, tmp_path):
         assert {r["libraryTier"] for r in csv.DictReader(fh, delimiter="\t")} == {"clean"}
 
 
+@pytest.mark.slow
 def test_offset_zero_moves_the_feature_to_the_front_of_r2(panel_csv, tmp_path):
     import gzip
 
@@ -235,6 +242,7 @@ def test_offset_zero_moves_the_feature_to_the_front_of_r2(panel_csv, tmp_path):
 
 # --- sample metadata ------------------------------------------------------------------------------
 
+@pytest.mark.slow
 def test_sample_metadata_names_exactly_the_panels_samples(panel_csv, tmp_path):
     """Samples & Data joins metadata on the sample name. A row for a sample that is not in the run, or a
         sample with no row, means a grouping column that silently covers part of the run."""
@@ -246,6 +254,7 @@ def test_sample_metadata_names_exactly_the_panels_samples(panel_csv, tmp_path):
     assert list(rows[0]) == ["Sample", "Donor", "Condition", "LibraryQuality", "PanelMembers", "PanelTargets"]
 
 
+@pytest.mark.slow
 def test_metadata_carries_the_per_sample_panel_shape(panel_csv, tmp_path):
     """PanelMembers / PanelTargets are the two metadata columns read from the panel rather than invented, and
         the per-sample difference is what makes *never asked* reachable."""
@@ -258,6 +267,7 @@ def test_metadata_carries_the_per_sample_panel_shape(panel_csv, tmp_path):
     assert by_sample["grp1"]["PanelTargets"] == "2"
 
 
+@pytest.mark.slow
 def test_metadata_records_the_library_tier(panel_csv, tmp_path):
     out = tmp_path / "run"
     assert run_generator(panel_csv, out, "--library-quality", "uniform").returncode == 0
@@ -267,6 +277,7 @@ def test_metadata_records_the_library_tier(panel_csv, tmp_path):
 
 # --- reshaping the repertoire without regenerating the reads ---------------------------------------
 
+@pytest.mark.slow
 def test_arm_vdj_rebuilds_the_repertoire_and_leaves_the_reads_alone(panel_csv, tmp_path):
     out = tmp_path / "run"
     assert run_generator(panel_csv, out).returncode == 0
@@ -280,12 +291,14 @@ def test_arm_vdj_rebuilds_the_repertoire_and_leaves_the_reads_alone(panel_csv, t
     assert (out / "vdj" / "grp1.tsv").read_bytes() != before_vdj, "the repertoire must change"
 
 
+@pytest.mark.slow
 def test_arm_vdj_without_an_antigen_arm_says_so(panel_csv, tmp_path):
     res = run_generator(panel_csv, tmp_path / "empty", "--arm", "vdj")
     assert res.returncode != 0
     assert "rebuilds the repertoire over an EXISTING antigen arm" in res.stdout + res.stderr
 
 
+@pytest.mark.slow
 def test_most_cells_sit_in_expanded_clones(panel_csv, tmp_path):
     """The shape that matters for an antibody-discovery bed: a clonotype's verdict must usually rest on
         SEVERAL cells. Asserted on the share of CELLS in clones of >= 10, not on the share of clonotypes.
@@ -300,6 +313,7 @@ def test_most_cells_sit_in_expanded_clones(panel_csv, tmp_path):
     assert max(sizes) >= 20, f"largest clone is {max(sizes)} cells — no lead to find"
 
 
+@pytest.mark.slow
 def test_clone_size_knobs_move_the_distribution(panel_csv, tmp_path):
     def biggest(out):
         with open(out / "truth" / "truth_clonotypes.csv", newline="") as fh:
@@ -311,6 +325,7 @@ def test_clone_size_knobs_move_the_distribution(panel_csv, tmp_path):
     assert biggest(expanded) > biggest(diverse)
 
 
+@pytest.mark.slow
 def test_crossreactive_cells_form_clones_not_singletons(panel_csv, tmp_path):
     """A cross-reactive clonotype is a real lead. If those cells are all singletons, no clonotype is ever
         cross-reactive with more than one cell agreeing, and the two-identity case is untestable."""
@@ -391,6 +406,7 @@ def test_shallow_magnitudes_are_ordered_below_deep():
         assert realpanel.MAGNITUDES_SHALLOW[tier][1] < realpanel.MAGNITUDES_DEEP[tier][1]
 
 
+@pytest.mark.slow
 def test_deep_regime_is_the_default(panel_csv, tmp_path):
     """The default path must not acquire the shallow regime's behaviours by accident: no aggregates, no sized
         barcode universe, and the original duplication draw."""
@@ -404,6 +420,7 @@ def test_deep_regime_is_the_default(panel_csv, tmp_path):
     assert (tmp_path / "run" / "truth" / "regime.txt").read_text().strip() == "deep"
 
 
+@pytest.mark.slow
 def test_shallow_run_lands_in_the_measured_regime(panel_csv, tmp_path):
     """A shallow run reproduces the shape real in-vivo data shows, checked from the truth tables rather than
         from the log line."""
@@ -464,6 +481,7 @@ def test_control_feature_overrides_the_name(narrow_panel_csv):
     assert "Ag Alpha" not in panels["grp1"].targets
 
 
+@pytest.mark.slow
 def test_narrow_panel_drives_a_whole_run(narrow_panel_csv, tmp_path):
     out = run_generator(narrow_panel_csv, tmp_path / "run", "--regime", "shallow")
     assert out.returncode == 0, out.stdout + out.stderr
