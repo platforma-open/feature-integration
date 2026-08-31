@@ -27,3 +27,6 @@ The RAM formula asked for `16 GiB + 8 x size(counts)`. The 8 was never reached b
 16 GiB floor covered any counts file below ~0.8 GiB; the first run past that knee died. It
 is now 24x, measured from 614 bytes of peak per counts row against 64 bytes per row on the
 wire, with room for a narrower row and a denser cell linker.
+
+Also bumps the two pins the require-latest CI gate reads: block-tools 2.14.0 -> 2.14.3 and
+tengo-builder 4.0.22 -> 4.0.23. The lock file moves for those two packages and nothing else.
