@@ -22,8 +22,12 @@ import pytest
 from panel import ANY_SAMPLE
 from tag_distribution import (
     DEFAULT_DISTRIBUTION_MIN_CELLS,
+    DEFAULT_INITIAL_SIGNAL_WEIGHT,
     NO_FIT,
     TOO_FEW_CELLS,
+    _fit_two_component_nb,
+    _signal_component,
+    bound_at_count,
     fit_tag_probabilities,
     fit_tag_probabilities_by_pair,
 )
@@ -129,17 +133,45 @@ def test_an_even_split_is_handled():
     assert _bound(fit.probabilities)[1000:].all()
 
 
-def test_a_cell_that_read_nothing_is_not_called_bound_beside_an_overdispersed_population():
-    """The signal component is the higher-MEDIAN one, and the median is not ordered by the mean.
+def test_the_signal_component_is_the_higher_median_one_even_where_the_means_disagree():
+    """The labelling rule itself, on parameters rather than on a fitted bed.
 
-    An ambient population -- mostly zero with a few enormous counts -- fits a component whose mean sits
-    far above a real binder population's while its median sits far below. The Poisson-shaped binders
-    here are the higher-median component and the overdispersed ambient one is not, so ordering the two
-    by mean labels them the wrong way round.
+    `what-plays-the-baseline` fixes the rule as the higher-median component. A negative binomial's
+    median is not ordered by its mean -- the median depends on the size too -- so the two orderings can
+    disagree, and labelling by mean inverts every call for the tag: cells reading nothing score high and
+    cells reading a lot score low. That was a shipped bug, fixed by labelling on the median.
 
-    Asserted at a count of zero because that is where the inversion is unmistakable: under the mean
-    ordering every cell that read nothing lands in the ambient component with probability 1 and is
-    called bound.
+    Asserted on component parameters directly, NOT through a fit. The old form of this test built a bed
+    whose components the mean ordering got wrong, and so it also depended on the EM reaching one
+    particular decomposition of that bed -- which the initialisation decides. That made a labelling-rule
+    guard fail whenever the initialisation changed, for reasons that had nothing to do with labelling.
+    The rule is a pure function of the fitted parameters, so it is tested as one.
+    """
+    # The pair from `_signal_component`'s own docstring. Component 0 has the higher MEAN, component 1
+    # the higher MEDIAN: at mean 50 with size 0.05 the median is 0, at mean 5 with size 1e6 it is 5.
+    assert _signal_component(np.array([50.0, 5.0]), np.array([0.05, 1e6])) == 1
+
+    # Where the two orderings agree there is nothing to choose between them.
+    assert _signal_component(np.array([2.0, 40.0]), np.array([3.0, 4.0])) == 1
+
+
+def test_two_components_with_equal_medians_are_separated_by_their_means():
+    # Fitted over mostly-zero counts, both components have a median of zero, and the published rule
+    # says nothing about that case -- the mean is all that is left to separate them. Pinned because
+    # that tie-break is our own choice, so it needs to be written down somewhere.
+    assert _signal_component(np.array([2.0, 8.0]), np.array([0.02, 0.02])) == 1
+
+
+def test_a_cell_that_read_nothing_is_never_called_bound():
+    """A cell holding no count of a tag cannot bind it, whatever the fit made of the rest.
+
+    This is the invariant `silent_tally` rests on. It resolves the unobserved positions by arithmetic --
+    asked minus observed minus unreliable -- instead of reading each one, and that is only sound while a
+    zero-count cell cannot reach the bound line. A breach would make the run call a cell bound in one
+    place and count it not-bound in the other, with nothing raised.
+
+    The bed is an ambient population that is mostly zero with a few enormous counts, which is the shape
+    that puts the most pressure on it.
     """
     rng = np.random.default_rng(3)
     ambient = rng.negative_binomial(0.15, 0.15 / (0.15 + 40), 1000)
@@ -151,8 +183,46 @@ def test_a_cell_that_read_nothing_is_not_called_bound_beside_an_overdispersed_po
     silent = fit.probabilities[counts == 0]
     assert silent.size > 0, "the bed must hold cells that read nothing for this to say anything"
     assert silent.max() < DISTRIBUTION_BOUND_PROBABILITY, "a cell holding no count of the tag cannot bind it"
-    # The direction holds over the two populations and not only at zero.
-    assert fit.probabilities[1000:].mean() > fit.probabilities[:1000].mean()
+
+
+def test_an_ambient_tail_heavier_than_the_binders_is_labelled_the_signal_and_says_nothing():
+    """KNOWN LIMITATION. This test records it; it does not guard against it.
+
+    When the background counts have a long enough tail that their MEAN sits above the binders', the fit
+    splits the data the wrong way. Instead of {background} and {binders} it finds {everything} and {the
+    background's tail}, and calls that tail the signal. Every real binder then scores below the line,
+    and part of the background tail scores above it.
+
+    Not one unlucky dataset: 0 of 12 seeds come out right on this shape, at every binder share from 2%
+    to 50%. It is a property of where the fit starts.
+
+    The median start this used to have got this shape right -- and got the mostly-background case wrong
+    instead, which is every tag in a real run. Neither start wins both. The source paper reports the
+    same weakness for its own no-control path.
+
+    THE RUN GIVES NO WARNING. That is what the asserts below are for: the fit comes back with its
+    signal mean above its background mean, so the probability rises with the count and an ordinary
+    threshold gets drawn. Nothing in the output distinguishes this from a fit that got it right. Anyone
+    building a check for it should start here.
+    """
+    rng = np.random.default_rng(3)
+    ambient = rng.negative_binomial(0.15, 0.15 / (0.15 + 40), 1000)
+    binders = rng.poisson(12, 1000)
+    counts = np.concatenate([ambient, binders])
+
+    fit = fit_tag_probabilities(counts)
+    assert fit.reason is None
+    # The wrong population carries the signal label: the binders score BELOW the ambient.
+    assert fit.probabilities[1000:].mean() < fit.probabilities[:1000].mean()
+    assert not _bound(fit.probabilities[1000:]).any(), "no real binder clears the line on this bed"
+    assert _bound(fit.probabilities[:1000]).any(), "part of the ambient tail does"
+    # And it looks healthy. Two means the right way round, so a gate is drawn like any other fit.
+    assert fit.background.signal_mean > fit.background.mean
+    counts_seen = np.unique(counts)
+    curve = (counts_seen, np.array([fit.probabilities[counts == c][0] for c in counts_seen]))
+    assert bound_at_count(curve, DISTRIBUTION_BOUND_PROBABILITY) is not None, (
+        "the fit resolves a bound count, so nothing marks this as suspect"
+    )
 
 
 def test_the_probability_is_a_probability():
@@ -182,19 +252,32 @@ def test_a_tag_no_cell_read_at_all_does_not_fit():
     assert fit.reason == NO_FIT
 
 
-def test_a_tag_nothing_bound_still_fits_and_calls_some_cells_bound():
-    # DELIBERATE: the method assumes two components exist, so it splits a single population and calls its
-    # upper slice signal. Rejecting this would be a separation test of our own invention.
-    #
-    # The background here is OVERDISPERSED rather than Poisson, which is what a real one is: the invented
-    # binders are the long tail of a single skewed population, so a Poisson bed would let this pass for
-    # the wrong reason.
-    #
-    # Pinned so that nobody restores the rejection as a bug fix.
+def test_a_tag_nothing_bound_still_fits_and_now_calls_no_cell_bound():
+    """A single population still FITS -- no rejection -- and no longer reaches the bound line.
+
+    The method assumes two components exist, so it splits a single population and calls its upper slice
+    signal. That much is unchanged, and the pin below is unchanged with it: the fit must return
+    probabilities rather than refuse, because rejecting here would be a separation test of our own
+    invention and `what-plays-the-baseline` declines to build one.
+
+    What changed is WHERE the split lands. This rung now starts the EM from the source paper's own
+    pivot rather than from the median, and from that start a single background population no longer
+    produces a slice above 0.9. The earlier assertion -- that some cell IS called bound -- recorded the
+    median start's behaviour, not a decision the spec had taken: the spec fixes the trim, the labelling
+    rule and the 0.9, and says nothing about the initialisation.
+
+    So this test still pins the thing it was written to pin, that nobody restores the rejection, and
+    reads the count off the fit instead of requiring it to be non-zero.
+
+    The background here is OVERDISPERSED rather than Poisson, which is what a real one is: a Poisson bed
+    would pass for the wrong reason.
+    """
     rng = np.random.default_rng(SEED)
     fit = fit_tag_probabilities(rng.negative_binomial(3, 3 / (3 + 2), size=2000))
-    assert fit.reason is None
-    assert _bound(fit.probabilities).any(), "the spec accepts invented binders on a tag that bound nothing"
+    assert fit.reason is None, "a single population must still fit rather than be rejected"
+    assert fit.probabilities is not None
+    assert fit.probabilities.size == 2000
+    assert not _bound(fit.probabilities).any(), "the paper's pivot invents no binders on this bed"
 
 
 # --- the trim -----------------------------------------------------------------------------------
@@ -435,3 +518,194 @@ def test_padding_the_universe_with_ambient_barcodes_collapses_the_fit():
     # apart. Both are unusable.
     over_barcodes = swamped.backgrounds.get(("S1", "AAAA"))
     assert over_barcodes is None or over_barcodes.signal_mean < over_barcodes.mean * 2
+
+
+def test_bins_count_every_cell_the_fit_saw_including_the_zeros() -> None:
+    # The plot a reader judges the background against is drawn from these bins, so they have to cover the
+    # cells the fit actually saw: one entry per cell in the sample, with a cell that read nothing counted
+    # as a zero. The sparse counts frame has no rows for those zeros, and on real data the zeros are most
+    # of the background -- bin the sparse frame instead and the plot shows one decaying hump no matter
+    # what the fit found, because the left half is simply missing.
+    counts, cells = _bed()
+    fits = fit_tag_probabilities_by_pair(counts, cells, _panel([("AAAA", "S1")]))
+
+    weights = fits.bins[("S1", "AAAA")]
+    in_sample = len([c for c in cells if c[0] == "S1"])
+    assert sum(weights) == in_sample, "every cell of the sample lands in a bin"
+
+    observed = counts.filter((pl.col("sampleId") == "S1") & (pl.col("tag") == "AAAA")).height
+    assert observed < in_sample, "the bed must leave some cells unobserved or this pins nothing"
+    # The zeros sit in the first bin, which spans [0, expm1(width)) and so holds no other count.
+    assert weights[0] == in_sample - observed
+
+
+def test_bins_are_recorded_even_where_no_fit_came_out() -> None:
+    # A pair where nothing separated is the case a reader most needs to see, so its bins are kept too. A
+    # tag the reads never showed is all zeros, and cannot separate.
+    _, cells = _bed()
+    empty = _counts_frame([])
+    fits = fit_tag_probabilities_by_pair(empty, cells, _panel([("AAAA", "S1")]))
+
+    assert ("S1", "AAAA") in fits.reasons
+    assert ("S1", "AAAA") not in fits.backgrounds
+    weights = fits.bins[("S1", "AAAA")]
+    # All zeros, so one bin holding every cell of the sample -- not an empty list.
+    assert weights == [len([c for c in cells if c[0] == "S1"])]
+
+
+def test_bound_at_count_takes_the_start_of_the_final_crossing_region():
+    counts = np.array([0, 1, 2, 5, 9])
+    probabilities = np.array([0.01, 0.10, 0.55, 0.93, 0.99])
+    assert bound_at_count((counts, probabilities), 0.9) == 5
+
+
+def test_bound_at_count_refuses_an_inverted_fit_rather_than_marking_its_low_crossing():
+    # Components are labelled by median, so a pair can come back with its signal component BELOW its
+    # background, and then the probability falls as the count rises. The low counts cross; no count
+    # sits above the line, so there is no gate to draw.
+    counts = np.array([0, 1, 2, 5, 9])
+    probabilities = np.array([0.99, 0.95, 0.40, 0.05, 0.01])
+    assert bound_at_count((counts, probabilities), 0.9) is None
+
+
+def test_bound_at_count_is_none_where_the_fit_never_reaches_the_cutoff():
+    assert bound_at_count((np.array([0, 1, 4]), np.array([0.1, 0.2, 0.7])), 0.9) is None
+
+
+def test_bound_at_count_rises_with_the_cutoff():
+    curve = (np.array([0, 1, 2, 5, 9]), np.array([0.01, 0.10, 0.92, 0.97, 0.995]))
+    assert bound_at_count(curve, 0.9) == 2
+    assert bound_at_count(curve, 0.95) == 5
+    assert bound_at_count(curve, 0.999) is None
+
+
+def test_curves_carry_one_entry_per_distinct_scored_count():
+    counts = pl.DataFrame(
+        {
+            "sampleId": ["s"] * 6,
+            "cellId": [f"c{i}" for i in range(6)],
+            "tag": ["T"] * 6,
+            "umiCount": [1, 1, 2, 2, 40, 41],
+        }
+    )
+    cells = [("s", f"c{i}") for i in range(400)]
+    panel = pl.DataFrame({"tag": ["T"], "sample": [ANY_SAMPLE]})
+    fits = fit_tag_probabilities_by_pair(counts, cells, panel)
+    curve = fits.curves.get(("s", "T"))
+    if curve is None:
+        pytest.skip("this population produced no fit, so it carries no curve")
+    distinct, probabilities = curve
+    assert distinct.tolist() == [0, 1, 2, 40, 41]
+    assert probabilities.size == distinct.size
+    # Ascending counts, so a monotone fit gives a resolvable crossing.
+    assert np.all(np.diff(distinct) > 0)
+
+
+# --- the expected binder fraction ---------------------------------------------------------------
+
+
+def _from_bins(weights: list[int], top: int = 1381, bins: int = 24) -> np.ndarray:
+    """Per-cell counts rebuilt from a run's own histogram, at each bin's geometric middle.
+
+    Coarse on purpose: it carries the SHAPE of a real distribution into a test without a fixture file.
+    """
+    ratio = (top + 1) ** (1.0 / bins)
+    edges = [1]
+    while len(edges) < bins:
+        step = max(edges[-1] + 1, round(edges[-1] * ratio))
+        if step >= top:
+            break
+        edges.append(step)
+    edges.append(top + 1)
+    edges.insert(0, 0)
+    out: list[int] = []
+    for i, count in enumerate(weights):
+        if count == 0:
+            continue
+        low, high = edges[i], edges[i + 1]
+        out += [0 if low == 0 else int(round(np.sqrt(low * max(high - 1, low))))] * count
+    return np.array(out)
+
+
+# One real tag from a synthetic bound panel: a tight background, a gap at counts 7-11, then a broad
+# upper mode holding 27% of the cells.
+_BINDER_RICH = [
+    2140,
+    441,
+    453,
+    363,
+    79,
+    28,
+    0,
+    0,
+    11,
+    20,
+    41,
+    73,
+    80,
+    101,
+    106,
+    61,
+    78,
+    65,
+    76,
+    111,
+    104,
+    132,
+    163,
+    102,
+]
+
+
+def test_the_published_default_is_the_papers_initial_weight():
+    assert DEFAULT_INITIAL_SIGNAL_WEIGHT == 0.1
+
+
+def test_a_binder_rich_tag_needs_a_higher_expected_fraction_to_split_at_its_own_gap():
+    """Why the fraction is settable at all.
+
+    The default assumes a tenth of cells bind. This tag's upper mode holds 27% of them, so the pivot
+    lands INSIDE that mode, the background component is seeded with most of the binders and ends up
+    wide enough to explain the whole range, and no count is ever 90% likely to be signal. Told the
+    right fraction, the same fit splits at the gap the histogram shows.
+    """
+    counts = _from_bins(_BINDER_RICH)
+    x = counts.astype(float)
+
+    default_fit = _fit_two_component_nb(x, DEFAULT_INITIAL_SIGNAL_WEIGHT)
+    informed_fit = _fit_two_component_nb(x, 0.3)
+    assert default_fit is not None and informed_fit is not None
+
+    # The background the default settles on is two orders of magnitude wider than the real one.
+    assert min(default_fit.means) > 10.0
+    assert min(informed_fit.means) < 2.0
+
+
+def test_the_expected_fraction_reaches_the_per_pair_driver():
+    """Threaded rather than read from the module at the bottom of the stack.
+
+    Asserted on the binder-rich shape, because that is where the weight changes the answer. A bed whose
+    two populations stand well apart converges to the same fit from either start -- correctly, since the
+    start only picks which optimum the EM walks to -- so it cannot tell a threaded weight from a
+    dropped one.
+    """
+    population = _from_bins(_BINDER_RICH)
+    cells = [("s", f"c{i}") for i in range(population.size)]
+    observed = [(key[1], int(v)) for key, v in zip(cells, population) if v > 0]
+    counts = pl.DataFrame(
+        {
+            "sampleId": ["s"] * len(observed),
+            "cellId": [c for c, _ in observed],
+            "tag": ["T"] * len(observed),
+            "umiCount": [v for _, v in observed],
+        }
+    )
+    panel = pl.DataFrame({"tag": ["T"], "sample": [ANY_SAMPLE]})
+
+    default = fit_tag_probabilities_by_pair(counts, cells, panel, initial_signal_weight=DEFAULT_INITIAL_SIGNAL_WEIGHT)
+    informed = fit_tag_probabilities_by_pair(counts, cells, panel, initial_signal_weight=0.3)
+    low, high = default.backgrounds.get(("s", "T")), informed.backgrounds.get(("s", "T"))
+    assert low is not None and high is not None
+    # The same divergence the direct-fit test pins, seen through the driver.
+    assert low.mean > 10.0
+    assert high.mean < 2.0

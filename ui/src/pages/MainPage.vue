@@ -35,6 +35,7 @@ import {
   AGGREGATE_DETECTION_DEFAULTS,
   groupingColumns,
   QC_LINE_DEFAULTS,
+  VERDICT_DEFAULTS,
 } from "@platforma-open/milaboratories.feature-integration.model";
 import type { ImportFileHandle } from "@platforma-sdk/model";
 import { parseTagCsvMeta } from "../csvMeta";
@@ -227,6 +228,19 @@ const allSources = computed(() => referenceSources.value?.options ?? []);
 //
 // The data keeps the share, so this is a display conversion and not a migration. Rounded on the way in,
 // because a percentage entered as an integer must come back as the same integer.
+// The expected binder fraction as a PERCENTAGE, where the data holds a share from 0 to 1. Same display
+// conversion as the agreement limit below, and for the same reason: a scientist states "about 30% of these
+// cells bound", not "0.3". Not rounded on the way out, so a typed value comes back as the number typed.
+const binderPercent = computed({
+  get: () => {
+    const share = app.model.data.expectedBinderFraction;
+    return typeof share === "number" ? share * 100 : undefined;
+  },
+  set: (percent: number | undefined) => {
+    app.model.data.expectedBinderFraction = typeof percent === "number" ? percent / 100 : undefined;
+  },
+});
+
 const agreementPercent = computed({
   get: () => {
     const share = app.model.data.minAgreement;
@@ -970,6 +984,54 @@ const gridOptions = {
               baseline counts.<br /><br />
               <b>Certainty, not strength</b> — two counts against zero score low. Cell Ranger says
               this score does not measure binding strength.
+            </template>
+          </PlNumberField>
+          <!-- Ordered before the bound probability deliberately. This decides WHICH two populations the
+               fit finds; the probability only sets how sure the fit must be about a cell once it has them.
+               A binder list that looks wrong is usually this one's business, not that one's. -->
+          <PlNumberField
+            v-if="chosenSource === 'distribution'"
+            :class="$style.half"
+            v-model="binderPercent"
+            :min-value="0.1"
+            :max-value="99.9"
+            :step="5"
+            clearable
+            label="Expected binder fraction (%)"
+          >
+            <template #tooltip>
+              Roughly what share of cells you expect to bind a given antigen. It tells the fit where
+              to start looking for the split between background and signal.<br /><br />
+              <b>Empty means {{ VERDICT_DEFAULTS.expectedBinderFraction * 100 }}%</b>, the value the
+              published method uses.<br /><br />
+              Raise it for a sorted or synthetic population that really does bind in bulk. Left too
+              low, the fit puts the split well above the gap you can see in the distribution.<br /><br />
+              Raising it also makes the fit readier to find "binders" on a tag that bound nothing,
+              so check the distributions after you change it.
+            </template>
+          </PlNumberField>
+          <!-- The fitted rung's line, in the slot the score cutoff occupies on the declared one. The two are
+               different quantities on different rungs and never both apply, so one field each, each shown only
+               where its own rung serves. Floored at the value the rung shipped at: raising it restricts, and
+               lowering it lets a cell holding none of a tag reach the line. -->
+          <PlNumberField
+            v-if="chosenSource === 'distribution'"
+            :class="$style.half"
+            v-model="app.model.data.boundProbability"
+            :min-value="0.9"
+            :max-value="1"
+            :step="0.01"
+            clearable
+            label="Bound probability"
+          >
+            <template #tooltip>
+              A cell reads bound where the probability its count belongs to the fitted signal
+              component reaches this.<br /><br />
+              <b>Empty means {{ VERDICT_DEFAULTS.boundProbability }}</b
+              >, the value this baseline ships at and the lowest it accepts. Raise it to keep only
+              the cells the fit is most certain about. <br /><br />
+              Lower is not offered: below it a cell holding none of the tag can reach the line, and
+              the run counts those positions without reading each one.
             </template>
           </PlNumberField>
           <PlNumberField

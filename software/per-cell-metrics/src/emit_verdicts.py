@@ -89,9 +89,10 @@ from qc_measures import (
     Line,
     antigen_count_deciles,
     bin_values,
-    count_bin_edges,
     deciles_of,
     linear_bin_edges,
+    log1p_bin_edges,
+    log1p_edges_for,
     per_antigen_measures,
     per_tag_count_bins,
     reads_per_cell,
@@ -122,13 +123,16 @@ from qc_rows import (
 )
 from tag_distribution import (
     DEFAULT_DISTRIBUTION_MIN_CELLS,
+    DEFAULT_INITIAL_SIGNAL_WEIGHT,
     TagFits,
+    bound_at_count,
     fit_tag_probabilities_by_pair,
 )
 from verdict import (
     BOUND_CUTOFF,
     DEFAULT_FLOOR,
     DEFAULT_PANEL_MIN_MEMBERS,
+    DISTRIBUTION_BOUND_PROBABILITY,
     Admissibility,
     Reference,
     ReferenceChoice,
@@ -215,6 +219,18 @@ def main() -> None:
             "Required: nothing here picks a rung for a scientist who did not"
         ),
     )
+    p.add_argument(
+        "--bound-probability",
+        type=float,
+        default=DISTRIBUTION_BOUND_PROBABILITY,
+        help=(
+            "how sure the fit must be before a cell counts as bound, as a probability that the cell's "
+            f"count came from the signal component. The lowest allowed value is "
+            f"{DISTRIBUTION_BOUND_PROBABILITY}, which is also the default. Lower is refused: a cell "
+            "holding none of the tag could then cross the line, and this run counts those cells by "
+            "arithmetic instead of checking each one, so the two halves would disagree"
+        ),
+    )
     p.add_argument("--panel-min-members", type=int, default=DEFAULT_PANEL_MIN_MEMBERS)
     p.add_argument(
         "--distribution-min-cells",
@@ -228,6 +244,8 @@ def main() -> None:
     )
     p.add_argument("--min-voters", type=int, default=DEFAULT_MIN_VOTERS)
     p.add_argument("--min-agreement", type=float, default=DEFAULT_MIN_AGREEMENT)
+    # Roughly what share of cells are expected to bind an antigen.
+    p.add_argument("--initial-signal-weight", type=float, default=DEFAULT_INITIAL_SIGNAL_WEIGHT)
     p.add_argument("--gate-threshold", type=int, default=None, help="set aside cells whose comparator reads above this")
     p.add_argument("--grouping", default=None, help="JSON: {'by':'tag'} or {'by':'property','column':...}")
     p.add_argument("--contending", default=None, help="JSON: groups of identities that contend, as a list of lists")
@@ -276,6 +294,20 @@ def main() -> None:
     }
     add = functools.partial(_add, lines=lines)
 
+    # Must be above 0 and below 1. At either end the split hands every cell to one side, and the fit
+    # quietly falls back to splitting at the mean instead. The run would then report a value it never
+    # used, so refuse rather than let that happen silently.
+    if not 0.0 < args.initial_signal_weight < 1.0:
+        raise SystemExit(
+            f"the expected binder fraction is a share strictly between 0 and 1. Got {args.initial_signal_weight}."
+        )
+    if args.bound_probability < DISTRIBUTION_BOUND_PROBABILITY:
+        raise SystemExit(
+            f"--bound-probability must be at least {DISTRIBUTION_BOUND_PROBABILITY}. Below that a cell "
+            f"holding none of a tag could be called bound. Most cells hold none of most tags, and the run "
+            f"counts them by arithmetic rather than checking each one, so those cells would be counted "
+            f"not-bound in one place and called bound in another. Got {args.bound_probability}."
+        )
     if args.cutoff <= ANALYTIC_CUTOFF_BOUND:
         raise SystemExit(
             f"--cutoff must be strictly above {ANALYTIC_CUTOFF_BOUND:.4f}, the best score a zero count can reach. "
@@ -465,6 +497,7 @@ def main() -> None:
             args.distribution_min_cells,
             floor=args.floor,
             reference_tags=reference_tags,
+            initial_signal_weight=args.initial_signal_weight,
         )
         probabilities = _identity_probabilities(tag_fits, grouping)
         # A run where no tag fitted anywhere established no baseline. This is the one refusal that
@@ -518,7 +551,7 @@ def main() -> None:
 
     non_reference = floored.filter(~pl.col("tag").is_in(list(reference_tags))) if reference_tags else floored
     identities = combine_tags_to_identities(non_reference, grouping)
-    states = read_states(identities, admissibility, args.cutoff)
+    states = read_states(identities, admissibility, args.cutoff, args.bound_probability)
 
     # The per-tag reading is diagnostic only: it compares each tag against the reference separately,
     # and no verdict is built from it. The measurement set carries it at both levels always, so where
@@ -535,7 +568,10 @@ def main() -> None:
             else admissibility
         )
         tag_states = read_states(
-            combine_tags_to_identities(non_reference, by_tag_grouping), tag_admissibility, args.cutoff
+            combine_tags_to_identities(non_reference, by_tag_grouping),
+            tag_admissibility,
+            args.cutoff,
+            args.bound_probability,
         )
 
     # Which (sample, tag) pairs the reads actually carry, from the RAW counts. Never from `floored`: a
@@ -683,6 +719,14 @@ def main() -> None:
         .select(["sampleId", "cellId", "tag", "umiCount", "referenceCount", "inCellList"])
     )
     _write_sorted(cell_counts, f"{prefix}_cell_counts.csv", ["sampleId", "cellId", "tag"])
+
+    # The same (cell, tag) counts as the table above, but taken before the floor and including the
+    # control tag.
+    _write_sorted(
+        _listed(counts).select(["sampleId", "cellId", "tag", "umiCount"]),
+        f"{prefix}_cell_raw_counts.csv",
+        ["sampleId", "cellId", "tag"],
+    )
 
     cell_scalars = (
         reference_frame.join(in_list, on=["sampleId", "cellId"], how="left")
@@ -1498,35 +1542,56 @@ def main() -> None:
     # A run with no cell list bins every barcode, and `cellListSource` in the run meta says which case a
     # plot was drawn under. The edges are taken from the same filtered frame, so the shared domain ends
     # at the highest count among cells rather than among barcodes.
+    # The plot is binned over exactly the cells the fit ran on: one entry per cell in the sample, with a
+    # cell that read nothing counted as a zero.
+    fitted_bins = tag_fits.bins if tag_fits is not None else {}
     bin_counts = _listed(counts)
-    bin_edges = count_bin_edges(bin_counts)
+    if fitted_bins:
+        tag_bins: dict[str, dict[str, list[int]]] = {}
+        for (sample, tag), weights in fitted_bins.items():
+            if weights:
+                tag_bins.setdefault(str(sample), {})[str(tag)] = weights
+        bin_edges = log1p_edges_for(max((len(w) for w in fitted_bins.values()), default=0))
+    else:
+        # No fit ran, so there is no fitted population to bin. The observed readings still carry a shape
+        # worth showing, on the same equal-width edges.
+        observed = int(bin_counts["umiCount"].max() or 0) if bin_counts.height else 0
+        bin_edges = log1p_bin_edges(observed)
+        tag_bins = per_tag_count_bins(bin_counts, bin_edges)
     # The fit's two means travel WITH the bins, at the same (sample, tag) grain. They are what a reader
     # judges the humps against, so reaching them through the p-frame beside this would mean a driver
     # query per panel of the grid. Absent under a declared baseline, which fits nothing.
     fits_by_sample: dict[str, dict[str, dict[str, float]]] = {}
+    fit_curves = tag_fits.curves if tag_fits is not None else {}
     for (sample, tag), b in (tag_fits.backgrounds if tag_fits is not None else {}).items():
+        # The count at which the run's bound probability starts calling a cell bound, resolved from this
+        # pair's own scored curve.
+        curve = fit_curves.get((sample, tag))
+        crossing = None if curve is None else bound_at_count(curve, args.bound_probability)
         fits_by_sample.setdefault(str(sample), {})[str(tag)] = {
             "backgroundMean": float(b.mean),
             "signalMean": float(b.signal_mean),
             "backgroundWeight": float(b.weight),
+            "boundAtCount": crossing,
         }
     with open(f"{prefix}_qc_tag_bins.json", "w") as out:
         json.dump(
             {
                 "edges": bin_edges,
-                "bySample": per_tag_count_bins(bin_counts, bin_edges),
+                "bySample": tag_bins,
                 "fitsBySample": fits_by_sample,
                 # The same names `result_tag_labels.csv` carries, so a tag reads under one name on the plots
                 # and in the reagent table. The plots are drawn from this JSON rather than from a p-frame, and
                 # a label column reaches only p-frame surfaces, so without this every panel title is a barcode.
                 "tagLabels": tag_names,
+                # The panel's OWN row order.
+                "tagOrder": list(dict.fromkeys(panel["tag"].to_list())),
                 # The run's score spread and its reference readings, on their own linear edges. Each is one
                 # distribution for the whole run, pooled across samples and narrowed to the cell list, so it
                 # carries the same population as the count bins beside it.
                 "spreads": spread_bins,
             },
             out,
-            indent=2,
             sort_keys=True,
         )
 
@@ -1576,11 +1641,13 @@ def main() -> None:
         "cellsAnalysed": len(analysed_cells),
         "floor": args.floor,
         "cutoff": args.cutoff,
+        "boundProbability": args.bound_probability,
         "minVoters": args.min_voters,
         "minAgreement": args.min_agreement,
         "gateThreshold": args.gate_threshold,
         "panelMinMembers": args.panel_min_members,
         "distributionMinCells": args.distribution_min_cells,
+        "initialSignalWeight": args.initial_signal_weight,
         # Per (sample, tag), and only where that rung was asked for: which tags could not be fitted,
         # and why. A tag missing here fitted. The reader needs both halves to tell a panel that mostly
         # worked from one that mostly did not.

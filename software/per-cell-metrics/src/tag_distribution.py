@@ -17,6 +17,13 @@ populations are unequal in size, which is the antigen case exactly.
 threshold. Nothing downstream thresholds: it scores a reading against a comparator count. So the
 split point identifies which readings are background, and the comparator is the middle of those.
 
+**Where the fit starts.** While the EM runs, the two components are interchangeable -- the paper says
+so, and both it and this module decide afterwards which is which, by median. So the starting point does
+not change what the components mean; it changes which answer the EM settles on. On a mostly-background
+population that is the difference between a background weight near 0.8 and one near 0.95. The starting
+split is the paper's, `DEFAULT_INITIAL_SIGNAL_WEIGHT` above. It used to be the median, which is a choice
+`what-plays-the-baseline` never actually specified.
+
 **No normalization.** The paper normalizes by each cell's UMI total. Every reading here is a raw
 integer UMI count, and a normalized comparator would be the only non-count in the pipeline. The
 cost is that a cell sequenced twice as deeply contributes a reading twice as large; the split is
@@ -34,6 +41,7 @@ from typing import NamedTuple
 import numpy as np
 import polars as pl
 from panel import ANY_SAMPLE
+from qc_measures import bin_values, log1p_bin_edges, log1p_edges_for
 from scipy.special import logsumexp
 from scipy.stats import nbinom
 
@@ -84,6 +92,9 @@ TOO_FEW_CELLS = "the sample holds too few cells for a distribution to be fitted"
 # finding that this tag's counts failed to separate -- no check for that is built.
 NO_FIT = "no two-component fit could be computed for this tag"
 
+
+# Roughly what share of cells are expected to bind an antigen.
+DEFAULT_INITIAL_SIGNAL_WEIGHT = 0.1
 
 # The share of the highest counts dropped before the fit, so that a handful of very high readings
 # cannot drag the signal component's mean up and pull the boundary with it. The dropped cells still
@@ -159,7 +170,9 @@ class _Mixture(NamedTuple):
     signal: int
 
 
-def _fit_two_component_nb(counts: np.ndarray) -> _Mixture | None:
+def _fit_two_component_nb(
+    counts: np.ndarray, initial_signal_weight: float = DEFAULT_INITIAL_SIGNAL_WEIGHT
+) -> _Mixture | None:
     """A two-component negative binomial fitted to `counts`, or None where none exists.
 
     The method: fit a two-component negative binomial mixture and label the higher-median component
@@ -179,13 +192,13 @@ def _fit_two_component_nb(counts: np.ndarray) -> _Mixture | None:
     if np.unique(x).size < 2:
         return None
 
-    # Split at the median to start. Two components initialised on the same statistics never separate,
-    # and the median is the one split point that is always available.
-    pivot = float(np.median(x))
+    # Split the counts so that `initial_signal_weight` of them sit above the pivot. Each side then
+    # seeds one component, and the two side sizes are the starting weights.
+    pivot = float(np.quantile(x, 1.0 - initial_signal_weight))
     low, high = x[x <= pivot], x[x > pivot]
     if low.size == 0 or high.size == 0:
-        # A median equal to the maximum puts everything in one half. Fall back to splitting at the
-        # mean, which differs from the median exactly when the counts are skewed.
+        # The quantile landed on the maximum, so one side got every cell. Split at the mean instead:
+        # on a skewed count distribution the mean sits below the upper quantile, so it still divides.
         pivot = float(np.mean(x))
         low, high = x[x <= pivot], x[x > pivot]
         if low.size == 0 or high.size == 0:
@@ -269,6 +282,7 @@ def fit_tag_probabilities(
     counts: np.ndarray,
     min_cells: int = DEFAULT_DISTRIBUTION_MIN_CELLS,
     scored: np.ndarray | None = None,
+    initial_signal_weight: float = DEFAULT_INITIAL_SIGNAL_WEIGHT,
 ) -> TagFit:
     """One tag's counts across one sample's cells, as a probability of binding per cell.
 
@@ -308,7 +322,7 @@ def fit_tag_probabilities(
     if fitted_on.size == 0:
         return TagFit(None, NO_FIT, n)
 
-    fit = _fit_two_component_nb(fitted_on)
+    fit = _fit_two_component_nb(fitted_on, initial_signal_weight)
     if fit is None:
         return TagFit(None, NO_FIT, n)
     probabilities = _signal_probability(scored, fit)
@@ -334,9 +348,14 @@ class TagFits(NamedTuple):
 
     probabilities: pl.DataFrame
     reasons: dict[tuple[str, str], str]
+    # Each pair's fitted cells, already binned for the plot: one entry per cell in the sample, with a
+    # cell that read nothing counted as a zero.
+    bins: dict[tuple[str, str], list[int]]
     # One entry per pair that fitted, on the same condition as a contribution to `probabilities`. A
     # pair in `reasons` is absent here.
     backgrounds: dict[tuple[str, str], Background] = {}
+    # Each fitted pair's distinct counts, ascending, with the probability the fit gave each one.
+    curves: dict[tuple[str, str], tuple[np.ndarray, np.ndarray]] = {}
 
 
 _PROB_SCHEMA = {"sampleId": pl.String, "cellId": pl.String, "tag": pl.String, "pBound": pl.Float64}
@@ -349,6 +368,7 @@ def fit_tag_probabilities_by_pair(
     min_cells: int = DEFAULT_DISTRIBUTION_MIN_CELLS,
     floor: int = 0,
     reference_tags: Collection[str] = (),
+    initial_signal_weight: float = DEFAULT_INITIAL_SIGNAL_WEIGHT,
 ) -> TagFits:
     """One fit per (sample, tag) the panel declares, scored per cell.
 
@@ -394,7 +414,9 @@ def fit_tag_probabilities_by_pair(
     by_sample = {s: f.select("cellId") for (s,), f in universe.group_by("sampleId")}
     frames: list[pl.DataFrame] = []
     reasons: dict[tuple[str, str], str] = {}
+    binned: dict[tuple[str, str], list[int]] = {}
     backgrounds: dict[tuple[str, str], Background] = {}
+    curves: dict[tuple[str, str], tuple[np.ndarray, np.ndarray]] = {}
     for sample, tag in _declared_pairs(panel, sorted(by_sample)):
         sample_cells = by_sample.get(sample)
         if sample_cells is None:
@@ -408,13 +430,23 @@ def fit_tag_probabilities_by_pair(
         ).with_columns(pl.col("umiCount").fill_null(0))
 
         raw = dense["umiCount"].to_numpy()
+        # Binned before the fit is attempted, so a pair that established nothing still carries the
+        # distribution a reader would judge that outcome against. `raw` dies with the iteration; only
+        # the bins outlive it.
+        binned[(sample, tag)] = (
+            bin_values(raw, log1p_bin_edges(int(raw.max())) or log1p_edges_for(1)) if raw.size else []
+        )
         scored = raw if floor <= 0 or tag in exempt else np.where(raw < floor, 0, raw)
-        fit = fit_tag_probabilities(raw, min_cells, scored=scored)
+        fit = fit_tag_probabilities(raw, min_cells, scored=scored, initial_signal_weight=initial_signal_weight)
         if fit.probabilities is None:
             reasons[(sample, tag)] = fit.reason or NO_FIT
             continue
         if fit.background is not None:
             backgrounds[(sample, tag)] = fit.background
+        # Built from `scored`, not `raw`. The probabilities were computed on the scored values, so a
+        # reading the floor zeroed carries the probability of 0, not of the count it originally held.
+        distinct, first = np.unique(scored, return_index=True)
+        curves[(sample, tag)] = (distinct, np.asarray(fit.probabilities, dtype=float)[first])
         frames.append(
             dense.select("cellId")
             .with_columns(
@@ -426,7 +458,29 @@ def fit_tag_probabilities_by_pair(
         )
 
     probabilities = pl.concat(frames) if frames else pl.DataFrame(schema=_PROB_SCHEMA)
-    return TagFits(probabilities, reasons, backgrounds)
+    return TagFits(probabilities, reasons, binned, backgrounds, curves)
+
+
+def bound_at_count(curve: tuple[np.ndarray, np.ndarray], probability_cutoff: float) -> int | None:
+    """The lowest count at or above which every count is called bound, or None if there is none.
+
+    `curve` is one `TagFits.curves` entry: ascending distinct counts, and the probability each was given.
+
+    Note it looks for the lowest count from which the cutoff holds all the way up, NOT simply the first
+    count to cross it. Usually these are the same, because the probability normally rises with the count.
+
+    They differ when a fit comes back inverted. Components are labelled by median, so a pair can end up
+    with its "signal" component sitting BELOW its background. The probability then FALLS as the count
+    rises, and it is the LOW counts that cross the cutoff. Taking the first crossing would report a
+    threshold of 1, which the run does not apply. Requiring the cutoff to hold all the way up returns
+    None instead, which says plainly that this fit has no count above which it calls a cell bound.
+    """
+    counts, probabilities = curve
+    if counts.size == 0 or counts.size != probabilities.size:
+        return None
+    missed = np.flatnonzero(probabilities < probability_cutoff)
+    start = 0 if missed.size == 0 else int(missed[-1]) + 1
+    return int(counts[start]) if start < counts.size else None
 
 
 _EMPTY = np.zeros(0, dtype=np.int64)

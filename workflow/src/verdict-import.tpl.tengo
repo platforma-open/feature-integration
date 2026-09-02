@@ -254,6 +254,15 @@ self.body(func(inputs) {
 	// (sampleId, tag) rather than any axis the tables above use, and because the retired check's
 	// "undeclared-in-panel" direction was structurally unreachable there -- refine-tags has already snapped
 	// every barcode onto the panel before that check's counts are built.
+	// Per-cell per-tag CAPTURE, exported for a downstream per-cell composition plot. Its own frame: the
+	// grain is (sample, cell, tag) and nothing else here shares it -- `cellRefFb` above is per cell, and the
+	// reagent table is per (tag, identity, panel). The tag label travels WITH it
+	cellTagFb := pframes.pFrameBuilder()
+	addTo(cellTagFb, "cellRawCounts", inputs.cellRawCounts,
+		columnSpecs.cellRawTagCountsImportSpec(sampleAxis, cellAxis, tagAxis))
+	addTo(cellTagFb, "cellTagLabels", inputs.tagLabels,
+		columnSpecs.tagLabelsImportSpec(tagAxis))
+
 	undeclaredFb := pframes.pFrameBuilder()
 	addTo(undeclaredFb, "undeclaredBarcodes", inputs.undeclaredBarcodes,
 		columnSpecs.undeclaredBarcodeImportSpec(sampleAxis, tagAxis))
@@ -266,6 +275,7 @@ self.body(func(inputs) {
 		qcSummaryTable: qcSummaryFb.build(),
 		qcDistributions: distributionFb.build(),
 		reagentTable: reagentFb.build(),
-		undeclaredBarcodesTable: undeclaredFb.build()
+		undeclaredBarcodesTable: undeclaredFb.build(),
+		cellTagCounts: cellTagFb.build()
 	}
 })

@@ -90,6 +90,8 @@ export type BlockArgs = {
   distributionMinCells: number; // cells a sample needs before the rung may serve
   countFloor: number; // counts below this are not evidence of binding
   boundCutoff: number; // specificity score (0-100) at or above which a cell binds
+  boundProbability?: number; // the probability a count belongs to the signal component at or above which a cell binds
+  expectedBinderFraction?: number; // the share of cells expected to bind, seeding the fitted rung's split
   minVotingCells: number; // a verdict may rest on one cell and say so
   // Share (0-1) of answering cells the majority must reach. Off by default, and off means ABSENT rather
   // than zero: a floor of 0 passes every majority instead of skipping the check.
@@ -188,6 +190,8 @@ export type BlockData = {
   distributionMinCells: number;
   countFloor: number;
   boundCutoff: number;
+  boundProbability?: number;
+  expectedBinderFraction?: number;
   minVotingCells: number;
   minAgreement?: number;
   gateThreshold?: number;
