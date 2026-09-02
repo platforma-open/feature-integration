@@ -98,7 +98,8 @@ const listStyle: CSSProperties = {
     <div v-for="e in ENTRIES" :key="e.label" :style="rowStyle">
       <span :style="swatch(e.glyph)" />
       <span
-        ><b>{{ e.label }}</b>: {{ e.meaning }}</span
+        ><b>{{ e.label }}</b
+        >: {{ e.meaning }}</span
       >
     </div>
   </div>

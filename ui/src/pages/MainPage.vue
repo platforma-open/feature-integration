@@ -875,8 +875,8 @@ const gridOptions = {
       >
         <template #tooltip>
           Select the value that marks the baseline tag. Required once you name a role column.<br /><br />
-          Where the value marks several tags, the block reads each cell against the highest of
-          their counts.
+          Where the value marks several tags, the block reads each cell against the highest of their
+          counts.
         </template>
       </PlDropdown>
 
@@ -1165,8 +1165,8 @@ const gridOptions = {
             <template #tooltip>
               The share of a sample's pre-correction reads that one undeclared sequence carries.
               Each row of the Undeclared barcodes table warns above this share.<br /><br />
-              Default 0.01. This is the block's own line, not a published one. Nothing calibrates
-              it against your own data.
+              Default 0.01. This is the block's own line, not a published one. Nothing calibrates it
+              against your own data.
             </template>
           </PlNumberField>
           <PlNumberField
@@ -1180,8 +1180,8 @@ const gridOptions = {
           >
             <template #tooltip>
               The same share. Each row alerts above this value.<br /><br />
-              Default 0.05. This is the block's own line, not a published one. Nothing calibrates
-              it against your own data.
+              Default 0.05. This is the block's own line, not a published one. Nothing calibrates it
+              against your own data.
             </template>
           </PlNumberField>
         </PlRow>

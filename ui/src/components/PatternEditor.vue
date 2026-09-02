@@ -139,8 +139,8 @@ watch(editorMode, (mode) => {
     @update:model-value="setPresetId"
   >
     <template #tooltip>
-      Feature-barcode chemistry preset. Sets the tag pattern: cell barcode and UMI on Read 1, feature
-      barcode on Read 2. Select the configurable preset to edit the read layout by hand.
+      Feature-barcode chemistry preset. Sets the tag pattern: cell barcode and UMI on Read 1,
+      feature barcode on Read 2. Select the configurable preset to edit the read layout by hand.
     </template>
   </PlDropdown>
 
@@ -186,8 +186,8 @@ watch(editorMode, (mode) => {
         </PlNumberField>
         <PlNumberField v-model="r1.umiLen" :min-value="1" :step="1" label="UMI length">
           <template #tooltip>
-            UMI length on Read 1. Your chemistry fixes it, at 10 nt for 10x 5' v2. Change it only
-            if your kit uses a different UMI length.
+            UMI length on Read 1. Your chemistry fixes it, at 10 nt for 10x 5' v2. Change it only if
+            your kit uses a different UMI length.
           </template>
         </PlNumberField>
         <PlCheckbox v-model="r1.hasTrailingWildcard">
