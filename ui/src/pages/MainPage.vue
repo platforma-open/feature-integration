@@ -290,7 +290,7 @@ const groupingOptions = computed(() => [
     value: TAG_GROUPING_VALUE,
     // Labelled so it cannot be mistaken for one of the panel's own columns, which is what naming it
     // after the barcode column did.
-    label: "Each barcode on its own — one identity per barcode",
+    label: "One identity per barcode",
   },
   ...panelPropertyOptions.value,
 ]);
@@ -320,10 +320,10 @@ const combineColumnError = computed(() => {
   if (!c) return undefined;
   if (c === app.model.data.barcodeSeqColumn || c === app.model.data.featureNameColumn)
     return (
-      `The Combine-mode column must be a column of its own — it holds each feature's mode ` +
-      `("sum" or "all"), not barcodes or feature names. It's currently set to "${c}", the same ` +
-      `column used for the ${c === app.model.data.barcodeSeqColumn ? "barcode sequence" : "feature name"}. ` +
-      `Pick a different column, or clear it to sum all co-barcodes.`
+      `The stored Combine-mode column is "${c}", which this panel already uses for the ` +
+      `${c === app.model.data.barcodeSeqColumn ? "barcode sequence" : "feature name"}. ` +
+      `A combine-mode column must be a column of its own. It holds each feature's mode, "sum" or "all". ` +
+      `Upload the panel file again to clear it. Each feature then sums the counts of its barcodes.`
     );
   return undefined;
 });
