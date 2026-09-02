@@ -836,8 +836,8 @@ const gridOptions = {
         <template #tooltip>
           Select what each count is read against. The block does not choose for you. Two baselines
           give numbers that do not compare.<br /><br />
-          <b>Declared baseline tag</b> — the tag your panel marks as binding nothing.<br />
-          <b>Each tag's own distribution</b> — that tag's counts across the sample's cells, split in
+          <b>Declared baseline tag</b>: the tag your panel marks as binding nothing.<br />
+          <b>Each tag's own distribution</b>: that tag's counts across the sample's cells, split in
           two.<br /><br />
           The form then asks only for what your choice needs.
         </template>
@@ -875,8 +875,8 @@ const gridOptions = {
       >
         <template #tooltip>
           Select the value that marks the baseline tag. Required once you name a role column.<br /><br />
-          The block reads counts against <b>one</b> baseline tag. If the value marks more than one
-          tag, the run stops and names them.
+          Where the value marks several tags, the block reads each cell against the highest of
+          their counts.
         </template>
       </PlDropdown>
 
@@ -968,8 +968,8 @@ const gridOptions = {
               A cell reads bound where its score reaches this number, from 0 to 100. The score is
               how certain it is that the antigen makes up more than 92.5% of the antigen and
               baseline counts.<br /><br />
-              <b>Certainty, not strength</b> — two counts against zero score low. Cell Ranger says
-              this score does not measure binding strength.
+              <b>Certainty, not strength</b>: two counts against zero score low. The score does not
+              measure binding strength.
             </template>
           </PlNumberField>
           <PlNumberField
@@ -982,9 +982,9 @@ const gridOptions = {
             label="Min agreement (>50%)"
           >
             <template #tooltip>
-              <b>Empty means off</b>, which is the default. A narrow majority then stands, and the
-              verdict reports how narrow it was.<br /><br />
-              Set it and a verdict reads unreliable below this share of the answering cells.<br /><br />
+              Empty means off, which is the default. A narrow majority then stands, and the verdict
+              reports how narrow it was.<br /><br />
+              Set a share, and a verdict whose majority falls below it reads unreliable.<br /><br />
               The lowest value is 50.001%, because the verdict already takes the majority.
             </template>
           </PlNumberField>
@@ -1057,11 +1057,11 @@ const gridOptions = {
         >
           <template #tooltip>
             Leave empty to size memory from the reads. The block then asks for 16 GiB plus four
-            times the read volume, between 16 and 256 GiB.<br /><br />
+            times the size of the FASTQ input, capped at 256 GiB.<br /><br />
             Set a number only if a sample runs out of memory. That number becomes a fixed request
-            for every sample, so a value chosen for your largest sample is demanded for the smallest
-            one too. It reaches the parse and refine-tags steps only. Tag-stat stays sized from its
-            own input.
+            for every sample. A value chosen for your largest sample is then demanded for the
+            smallest one too. It reaches the parse and refine-tags steps only. Tag-stat stays sized
+            from its own input.
           </template>
         </PlNumberField>
       </PlAccordionSection>
@@ -1083,8 +1083,8 @@ const gridOptions = {
             <template #tooltip>
               The share of reads whose cell barcode corrects onto the chemistry's whitelist. The
               measurement warns below this share.<br /><br />
-              Default 0.75. The field supplies this number. Nothing calibrates it for this assay,
-              and no test asserts it.
+              Default 0.75. The block inherits this number from published quality thresholds.
+              Nothing calibrates it against your own data.
             </template>
           </PlNumberField>
           <PlNumberField
@@ -1098,8 +1098,8 @@ const gridOptions = {
           >
             <template #tooltip>
               The same share. The measurement alerts below this share instead of warning.<br /><br />
-              Default 0.50. The field supplies this number. Nothing calibrates it for this assay,
-              and no test asserts it.
+              Default 0.50. The block inherits this number from published quality thresholds.
+              Nothing calibrates it against your own data.
             </template>
           </PlNumberField>
         </PlRow>
@@ -1114,7 +1114,7 @@ const gridOptions = {
             Reads matched per cell in the cell list. The measurement warns below this count. It has
             no alert line, because the vendor published one boundary.<br /><br />
             Default 5000. The vendor recommends this minimum for this assay type. Nothing calibrates
-            it against your own data, and no test asserts it.
+            it against your own data.
           </template>
         </PlNumberField>
         <PlRow>
@@ -1130,10 +1130,10 @@ const gridOptions = {
             <template #tooltip>
               The share of reads in barcodes flagged as aggregates. The measurement warns above this
               share.<br /><br />
-              Default 0.05. The field supplies this number. Nothing calibrates it for this assay,
-              and no test asserts it.<br /><br />
-              The three detection settings below decide which barcodes count as aggregates, so each
-              one changes what this line judges.
+              Default 0.05. The block inherits this number from published quality thresholds.
+              Nothing calibrates it against your own data.<br /><br />
+              The block flags aggregates with Cell Ranger's own constants. They have no control
+              here.
             </template>
           </PlNumberField>
           <PlNumberField
@@ -1146,10 +1146,9 @@ const gridOptions = {
             label="Aggregate reads alert"
           >
             <template #tooltip>
-              The same share. The measurement alerts where the share equals this value, and not
-              above it.<br /><br />
-              Default 1.0, which is total failure. The field supplies this number. Nothing
-              calibrates it for this assay, and no test asserts it.
+              The same share. The measurement alerts only at this value.<br /><br />
+              Default 1.0, where every read sits in an aggregate barcode. The block inherits this
+              number from published quality thresholds. Nothing calibrates it against your own data.
             </template>
           </PlNumberField>
         </PlRow>
@@ -1164,10 +1163,10 @@ const gridOptions = {
             label="Undeclared reads warn"
           >
             <template #tooltip>
-              The share of a sample's reads in barcodes the panel never declared. The measurement
-              warns above this share.<br /><br />
-              Default 0.50. The field supplies this number. Nothing calibrates it for this assay,
-              and no test asserts it.
+              The share of a sample's pre-correction reads that one undeclared sequence carries.
+              Each row of the Undeclared barcodes table warns above this share.<br /><br />
+              Default 0.01. This is the block's own line, not a published one. Nothing calibrates
+              it against your own data.
             </template>
           </PlNumberField>
           <PlNumberField
@@ -1180,10 +1179,9 @@ const gridOptions = {
             label="Undeclared reads alert"
           >
             <template #tooltip>
-              The same share. The measurement alerts where the share equals this value, and not
-              above it.<br /><br />
-              Default 1.0, which is total failure. The field supplies this number. Nothing
-              calibrates it for this assay, and no test asserts it.
+              The same share. Each row alerts above this value.<br /><br />
+              Default 0.05. This is the block's own line, not a published one. Nothing calibrates
+              it against your own data.
             </template>
           </PlNumberField>
         </PlRow>
@@ -1200,8 +1198,8 @@ const gridOptions = {
             <template #tooltip>
               The share of the library's reads that reach a called cell with a panel-recognised
               barcode. The measurement warns below this share.<br /><br />
-              Default 0.20. The field supplies this number. Nothing calibrates it for this assay,
-              and no test asserts it.
+              Default 0.20. The block inherits this number from published quality thresholds.
+              Nothing calibrates it against your own data.
             </template>
           </PlNumberField>
           <PlNumberField
@@ -1214,11 +1212,9 @@ const gridOptions = {
             label="Usable reads alert"
           >
             <template #tooltip>
-              The same share. The measurement alerts where the share equals this value, and not
-              below it.<br /><br />
-              Default 0.0, which is total failure. At that default the alert fires only where no
-              read is usable. The field supplies this number. Nothing calibrates it for this assay,
-              and no test asserts it.
+              The same share. The measurement alerts only at this value, and not below it.<br /><br />
+              Default 0.0, where no read is usable. The block inherits this number from published
+              quality thresholds. Nothing calibrates it against your own data.
             </template>
           </PlNumberField>
         </PlRow>

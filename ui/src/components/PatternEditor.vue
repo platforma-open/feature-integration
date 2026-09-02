@@ -139,8 +139,8 @@ watch(editorMode, (mode) => {
     @update:model-value="setPresetId"
   >
     <template #tooltip>
-      Feature-barcode chemistry preset. Sets the tag pattern — cell barcode + UMI on Read 1, feature
-      barcode on Read 2. Pick the configurable preset to edit the read layout by hand.
+      Feature-barcode chemistry preset. Sets the tag pattern: cell barcode and UMI on Read 1, feature
+      barcode on Read 2. Select the configurable preset to edit the read layout by hand.
     </template>
   </PlDropdown>
 
@@ -180,22 +180,22 @@ watch(editorMode, (mode) => {
       <template v-if="readTab === 'r1'">
         <PlNumberField v-model="r1.cellLen" :min-value="1" :step="1" label="Cell barcode length">
           <template #tooltip>
-            Cell barcode length on Read 1. Fixed by your single-cell chemistry (16 nt for 10x);
-            change only if your kit uses a different barcode length.
+            Cell barcode length on Read 1. Your single-cell chemistry fixes it, at 16 nt for 10x.
+            Change it only if your kit uses a different barcode length.
           </template>
         </PlNumberField>
         <PlNumberField v-model="r1.umiLen" :min-value="1" :step="1" label="UMI length">
           <template #tooltip>
-            UMI length on Read 1. Fixed by your chemistry (10 nt for 10x 5' v2); change only if your
-            kit uses a different UMI length.
+            UMI length on Read 1. Your chemistry fixes it, at 10 nt for 10x 5' v2. Change it only
+            if your kit uses a different UMI length.
           </template>
         </PlNumberField>
         <PlCheckbox v-model="r1.hasTrailingWildcard">
           Trailing wildcard
           <template #tooltip>
-            Append <code>*</code> after the UMI so any sequence past the cell barcode + UMI is
-            ignored — needed when Read 1 is sequenced longer than cell barcode + UMI (e.g. a 28 nt
-            R1). Leave on unless Read 1 is exactly cell barcode + UMI.
+            Append <code>*</code> after the UMI, so the block ignores any sequence past the cell
+            barcode and UMI. Needed when Read 1 is sequenced longer than cell barcode and UMI, such
+            as a 28 nt Read 1. Leave it on unless Read 1 is exactly cell barcode and UMI.
           </template>
         </PlCheckbox>
       </template>
@@ -209,8 +209,8 @@ watch(editorMode, (mode) => {
         >
           <template #tooltip>
             Bases to skip at the start of Read 2 before the feature barcode. 0 for the 10x BEAM Core
-            Kit; 10 for TotalSeq-C / next-gen antigen barcoding (the 15 nt barcode sits behind a 10
-            nt lead).
+            Kit. 10 for TotalSeq-C and next-gen antigen barcoding, where the 15 nt barcode sits
+            behind a 10 nt lead.
           </template>
         </PlNumberField>
         <PlNumberField
@@ -220,8 +220,8 @@ watch(editorMode, (mode) => {
           label="Feature barcode length"
         >
           <template #tooltip>
-            Feature (antigen) barcode length on Read 2. Set by your feature-barcode panel (15 nt for
-            10x BEAM / TotalSeq).
+            Feature barcode length on Read 2. Your feature-barcode panel sets it, at 15 nt for 10x
+            BEAM and TotalSeq.
           </template>
         </PlNumberField>
       </template>

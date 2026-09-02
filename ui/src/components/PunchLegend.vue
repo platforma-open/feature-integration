@@ -30,7 +30,7 @@ const SET_ENTRIES: Entry[] = [
   {
     glyph: "unreliable",
     label: "Unreliable",
-    meaning: "asked, and the readings could not settle it — hover for which of the five ways",
+    meaning: "asked, and the readings could not settle it. Hover for which of the five ways",
   },
   {
     glyph: "none",
@@ -56,7 +56,7 @@ const CELL_ENTRIES: Entry[] = [
   {
     glyph: "unreliable",
     label: "Unreliable",
-    meaning: "this cell could not be compared at all, so it cast no vote — hover for why",
+    meaning: "this cell could not be compared at all, so it cast no vote. Hover for why",
   },
   {
     glyph: "none",
@@ -98,7 +98,7 @@ const listStyle: CSSProperties = {
     <div v-for="e in ENTRIES" :key="e.label" :style="rowStyle">
       <span :style="swatch(e.glyph)" />
       <span
-        ><b>{{ e.label }}</b> — {{ e.meaning }}</span
+        ><b>{{ e.label }}</b>: {{ e.meaning }}</span
       >
     </div>
   </div>
