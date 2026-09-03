@@ -916,7 +916,9 @@ const gridOptions = {
         label="Admissibility gate"
       >
         <template #tooltip>
-          Off by default. A cell holding a lot of the control barcode is picking up reagent non-specifically. Any cell reading more UMIs than this for any of the controls is dropped and gives no verdict for any tag.
+          Off by default. A cell holding a lot of the control barcode is picking up reagent
+          non-specifically. Any cell reading more UMIs than this for any of the controls is dropped
+          and gives no verdict for any tag.
         </template>
       </PlNumberField>
 
