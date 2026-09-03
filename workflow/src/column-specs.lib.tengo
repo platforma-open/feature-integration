@@ -1627,19 +1627,6 @@ qcSampleSummaryImportSpec := func(sampleAxisSpec) {
 	return {
 		axes: [{ column: "sampleId", spec: sampleAxisSpec }],
 		columns: [
-			{
-				column: "status", id: "status",
-				spec: {
-					name: "pl7.app/qc/sampleStatus",
-					valueType: "String",
-					annotations: a(96000, true, {
-						"pl7.app/label": "Status",
-						"pl7.app/isDiscreteFilter": "true",
-						"pl7.app/discreteValues": QC_STATUSES,
-						"pl7.app/description": "The worst status among this sample's own measurements that carry one. Empty where none does."
-					})
-				}
-			},
 			num("readsTotal", "readsTotal", "Reads parsed", 95000, undefined,
 				"Every read the parser saw, before pattern matching."),
 			num("readsMatched", "readsMatched", "Reads matched", 94000, undefined, undefined),

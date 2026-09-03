@@ -3544,10 +3544,9 @@ def test_the_wide_summary_carries_every_sample_in_the_roster_including_one_with_
 
     s2 = summary.filter(pl.col("sampleId") == "S2")
     assert s2.height == 1
-    # Nothing computed a value for S2, so its cells read null rather than 0 or "OK" -- a blank and a zero
-    # are opposite findings.
+    # Nothing computed a value for S2, so its cells read null rather than 0 -- a blank and a zero are
+    # opposite findings.
     assert s2["readsTotal"].item() is None
-    assert s2["status"].item() is None
 
 
 def test_the_wide_summary_carries_every_sample_level_measurement_as_a_column(bed):
@@ -3562,19 +3561,25 @@ def test_the_wide_summary_carries_every_sample_level_measurement_as_a_column(bed
     assert "cellBarcodeValidFraction" in summary.columns
 
 
-def test_the_wide_summary_status_is_the_sample_rollup_and_is_not_recomputed(bed):
+def test_the_wide_summary_carries_no_rollup_column(bed):
+    """The rollup lives in one place, and this table is not it.
+
+    `roll_up`'s result travels in `result_qc_by_sample.json` and reaches a reader as the Main grid's
+    Quality tag and as the heading of a sample's own Quality Checks tab. It used to be copied here as
+    well, and the test that stood here pinned the two copies against each other -- because two copies of
+    a status can disagree, and the one a reader happens to be looking at decides what they believe.
+
+    One copy cannot disagree with itself. What needs pinning now is that a second one does not come
+    back: this table is measurements, and a status column here would need its own cell renderer and its
+    own agreement test all over again.
+    """
     _run(bed, *BASE)
     summary = pl.read_csv(bed / "result_qc_summary.csv")
+    assert "status" not in summary.columns
+    # The rollup is still computed and still reported -- just not from here.
     by_sample = json.loads((bed / "result_qc_by_sample.json").read_text())
-
-    for sample_id, report in by_sample.items():
-        row = summary.filter(pl.col("sampleId") == sample_id)
-        assert row.height == 1
-        got = row["status"].item()
-        assert got == report["status"], (
-            f"wide table status {got!r} for {sample_id!r} disagrees with the sample's own report "
-            f"{report['status']!r}; the two must read off one rollup"
-        )
+    assert by_sample, "the bed produced no per-sample report"
+    assert all("status" in report for report in by_sample.values())
 
 
 def test_a_missing_read_qc_row_names_the_row_not_the_denominator(bed):

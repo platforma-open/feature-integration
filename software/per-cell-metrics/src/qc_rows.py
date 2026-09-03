@@ -460,18 +460,20 @@ def sample_summary_rows(
 
     Pivots `sample_report` -- the same dict `main` writes to `result_qc_by_sample.json` -- rather than
     walking `MEASUREMENTS` a second time, so this table and a sample's own report cannot disagree.
-    `status` is `sample_report`'s own rollup, from `roll_up`, never recomputed here.
+
+    NO rollup column. `roll_up`'s result travels in `result_qc_by_sample.json` and reaches a reader as
+    the Main grid's Quality tag and the heading of a sample's own Quality Checks tab. A third copy here
+    said nothing those two had not already said, and it needed its own cell renderer to say it.
 
     Every id in `samples` gets a row, a sample absent from `sample_report` included: its measurement
-    columns and its status come back null, which reads as nothing having rolled up rather than as a
-    passing sample.
+    columns come back null, which reads as nothing having been computed rather than as a passing sample.
     """
     built = []
     for sample in samples:
         report = sample_report.get(sample, {})
         entries = {e["id"]: e["value"] for e in report.get("measurements", [])}
         qc = read_qc.get(sample, {})
-        row = {"sampleId": sample, "status": report.get("status")}
+        row = {"sampleId": sample}
         for col in _MITOOL_ONLY_COLUMNS:
             row[col] = _number(qc, col)
         for m in _SAMPLE_MEASUREMENTS:
@@ -479,7 +481,6 @@ def sample_summary_rows(
         built.append(row)
     schema = {
         "sampleId": pl.String,
-        "status": pl.String,
         **{col: pl.Float64 for col in _MITOOL_ONLY_COLUMNS},
         **{m.id: pl.Float64 for m in _SAMPLE_MEASUREMENTS},
     }
