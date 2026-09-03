@@ -1032,7 +1032,7 @@ const gridOptions = {
             :step="1"
             clearable
             placeholder="50"
-            label="Min agreement (≥51%)"
+            label="Min agreement (50%)"
           >
             <template #tooltip>
               Majority threshold at or above which a clonotype is called bound or not bound for a
