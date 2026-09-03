@@ -284,13 +284,13 @@ watch(
 
 <template>
   <PlBlockPage>
-    <template #title>Run quality</template>
+    <template #title>Per-tag QC</template>
 
     <PlAlert v-if="noDataset" type="warn">
       This run has no quality report: the verdict stage only runs once a single-cell V(D)J dataset
       is picked, so the run counted barcodes per cell and stopped before anything was measured. Pick
-      a dataset in Settings on the Explore readout page and run again. The per-sample read
-      statistics are unaffected and are on the Per-sample QC page.
+      a dataset in the Main page's Settings and run again. The per-sample read statistics are
+      unaffected and are on the Sample QC page.
     </PlAlert>
 
     <template v-else>

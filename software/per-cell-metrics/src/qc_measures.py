@@ -110,8 +110,7 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # (`undeclaredBarcodeShare` below), keyed by sequence and computed on the pre-refine counts. This
     # row keeps the number and carries no status.
     #
-    # The usable row is a different quantity: Cell Ranger `main`,
-    # `lib/python/cellranger/rna/report_matrix.py`, `_report_genome_agnostic_metrics`, defines
+    # The usable row is a different quantity: Cell Ranger `main`, defines
     # `frac_feature_reads_usable` as conf-mapped, barcoded reads restricted to the called-cell
     # partition (`cell_bcs_union`), over the whole library's read count. UMI validity is that source's
     # separate `good_umi_frac` figure. It is declared below as `usableReadFraction`.
@@ -136,7 +135,7 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "Reads on a sequence the panel does not declare that refine-tags then snapped onto a panel "
         "entry, over reads matched.",
     ),
-    # Ported from Cell Ranger `main`, `lib/python/cellranger/rna/report_matrix.py`,
+    # Ported from Cell Ranger's own read-recovery metric,
     # `_report_genome_agnostic_metrics::frac_feature_reads_usable`: conf-mapped, barcoded reads
     # restricted to the called-cell partition, over the whole library's read count.
     # `usable_read_fraction` sums the post-refine tag-stat's `totalWeight` over rows whose cell barcode
@@ -162,7 +161,7 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "which points at the wrong whitelist or the wrong read geometry.",
         "inherited",
     ),
-    # The categorical route's member. `where-the-lines-come-from` keeps that route for an alerting
+    # The categorical route's member. That route is kept for an alerting
     # condition that is a fact rather than a quantity, and says the route stays because the next
     # measurement may need it. This is that measurement: no cell barcode observed at all is a fact, and
     # a sample that detects none produced nothing for anything downstream to read.
@@ -201,9 +200,8 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "sample",
         "Deciles of the total antigen count per cell barcode.",
     ),
-    # Ports `detect_outlier_umis_bcs` from Cell Ranger `main`,
-    # `lib/python/cellranger/feature/antibody/analysis.py`, called for the ANTIGEN library type from
-    # `cell_calling_helpers.py::remove_antibody_antigen_aggregates`. That function's antibody sibling
+    # Ports Cell Ranger's `detect_outlier_umis_bcs`, which it calls for the ANTIGEN library
+    # type while removing antibody and antigen aggregates.
     # (`detect_aggregate_barcodes`, cross-feature co-elevation against gene expression) is a different
     # rule and is not ported.
     #
@@ -407,21 +405,21 @@ DEFAULT_LINES: dict[str, Line] = {
 # the line published no error threshold.
 #
 # The two thresholds of one line are read INDEPENDENTLY. Three of the four inherited lines warn on
-# a direction and put error at total failure -- "at 0", "at 1.0" -- which is `alerting-at` and not
+# a direction and put error at total failure -- "at 0", "at 1.0" -- which is alerting AT failure, not
 # a further step along the warn direction. Only barcode validity steps the same way twice: warn
 # below 0.75, error below 0.50. One direction per measurement collapsed those into one, and a
 # fraction whose error sits "at 0" could then never alert.
 _COMPARISON: dict[str, tuple[str, str | None]] = {
     "cellBarcodeValidFraction": ("at-least", "at-least"),
     "readsPerCell": ("at-least", None),
-    # Error at total failure (`alerting-at` 1.0) rather than a further step past warn: every
+    # Error at total failure (alerting at 1.0) rather than a further step past warn: every
     # inherited share sits at either "at least" or "at most" with error at the catastrophe end, and
     # this is one of the two upward-facing members of that set.
     "aggregateBarcodeFraction": ("at-most", "alerting-at"),
     # Both ends face the same way, unlike the four inherited shares: this line alerts ABOVE its error
-    # threshold rather than at a catastrophe value, so `alerting-at` would fire only at exactly 0.05.
+    # threshold rather than at a catastrophe value, so alerting at failure would fire only at 0.05.
     "undeclaredBarcodeShare": ("at-most", "at-most"),
-    # Error at total failure (`alerting-at` 0.0), the downward-facing member of that same set.
+    # Error at total failure (alerting at 0.0), the downward-facing member of that same set.
     "usableReadFraction": ("at-least", "alerting-at"),
 }
 
@@ -757,7 +755,7 @@ def usable_read_fraction(
     """Reads landing on a called cell, recognised against the panel, over `reads_total`.
 
     Ports Cell Ranger's `frac_feature_reads_usable` (Cell Ranger `main`,
-    `lib/python/cellranger/rna/report_matrix.py`, `_report_genome_agnostic_metrics`): conf-mapped,
+    `_report_genome_agnostic_metrics`): conf-mapped,
     barcoded reads restricted to the called-cell partition, over the whole library's read count. UMI
     validity is that source's separate `good_umi_frac` figure and is not part of this one.
 
@@ -778,7 +776,7 @@ def usable_read_fraction(
 
 
 # Cell Ranger's own constants for the ANTIGEN branch of `detect_outlier_umis_bcs`
-# (`lib/python/cellranger/feature/antibody/analysis.py`): a 3x interquartile multiplier over the top
+# a 3x interquartile multiplier over the top
 # 100 barcodes by count, and a 1000-UMI floor below which nothing is flagged.
 AGGREGATE_BARCODE_IQR_MULTIPLIER: float = 3.0
 AGGREGATE_BARCODE_MIN_THRESHOLD: float = 1000.0
@@ -793,9 +791,8 @@ def detect_aggregate_barcodes(
 ) -> tuple[frozenset[str], float | None]:
     """Barcodes whose antigen UMI count is an outlier, and the threshold that decided it.
 
-    Ports `detect_outlier_umis_bcs` (Cell Ranger `main`,
-    `lib/python/cellranger/feature/antibody/analysis.py`), called for the ANTIGEN library type from
-    `cell_calling_helpers.py::remove_antibody_antigen_aggregates`.
+    Ports Cell Ranger's `detect_outlier_umis_bcs`, which it calls for the ANTIGEN library
+    type while removing antibody and antigen aggregates.
 
     `per_barcode` has one row per observed barcode, columns `barcode` and `umiCount` -- the whole
     whitelist-corrected barcode universe, not the cell list. q1 and q3 are taken over the top `top_n`

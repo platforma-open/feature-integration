@@ -1274,7 +1274,7 @@ def test_one_antigen_on_two_barcodes_is_read_by_its_highest_member(wide_bed):
 
 
 def test_two_declared_comparators_serve_together(wide_bed):
-    # A panel declaring two undifferentiated comparators runs. `baseline-scope` makes them replicates of
+    # A panel declaring two undifferentiated comparators runs. They are replicates of
     # one group, since nothing declared separates them, and replicates combine by taking the highest.
     # It used to be refused, which sent the scientist back to edit a panel file over a case the corpus
     # had already decided.
@@ -2494,7 +2494,7 @@ def _distribution_bed_with_a_baseline_tag(root, n_cells=400, sticky=40, seed=7):
     """The distribution bed, plus a declared baseline tag reading high in a few cells.
 
     The rung's comparator is the fit. The baseline tag is here only in its other role, which is what
-    `reference-two-roles` keeps apart. Its readings sit either side of the gate used below, and the
+    the two roles are kept apart. Its readings sit either side of the gate used below, and the
     minimum never touches a baseline tag, so the low ones survive as the measurement they are.
     """
     _distribution_bed(root, n_cells=n_cells, seed=seed)

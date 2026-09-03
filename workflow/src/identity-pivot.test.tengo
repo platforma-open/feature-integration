@@ -61,7 +61,7 @@ Test_the_ids_are_stable_across_renders := func() {
 	test.isEqual(first, second, "two renders of one run must agree on every id")
 }
 
-// `parameter-set` requires every parameter to be recorded where its verdicts appear. A run that lowered
+// Every parameter is recorded where its verdicts appear. A run that lowered
 // a number must not look like a run that did not, and the exported pivot is where a consumer of the
 // verdicts reads them.
 Test_the_pivot_carries_the_parameters_the_run_was_answered_under := func() {

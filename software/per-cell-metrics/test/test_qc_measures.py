@@ -241,7 +241,7 @@ def test_usable_read_fraction_line_and_comparison():
 def test_usable_read_fraction_status_boundaries():
     assert status_for("usableReadFraction", 0.19, DEFAULT_LINES) is Status.WARN
     assert status_for("usableReadFraction", 0.21, DEFAULT_LINES) is Status.OK
-    # Error is `alerting-at` total failure (0.0), not a further step past warn.
+    # Error is alerting AT total failure (0.0), not a further step past warn.
     assert status_for("usableReadFraction", 0.0, DEFAULT_LINES) is Status.ALERT
 
 
@@ -403,9 +403,8 @@ def test_reads_per_cell_empty_cell_list_does_not_divide_by_zero():
 
 # --- aggregate-barcode detection --------------------------------------------
 #
-# Ports `detect_outlier_umis_bcs` from Cell Ranger `main`,
-# `lib/python/cellranger/feature/antibody/analysis.py`, called for the ANTIGEN library type from
-# `cell_calling_helpers.py::remove_antibody_antigen_aggregates`.
+# Ports Cell Ranger's `detect_outlier_umis_bcs`, which it calls for the ANTIGEN library
+# type while removing antibody and antigen aggregates.
 
 
 def _per_barcode(umi: list[int], read: list[int] | None = None, barcode: list[str] | None = None) -> pl.DataFrame:
@@ -511,7 +510,7 @@ def test_aggregate_barcode_fraction_line_and_comparison():
 def test_aggregate_barcode_fraction_status_boundaries():
     assert status_for("aggregateBarcodeFraction", 0.04, DEFAULT_LINES) is Status.OK
     assert status_for("aggregateBarcodeFraction", 0.06, DEFAULT_LINES) is Status.WARN
-    # Error is `alerting-at`, total failure, not a further step past warn: 0.99 still warns.
+    # Error is alerting at total failure, not a further step past warn: 0.99 still warns.
     assert status_for("aggregateBarcodeFraction", 0.99, DEFAULT_LINES) is Status.WARN
     assert status_for("aggregateBarcodeFraction", 1.0, DEFAULT_LINES) is Status.ALERT
 
@@ -611,7 +610,7 @@ def test_the_undeclared_barcode_line_is_per_barcode_and_operator_set():
 
 
 def test_the_undeclared_barcode_line_alerts_above_its_error_not_only_at_it():
-    # Both ends face the same way, unlike the four inherited shares. `alerting-at` on the error end
+    # Both ends face the same way, unlike the four inherited shares. Alerting at failure on the error end
     # would fire only at exactly 0.05 and let every larger share read warn -- the worse finding being
     # the one that never showed.
     assert _COMPARISON["undeclaredBarcodeShare"] == ("at-most", "at-most")

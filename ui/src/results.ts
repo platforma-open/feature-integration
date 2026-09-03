@@ -101,7 +101,8 @@ function recoveryBar(qc: QcRow): RecoveryBar | undefined {
     ),
   );
 
-  return { title: "Read recovery", data };
+  // Only the segments that actually have reads.
+  return { title: "Read recovery", data: data.filter((segment) => segment.value > 0) };
 }
 
 export const sampleResults = computed<SampleResult[] | undefined>(() => {

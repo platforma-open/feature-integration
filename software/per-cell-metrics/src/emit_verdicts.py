@@ -505,7 +505,7 @@ def main() -> None:
         # cannot be caught from the settings: whether a sample holds three hundred cells whose counts
         # admit a two-component fit is a property of the data. So the run FINISHES, says so, and draws
         # no punchcard.
-        # The gate is not the comparator. `reference-two-roles` keeps a declared baseline tag's two
+        # The gate is not the comparator. A declared baseline tag has two
         # roles apart: comparator always, admissibility gate only where a threshold is declared. Which
         # rung supplies the comparator does not reach the gate, so the declared readings are built here
         # too wherever the panel carries them. Without them a stored gate goes silently inert the moment
