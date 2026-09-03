@@ -1,7 +1,20 @@
 <script setup lang="ts">
+import type {
+  GroupingRule,
+  ReferenceSource,
+} from "@platforma-open/milaboratories.feature-integration.model";
+import {
+  AGGREGATE_DETECTION_DEFAULTS,
+  groupingColumns,
+  QC_LINE_DEFAULTS,
+} from "@platforma-open/milaboratories.feature-integration.model";
+import type { ImportFileHandle } from "@platforma-sdk/model";
 import type { PlAgHeaderComponentParams } from "@platforma-sdk/ui-vue";
 import {
   AgGridTheme,
+  autoSizeRowNumberColumn,
+  createAgGridColDef,
+  makeRowNumberColDef,
   PlAccordionSection,
   PlAgCellStatusTag,
   PlAgChartStackedBarCell,
@@ -9,7 +22,6 @@ import {
   PlAgOverlayNoRows,
   PlAgTextAndButtonCell,
   PlAlert,
-  PlCheckbox,
   PlBlockPage,
   PlBtnGhost,
   PlBtnGroup,
@@ -23,29 +35,15 @@ import {
   PlRow,
   PlSectionSeparator,
   PlSlideModal,
-  autoSizeRowNumberColumn,
-  createAgGridColDef,
-  makeRowNumberColDef,
 } from "@platforma-sdk/ui-vue";
-import type {
-  GroupingRule,
-  ReferenceSource,
-} from "@platforma-open/milaboratories.feature-integration.model";
-import {
-  AGGREGATE_DETECTION_DEFAULTS,
-  groupingColumns,
-  QC_LINE_DEFAULTS,
-} from "@platforma-open/milaboratories.feature-integration.model";
-import type { ImportFileHandle } from "@platforma-sdk/model";
-import { parseTagCsvMeta } from "../csvMeta";
-import { readLocalCsvMeta, useRemoteCsvBytes } from "../csvSource";
 import type { ColDef, GridReadyEvent } from "ag-grid-enterprise";
 import { ClientSideRowModelModule, ModuleRegistry } from "ag-grid-enterprise";
 import { AgGridVue } from "ag-grid-vue3";
 import { computed, ref, watch } from "vue";
 import { useApp } from "../app";
 import PatternEditor from "../components/PatternEditor.vue";
-import SampleReportPanel from "./SampleReportPanel.vue";
+import { parseTagCsvMeta } from "../csvMeta";
+import { readLocalCsvMeta, useRemoteCsvBytes } from "../csvSource";
 import {
   sampleResults,
   type ProgressCell,
@@ -53,6 +51,7 @@ import {
   type RecoveryBar,
   type SampleResult,
 } from "../results";
+import SampleReportPanel from "./SampleReportPanel.vue";
 
 const app = useApp();
 
@@ -227,6 +226,19 @@ const allSources = computed(() => referenceSources.value?.options ?? []);
 //
 // The data keeps the share, so this is a display conversion and not a migration. Rounded on the way in,
 // because a percentage entered as an integer must come back as the same integer.
+// The expected binder fraction as a PERCENTAGE, where the data holds a share from 0 to 1. Same display
+// conversion as the agreement limit below, and for the same reason: a scientist states "about 30% of these
+// cells bound", not "0.3". Not rounded on the way out, so a typed value comes back as the number typed.
+const binderPercent = computed({
+  get: () => {
+    const share = app.model.data.expectedBinderFraction;
+    return typeof share === "number" ? share * 100 : undefined;
+  },
+  set: (percent: number | undefined) => {
+    app.model.data.expectedBinderFraction = typeof percent === "number" ? percent / 100 : undefined;
+  },
+});
+
 const agreementPercent = computed({
   get: () => {
     const share = app.model.data.minAgreement;
@@ -242,6 +254,11 @@ const agreementPercent = computed({
 
 // The chosen rung, from DATA. Read from data and never from `effectiveReferenceSource`: the form reveals
 // fields against what the scientist picked, and that must not move on its own.
+
+// @TODO: Pending to evaluate in more detail to define the best values for those setings.
+// Once set, remove forever from here and define the values as constants.
+const SHOW_QUALITY_LINES = false;
+
 const chosenSource = computed(() => app.model.data.referenceSource);
 
 // What the chosen rung still needs, if anything. The model computes it, because whether a rung can serve
@@ -290,7 +307,7 @@ const groupingOptions = computed(() => [
     value: TAG_GROUPING_VALUE,
     // Labelled so it cannot be mistaken for one of the panel's own columns, which is what naming it
     // after the barcode column did.
-    label: "Each barcode on its own — one identity per barcode",
+    label: "One identity per barcode",
   },
   ...panelPropertyOptions.value,
 ]);
@@ -320,10 +337,10 @@ const combineColumnError = computed(() => {
   if (!c) return undefined;
   if (c === app.model.data.barcodeSeqColumn || c === app.model.data.featureNameColumn)
     return (
-      `The Combine-mode column must be a column of its own — it holds each feature's mode ` +
-      `("sum" or "all"), not barcodes or feature names. It's currently set to "${c}", the same ` +
-      `column used for the ${c === app.model.data.barcodeSeqColumn ? "barcode sequence" : "feature name"}. ` +
-      `Pick a different column, or clear it to sum all co-barcodes.`
+      `The stored Combine-mode column is "${c}", which this panel already uses for the ` +
+      `${c === app.model.data.barcodeSeqColumn ? "barcode sequence" : "feature name"}. ` +
+      `A combine-mode column must be a column of its own. It holds each feature's mode, "sum" or "all". ` +
+      `Upload the panel file again to clear it. Each feature then sums the counts of its barcodes.`
     );
   return undefined;
 });
@@ -836,8 +853,8 @@ const gridOptions = {
         <template #tooltip>
           Select what each count is read against. The block does not choose for you. Two baselines
           give numbers that do not compare.<br /><br />
-          <b>Declared baseline tag</b> — the tag your panel marks as binding nothing.<br />
-          <b>Each tag's own distribution</b> — that tag's counts across the sample's cells, split in
+          <b>Declared baseline tag</b>: the tag your panel marks as binding nothing.<br />
+          <b>Each tag's own distribution</b>: that tag's counts across the sample's cells, split in
           two.<br /><br />
           The form then asks only for what your choice needs.
         </template>
@@ -875,8 +892,8 @@ const gridOptions = {
       >
         <template #tooltip>
           Select the value that marks the baseline tag. Required once you name a role column.<br /><br />
-          The block reads counts against <b>one</b> baseline tag. If the value marks more than one
-          tag, the run stops and names them.
+          Where the value marks several tags, the block reads each cell against the highest of their
+          counts.
         </template>
       </PlDropdown>
 
@@ -968,10 +985,58 @@ const gridOptions = {
               A cell reads bound where its score reaches this number, from 0 to 100. The score is
               how certain it is that the antigen makes up more than 92.5% of the antigen and
               baseline counts.<br /><br />
-              <b>Certainty, not strength</b> — two counts against zero score low. Cell Ranger says
-              this score does not measure binding strength.
+              <b>Certainty, not strength</b>: two counts against zero score low. The score does not
+              measure binding strength.
             </template>
           </PlNumberField>
+          <!-- Ordered before the bound probability deliberately. This decides WHICH two populations the
+               fit finds; the probability only sets how sure the fit must be about a cell once it has them.
+               A binder list that looks wrong is usually this one's business, not that one's. -->
+          <PlNumberField
+            v-if="chosenSource === 'distribution'"
+            :class="$style.half"
+            v-model="binderPercent"
+            :min-value="0.1"
+            :max-value="99.9"
+            :step="5"
+            clearable
+            placeholder="Auto"
+            label="Expected binder %"
+          >
+            <template #tooltip>
+              <b>Empty is the default</b>: the split between background and signal is worked out for
+              each sample and barcode from its own counts.<br /><br />
+              Set a share only where you already know it — a sorted or spiked population that binds
+              in bulk. One value then applies to every barcode in the run.<br /><br />
+              Too low and the split lands above the gap you can see in the distribution; too high
+              and the fit finds "binders" on a barcode that bound nothing.
+            </template>
+          </PlNumberField>
+          <!-- The fitted rung's line, in the slot the score cutoff occupies on the declared one. The two are
+               different quantities on different rungs and never both apply, so one field each, each shown only
+               where its own rung serves. Floored at the value the rung shipped at: raising it restricts, and
+               lowering it lets a cell holding none of a tag reach the line. -->
+          <PlNumberField
+            v-if="chosenSource === 'distribution'"
+            :class="$style.half"
+            v-model="app.model.data.boundProbability"
+            :min-value="0.9"
+            :max-value="1"
+            :step="0.01"
+            required
+            label="Certainty to call bound"
+          >
+            <template #tooltip>
+              How sure the fit must be that a cell's count belongs to the signal population before
+              that cell reads bound. Raise it to keep only the cells the fit is most certain
+              about.<br /><br />
+              <b>0.9-1.0</b>
+            </template>
+          </PlNumberField>
+        </PlRow>
+        <!-- Its own row. The three fields above are conditions on ONE cell's reading; this one is a
+             condition on how the cell readings agree with each other, so it sits apart from them. -->
+        <PlRow>
           <PlNumberField
             :class="$style.half"
             v-model="agreementPercent"
@@ -982,9 +1047,9 @@ const gridOptions = {
             label="Min agreement (>50%)"
           >
             <template #tooltip>
-              <b>Empty means off</b>, which is the default. A narrow majority then stands, and the
-              verdict reports how narrow it was.<br /><br />
-              Set it and a verdict reads unreliable below this share of the answering cells.<br /><br />
+              Empty means off, which is the default. A narrow majority then stands, and the verdict
+              reports how narrow it was.<br /><br />
+              Set a share, and a verdict whose majority falls below it reads unreliable.<br /><br />
               The lowest value is 50.001%, because the verdict already takes the majority.
             </template>
           </PlNumberField>
@@ -1057,11 +1122,11 @@ const gridOptions = {
         >
           <template #tooltip>
             Leave empty to size memory from the reads. The block then asks for 16 GiB plus four
-            times the read volume, between 16 and 256 GiB.<br /><br />
+            times the size of the FASTQ input, capped at 256 GiB.<br /><br />
             Set a number only if a sample runs out of memory. That number becomes a fixed request
-            for every sample, so a value chosen for your largest sample is demanded for the smallest
-            one too. It reaches the parse and refine-tags steps only. Tag-stat stays sized from its
-            own input.
+            for every sample. A value chosen for your largest sample is then demanded for the
+            smallest one too. It reaches the parse and refine-tags steps only. Tag-stat stays sized
+            from its own input.
           </template>
         </PlNumberField>
       </PlAccordionSection>
@@ -1069,7 +1134,7 @@ const gridOptions = {
       <!-- The QC lines, separate from Compute resources: these change what a measurement's own status reads,
            never what the run computes. Every field here is clearable -- empty means the shipped default, the
            same number the tooltip names. -->
-      <PlAccordionSection label="Quality lines">
+      <PlAccordionSection v-if="SHOW_QUALITY_LINES" label="Quality lines">
         <PlRow>
           <PlNumberField
             :class="$style.half"
@@ -1083,8 +1148,8 @@ const gridOptions = {
             <template #tooltip>
               The share of reads whose cell barcode corrects onto the chemistry's whitelist. The
               measurement warns below this share.<br /><br />
-              Default 0.75. The field supplies this number. Nothing calibrates it for this assay,
-              and no test asserts it.
+              Default 0.75. The block inherits this number from published quality thresholds.
+              Nothing calibrates it against your own data.
             </template>
           </PlNumberField>
           <PlNumberField
@@ -1098,8 +1163,8 @@ const gridOptions = {
           >
             <template #tooltip>
               The same share. The measurement alerts below this share instead of warning.<br /><br />
-              Default 0.50. The field supplies this number. Nothing calibrates it for this assay,
-              and no test asserts it.
+              Default 0.50. The block inherits this number from published quality thresholds.
+              Nothing calibrates it against your own data.
             </template>
           </PlNumberField>
         </PlRow>
@@ -1114,7 +1179,7 @@ const gridOptions = {
             Reads matched per cell in the cell list. The measurement warns below this count. It has
             no alert line, because the vendor published one boundary.<br /><br />
             Default 5000. The vendor recommends this minimum for this assay type. Nothing calibrates
-            it against your own data, and no test asserts it.
+            it against your own data.
           </template>
         </PlNumberField>
         <PlRow>
@@ -1130,10 +1195,10 @@ const gridOptions = {
             <template #tooltip>
               The share of reads in barcodes flagged as aggregates. The measurement warns above this
               share.<br /><br />
-              Default 0.05. The field supplies this number. Nothing calibrates it for this assay,
-              and no test asserts it.<br /><br />
-              The three detection settings below decide which barcodes count as aggregates, so each
-              one changes what this line judges.
+              Default 0.05. The block inherits this number from published quality thresholds.
+              Nothing calibrates it against your own data.<br /><br />
+              The block flags aggregates with Cell Ranger's own constants. They have no control
+              here.
             </template>
           </PlNumberField>
           <PlNumberField
@@ -1146,10 +1211,9 @@ const gridOptions = {
             label="Aggregate reads alert"
           >
             <template #tooltip>
-              The same share. The measurement alerts where the share equals this value, and not
-              above it.<br /><br />
-              Default 1.0, which is total failure. The field supplies this number. Nothing
-              calibrates it for this assay, and no test asserts it.
+              The same share. The measurement alerts only at this value.<br /><br />
+              Default 1.0, where every read sits in an aggregate barcode. The block inherits this
+              number from published quality thresholds. Nothing calibrates it against your own data.
             </template>
           </PlNumberField>
         </PlRow>
@@ -1164,10 +1228,10 @@ const gridOptions = {
             label="Undeclared reads warn"
           >
             <template #tooltip>
-              The share of a sample's reads in barcodes the panel never declared. The measurement
-              warns above this share.<br /><br />
-              Default 0.50. The field supplies this number. Nothing calibrates it for this assay,
-              and no test asserts it.
+              The share of a sample's pre-correction reads that one undeclared sequence carries.
+              Each row of the Undeclared barcodes table warns above this share.<br /><br />
+              Default 0.01. This is the block's own line, not a published one. Nothing calibrates it
+              against your own data.
             </template>
           </PlNumberField>
           <PlNumberField
@@ -1180,10 +1244,9 @@ const gridOptions = {
             label="Undeclared reads alert"
           >
             <template #tooltip>
-              The same share. The measurement alerts where the share equals this value, and not
-              above it.<br /><br />
-              Default 1.0, which is total failure. The field supplies this number. Nothing
-              calibrates it for this assay, and no test asserts it.
+              The same share. Each row alerts above this value.<br /><br />
+              Default 0.05. This is the block's own line, not a published one. Nothing calibrates it
+              against your own data.
             </template>
           </PlNumberField>
         </PlRow>
@@ -1200,8 +1263,8 @@ const gridOptions = {
             <template #tooltip>
               The share of the library's reads that reach a called cell with a panel-recognised
               barcode. The measurement warns below this share.<br /><br />
-              Default 0.20. The field supplies this number. Nothing calibrates it for this assay,
-              and no test asserts it.
+              Default 0.20. The block inherits this number from published quality thresholds.
+              Nothing calibrates it against your own data.
             </template>
           </PlNumberField>
           <PlNumberField
@@ -1214,11 +1277,9 @@ const gridOptions = {
             label="Usable reads alert"
           >
             <template #tooltip>
-              The same share. The measurement alerts where the share equals this value, and not
-              below it.<br /><br />
-              Default 0.0, which is total failure. At that default the alert fires only where no
-              read is usable. The field supplies this number. Nothing calibrates it for this assay,
-              and no test asserts it.
+              The same share. The measurement alerts only at this value, and not below it.<br /><br />
+              Default 0.0, where no read is usable. The block inherits this number from published
+              quality thresholds. Nothing calibrates it against your own data.
             </template>
           </PlNumberField>
         </PlRow>

@@ -1,12 +1,15 @@
 import dataclasses
+import math
 import re
 
+import numpy as np
 import polars as pl
 import pytest
 from qc_measures import (
     _COMPARISON,
     DEFAULT_LINES,
     LINE_ROUTES,
+    LOG1P_BIN_WIDTH,
     MEASUREMENTS,
     Coverage,
     Line,
@@ -15,14 +18,16 @@ from qc_measures import (
     Status,
     aggregate_barcode_fraction,
     antigen_count_deciles,
-    count_bin_edges,
+    bin_values,
     detect_aggregate_barcodes,
+    log1p_bin_edges,
     measurement_rows,
     per_antigen_measures,
     per_tag_count_bins,
     reads_per_cell,
     roll_up,
     sibling_disagreement,
+    status_expr,
     status_for,
     usable_read_fraction,
 )
@@ -594,14 +599,25 @@ def test_the_categorical_route_carries_cells_detected_and_nothing_else():
     assert categorical_routed.isdisjoint(_COMPARISON)
 
 
-def test_the_undeclared_barcode_line_is_read_direct_not_as_a_complement():
-    # The line is published on the undeclared share itself: warn above 0.50, error at 1.0. The barcode
-    # table measures that share directly, so the thresholds are not mirrored.
+def test_the_undeclared_barcode_line_is_per_barcode_and_operator_set():
+    # Judged on ONE sequence's share of its sample's pre-refine reads, not on the sample's aggregate.
+    # The field's 0.50/1.0 is published for the aggregate and does not transfer: an aggregate reaches
+    # 0.50 while no single sequence comes near it, so that line would never fire on a row.
     line = DEFAULT_LINES["undeclaredBarcodeShare"]
-    assert (line.warn, line.error) == (0.50, 1.0)
-    assert status_for("undeclaredBarcodeShare", 0.60, DEFAULT_LINES) is Status.WARN
+    assert (line.warn, line.error) == (0.01, 0.05)
+    assert status_for("undeclaredBarcodeShare", 0.02, DEFAULT_LINES) is Status.WARN
+    assert status_for("undeclaredBarcodeShare", 0.10, DEFAULT_LINES) is Status.ALERT
+    assert status_for("undeclaredBarcodeShare", 0.005, DEFAULT_LINES) is Status.OK
+
+
+def test_the_undeclared_barcode_line_alerts_above_its_error_not_only_at_it():
+    # Both ends face the same way, unlike the four inherited shares. `alerting-at` on the error end
+    # would fire only at exactly 0.05 and let every larger share read warn -- the worse finding being
+    # the one that never showed.
+    assert _COMPARISON["undeclaredBarcodeShare"] == ("at-most", "at-most")
+    assert status_for("undeclaredBarcodeShare", 0.05, DEFAULT_LINES) is Status.WARN
+    assert status_for("undeclaredBarcodeShare", 0.0501, DEFAULT_LINES) is Status.ALERT
     assert status_for("undeclaredBarcodeShare", 1.0, DEFAULT_LINES) is Status.ALERT
-    assert status_for("undeclaredBarcodeShare", 0.40, DEFAULT_LINES) is Status.OK
 
 
 def test_panel_assigned_fraction_carries_no_line_any_more():
@@ -676,11 +692,37 @@ def test_a_stated_recommendation_warns_and_never_alerts():
 def test_two_thresholds_give_three_levels():
     # The distinction collapsing them lost. Three of the four inherited lines put error at total failure,
     # so a low-but-non-zero share warns and only a wholly failed one alerts.
-    line = DEFAULT_LINES["undeclaredBarcodeShare"]
-    assert (line.warn, line.error) == (0.5, 1.0)
-    assert status_for("undeclaredBarcodeShare", 0.4, DEFAULT_LINES) is Status.OK
-    assert status_for("undeclaredBarcodeShare", 0.6, DEFAULT_LINES) is Status.WARN
-    assert status_for("undeclaredBarcodeShare", 1.0, DEFAULT_LINES) is Status.ALERT
+    line = DEFAULT_LINES["aggregateBarcodeFraction"]
+    assert (line.warn, line.error) == (0.05, 1.0)
+    assert status_for("aggregateBarcodeFraction", 0.04, DEFAULT_LINES) is Status.OK
+    assert status_for("aggregateBarcodeFraction", 0.06, DEFAULT_LINES) is Status.WARN
+    assert status_for("aggregateBarcodeFraction", 1.0, DEFAULT_LINES) is Status.ALERT
+
+
+def test_status_expr_agrees_with_status_for():
+    # Two evaluators over one set of thresholds. The column form exists because the undeclared-barcode
+    # table's row cap accepts None, so a scalar loop there is a loop over every distinct pre-refine
+    # sequence. Splitting the evaluator is only safe while the two cannot disagree, so every registered
+    # measurement is run against both -- over its own thresholds, either side of each, and over the four
+    # values that are not numbers.
+    not_numbers = [None, float("nan"), float("inf"), float("-inf")]
+    ids = sorted(set(DEFAULT_LINES) | {m.id for m in MEASUREMENTS})
+    for measurement in ids:
+        probes = [*not_numbers, 0.0, 0.5, 1.0, 5000.0]
+        line = DEFAULT_LINES.get(measurement)
+        if line is not None:
+            for threshold in (line.warn, line.error):
+                if threshold is not None:
+                    probes += [threshold, threshold - 1e-9, threshold + 1e-9, threshold - 0.01, threshold + 0.01]
+        frame = pl.DataFrame({"v": probes}, schema={"v": pl.Float64})
+        # `with_columns`, not `select`: a measurement with no line yields a scalar literal, and `select`
+        # would return one row of it rather than one per probe.
+        got = frame.with_columns(status_expr(measurement, pl.col("v"), DEFAULT_LINES).alias("s"))["s"].to_list()
+        want = [
+            None if (status := status_for(measurement, value, DEFAULT_LINES)) is None else status.value
+            for value in probes
+        ]
+        assert got == want, measurement
 
 
 def test_error_is_tested_before_warn(monkeypatch):
@@ -704,8 +746,8 @@ def test_at_least_is_acceptable_exactly_at_the_line():
 def test_at_most_is_acceptable_exactly_at_the_line():
     # `undeclaredBarcodeShare` reads `at-most`: the warn line itself satisfies the condition it names, and
     # only strictly above it warns.
-    assert status_for("undeclaredBarcodeShare", 0.5, DEFAULT_LINES) is Status.OK
-    assert status_for("undeclaredBarcodeShare", 0.51, DEFAULT_LINES) is Status.WARN
+    assert status_for("undeclaredBarcodeShare", 0.01, DEFAULT_LINES) is Status.OK
+    assert status_for("undeclaredBarcodeShare", 0.011, DEFAULT_LINES) is Status.WARN
 
 
 def test_the_undeclared_barcode_fraction_ships_unjudged():
@@ -1054,28 +1096,21 @@ def _bin_counts(rows: list[tuple[str, str, str, int]]) -> pl.DataFrame:
     )
 
 
-def test_one_edge_set_spans_the_whole_run():
-    # Per-tag edges would rescale every panel to its own range, so a tag spanning 1-4 and one spanning
-    # 1-4000 would draw alike in a grid a reader compares side by side.
-    counts = _bin_counts([("S1", "c1", "AAAA", 2), ("S1", "c2", "BBBB", 4000)])
-    edges = count_bin_edges(counts)
-    assert edges[0] == 1.0
-    assert edges[-1] == 4000.0
-    # Log-spaced, so the ambient population does not collapse into one bar.
-    assert edges[2] - edges[1] > edges[1] - edges[0]
+def _log1p_edges(counts) -> list[float]:
+    """The edge set the count distributions are drawn on, for a bin frame."""
+    top = int(counts["umiCount"].max() or 0) if counts.height else 0
+    return log1p_bin_edges(top)
 
 
-def test_a_frame_with_no_counts_has_no_edges_and_no_bins():
-    empty = _bin_counts([])
-    assert count_bin_edges(empty) == []
-    assert per_tag_count_bins(empty, []) == {}
+def test_a_frame_with_no_counts_has_no_bins():
+    assert per_tag_count_bins(_bin_counts([]), []) == {}
 
 
 def test_every_cell_lands_in_a_bin_including_the_largest_count():
     # np.histogram closes the last bin on the right. Without that the run's maximum count falls outside
     # every bucket, and the tag holding it reads one cell short.
     counts = _bin_counts([("S1", f"c{i}", "AAAA", n) for i, n in enumerate([1, 1, 2, 5, 40, 4000])])
-    edges = count_bin_edges(counts)
+    edges = _log1p_edges(counts)
     weights = per_tag_count_bins(counts, edges)["S1"]["AAAA"]
     assert len(weights) == len(edges) - 1
     assert sum(weights) == 6
@@ -1085,8 +1120,7 @@ def test_bins_are_kept_per_sample_and_tag():
     # The fit runs per (sample, tag), so the plots drawn beside it are keyed the same way. Pooling two
     # samples would read as one population.
     counts = _bin_counts([("S1", "c1", "AAAA", 2), ("S2", "c1", "AAAA", 2), ("S1", "c1", "BBBB", 3)])
-    edges = count_bin_edges(counts)
-    out = per_tag_count_bins(counts, edges)
+    out = per_tag_count_bins(counts, _log1p_edges(counts))
     assert sorted(out) == ["S1", "S2"]
     assert sorted(out["S1"]) == ["AAAA", "BBBB"]
     assert sorted(out["S2"]) == ["AAAA"]
@@ -1096,7 +1130,7 @@ def test_a_tag_absent_from_a_sample_gets_no_entry():
     # An absent tag and a tag whose cells all read low are different findings. A list of zeros would state
     # the second, so the absent one carries no list at all.
     counts = _bin_counts([("S1", "c1", "AAAA", 2), ("S2", "c1", "BBBB", 2)])
-    out = per_tag_count_bins(counts, count_bin_edges(counts))
+    out = per_tag_count_bins(counts, _log1p_edges(counts))
     assert "BBBB" not in out["S1"]
     assert "AAAA" not in out["S2"]
 
@@ -1105,5 +1139,47 @@ def test_the_reference_tag_keeps_its_bins():
     # The reference tag is the run's own ambient floor, which is what every other tag is judged against.
     # It is held out of the verdict read, never out of this.
     counts = _bin_counts([("S1", "c1", "CTRL", 6), ("S1", "c1", "AAAA", 500)])
-    out = per_tag_count_bins(counts, count_bin_edges(counts))
+    out = per_tag_count_bins(counts, _log1p_edges(counts))
     assert sorted(out["S1"]) == ["AAAA", "CTRL"]
+
+
+# --- the log1p bin edges the count distributions draw on ----------------------------------------
+
+
+def test_log1p_bin_edges_all_draw_the_same_width():
+    """The whole point of these edges: every bar draws the same width.
+
+    The plot's axis is log1p, so an edge at `expm1(k * width)` lands at `k * width` on screen. Equal
+    widths mean a bar's height is its share directly, which removes the per-bar division that
+    whole-number edges needed -- and that was once got wrong, hiding a real hump.
+    """
+    for top in (30, 1381, 152757):
+        edges = log1p_bin_edges(top)
+        drawn = [math.log1p(edges[i + 1]) - math.log1p(edges[i]) for i in range(len(edges) - 1)]
+        assert drawn, f"no bins for top={top}"
+        for width in drawn:
+            assert width == pytest.approx(LOG1P_BIN_WIDTH, abs=1e-12), f"top={top}"
+
+
+def test_log1p_bin_edges_keep_a_bar_for_the_zeros():
+    # The fit runs over one entry per cell, and a cell that read nothing enters as a zero. Those zeros
+    # are most of the background: drop them and the plot shows one decaying hump whatever the fit found.
+    edges = log1p_bin_edges(1381)
+    assert edges[0] == 0.0
+    assert bin_values(np.array([0, 0, 0, 4]), edges)[0] == 3
+
+
+def test_log1p_bin_edges_cover_the_highest_count():
+    # `np.histogram` closes the last bin on the right, so an edge sitting exactly ON the top count would
+    # give that bin one count more than its width. The last edge is the first step above the top.
+    for top in (1, 7, 30, 1381, 152757):
+        edges = log1p_bin_edges(top)
+        assert edges[-1] > top, f"top={top} has no bin to land in"
+        assert sum(bin_values(np.array([top]), edges)) == 1
+
+
+def test_log1p_bin_edges_are_empty_where_there_is_nothing_to_span():
+    assert log1p_bin_edges(0) == []
+    assert log1p_bin_edges(-1) == []
+    # A width of zero or less would divide by zero or loop forever, so it is refused rather than fixed up.
+    assert log1p_bin_edges(100, 0.0) == []

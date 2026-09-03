@@ -35,9 +35,9 @@ guardNoScore := func(annotations) {
 }
 
 /* A NEW column must never key on pl7.app/feature/featureId while carrying barcode sequences: the axis
-   identity would be unchanged and its value space inverted, so no query would fail and joins would return
-   wrong rows. Every antigen axis is minted under its own name. The block test asserts the same over
-   EMITTED columns, which needs a running workflow. */
+identity would be unchanged and its value space inverted, so no query would fail and joins would return
+wrong rows. Every antigen axis is minted under its own name. The block test asserts the same over
+EMITTED columns, which needs a running workflow. */
 // Split from the assertion below so it can be tested both ways. Tengo has no try/catch, so a predicate is
 // the only part of a guard a test can exercise.
 usesLegacyFeatureAxis := func(axesSpec) {
@@ -208,7 +208,7 @@ perCellSummaryOutput := func(blockId, sampleAxisName) {
 			valueType: "String",
 			annotations: a(84000, true, {
 				"pl7.app/label": "Feature breakdown",
-				"pl7.app/description": "Every feature this cell has signal for, as 'feature (fraction%, UMI count)', sorted by descending fraction (dominant feature first).",
+				"pl7.app/description": "Every feature this cell has signal for, as 'feature (share%, N UMI)', comma-separated, largest share first. A share under 1% prints as '<1%'.",
 				"pl7.app/isSummary": "true"
 			})
 		}
@@ -310,9 +310,9 @@ qcSummaryColumnsSpec := func(sampleAxisSpec) {
 			numCol("featuresDetected", "featuresDetected", "Features detected", 86000, undefined),
 			numCol("totalUniqueUmis", "totalUniqueUmis", "Total distinct UMIs", 85000, undefined),
 			numCol("medianUmisPerCell", "medianUmisPerCell", "Median UMIs / cell", 84000, ".1f"),
-			numCol("panelAssignedFraction", "panelAssignedFraction", "Panel-assigned fraction", 83000, ".2p", "Fraction of feature-barcode reads kept after correcting their barcode against the panel; reads too far from any panel entry are dropped. Its complement is the share landing in barcodes the panel never declared, which is where this measurement's line comes from. A low value flags a panel or read-geometry mismatch."),
-			numCol("cellBarcodeValidFraction", "cellBarcodeValidFraction", "Valid cell-barcode fraction", 82000, ".2p", "Fraction of reads whose cell barcode corrects onto the whitelist this chemistry produces. A low value points at the wrong whitelist or the wrong read geometry rather than at the panel."),
-			numCol("aggregateBarcodeFraction", "aggregateBarcodeFraction", "Aggregate-barcode read fraction", 81000, ".2p", "Reads in barcodes flagged as aggregates by the top-100 IQR rule, over readsTotal."),
+			numCol("panelAssignedFraction", "panelAssignedFraction", "Panel-assigned fraction", 83000, ".2p"),
+			numCol("cellBarcodeValidFraction", "cellBarcodeValidFraction", "Valid cell-barcode fraction", 82000, ".2p"),
+			numCol("aggregateBarcodeFraction", "aggregateBarcodeFraction", "Aggregate-barcode read fraction", 81000, ".2p"),
 			numCol("aggregateBarcodesFlagged", "aggregateBarcodesFlagged", "Aggregate barcodes flagged", 80000, undefined),
 			numCol("aggregateBarcodeThreshold", "aggregateBarcodeThreshold", "Aggregate-barcode UMI threshold", 79000, ".1f")
 		],
@@ -394,15 +394,17 @@ identityAxis := func(blockId, groupingId) {
 }
 
 // panelAxis: one distinct declared tag set. No panel file names its panel, so the id is a hash of the
-// sorted tag list (emit_verdicts.py `_panel_id`), stable across re-runs of the same declaration. Where one
-// panel covers every sample the axis takes a single value and still renders, holding that one value on
-// every row: the SDK suppresses no axis for being constant.
+// sorted tag list (emit_verdicts.py `_panel_id`), stable across re-runs of the same declaration.
+
 panelAxis := func(blockId) {
 	return {
 		name: "pl7.app/antigen/panelId",
 		type: "String",
 		domain: { "pl7.app/blockId": blockId },
-		annotations: { "pl7.app/label": "Panel" }
+		annotations: {
+			"pl7.app/label": "Panel",
+			"pl7.app/table/visibility": "hidden"
+		}
 	}
 }
 
@@ -551,7 +553,7 @@ verdictsImportSpec := func(setAxisSpec, identityAxisSpec, served) {
 					"pl7.app/label": "Why unsettled",
 					"pl7.app/isDiscreteFilter": "true",
 					"pl7.app/discreteValues": UNRELIABLE_REASONS,
-					"pl7.app/description": "A statement left unsettled by a position the experiment never asked calls for a panel change; one left unsettled by a reading that did not survive calls for a re-run. A bare 'unreliable' cannot tell them apart."
+					"pl7.app/description": "Why this verdict is not settled. 'never-offered' pairs with 'never asked'. The other five explain 'unreliable': no comparator, all cells gated, tie, below the agreement limit, too few voters."
 				})
 			}),
 			// The two sets `four-state-verdict` names, and they are NOT the same set. The cells a question
@@ -563,7 +565,7 @@ verdictsImportSpec := func(setAxisSpec, identityAxisSpec, served) {
 				name: "pl7.app/antigen/cellsAsked",
 				valueType: "Int",
 				annotations: a(99000, true, {
-					"pl7.app/label": "Cells the question was put to",
+					"pl7.app/label": "Cells asked",
 					"pl7.app/min": "0",
 					"pl7.app/description": "How many of this clonotype's cells sat in a sample whose panel offered this antigen and whose reads carried at least one of its tags. Cells a gate set aside, or with no baseline to read against, are in this number and did not vote."
 				})
@@ -597,10 +599,10 @@ verdictsImportSpec := func(setAxisSpec, identityAxisSpec, served) {
 				name: "pl7.app/antigen/wasCompeted",
 				valueType: "String",
 				annotations: a(96500, true, {
-					"pl7.app/label": "Reading was competed",
+					"pl7.app/label": "Competed by a bound antigen",
 					"pl7.app/isDiscreteFilter": "true",
 					"pl7.app/discreteValues": BOOL_VALUES,
-					"pl7.app/description": "True where this antigen read 'not bound' and something it was declared to compete with read 'bound' for the same clonotype. A statement can test this; the state itself is unchanged."
+					"pl7.app/description": "True where this antigen read 'not bound' and something it was declared to compete with read 'bound' for the same clonotype. A statement can test this. The state itself is unchanged."
 				})
 			}),
 			verdictCol("competedWith", "competedWith", {
@@ -654,16 +656,16 @@ setCountsImportSpec := func(setAxisSpec, served) {
 			// print the same word, so the count is what tells them apart. It does not vary by identity, which is
 			// why it belongs here rather than in the card.
 			countCol("cellCount", "pl7.app/antigen/cellCount", "Cells", 96000, true,
-				"How many cells this clonotype has. The verdicts rest on these cells; how many of them could answer at a given identity travels with that identity's verdict."),
+				"How many cells this clonotype has. The verdicts rest on these cells. How many of them could answer at a given identity travels with that identity's verdict."),
 			// Off by default. It qualifies the cell count directly above it -- forty cells of which thirty-eight
 			// read nothing is a different clonotype from forty that all read something -- so it is ordered next to
 			// it rather than among the identity counts below.
 			countCol("cellsReadingNothing", "pl7.app/antigen/cellsReadingNothing", "Cells that read nothing", 95500, false,
-				"How many of this clonotype's cells were left with no count on any tag, the baseline included, once the minimum count had run. It changes no verdict — those cells vote not bound like any other — and it separates a negative resting on cells that read something from one resting on cells that read nothing."),
+				"How many of this clonotype's cells were left with no count on any tag, the baseline included, once the minimum count had run. It changes no verdict. Those cells vote not bound like any other. It separates a negative resting on cells that read something from one resting on cells that read nothing."),
 			countCol("boundCount", "pl7.app/antigen/boundCount", "Identities bound", 95000, true,
 				"How many distinct antigen identities this clonotype bound. Breadth, never strength: nothing here says how well it bound any of them."),
 			countCol("offeredCount", "pl7.app/antigen/offeredCount", "Identities offered", 94000, true,
-				"How many identities this clonotype's cells were actually stained with — the denominator a rate must use, since a clone offered eight of ten and binding all eight failed nothing."),
+				"How many identities this clonotype's cells were offered: declared on the sample's panel and present in its reads. A rate must use this denominator. A clone offered eight of ten and binding all eight failed nothing."),
 			countCol("settledCount", "pl7.app/antigen/settledCount", "Identities settled", 93500, true,
 				"Of the identities offered, how many the data could settle either way."),
 			countCol("unsettledCount", "pl7.app/antigen/unsettledCount", "Identities unsettled", 93000, true,
@@ -753,11 +755,10 @@ identityPivotColumns := func(identities, groupingId, served, colName, valueType,
 		if !is_undefined(conflicts[identity]) {
 			// One barcode, several names, and the identity is unaffected. The KEY is the barcode, and the
 			// readings under this column are that one barcode's.
-			note = { "pl7.app/description": "The panel gives this one barcode more than one name — " +
+			note = { "pl7.app/description": "The panel gives this one barcode more than one name: " +
 				text.join(conflicts[identity], ", ") +
-				". Different samples name it differently, so every name it was given is shown. This is still a " +
-				"single barcode and a single identity; only the naming disagrees. Check the panel file if the " +
-				"names should have matched." }
+				". Different samples name it differently, so every name is shown. It is one barcode and one " +
+				"identity. Only the naming disagrees. Check the panel file if the names should match." }
 		}
 		cols = append(cols, {
 			column: identity,
@@ -809,7 +810,6 @@ identityPivotImportSpec := func(setAxisSpec, identities, groupingId, served, col
 	}
 }
 
-
 // --- The punchcard's pivot: result_identity_punch.csv, keyed (setId) --------------------
 //
 // One column per identity whose value carries the state AND everything behind it, as
@@ -832,7 +832,7 @@ identitySummaryImportSpec := func(setAxisSpec, identities, groupingId, served) {
 		"pl7.app/antigen/identityVerdict", "String", 92000, "identity_", false, {
 			"pl7.app/isDiscreteFilter": "true",
 			"pl7.app/discreteValues": VERDICT_STATES
-		})
+	})
 }
 
 // --- Re-derivation material -------------------------------------------------------------
@@ -883,7 +883,7 @@ cellPunchImportSpec := func(sampleAxisSpec, cellAxisSpec, identities, groupingId
 				// subset of the larger.
 				annotations: a(95000, true, {
 					"pl7.app/label": "Identities this cell bound",
-					"pl7.app/description": "How many identities this cell read as bound, over the identities its sample was stained for. A silent position counts as the not-bound it resolves to; a cell that could not be compared counts none.",
+					"pl7.app/description": "How many identities this cell read as bound, over the identities its sample was stained for. A silent position counts as the not-bound it resolves to. A cell that could not be compared counts none.",
 					"pl7.app/min": "0"
 				})
 			}
@@ -922,8 +922,8 @@ cellTagCountsImportSpec := func(sampleAxisSpec, cellAxisSpec, tagAxisSpec) {
 				name: "pl7.app/antigen/umiCount",
 				valueType: "Int",
 				annotations: a(80000, true, {
-					"pl7.app/label": "Tag UMI count",
-					"pl7.app/description": "Molecules seen for this tag in this cell, after the count floor. Sparse: a cell with no row for a tag saw nothing for it, which is a reading, not a gap.",
+					"pl7.app/label": "Tag UMI count (post-floor)",
+					"pl7.app/description": "Molecules seen for this tag in this cell, after the count floor. Sparse: a cell with no row for a tag saw nothing for it, which is a reading, not a gap. The baseline tag has no row here.",
 					"pl7.app/min": "0",
 					"pl7.app/isAbundance": "true",
 					"pl7.app/abundance/unit": "molecules",
@@ -933,6 +933,35 @@ cellTagCountsImportSpec := func(sampleAxisSpec, cellAxisSpec, tagAxisSpec) {
 		}],
 		storageFormat: "Parquet",
 		partitionKeyLength: 0
+	}
+}
+
+// result_cell_raw_counts.csv, keyed (sampleId, cellId, tag).
+cellRawTagCountsImportSpec := func(sampleAxisSpec, cellAxisSpec, tagAxisSpec) {
+	return {
+		axes: [
+			{ column: "sampleId", spec: sampleAxisSpec },
+			{ column: "cellId", spec: cellAxisSpec },
+			{ column: "tag", spec: tagAxisSpec }
+		],
+		columns: [{
+			column: "umiCount",
+			id: "tagRawUmiCount",
+			spec: {
+				name: "pl7.app/antigen/rawUmiCount",
+				valueType: "Int",
+				annotations: a(80000, true, {
+					"pl7.app/label": "Tag UMI count",
+					"pl7.app/description": "Molecules seen for this tag in this cell.",
+					"pl7.app/min": "0",
+					"pl7.app/isAbundance": "true",
+					"pl7.app/abundance/unit": "molecules",
+					"pl7.app/abundance/normalized": "false"
+				})
+			}
+		}],
+		storageFormat: "Parquet",
+		partitionKeyLength: 1
 	}
 }
 
@@ -962,22 +991,22 @@ cellScalarsImportSpec := func(sampleAxisSpec, cellAxisSpec, served) {
 			scalarCol("referenceCount", "pl7.app/antigen/referenceCount", "Int",
 				a(79000, true, {
 					"pl7.app/label": "Baseline reading",
-					"pl7.app/description": "What this cell's reading was compared against. Empty where the run had no baseline for the cell.",
+					"pl7.app/description": "The declared baseline tag's count in this cell. Under a declared baseline every reading is compared against it. Under a fitted distribution it feeds only the admissibility gate. Empty where the cell has none.",
 					"pl7.app/min": "0"
-				})),
+			})),
 			scalarCol("admissibility", "pl7.app/antigen/admissibility", "String",
 				a(78000, true, {
 					"pl7.app/label": "Admissibility",
 					"pl7.app/isDiscreteFilter": "true",
 					"pl7.app/discreteValues": ADMISSIBILITY_VALUES,
 					"pl7.app/description": "Whether this cell's readings could be compared at all, and if not, why. An inadmissible cell casts no vote; it does not vote 'not bound'."
-				})),
+			})),
 			scalarCol("inCellList", "pl7.app/antigen/inCellList", "String",
 				a(77000, false, {
 					"pl7.app/label": "In cell list",
 					"pl7.app/isDiscreteFilter": "true",
 					"pl7.app/discreteValues": BOOL_VALUES
-				}))
+			}))
 		],
 		storageFormat: "Parquet",
 		partitionKeyLength: 0
@@ -1157,7 +1186,7 @@ panelLabelsImportSpec := func(panelAxisSpec) {
 			spec: {
 				name: "pl7.app/label",
 				valueType: "String",
-				annotations: a(0, true, { "pl7.app/label": "Panel" })
+				annotations: a(0, false, { "pl7.app/label": "Panel" })
 			}
 		}],
 		storageFormat: "Parquet",
@@ -1240,8 +1269,9 @@ panelMismatchImportSpec := func(panelAxisSpec, tagAxisSpec) {
 //
 // Barcodes the reads carried that no panel declares get their own table, keyed by sequence, because they
 // have no row above -- they are not in the panel. It is the one thing on this surface that carries a
-// status: the share of a sample's reads landing in undeclared barcodes. That status stays the barcode's
-// and never the sample's, so it sits here rather than on any row of qcImportSpec's per-sample list.
+// status, and that status reads the ROW's own share of its sample's pre-refine reads. It stays the
+// barcode's and never the sample's, so it sits here rather than on any row of qcImportSpec's per-sample
+// list. The sample-level share keeps its own column beside it and carries no status.
 //
 // Usually this table has no row for a sample at all, and that is the wanted outcome. The description
 // below says so, since an empty grid otherwise reads as a check that never ran.
@@ -1261,7 +1291,7 @@ undeclaredBarcodeImportSpec := func(sampleAxisSpec, tagAxisSpec) {
 					annotations: a(79000, true, {
 						"pl7.app/label": "Reads",
 						"pl7.app/min": "0",
-						"pl7.app/description": "Reads carrying this sequence, from the pre-refine pass -- before refine-tags would have snapped or dropped it."
+						"pl7.app/description": "Reads that carry this sequence. The pre-refine pass supplies the count. It is taken before refine-tags snapped the sequence onto a panel barcode, or dropped it."
 					})
 				}
 			},
@@ -1276,7 +1306,7 @@ undeclaredBarcodeImportSpec := func(sampleAxisSpec, tagAxisSpec) {
 						"pl7.app/format": ".2p",
 						"pl7.app/min": "0",
 						"pl7.app/max": "1",
-						"pl7.app/description": "This one sequence's reads over every read the pre-refine pass saw for this sample. Reads here are not reads the run lost -- refine-tags snaps a sequence close enough to a panel barcode onto it, and the sample's own quality page carries the share it rescued that way."
+						"pl7.app/description": "The reads of this one sequence, divided by every read the pre-refine pass saw for this sample. The Status column reads this number. A read here is not always a read the run lost: the Reads correction rescued column gives the share refine-tags snapped onto the panel."
 					})
 				}
 			},
@@ -1287,11 +1317,11 @@ undeclaredBarcodeImportSpec := func(sampleAxisSpec, tagAxisSpec) {
 					name: "pl7.app/antigen/undeclaredBarcodeShare",
 					valueType: "Double",
 					annotations: a(78000, true, {
-						"pl7.app/label": "Undeclared share (whole sample)",
+						"pl7.app/label": "Sample's undeclared share",
 						"pl7.app/format": ".2p",
 						"pl7.app/min": "0",
 						"pl7.app/max": "1",
-						"pl7.app/description": "The share of this SAMPLE's reads landing in barcodes nobody declared -- every undeclared sequence together, whether or not it has a row here. Repeated on every one of that sample's rows, and the number the Status column reads. For this one sequence's own share, read the column beside it."
+						"pl7.app/description": "The share of this sample's reads that land in barcodes nobody declared. It counts every undeclared sequence together. It includes sequences that have no row in this table. The same number shows on every row of the sample. It carries no status. For the share of one sequence, read the column beside this one."
 					})
 				}
 			},
@@ -1305,7 +1335,7 @@ undeclaredBarcodeImportSpec := func(sampleAxisSpec, tagAxisSpec) {
 						"pl7.app/label": "Status",
 						"pl7.app/isDiscreteFilter": "true",
 						"pl7.app/discreteValues": QC_STATUSES,
-						"pl7.app/description": "Reads the undeclared share of the whole sample, not this one sequence's: warns above a 0.50 share and alerts at 1.0 (inherited from the field), so it is the same on every row of a sample. This status is the barcode's, never a sample's: it never rolls into any sample's own status. No row here is the outcome to want -- an empty table means every barcode the reads carried was declared."
+						"pl7.app/description": "How this one sequence reads against its own share of the sample's reads. By default it warns above 1% and alerts above 5%. This status belongs to the barcode. It never rolls up into the status of a sample. No row in this table is the outcome to want. An empty table means every barcode the reads carried was declared."
 					})
 				}
 			}
@@ -1537,19 +1567,19 @@ qcReagentImportSpec := func(panelAxisSpec, tagAxisSpec, identityAxisSpec) {
 			// Seen in prints the ratio, because the count alone does not say out of how many. The two counts it is
 			// built from stay as their own columns, optional, so the figure can be sorted and filtered as a number.
 			col("seenIn", "pl7.app/antigen/reagentSeenIn", "String", "Seen in", 79000, true,
-				"Samples of this panel carrying any count of the barcode, over the samples it declares. 0/4 means no read carried it."),
+				"Samples of this panel where a listed cell carries any count of the barcode, over the samples the panel declares. 0/4 means none did."),
 			col("samplesSeenIn", "pl7.app/antigen/reagentSamplesSeenIn", "Int", "Seen in (count)", 78950, false,
-				"Samples of this panel carrying any count of the barcode. Zero means no read carried it."),
+				"Samples of this panel where a listed cell carries any count of the barcode. Zero means none did."),
 			col("samplesInPanel", "pl7.app/antigen/reagentSamplesInPanel", "Int", "Samples in panel", 78500, false,
 				"The denominator for Seen in: the samples this panel declares."),
 			col("samplesSeenInNames", "pl7.app/antigen/reagentSamplesSeenInNames", "String", "Seen in (samples)", 78900, false,
-				"Samples of this panel carrying any count of the barcode, named. Empty means none did."),
+				"Samples of this panel where a listed cell carries any count of the barcode, named. Empty means none did."),
 			col("samplesInPanelNames", "pl7.app/antigen/reagentSamplesInPanelNames", "String", "Declared in (samples)", 78700, false,
 				"The samples this panel declares the tag for, named. Reading it apart from Seen in (samples) tells a sample whose panel never declared the tag from one that declared it and saw nothing."),
 			col("cellsWithCount", "pl7.app/antigen/reagentCellsWithCount", "Int", "Cells with any count", 78000, true,
 				"Cells holding any count of the barcode, taken before the minimum."),
 			col("cellsAboveTheLine", "pl7.app/antigen/reagentCellsAboveTheLine", "Double", "Cells called bound", 77000, true,
-				"Cells the verdict read called bound. Empty for a tag supplying the baseline; the reason column names that case."),
+				"Listed cells whose count of this one tag read bound, after the minimum. Empty for the baseline tag."),
 			col("medianCountPerCell", "pl7.app/antigen/reagentMedianCount", "Double", "Median count per cell", 76000, true,
 				"Median count over the cells holding any count, taken before the minimum."),
 			// The two disagreement rates print a rate or, where none exists, the words for why. A single-tag
@@ -1606,12 +1636,12 @@ qcSampleSummaryImportSpec := func(sampleAxisSpec) {
 						"pl7.app/label": "Status",
 						"pl7.app/isDiscreteFilter": "true",
 						"pl7.app/discreteValues": QC_STATUSES,
-						"pl7.app/description": "The worst status among this sample's own measurements that carry one, from result_qc.csv's rollup row. Empty where nothing at this sample carried a status."
+						"pl7.app/description": "The worst status among this sample's own measurements that carry one. Empty where none does."
 					})
 				}
 			},
 			num("readsTotal", "readsTotal", "Reads parsed", 95000, undefined,
-				"Every read the parser saw, and the share matching the tag pattern."),
+				"Every read the parser saw, before pattern matching."),
 			num("readsMatched", "readsMatched", "Reads matched", 94000, undefined, undefined),
 			num("matchedFraction", "matchedFraction", "Matched fraction", 93000, ".2p", undefined),
 			num("cellsDetected", "cellsDetected", "Cell barcodes detected", 92000, undefined, undefined),
@@ -1633,11 +1663,11 @@ qcSampleSummaryImportSpec := func(sampleAxisSpec) {
 			num("aggregateBarcodeFraction", "aggregateBarcodeFraction", "Aggregate-barcode read fraction", 83000, ".2p",
 				"Reads in barcodes flagged as aggregates by the top-100 IQR rule, over readsTotal."),
 			num("floorRemoved", "floorRemoved", "Counts removed by the minimum", 82000, undefined,
-				"Readings the minimum zeroed, and cells whose every non-reference reading was removed."),
-			num("uniqueCountsPerCell", "uniqueCountsPerCell", "Unique counts per cell", 81000, ".1f",
-				"Reads and distinct UMIs per cell barcode."),
+				"Readings the minimum count set to zero, summed over the sample. The baseline tag is exempt."),
+			num("uniqueCountsPerCell", "uniqueCountsPerCell", "Median unique counts per listed cell", 81000, ".1f",
+				"The median of each listed cell's total unique count across all tags. Cells outside the cell list are excluded."),
 			num("highReferenceCells", "highReferenceCells", "Sticky reference cells", 80000, undefined,
-				"Cells whose reference reading exceeded the declared gate, or the spread of those readings.")
+				"With a gate set, how many cells read above it on the baseline tag. With no gate, the median baseline reading.")
 		],
 		storageFormat: "Parquet",
 		partitionKeyLength: 0
@@ -1669,6 +1699,7 @@ export {
 	identityPunchImportSpec: identityPunchImportSpec,
 	cellPunchImportSpec: cellPunchImportSpec,
 	cellTagCountsImportSpec: cellTagCountsImportSpec,
+	cellRawTagCountsImportSpec: cellRawTagCountsImportSpec,
 	cellScalarsImportSpec: cellScalarsImportSpec,
 	offeredImportSpec: offeredImportSpec,
 	tagIdentityLinkerImportSpec: tagIdentityLinkerImportSpec,

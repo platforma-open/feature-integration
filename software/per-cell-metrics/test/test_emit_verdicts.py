@@ -93,6 +93,7 @@ def test_writes_every_artifact(bed):
         "result_verdicts.csv",
         "result_set_counts.csv",
         "result_cell_counts.csv",
+        "result_cell_raw_counts.csv",
         "result_cell_scalars.csv",
         "result_offered.csv",
         "result_identity_labels.csv",
@@ -586,7 +587,7 @@ def test_undeclared_barcode_table_is_keyed_by_sequence_with_the_samples_share(be
     # is the only undeclared sequence; the next test separates them.
     assert row["readShare"] == pytest.approx(10 / 60)
     assert row["barcodeShare"] == pytest.approx(10 / 60)
-    assert row["status"] == "OK"  # 10/60 is well under the 0.50 warn line
+    assert row["status"] == "alert"  # this sequence is 16.7% of the sample, above the 5% alert line
 
 
 def test_each_undeclared_barcode_carries_its_own_share_beside_the_samples(bed):
@@ -612,11 +613,25 @@ def test_the_own_share_denominator_is_every_pre_refine_read_not_the_undeclared_o
     assert sum(t["barcodeShare"].to_list()) == pytest.approx(0.10)
 
 
-def test_undeclared_barcode_share_warns_above_half(bed):
-    _write_raw_feature_counts(bed, [("S1", "AAAA", 10), ("S1", "ZZZZ", 15)])
+def test_undeclared_barcode_status_warns_above_one_percent(bed):
+    _write_raw_feature_counts(bed, [("S1", "AAAA", 980), ("S1", "ZZZZ", 20)])
     _run(bed, *BASE, "--raw-feature-counts", "raw_feature_counts.csv")
     t = pl.read_csv(bed / "result_undeclared_barcodes.csv")
-    assert t.row(0, named=True)["status"] == "warn"
+    assert t.row(0, named=True)["status"] == "warn"  # 20/1000 = 2%
+
+
+def test_undeclared_barcode_status_is_the_rows_own_not_the_samples(bed):
+    # The status reads `barcodeShare`, so two rows of one sample can read differently. Read from
+    # `readShare` it would be one word repeated, and a sample carrying one heavy sequence among many
+    # light ones would say nothing about which sequence to look at.
+    _write_raw_feature_counts(bed, [("S1", "AAAA", 900), ("S1", "ZZZZ", 80), ("S1", "YYYY", 20)])
+    _run(bed, *BASE, "--raw-feature-counts", "raw_feature_counts.csv")
+    t = pl.read_csv(bed / "result_undeclared_barcodes.csv")
+    by_tag = {r["tag"]: r for r in t.iter_rows(named=True)}
+    assert by_tag["ZZZZ"]["status"] == "alert"  # 8%, above the 5% alert line
+    assert by_tag["YYYY"]["status"] == "warn"  # 2%, above the 1% warn line
+    # One sample-level number on both rows, and it is no longer what the status reads.
+    assert [r["readShare"] for r in by_tag.values()] == [pytest.approx(0.10)] * 2
 
 
 def test_undeclared_barcode_share_alerts_when_every_read_is_undeclared(bed):
@@ -690,6 +705,7 @@ def test_rows_are_sorted_on_a_bed_wide_enough_for_order_to_show(bed):
     for name, keys in (
         ("result_verdicts.csv", ["setId", "identity"]),
         ("result_cell_counts.csv", ["sampleId", "cellId", "tag"]),
+        ("result_cell_raw_counts.csv", ["sampleId", "cellId", "tag"]),
         ("result_offered.csv", ["sampleId", "identity"]),
         ("result_tag_identity.csv", ["tag", "identity"]),
     ):
@@ -3718,3 +3734,57 @@ def test_the_rescued_share_says_why_where_no_pre_refine_pass_reached_the_run(bed
     entry = next(m for m in report["S1"]["measurements"] if m["id"] == "refineRescuedShare")
     assert entry["value"] is None
     assert entry["reason"]
+
+
+# --- the pre-floor per-cell per-tag table -------------------------------------------------------
+#
+# The bed's non-reference readings are 500 and 600, so a floor has to sit between them to bite. 550 is
+# chosen for that and for nothing else: it zeroes exactly one reading, which is what these tests read.
+
+
+@pytest.mark.slow
+def test_raw_counts_are_taken_before_the_floor(bed):
+    """The point of the second table: the floor is not visible in it.
+
+    `result_cell_counts.csv` is evidence of binding, so `apply_floor` has zeroed every count below the
+    minimum there. `result_cell_raw_counts.csv` is capture, so the same reading keeps the value the reads
+    carried. Asserted against each other, because either table read alone cannot show that a count was
+    floored -- afterwards a floored count and a true zero are the same number.
+    """
+    assert _run(bed, *BASE, "--floor", "550").returncode == 0
+    floored = pl.read_csv(bed / "result_cell_counts.csv", infer_schema_length=0)
+    raw = pl.read_csv(bed / "result_cell_raw_counts.csv", infer_schema_length=0)
+
+    assert raw.columns == ["sampleId", "cellId", "tag", "umiCount"]
+    floored_values = sorted(int(v) for v in floored["umiCount"].to_list())
+    raw_values = sorted(int(v) for v in raw["umiCount"].to_list())
+
+    # The 500 was zeroed for the verdicts and kept here.
+    assert 0 in floored_values, "the floor bit nothing, so this test proves nothing"
+    assert 500 in raw_values
+    assert 0 not in raw_values, "a pre-floor table holds no manufactured zeros"
+
+
+@pytest.mark.slow
+def test_raw_counts_keep_the_comparator_the_floored_table_drops(bed):
+    # `cell_counts` is written from the NON-reference readings, and `apply_floor` exempts the comparator
+    # from the floor besides. The capture table applies neither rule, so a cell's tags sum to what that
+    # cell held -- which is what a composition plot needs.
+    assert _run(bed, *BASE).returncode == 0
+    floored = pl.read_csv(bed / "result_cell_counts.csv", infer_schema_length=0)
+    raw = pl.read_csv(bed / "result_cell_raw_counts.csv", infer_schema_length=0)
+    assert "CTRL" not in set(floored["tag"].to_list())
+    assert "CTRL" in set(raw["tag"].to_list())
+
+
+@pytest.mark.slow
+def test_raw_counts_do_not_move_when_the_floor_does(bed):
+    # The floor reaches the verdicts and must not reach this table. Byte equality on one side, and a
+    # required DIFFERENCE on the other: without the second half the test would pass on a run where the
+    # floor changed nothing at all.
+    _run(bed, *BASE, "--floor", "1")
+    raw_low = (bed / "result_cell_raw_counts.csv").read_bytes()
+    floored_low = (bed / "result_cell_counts.csv").read_bytes()
+    _run(bed, *BASE, "--floor", "550")
+    assert (bed / "result_cell_raw_counts.csv").read_bytes() == raw_low
+    assert (bed / "result_cell_counts.csv").read_bytes() != floored_low, "the floor moved nothing"

@@ -162,8 +162,8 @@ Test_line_thresholds_are_always_present := func() {
 	test.isEqual("5000", va.valueOf(args, "--reads-per-cell-warn"), "the depth line is stated")
 	test.isEqual("0.05", va.valueOf(args, "--aggregate-barcode-warn"), "the aggregate-barcode warn line is stated")
 	test.isEqual("1", va.valueOf(args, "--aggregate-barcode-error"), "the aggregate-barcode alert line is stated")
-	test.isEqual("0.5", va.valueOf(args, "--undeclared-barcode-warn"), "the undeclared-barcode warn line is stated")
-	test.isEqual("1", va.valueOf(args, "--undeclared-barcode-error"), "the undeclared-barcode alert line is stated")
+	test.isEqual("0.01", va.valueOf(args, "--undeclared-barcode-warn"), "the undeclared-barcode warn line is stated")
+	test.isEqual("0.05", va.valueOf(args, "--undeclared-barcode-error"), "the undeclared-barcode alert line is stated")
 	test.isEqual("0.2", va.valueOf(args, "--usable-read-warn"), "the usable-read warn line is stated")
 	test.isEqual("0", va.valueOf(args, "--usable-read-error"), "the usable-read alert line is stated")
 }

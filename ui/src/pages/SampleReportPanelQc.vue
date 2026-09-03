@@ -12,6 +12,13 @@ const props = defineProps<{
 }>();
 
 const report = computed(() => props.sampleData?.qcReport);
+
+// Measurements that can be JUDGED first, the rest below them.
+const orderedMeasurements = computed(() => {
+  const all = report.value?.measurements ?? [];
+  const judgeable = all.filter((m) => m.implies !== null);
+  return [...judgeable, ...all.filter((m) => m.implies === null)];
+});
 const tag = computed(() => (report.value ? qcStatusTag(report.value.status) : undefined));
 
 // How much of the sample was checked. Kept beside the status and out of it: a status says whether something
@@ -38,7 +45,7 @@ const coverage = computed(() => {
       >
       <span class="qc-rollup__coverage">{{ coverage }}</span>
     </div>
-    <QcSection v-for="m in report.measurements" :key="m.id" :value="m" />
+    <QcSection v-for="m in orderedMeasurements" :key="m.id" :value="m" />
   </div>
   <div v-else class="qc-pending">
     Quality checks appear when this sample finishes — its measurements are computed from the

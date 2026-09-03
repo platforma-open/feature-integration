@@ -17,6 +17,13 @@ populations are unequal in size, which is the antigen case exactly.
 threshold. Nothing downstream thresholds: it scores a reading against a comparator count. So the
 split point identifies which readings are background, and the comparator is the middle of those.
 
+**Where the fit starts.** While the EM runs, the two components are interchangeable -- the paper says
+so, and both it and this module decide afterwards which is which, by median. So the starting point does
+not change what the components mean; it changes which answer the EM settles on. On a mostly-background
+population that is the difference between a background weight near 0.8 and one near 0.95. The starting
+split is the paper's, `DEFAULT_INITIAL_SIGNAL_WEIGHT` above. It used to be the median, which is a choice
+`what-plays-the-baseline` never actually specified.
+
 **No normalization.** The paper normalizes by each cell's UMI total. Every reading here is a raw
 integer UMI count, and a normalized comparator would be the only non-count in the pipeline. The
 cost is that a cell sequenced twice as deeply contributes a reading twice as large; the split is
@@ -34,6 +41,7 @@ from typing import NamedTuple
 import numpy as np
 import polars as pl
 from panel import ANY_SAMPLE
+from qc_measures import bin_values, log1p_bin_edges, log1p_edges_for
 from scipy.special import logsumexp
 from scipy.stats import nbinom
 
@@ -84,6 +92,10 @@ TOO_FEW_CELLS = "the sample holds too few cells for a distribution to be fitted"
 # finding that this tag's counts failed to separate -- no check for that is built.
 NO_FIT = "no two-component fit could be computed for this tag"
 
+
+# Roughly what share of cells are expected to bind an antigen. The source paper's own initial weight,
+# and an OVERRIDE here rather than the default.
+DEFAULT_INITIAL_SIGNAL_WEIGHT = 0.1
 
 # The share of the highest counts dropped before the fit, so that a handful of very high readings
 # cannot drag the signal component's mean up and pull the boundary with it. The dropped cells still
@@ -159,7 +171,59 @@ class _Mixture(NamedTuple):
     signal: int
 
 
-def _fit_two_component_nb(counts: np.ndarray) -> _Mixture | None:
+# @TODO: Review this function in more detail looking for logic flaws that might have been missed
+def _scan_pivot(x: np.ndarray) -> float | None:
+    """The split point that best explains the counts as two negative binomials, or None.
+
+    Scores every cut of the counts into `[0, t]` and the rest, and returns the `t` that scores best.
+    None where the counts hold fewer than two distinct values, or where no cut scores finitely.
+    """
+    # The histogram, not the cells: everything below is sized by the number of DISTINCT counts, which is
+    # why the scan costs milliseconds against the EM's seconds and does not grow with the sample.
+    vals, mult = np.unique(x, return_counts=True)
+    k = vals.size
+    if k < 2:
+        return None
+
+    # Prefix sums of the cell count, of the counts, and of their squares. They make each cut's two-sided
+    # weight, mean and variance a subtraction instead of a pass over the data.
+    n = float(x.size)
+    cum_w = np.cumsum(mult).astype(float)
+    cum_s = np.cumsum(vals * mult)
+    cum_q = np.cumsum((vals**2) * mult)
+
+    # One entry per cut, and `[:-1]` is the cut set: cutting at the highest count leaves the upper side
+    # empty. Variance by `E[x^2] - E[x]^2`, so it can land just below zero on a near-constant side.
+    w_lo = cum_w[:-1]
+    w_hi = n - w_lo
+    m_lo = cum_s[:-1] / w_lo
+    m_hi = (cum_s[-1] - cum_s[:-1]) / w_hi
+    v_lo = cum_q[:-1] / w_lo - m_lo**2
+    v_hi = (cum_q[-1] - cum_q[:-1]) / w_hi - m_hi**2
+    m_lo = np.maximum(m_lo, _MIN_COMPONENT_MEAN)
+    m_hi = np.maximum(m_hi, _MIN_COMPONENT_MEAN)
+
+    # Dispersions through `_nb_size` rather than inline, so each side inherits the same Poisson-limit
+    # fallback the EM's own components get and the two cannot disagree about what a dispersion is.
+    s_lo = np.array([_nb_size(m, v) for m, v in zip(m_lo, np.maximum(v_lo, 0.0), strict=True)])
+    s_hi = np.array([_nb_size(m, v) for m, v in zip(m_hi, np.maximum(v_hi, 0.0), strict=True)])
+
+    # The score, one row per cut and one column per distinct count. It is the CLASSIFICATION
+    # log-likelihood -- every count read against the side its cut assigns it, weighted by that side's
+    # share and by how many cells hold the count.
+    below = vals[None, :] <= vals[:-1, None]
+    lo = _nb_logpmf(vals[None, :], m_lo[:, None], s_lo[:, None]) + np.log(w_lo / n)[:, None]
+    hi = _nb_logpmf(vals[None, :], m_hi[:, None], s_hi[:, None]) + np.log(w_hi / n)[:, None]
+    scored = np.where(below, lo, hi) * mult[None, :]
+
+    # A cut where any count underflowed is dropped rather than left to win the argmax on a -inf.
+    total = np.where(np.all(np.isfinite(scored), axis=1), scored.sum(axis=1), -np.inf)
+    if not np.any(np.isfinite(total)):
+        return None
+    return float(vals[int(np.argmax(total))])
+
+
+def _fit_two_component_nb(counts: np.ndarray, initial_signal_weight: float | None = None) -> _Mixture | None:
     """A two-component negative binomial fitted to `counts`, or None where none exists.
 
     The method: fit a two-component negative binomial mixture and label the higher-median component
@@ -179,13 +243,18 @@ def _fit_two_component_nb(counts: np.ndarray) -> _Mixture | None:
     if np.unique(x).size < 2:
         return None
 
-    # Split at the median to start. Two components initialised on the same statistics never separate,
-    # and the median is the one split point that is always available.
-    pivot = float(np.median(x))
+    # Where the scientist stated a share, split the counts so that `initial_signal_weight` of them sit
+    # above the pivot. Otherwise derive the split from the counts themselves. Each side then seeds one
+    # component, and the two side sizes are the starting weights.
+    scanned = _scan_pivot(x) if initial_signal_weight is None else None
+    if scanned is not None:
+        pivot = scanned
+    else:
+        pivot = float(np.quantile(x, 1.0 - (initial_signal_weight or DEFAULT_INITIAL_SIGNAL_WEIGHT)))
     low, high = x[x <= pivot], x[x > pivot]
     if low.size == 0 or high.size == 0:
-        # A median equal to the maximum puts everything in one half. Fall back to splitting at the
-        # mean, which differs from the median exactly when the counts are skewed.
+        # The quantile landed on the maximum, so one side got every cell. Split at the mean instead:
+        # on a skewed count distribution the mean sits below the upper quantile, so it still divides.
         pivot = float(np.mean(x))
         low, high = x[x <= pivot], x[x > pivot]
         if low.size == 0 or high.size == 0:
@@ -269,6 +338,7 @@ def fit_tag_probabilities(
     counts: np.ndarray,
     min_cells: int = DEFAULT_DISTRIBUTION_MIN_CELLS,
     scored: np.ndarray | None = None,
+    initial_signal_weight: float | None = None,
 ) -> TagFit:
     """One tag's counts across one sample's cells, as a probability of binding per cell.
 
@@ -308,7 +378,7 @@ def fit_tag_probabilities(
     if fitted_on.size == 0:
         return TagFit(None, NO_FIT, n)
 
-    fit = _fit_two_component_nb(fitted_on)
+    fit = _fit_two_component_nb(fitted_on, initial_signal_weight)
     if fit is None:
         return TagFit(None, NO_FIT, n)
     probabilities = _signal_probability(scored, fit)
@@ -334,9 +404,14 @@ class TagFits(NamedTuple):
 
     probabilities: pl.DataFrame
     reasons: dict[tuple[str, str], str]
+    # Each pair's fitted cells, already binned for the plot: one entry per cell in the sample, with a
+    # cell that read nothing counted as a zero.
+    bins: dict[tuple[str, str], list[int]]
     # One entry per pair that fitted, on the same condition as a contribution to `probabilities`. A
     # pair in `reasons` is absent here.
     backgrounds: dict[tuple[str, str], Background] = {}
+    # Each fitted pair's distinct counts, ascending, with the probability the fit gave each one.
+    curves: dict[tuple[str, str], tuple[np.ndarray, np.ndarray]] = {}
 
 
 _PROB_SCHEMA = {"sampleId": pl.String, "cellId": pl.String, "tag": pl.String, "pBound": pl.Float64}
@@ -349,6 +424,7 @@ def fit_tag_probabilities_by_pair(
     min_cells: int = DEFAULT_DISTRIBUTION_MIN_CELLS,
     floor: int = 0,
     reference_tags: Collection[str] = (),
+    initial_signal_weight: float | None = None,
 ) -> TagFits:
     """One fit per (sample, tag) the panel declares, scored per cell.
 
@@ -394,7 +470,9 @@ def fit_tag_probabilities_by_pair(
     by_sample = {s: f.select("cellId") for (s,), f in universe.group_by("sampleId")}
     frames: list[pl.DataFrame] = []
     reasons: dict[tuple[str, str], str] = {}
+    binned: dict[tuple[str, str], list[int]] = {}
     backgrounds: dict[tuple[str, str], Background] = {}
+    curves: dict[tuple[str, str], tuple[np.ndarray, np.ndarray]] = {}
     for sample, tag in _declared_pairs(panel, sorted(by_sample)):
         sample_cells = by_sample.get(sample)
         if sample_cells is None:
@@ -408,13 +486,23 @@ def fit_tag_probabilities_by_pair(
         ).with_columns(pl.col("umiCount").fill_null(0))
 
         raw = dense["umiCount"].to_numpy()
+        # Binned before the fit is attempted, so a pair that established nothing still carries the
+        # distribution a reader would judge that outcome against. `raw` dies with the iteration; only
+        # the bins outlive it.
+        binned[(sample, tag)] = (
+            bin_values(raw, log1p_bin_edges(int(raw.max())) or log1p_edges_for(1)) if raw.size else []
+        )
         scored = raw if floor <= 0 or tag in exempt else np.where(raw < floor, 0, raw)
-        fit = fit_tag_probabilities(raw, min_cells, scored=scored)
+        fit = fit_tag_probabilities(raw, min_cells, scored=scored, initial_signal_weight=initial_signal_weight)
         if fit.probabilities is None:
             reasons[(sample, tag)] = fit.reason or NO_FIT
             continue
         if fit.background is not None:
             backgrounds[(sample, tag)] = fit.background
+        # Built from `scored`, not `raw`. The probabilities were computed on the scored values, so a
+        # reading the floor zeroed carries the probability of 0, not of the count it originally held.
+        distinct, first = np.unique(scored, return_index=True)
+        curves[(sample, tag)] = (distinct, np.asarray(fit.probabilities, dtype=float)[first])
         frames.append(
             dense.select("cellId")
             .with_columns(
@@ -426,7 +514,29 @@ def fit_tag_probabilities_by_pair(
         )
 
     probabilities = pl.concat(frames) if frames else pl.DataFrame(schema=_PROB_SCHEMA)
-    return TagFits(probabilities, reasons, backgrounds)
+    return TagFits(probabilities, reasons, binned, backgrounds, curves)
+
+
+def bound_at_count(curve: tuple[np.ndarray, np.ndarray], probability_cutoff: float) -> int | None:
+    """The lowest count at or above which every count is called bound, or None if there is none.
+
+    `curve` is one `TagFits.curves` entry: ascending distinct counts, and the probability each was given.
+
+    Note it looks for the lowest count from which the cutoff holds all the way up, NOT simply the first
+    count to cross it. Usually these are the same, because the probability normally rises with the count.
+
+    They differ when a fit comes back inverted. Components are labelled by median, so a pair can end up
+    with its "signal" component sitting BELOW its background. The probability then FALLS as the count
+    rises, and it is the LOW counts that cross the cutoff. Taking the first crossing would report a
+    threshold of 1, which the run does not apply. Requiring the cutoff to hold all the way up returns
+    None instead, which says plainly that this fit has no count above which it calls a cell bound.
+    """
+    counts, probabilities = curve
+    if counts.size == 0 or counts.size != probabilities.size:
+        return None
+    missed = np.flatnonzero(probabilities < probability_cutoff)
+    start = 0 if missed.size == 0 else int(missed[-1]) + 1
+    return int(counts[start]) if start < counts.size else None
 
 
 _EMPTY = np.zeros(0, dtype=np.int64)

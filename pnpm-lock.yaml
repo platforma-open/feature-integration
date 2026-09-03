@@ -49,8 +49,8 @@ catalogs:
       specifier: 1.81.1
       version: 1.81.1
     '@platforma-sdk/workflow-tengo':
-      specifier: 6.8.2
-      version: 6.8.2
+      specifier: 6.8.3
+      version: 6.8.3
     ag-grid-enterprise:
       specifier: ~34.1.2
       version: 34.1.2
@@ -254,7 +254,7 @@ importers:
         version: 2.3.1-131-main
       '@platforma-sdk/workflow-tengo':
         specifier: 'catalog:'
-        version: 6.8.2
+        version: 6.8.3
     devDependencies:
       '@platforma-sdk/tengo-builder':
         specifier: 'catalog:'
@@ -1691,6 +1691,9 @@ packages:
 
   '@platforma-sdk/workflow-tengo@6.8.2':
     resolution: {integrity: sha512-AHR/Y+vbyfda17A7xY2uH9TlXiBpM8242tTO6+lj8phA4/KS6mez4GLu4ZEaASlZpX6YkQsUs5LUxYQU7pXeiQ==}
+
+  '@platforma-sdk/workflow-tengo@6.8.3':
+    resolution: {integrity: sha512-KImCzq7v/2qgH/PIBCTipV0B/ulLxDnDOpWOO+zs56+p/B2Dg25ZevlA2LzOFVk9SWx6ilXp4ilWx3K2HbccqQ==}
 
   '@protobuf-ts/grpc-transport@2.11.1':
     resolution: {integrity: sha512-l6wrcFffY+tuNnuyrNCkRM8hDIsAZVLA8Mn7PKdVyYxITosYh60qW663p9kL6TWXYuDCL3oxH8ih3vLKTDyhtg==}
@@ -8729,6 +8732,14 @@ snapshots:
       '@platforma-open/milaboratories.software-small-binaries': 1.15.26
 
   '@platforma-sdk/workflow-tengo@6.8.2':
+    dependencies:
+      '@milaboratories/pframes-rs-wasip2': 1.1.56
+      '@milaboratories/software-pframes-conv': 2.2.9
+      '@platforma-open/milaboratories.software-ptabler': 2.1.8
+      '@platforma-open/milaboratories.software-ptexter': 1.2.4
+      '@platforma-open/milaboratories.software-small-binaries': 2.1.1
+
+  '@platforma-sdk/workflow-tengo@6.8.3':
     dependencies:
       '@milaboratories/pframes-rs-wasip2': 1.1.56
       '@milaboratories/software-pframes-conv': 2.2.9

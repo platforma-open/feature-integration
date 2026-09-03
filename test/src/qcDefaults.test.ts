@@ -85,6 +85,12 @@ describe("VERDICT_DEFAULTS matches verdict-args.lib.tengo and the Python that ow
   const pairs: [keyof typeof VERDICT_DEFAULTS, string, string, string][] = [
     ["countFloor", "DEFAULT_COUNT_FLOOR", "verdict.py", "DEFAULT_FLOOR"],
     ["boundCutoff", "DEFAULT_BOUND_CUTOFF", "verdict.py", "BOUND_CUTOFF"],
+    [
+      "boundProbability",
+      "DEFAULT_BOUND_PROBABILITY",
+      "verdict.py",
+      "DISTRIBUTION_BOUND_PROBABILITY",
+    ],
     ["minVotingCells", "DEFAULT_MIN_VOTING_CELLS", "combine.py", "DEFAULT_MIN_VOTERS"],
     [
       "panelReferenceMinMembers",
@@ -108,7 +114,7 @@ describe("VERDICT_DEFAULTS matches verdict-args.lib.tengo and the Python that ow
   it("covers every shaping default the tengo file declares", () => {
     const declared = [
       ...tengo.matchAll(
-        /^(DEFAULT_(?:COUNT_FLOOR|BOUND_CUTOFF|MIN_VOTING_CELLS|PANEL_MIN_MEMBERS|DISTRIBUTION_MIN_CELLS))\s*:=/gm,
+        /^(DEFAULT_(?:COUNT_FLOOR|BOUND_CUTOFF|BOUND_PROBABILITY|MIN_VOTING_CELLS|PANEL_MIN_MEMBERS|DISTRIBUTION_MIN_CELLS))\s*:=/gm,
       ),
     ].map((m) => m[1]);
     expect(new Set(declared)).toStrictEqual(new Set(pairs.map(([, name]) => name)));

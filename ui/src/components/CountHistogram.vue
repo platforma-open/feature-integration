@@ -17,9 +17,11 @@ import { valuesFromBins } from "./binValues";
 // 674px default overflows any narrower container and paints over whatever sits beside it. Measured here
 // with a ResizeObserver.
 const props = defineProps<{
-  /** Bin boundaries, `weights.length + 1` of them, shared across every plot of a run. */
+  /** Bin boundaries, shared across every plot of a run. */
   edges: number[];
-  /** Cells per bin, in edge order. */
+  /**
+   * Cells per bin, in edge order.
+   */
   weights: number[];
   /**
    * The x axis. `log` suits counts per cell, which span orders of magnitude: on a linear axis the ambient
@@ -48,12 +50,24 @@ const MIN_WIDTH = 220;
 const width = ref(MIN_WIDTH);
 let observer: ResizeObserver | undefined;
 
+// Ignore resizes too small to change what is drawn.
+//
+// Any width change rewrites `settings`, which redraws the chart. The uikit's `drawBins` adds a tooltip div
+// to the body on every draw and never removes it, so each redraw leaks one div per panel -- and dragging a
+// window fires a resize every frame. A few pixels of tolerance is invisible to the eye and turns a drag
+// from hundreds of redraws into a handful.
+//
+// Fixing the leak itself belongs in the uikit. This only stops us multiplying it.
+const WIDTH_EPSILON = 4;
+
 onMounted(() => {
   const el = host.value;
   if (el === undefined) return;
   observer = new ResizeObserver((entries) => {
-    const measured = entries[0]?.contentRect.width ?? 0;
-    width.value = Math.max(MIN_WIDTH, Math.floor(measured));
+    const measured = Math.max(MIN_WIDTH, Math.floor(entries[0]?.contentRect.width ?? 0));
+    // The value stored is the exact measurement, not a rounded one. A drag that ends within the
+    // threshold leaves the chart up to 4px off the container, which nobody can see.
+    if (Math.abs(measured - width.value) >= WIDTH_EPSILON) width.value = measured;
   });
   observer.observe(el);
 });
@@ -95,10 +109,12 @@ const settings = computed(() => {
     ...common,
     type: "log-bins" as const,
     // A bin's own bounds travel with its weight, since this form bins nothing itself.
-    bins: props.weights.map((weight, i) => ({
+    // Bar height is the plain cell count. Every caller's bars are the same width on screen, so the
+    // height already is the share and there is nothing to divide by. PADDED to the full edge set.
+    bins: Array.from({ length: Math.max(props.edges.length - 1, 0) }, (_, i) => ({
       from: props.edges[i]!,
       to: props.edges[i + 1]!,
-      weight,
+      weight: props.weights[i] ?? 0,
     })),
   };
 });

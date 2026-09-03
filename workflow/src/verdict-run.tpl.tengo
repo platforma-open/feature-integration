@@ -30,6 +30,7 @@ RESULT_TABLES := [
 	{ out: "identityPunch", file: "result_identity_punch.csv" },
 	{ out: "cellPunch", file: "result_cell_punch.csv" },
 	{ out: "cellCounts", file: "result_cell_counts.csv" },
+	{ out: "cellRawCounts", file: "result_cell_raw_counts.csv" },
 	{ out: "cellScalars", file: "result_cell_scalars.csv" },
 	{ out: "offered", file: "result_offered.csv" },
 	{ out: "tagIdentity", file: "result_tag_identity.csv" },

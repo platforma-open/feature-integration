@@ -375,6 +375,9 @@ _CATEGORICAL: frozenset[str] = frozenset(m.id for m in MEASUREMENTS if m.line ==
 # `Measurement`: that status is the barcode's, never a sample's, so it is computed and carried where
 # the barcode rows are, in emit_verdicts.py, and reaches `status_for` under this id. It is the one
 # exception to "every line backs a declared measurement", and a test names it.
+#
+# It reads the ROW's own share, `barcodeShare`, not the sample-level `readShare` the id is named for.
+# The sample-level share keeps its column and carries no status.
 DEFAULT_LINES: dict[str, Line] = {
     # Both thresholds step the same way. This is the line with a real gradient at the far end.
     "cellBarcodeValidFraction": Line(warn=0.75, error=0.50),
@@ -383,9 +386,11 @@ DEFAULT_LINES: dict[str, Line] = {
     # Published values for the aggregate-barcode read fraction: warn above 0.05, error at total
     # failure (1.0).
     "aggregateBarcodeFraction": Line(warn=0.05, error=1.0),
-    # Published values for the undeclared-barcode read fraction, read direct rather than as a
-    # complement: warn above 0.50, error at total failure (1.0).
-    "undeclaredBarcodeShare": Line(warn=0.5, error=1.0),
+    # ONE BARCODE's share of its sample's pre-refine reads: warn above 0.01, alert above 0.05.
+    # Operator-set, not inherited. The field publishes 0.50/1.0 for a sample's AGGREGATE undeclared
+    # share, and that line does not transfer to a single sequence: the aggregate reaches 0.50 while no
+    # single sequence comes near it. Needs an atom on 315 before it can be called inherited.
+    "undeclaredBarcodeShare": Line(warn=0.01, error=0.05),
     # Published values for the usable antigen-read fraction: warn below 0.20, error at total
     # failure (0.0).
     "usableReadFraction": Line(warn=0.20, error=0.0),
@@ -413,7 +418,9 @@ _COMPARISON: dict[str, tuple[str, str | None]] = {
     # inherited share sits at either "at least" or "at most" with error at the catastrophe end, and
     # this is one of the two upward-facing members of that set.
     "aggregateBarcodeFraction": ("at-most", "alerting-at"),
-    "undeclaredBarcodeShare": ("at-most", "alerting-at"),
+    # Both ends face the same way, unlike the four inherited shares: this line alerts ABOVE its error
+    # threshold rather than at a catastrophe value, so `alerting-at` would fire only at exactly 0.05.
+    "undeclaredBarcodeShare": ("at-most", "at-most"),
     # Error at total failure (`alerting-at` 0.0), the downward-facing member of that same set.
     "usableReadFraction": ("at-least", "alerting-at"),
 }
@@ -421,6 +428,19 @@ _COMPARISON: dict[str, tuple[str, str | None]] = {
 
 def _breaches(value: float, threshold: float, comparison: str) -> bool:
     """Whether a value falls the wrong side of one threshold."""
+    if comparison == "at-least":
+        return value < threshold
+    if comparison == "at-most":
+        return value > threshold
+    return value == threshold
+
+
+def _breaches_expr(value: pl.Expr, threshold: float, comparison: str) -> pl.Expr:
+    """`_breaches` over a column. Every branch mirrors the scalar above, line for line.
+
+    `test_status_expr_agrees_with_status_for` runs the two against one another over the boundary
+    values and every registered measurement, so a branch changed on one side alone fails there.
+    """
     if comparison == "at-least":
         return value < threshold
     if comparison == "at-most":
@@ -473,6 +493,52 @@ def status_for(measurement: str, value: float | None, lines: dict[str, Line]) ->
     if _breaches(value, line.warn, warn_comparison):
         return Status.WARN
     return Status.OK
+
+
+def status_expr(measurement: str, value: pl.Expr, lines: dict[str, Line]) -> pl.Expr:
+    """`status_for` over a column, returning the status string or null.
+
+    For a per-row status on a frame with no bound on its height. The undeclared-barcode table is the
+    caller: its row cap is a parameter that accepts `None`, so a Python loop there is a loop over every
+    distinct pre-refine sequence -- 10.2M per sample on a measured 44-sample run -- and materialising
+    the column to drive it undoes the memory work this stage carries.
+
+    Thresholds and directions are read from the SAME `lines` and `_COMPARISON` this module's scalar
+    reads. Only the evaluator differs, and a test pins the two together.
+    """
+    null = pl.lit(None, pl.String)
+    if measurement in _DEFERRED:
+        return null
+    # `is_computed` over a column: a null, a NaN or an infinity is not a number. Kleene `&` makes a
+    # null value read False here rather than propagating a null into the branch below.
+    computed = (value.is_not_null() & value.is_finite()).fill_null(False)  # noqa: FBT003
+    if measurement in _CATEGORICAL:
+        return (
+            pl.when(~computed)
+            .then(null)
+            .when(value == 0)
+            .then(pl.lit(Status.ALERT.value, pl.String))
+            .otherwise(pl.lit(Status.OK.value, pl.String))
+        )
+    if measurement not in lines:
+        return null
+    line = lines[measurement]
+    warn_comparison, error_comparison = _COMPARISON[measurement]
+    alerts = (
+        _breaches_expr(value, line.error, error_comparison)
+        if line.error is not None and error_comparison is not None
+        else pl.lit(False)  # noqa: FBT003
+    )
+    # Error first, exactly as the scalar orders it: a value past both boundaries reads alert.
+    return (
+        pl.when(~computed)
+        .then(null)
+        .when(computed & alerts)
+        .then(pl.lit(Status.ALERT.value, pl.String))
+        .when(computed & _breaches_expr(value, line.warn, warn_comparison))
+        .then(pl.lit(Status.WARN.value, pl.String))
+        .otherwise(pl.lit(Status.OK.value, pl.String))
+    )
 
 
 def roll_up(readings: list[Reading]) -> Coverage:
@@ -812,44 +878,64 @@ def deciles_of(values: np.ndarray) -> pl.DataFrame:
     )
 
 
-# How many log-spaced buckets a count distribution is drawn in. Enough bars for two humps to read
-# apart at thumbnail size, few enough that a sparse tag does not dissolve into single-cell spikes.
+# How many buckets the count distributions used to be drawn in, back when their edges were integers.
+# Kept only because `linear_bin_edges` uses it as its default; the count distributions do not.
 COUNT_BIN_COUNT = 24
 
 
-def count_bin_edges(counts: pl.DataFrame) -> list[float]:
-    """Log-spaced bin edges spanning every count in the frame, shared by every plot drawn from it.
+# The width of one bar, measured in log1p units. A fixed width is what makes every bar the same size.
+#
+# The source paper uses 0.075. This is deliberately coarser: at 0.075 a real tag came back with 75 of its
+# 97 bins empty, because whole-number counts land on scattered points once you take the log. The paper
+# lives with those gaps by drawing a smooth density curve over them, which these plots cannot do. 0.2
+# keeps the bars equal and still readable at thumbnail size.
+LOG1P_BIN_WIDTH = 0.2
 
-    The caller passes the counts of the CELL LIST where one arrived, so the domain ends at the
-    highest count among cells. Observed barcodes outnumber cells by one to two orders of magnitude.
 
-    ONE edge set for the whole run, not one per tag. A reader judges whether a tag's counts fall into
-    two separated humps by scanning a grid of tags side by side, and per-tag edges would rescale
-    every panel to its own range, so a tag whose counts span 1-4 and one spanning 1-4000 would draw
-    identical pictures.
+def log1p_bin_edges(top: int, width: float = LOG1P_BIN_WIDTH) -> list[float]:
+    """Bin edges spanning 0 to `top` that all draw the SAME WIDTH. `[]` if there is nothing to span.
 
-    Log-spaced because UMI counts per cell span orders of magnitude: on a linear axis the ambient
-    population occupies one bar and everything above it is empty.
+    Returned as counts, at `expm1(k * width)`, because counts are what the plot takes. The plot's axis is
+    log1p, so an edge at `expm1(k * width)` lands at `k * width` on screen -- evenly spaced.
 
-    Edges start at 1, the smallest count that exists -- a row is only written for an observed
-    reading, so zero never appears. `[]` where the frame holds no counts at all.
+    Edges start at 0 so the zeros the fit ran over get a bar of their own. Those zeros are most of the
+    background; drop them and the plot shows one decaying hump whatever the fit found. The last edge is
+    the first step above `top`, so the largest count has a bin to land in.
+
+    ONE edge set for the whole run, not one per tag, so a reader can compare a grid of tags side by side.
+
+    The cost: THE EDGES ARE NOT WHOLE NUMBERS. Counts are, so consecutive integers sit further apart than
+    one bin until about count 13, and the low end comes out as separated bars with empty gaps between
+    them. Whole-number edges avoided that, which is why they were used here before -- but they bought it
+    with the per-bar division above. The source paper's figures show the same gaps.
+
+    Nothing needs to be told the bin count: `bin_values`, `per_tag_count_bins` and the UI all read it
+    from `len(edges) - 1`.
     """
-    if counts.height == 0:
+    if top < 1 or width <= 0.0:
         return []
-    top = float(counts["umiCount"].max() or 0)
-    if top < 1:
+    return log1p_edges_for(int(np.floor(np.log1p(top) / width)) + 1, width)
+
+
+def log1p_edges_for(steps: int, width: float = LOG1P_BIN_WIDTH) -> list[float]:
+    """The first `steps` bins of the same grid, as counts. `[]` for a non-positive step or width.
+
+    Separate from `log1p_bin_edges` because the edges are ABSOLUTE: they sit at `expm1(k * width)`
+    whatever the data holds, so a bin count alone identifies them. Each (sample, tag) bins against its
+    own range, and the plot then needs one edge list long enough for the widest of them -- which is a
+    bin count, not a frame to re-scan.
+    """
+    if steps < 1 or width <= 0.0:
         return []
-    # `top` lands on the last edge, so the largest count falls inside the last bin rather than
-    # outside every bin.
-    return [float(x) for x in np.geomspace(1.0, max(top, 2.0), COUNT_BIN_COUNT + 1)]
+    return [float(np.expm1(k * width)) for k in range(steps + 1)]
 
 
 def linear_bin_edges(values: np.ndarray, count: int = COUNT_BIN_COUNT) -> list[float]:
     """Evenly spaced bin edges spanning `values`. `[]` where there are none.
 
-    Linear, unlike `count_bin_edges`: a specificity score is a 0-100 scale and a reference reading is
-    read against a gate a scientist types in the same units, so a log axis would put the number they
-    are choosing somewhere they cannot find it.
+    Evenly spaced, unlike the count distributions' log1p edges. A specificity score is a 0-100 scale,
+    and a reference reading is judged against a threshold the scientist types in the same units, so a
+    log axis would put the number they are choosing somewhere they cannot find it.
     """
     if values.size == 0:
         return []

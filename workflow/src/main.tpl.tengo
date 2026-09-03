@@ -412,6 +412,8 @@ wf.body(func(args) {
 		setParam("distributionMinCells", args.distributionMinCells)
 		setParam("countFloor", args.countFloor)
 		setParam("boundCutoff", args.boundCutoff)
+		setParam("boundProbability", args.boundProbability)
+		setParam("expectedBinderFraction", args.expectedBinderFraction)
 		setParam("minVotingCells", args.minVotingCells)
 		setParam("minAgreement", args.minAgreement)
 		setParam("gateThreshold", args.gateThreshold)
@@ -457,9 +459,9 @@ wf.body(func(args) {
 			identitySummary: verdictRun.output("identitySummary"),
 			identityPunch: verdictRun.output("identityPunch"),
 			cellPunch: verdictRun.output("cellPunch"),
-			// cellCounts is deliberately NOT passed. The per-cell per-tag counts are the run's largest table and no
-			// reader exists for them on either side of the block boundary, so the import template does not build
-			// them into columns. An input it would ignore reads as a consumer that is not there.
+			// cellCounts, the POST-floor per-cell per-tag counts, is still deliberately NOT passed.
+			// cellRawCounts, the same grain BEFORE the floor, IS passed.
+			cellRawCounts: verdictRun.output("cellRawCounts"),
 			cellScalars: verdictRun.output("cellScalars"),
 			offered: verdictRun.output("offered"),
 			tagIdentity: verdictRun.output("tagIdentity"),
@@ -530,6 +532,8 @@ wf.body(func(args) {
 		// per-cell reference readings are still reported, as an OUTPUT below. The per-cell per-tag counts are not
 		// built at any grain.
 		blockExports.antigenVerdicts = verdictImport.output("antigenVerdicts")
+		// Per-cell per-tag capture, pre-floor.
+		blockExports.antigenCellTagCounts = verdictImport.output("cellTagCounts")
 		// The same frame as an OUTPUT, because a block's own exports are not in its own result pool. Without
 		// this the block that produced the verdicts would be the one place that cannot read them.
 		//
