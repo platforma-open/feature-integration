@@ -19,7 +19,7 @@ const tableSettings = usePlDataTableSettingsV2({
 
 <template>
   <PlBlockPage>
-    <template #title>Per-cell results</template>
+    <template #title>Per-cell tag counts</template>
     <PlAgDataTableV2
       v-if="app.model.outputs.perCellTable"
       v-model="app.model.data.tableState"

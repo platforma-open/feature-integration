@@ -21,8 +21,7 @@ split point identifies which readings are background, and the comparator is the 
 so, and both it and this module decide afterwards which is which, by median. So the starting point does
 not change what the components mean; it changes which answer the EM settles on. On a mostly-background
 population that is the difference between a background weight near 0.8 and one near 0.95. The starting
-split is the paper's, `DEFAULT_INITIAL_SIGNAL_WEIGHT` above. It used to be the median, which is a choice
-`what-plays-the-baseline` never actually specified.
+split is the paper's, `DEFAULT_INITIAL_SIGNAL_WEIGHT` above.
 
 **No normalization.** The paper normalizes by each cell's UMI total. Every reading here is a raw
 integer UMI count, and a normalized comparator would be the only non-count in the pipeline. The
@@ -303,7 +302,7 @@ def _fit_two_component_nb(counts: np.ndarray, initial_signal_weight: float | Non
 def _signal_component(means: np.ndarray, sizes: np.ndarray) -> int:
     """Which component is the signal one: the higher MEDIAN, the mean breaking a tie.
 
-    `what-plays-the-baseline` fixes the rule as the higher-median component, and a negative binomial's
+    The published rule is the higher-median component, and a negative binomial's
     median is not ordered by its mean. The median depends on the size as much as the mean: at mean 50
     and size 0.05 it is 0, at mean 5 and size 1e6 it is 5. Sizes are re-estimated per component from
     that component's own variance every round, so the two orderings are free to disagree -- and an
@@ -352,9 +351,9 @@ def fit_tag_probabilities(
     The count of cells, not of readings, is what the 300 gates.
 
     `scored` is the reading each cell is turned into a state on, defaulting to `counts`. The two differ
-    by the minimum: `what-plays-the-baseline` fits this rung "on the raw counts", while
-    `minimum-count-before-any-reference` decides a count below the minimum per cell and per tag, on the
-    raw count, "before anything is read against a baseline". A count the minimum zeroed is therefore in
+    by the minimum: this rung is fitted on the RAW counts, while the minimum decides a count per cell
+    and per tag on the raw count, before anything is read against a baseline. A count the minimum
+    zeroed is therefore in
     the population the background is estimated from and is read as the zero it became. Both arrays are
     one entry per cell, in the same order.
 

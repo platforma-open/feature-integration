@@ -323,7 +323,7 @@ const cellGate = computed(() => {
 
 <template>
   <PlBlockPage>
-    <template #title>Explore readout</template>
+    <template #title>Clonotype tag binding</template>
 
     <PlAlert v-if="noDataset" type="warn">
       This run has no rows to punch: the verdict stage only runs once a single-cell V(D)J dataset is

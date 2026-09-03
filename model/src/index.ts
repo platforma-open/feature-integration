@@ -1684,8 +1684,8 @@ export const platforma = BlockModelV3.create(dataModel)
         value: "declared",
         label: "Declared baseline tag",
         description:
-          "The block reads each count against the tag your panel marks as the baseline, in the " +
-          "same cell. Verdicts read this way compare across runs.",
+          "Use this when your panel declares a control barcode. In each cell, an antigen counts as " +
+          "bound where its count clearly exceeds the control's.",
         needs:
           declaredTags.length > 0
             ? undefined
@@ -1698,12 +1698,9 @@ export const platforma = BlockModelV3.create(dataModel)
         value: "distribution",
         label: "Each tag's own distribution",
         description:
-          `The block splits each tag's counts across a sample's cells into two components. It reads ` +
-          `each count against the lower component. The sample needs at least ` +
-          `${Math.round(ctx.data.distributionMinCells)} cells. Nothing checks that the two ` +
-          `components stand apart. The run shows each fit on the Run quality page, and you judge it. ` +
-          `Where no two-component fit can be computed, that tag gets no baseline, and only the ` +
-          `antigens it carries read unreliable. Select this where your panel declares no baseline tag.`,
+          `Use this when your panel has no control barcode. For each antigen, the block estimates ` +
+          `background from that antigen's own counts across a sample's cells, and a cell counts as ` +
+          `bound where its count is too high to be background.`,
       },
     ];
 
@@ -1726,13 +1723,10 @@ export const platforma = BlockModelV3.create(dataModel)
       { type: "link" as const, href: "/" as const, label: "Main" },
       ...(hasRun
         ? [
-            { type: "link" as const, href: "/qc" as const, label: "Per-sample QC" },
-            { type: "link" as const, href: "/results" as const, label: "Per-cell results" },
-            // Shown for every run, including a run with no V(D)J dataset. That run produces no antigen columns, and
-            // this page is the only place a user learns why.
-            { type: "link" as const, href: "/punchcard" as const, label: "Explore readout" },
-            // "Run quality" rather than "QC". That page is per SAMPLE and this one is per run.
-            { type: "link" as const, href: "/antigen-qc" as const, label: "Run quality" },
+            { type: "link" as const, href: "/qc" as const, label: "Sample QC" },
+            { type: "link" as const, href: "/results" as const, label: "Cell counts" },
+            { type: "link" as const, href: "/antigen-qc" as const, label: "Tag QC" },
+            { type: "link" as const, href: "/punchcard" as const, label: "Clonotype binding" },
           ]
         : []),
     ];

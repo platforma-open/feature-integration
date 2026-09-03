@@ -167,7 +167,7 @@ def test_empty_droplets_is_not_offered():
 
 
 def test_several_reference_tags_combine_by_the_highest():
-    # `baseline-scope` combines replicates WITHIN one group by taking the highest, and forbids combining
+    # Replicates WITHIN one group combine by taking the highest, and combining is forbidden
     # ACROSS groups. This block has no scope construct, so no declared property separates any two
     # references and the whole panel is one group -- the case the atom settles, not the one it forbids.
     # Taking the highest is also what stops a dead reference from making the background look cleaner
@@ -244,7 +244,7 @@ def test_panel_source_refuses_one_below_the_minimum():
 
 
 def test_the_gate_boundary_excludes_the_line_itself():
-    # `reference-two-roles` sets aside a cell ABOVE the threshold, and where a reading EXCEEDS it. So a
+    # The rule sets aside a cell ABOVE the threshold, and where a reading EXCEEDS it. So a
     # reading exactly at the line stays in and answers, the same direction the floor takes from the
     # other side -- a count of four survives a minimum of four. Both sides are pinned, so changing the
     # comparison is a deliberate act.
@@ -425,7 +425,7 @@ def _fitted(rows, probabilities):
 
 
 def test_the_population_rung_binds_at_its_line_and_not_above_it():
-    # `what-plays-the-baseline` reads a cell bound "at 0.9 or above", so the line itself is inside. The
+    # The published rule reads a cell bound AT 0.9 or above, so the line itself is inside. The
     # declared rung has the same test at its cutoff; this rung had none, so `>=` and `>` read alike.
     at_line = _fitted([("S1", "c1", "A", 7)], {("S1", "c1", "A"): DISTRIBUTION_BOUND_PROBABILITY})
     assert at_line["state"].to_list() == [State.BOUND.value]

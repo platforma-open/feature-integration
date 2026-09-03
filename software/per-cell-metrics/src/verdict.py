@@ -237,7 +237,7 @@ def reference_by_cell(
     )
 
     if served is ReferenceChoice.DECLARED:
-        # Several declared references combine by taking the HIGHEST, which is `baseline-scope`'s rule
+        # Several declared references combine by taking the HIGHEST, which is the rule
         # for replicates within one group. This block has no scope construct, so no declared property
         # separates any two references, so the whole panel is one group and every declared reference in
         # it is a replicate -- the case that atom settles rather than the cross-group case it forbids.
@@ -285,7 +285,7 @@ def gate_cells(
     A sticky cell left in returns as a confident *not bound*, the collapse the four-state
     model prevents, so the exposure is surfaced either way.
 
-    Strictly above the threshold, never at it. `reference-two-roles` says a cell *above* the
+    Strictly above the threshold, never at it. The rule sets aside a cell *above* the
     threshold is set aside and that a cell is set aside where a reading *exceeds* it, which is
     the same direction the minimum takes from the other side -- a count of four survives a
     minimum of four.

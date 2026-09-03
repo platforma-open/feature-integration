@@ -257,7 +257,7 @@ export type BlockData = {
   defaultBlockLabel?: string; // UI-only: sidebar subtitle, mirrored from the suggestedBlockLabel output
   tableState: PlDataTableStateV2; // per-cell results grid state (UI-only, never projected to args)
   qcSummaryTableState: PlDataTableStateV2; // per-sample QC summary grid state (UI-only)
-  // The Run quality page's two grids (UI-only). Deliberately NOT named `antigenQcTableState` /
+  // The Per-tag QC page's two grids (UI-only). Deliberately NOT named `antigenQcTableState` /
   // `panelMismatchTableState`: the v3 -> v4 migration strips those two keys. A stored grid state means
   // something only against the frame it was saved on.
   runQualityTableState: PlDataTableStateV2; // run-level quality measurements grid state

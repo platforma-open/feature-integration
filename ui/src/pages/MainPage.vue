@@ -595,7 +595,7 @@ const columnDefs: ColDef<SampleResult>[] = [
     lockPinned: true,
     sortable: true,
     flex: 1,
-    // The Open affordance, the same one the Explore readout puts on its clonotype column.
+    // The Open affordance, the same one Clonotype binding puts on its clonotype column.
     // `invokeRowsOnDoubleClick` makes the button fire the ROW's double-click, so it routes through the
     // `onRowDoubleClicked` handler below: one path, and double-clicking anywhere on the row keeps working.
     cellRendererSelector: () => ({
@@ -609,9 +609,6 @@ const columnDefs: ColDef<SampleResult>[] = [
     headerName: "Progress",
     headerComponentParams: {
       type: "Progress",
-      info:
-        "Double-click a sample to open its report: read recovery, the individual quality checks, " +
-        "and the per-step logs (parse, refine tags, count UMIs).",
     } satisfies PlAgHeaderComponentParams,
     flex: 2,
     // results.ts already produces the cell config (status / percent / text / suffix). Pass it through.
@@ -626,12 +623,9 @@ const columnDefs: ColDef<SampleResult>[] = [
     headerName: "Quality",
     headerComponentParams: {
       type: "Text",
-      info:
-        "The worst status among this sample's own quality measurements. A measurement carries a status " +
-        "only where a published or stated line stands behind it; the rest are shown with their value and " +
-        "no status.\n" +
-        "Blank means no measurement of this sample carried a line, which is not the same as OK.\n" +
-        "Double-click the sample to see every measurement, its value, and the reason where it has none.",
+      tooltip:
+        "This is the worst status among the sample's own measurements — only those " +
+        "with a published or stated line behind them carry one.",
     } satisfies PlAgHeaderComponentParams,
     width: 120,
     cellRendererSelector: (params) =>
@@ -646,11 +640,8 @@ const columnDefs: ColDef<SampleResult>[] = [
     headerName: "Read recovery",
     headerComponentParams: {
       type: "Text",
-      info:
-        "Where each sample's reads went, by count. Bar segments left → right:\n" +
-        "Usable (green) — matched the read pattern and kept after feature-barcode panel correction.\n" +
-        "Off-panel (orange-red) — matched the pattern but the feature barcode was dropped as off-panel.\n" +
-        "No pattern match (purple) — did not match the read pattern.",
+      tooltip:
+        "Where each sample's reads went, by count. Hover a segment for what it is and how many reads it holds.",
     } satisfies PlAgHeaderComponentParams,
     flex: 2,
     cellStyle: { "--ag-cell-horizontal-padding": "12px" },
@@ -688,8 +679,7 @@ const gridOptions = {
       </PlBtnGhost>
     </template>
 
-    <!-- Main shows ONLY per-sample progress. The per-cell results table lives on its own "Per-cell results"
-         tab. The in-memory progress grid is always shown: it handles layout, its Progress cell, and the
+    <!-- Main shows ONLY per-sample progress. The per-cell table lives on its own "Cell counts" tab. The in-memory progress grid is always shown: it handles layout, its Progress cell, and the
          loading overlay for the pre-roster window. results.ts settles every row into "Done" from
          completedSamples. -->
     <div :style="{ flex: 1 }">
@@ -795,7 +785,7 @@ const gridOptions = {
       <PlDropdown
         v-model="app.model.data.featureNameColumn"
         :options="app.model.outputs.csvColumnOptions"
-        label="Antigen name column"
+        label="Tag name column"
         :disabled="tagMappingDisabled"
         required
       >
@@ -851,12 +841,10 @@ const gridOptions = {
         @update:model-value="setBaselineSource"
       >
         <template #tooltip>
-          Select what each count is read against. The block does not choose for you. Two baselines
-          give numbers that do not compare.<br /><br />
+          What each antigen count is compared against, to decide whether a cell bound it.<br /><br />
           <b>Declared baseline tag</b>: the tag your panel marks as binding nothing.<br />
           <b>Each tag's own distribution</b>: that tag's counts across the sample's cells, split in
           two.<br /><br />
-          The form then asks only for what your choice needs.
         </template>
       </PlDropdown>
       <!-- What the chosen rung still needs. Not an error: the rung is a legitimate choice and the fields that
@@ -924,14 +912,13 @@ const gridOptions = {
         :min-value="1"
         :step="1"
         clearable
+        placeholder="Off"
         label="Admissibility gate"
       >
         <template #tooltip>
-          Empty means off, which is the default. Set it, in baseline unique counts, and the block
-          sets aside any cell whose baseline reading goes above this value. That cell gives no
-          verdict anywhere.<br /><br />
-          Off matches Cell Ranger defaults. The cost is that a sticky cell stays in the set and
-          returns a confident "not bound".
+          Off by default. A cell holding a lot of the control barcode is picking up reagent
+          non-specifically. Any cell reading more UMIs than this for any of the controls is dropped
+          and gives no verdict for any tag.
         </template>
       </PlNumberField>
 
@@ -1040,17 +1027,18 @@ const gridOptions = {
           <PlNumberField
             :class="$style.half"
             v-model="agreementPercent"
-            :min-value="50.001"
+            :min-value="51"
             :max-value="100"
             :step="1"
             clearable
-            label="Min agreement (>50%)"
+            placeholder="50"
+            label="Min agreement (50%)"
           >
             <template #tooltip>
-              Empty means off, which is the default. A narrow majority then stands, and the verdict
-              reports how narrow it was.<br /><br />
-              Set a share, and a verdict whose majority falls below it reads unreliable.<br /><br />
-              The lowest value is 50.001%, because the verdict already takes the majority.
+              Majority threshold at or above which a clonotype is called bound or not bound for a
+              tag. Where its cells do not agree that strongly, the clonotype reads unreliable
+              instead.<br /><br />
+              Empty means off — any agreement above 50% is accepted.
             </template>
           </PlNumberField>
         </PlRow>

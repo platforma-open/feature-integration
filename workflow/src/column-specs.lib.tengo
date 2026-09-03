@@ -494,7 +494,7 @@ servedDomain := func(served) {
 // change of comparator does -- the comparator, the cell list and the grouping are in the DOMAIN for
 // exactly that reason.
 //
-// `parameter-set` requires every one of them to be recorded where its verdicts appear, so that a run
+// Every one of them is recorded where its verdicts appear, so that a run
 // that lowered a number does not look like a run that did not. Two of the seven change WHICH verdicts
 // exist -- the gate and the agreement floor -- and two runs differing on them used to emit columns of
 // identical identity and identical annotations, with the record only in a block-local output that
@@ -556,7 +556,7 @@ verdictsImportSpec := func(setAxisSpec, identityAxisSpec, served) {
 					"pl7.app/description": "Why this verdict is not settled. 'never-offered' pairs with 'never asked'. The other five explain 'unreliable': no comparator, all cells gated, tie, below the agreement limit, too few voters."
 				})
 			}),
-			// The two sets `four-state-verdict` names, and they are NOT the same set. The cells a question
+			// The two sets the four-state verdict names, and they are NOT the same set. The cells a question
 			// was put to is a fact about the experiment; the cells that could answer is that set narrowed
 			// by what the data and the settings allow -- a gate that set a cell aside, or a baseline that
 			// could not be computed for it. With no gate declared and a comparator for every cell the two
@@ -1627,19 +1627,6 @@ qcSampleSummaryImportSpec := func(sampleAxisSpec) {
 	return {
 		axes: [{ column: "sampleId", spec: sampleAxisSpec }],
 		columns: [
-			{
-				column: "status", id: "status",
-				spec: {
-					name: "pl7.app/qc/sampleStatus",
-					valueType: "String",
-					annotations: a(96000, true, {
-						"pl7.app/label": "Status",
-						"pl7.app/isDiscreteFilter": "true",
-						"pl7.app/discreteValues": QC_STATUSES,
-						"pl7.app/description": "The worst status among this sample's own measurements that carry one. Empty where none does."
-					})
-				}
-			},
 			num("readsTotal", "readsTotal", "Reads parsed", 95000, undefined,
 				"Every read the parser saw, before pattern matching."),
 			num("readsMatched", "readsMatched", "Reads matched", 94000, undefined, undefined),

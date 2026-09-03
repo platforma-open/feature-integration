@@ -136,7 +136,7 @@ def test_an_even_split_is_handled():
 def test_the_signal_component_is_the_higher_median_one_even_where_the_means_disagree():
     """The labelling rule itself, on parameters rather than on a fitted bed.
 
-    `what-plays-the-baseline` fixes the rule as the higher-median component. A negative binomial's
+    The published rule is the higher-median component. A negative binomial's
     median is not ordered by its mean -- the median depends on the size too -- so the two orderings can
     disagree, and labelling by mean inverts every call for the tag: cells reading nothing score high and
     cells reading a lot score low. That was a shipped bug, fixed by labelling on the median.
@@ -258,7 +258,7 @@ def test_a_tag_nothing_bound_still_fits_and_now_calls_no_cell_bound():
     The method assumes two components exist, so it splits a single population and calls its upper slice
     signal. That much is unchanged, and the pin below is unchanged with it: the fit must return
     probabilities rather than refuse, because rejecting here would be a separation test of our own
-    invention and `what-plays-the-baseline` declines to build one.
+    invention, and the method this rung implements has no such test.
 
     What changed is WHERE the split lands. This rung now starts the EM from the source paper's own
     pivot rather than from the median, and from that start a single background population no longer
