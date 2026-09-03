@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.feature-integration
 
+## 3.3.0
+
+### Minor Changes
+
+- b6e5a68: Release the visual refactoring of the block
+
 ## 3.2.0
 
 ### Minor Changes
