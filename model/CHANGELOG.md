@@ -1,5 +1,141 @@
 # @platforma-open/milaboratories.feature-integration.model
 
+## 3.1.0
+
+### Minor Changes
+
+- e873489: The fitted baseline states where it starts, and the scientist can move it
+
+  Two settings appear under the fitted baseline, and nowhere else — neither reaches the declared or
+  panel rung, so neither is offered there.
+
+  **Expected binder %.** Roughly what share of cells are expected to bind an antigen. The fit splits the
+  counts at the matching quantile and seeds one component from each side. It is not a threshold: the EM
+  re-estimates both components from there, so the split the run ends up with is an output of the fit.
+
+  It changes answers anyway, because the EM is not globally convergent on these distributions and the
+  start decides which optimum it reaches. On a panel where 27% of cells really did bind, the shipped
+  value put the split at 953 counts; told 30%, the same fit put it at 13 — which is where the gap in that
+  tag's histogram actually is. The published value comes from a rare-binder regime, and the study behind
+  this rung never tested a positive fraction above 25%.
+
+  The trade runs one way, so no single value is right: raising it also makes the fit readier to carve a
+  signal component out of a single population, so a tag that bound nothing invents more binders. Only
+  the scientist knows which side of that to be on, which is why it is a setting.
+
+  **Bound probability.** How sure the fit must be before a cell counts as bound. Previously fixed at
+  0.9 with no way to see or move it. Now shown, with 0.9 as both the default and the lowest accepted
+  value — below it a cell holding none of a tag could cross the line, and the run counts those cells by
+  arithmetic rather than reading each one, so the two halves would disagree with nothing raised.
+
+  **The fit now starts where the method says.** The split was taken at the median, which
+  `what-plays-the-baseline` never specified. A median start begins from two halves of equal size, which
+  is far from the truth on a mostly-background population — every tag here — and pulls the fit toward
+  calling much of that background signal. On a control reagent, whose counts hold one population, a
+  median start gives a background weight near 0.8 against 0.95 from the published split.
+
+  That trade is not free, and the direction is recorded in the suite: on a background whose long tail
+  puts its mean above the binders', the published start decomposes the counts into the bulk and the
+  tail rather than into background and binders, and calls the tail the signal. The median start got that
+  shape right and the mostly-background case wrong instead. Neither wins both. The run gives no warning
+  in either case, which is why the fitted grid puts both means in front of the reader.
+
+- 3af02c5: The undeclared-barcode Status judges each barcode, not the whole sample
+
+  The Status column read the sample's aggregate undeclared share, so it was one
+  word repeated down every row of a sample. A sample carrying one heavy
+  undeclared sequence among many light ones said nothing about which sequence to
+  look at.
+
+  Status now reads each row's own share of its sample's pre-refine reads. It warns
+  above 1% and alerts above 5%. Those two numbers are operator-set and
+  overridable, not inherited: the field publishes 0.50/1.0 for a sample's
+  AGGREGATE undeclared share, and that line does not transfer to one sequence,
+  because an aggregate reaches 0.50 while no single sequence comes near it.
+
+  The alert end changed direction with it. It compared for equality, which fired
+  only at exactly the error threshold and let every larger share read _warn_ — the
+  worse finding being the one that never showed. Both ends now face the same way.
+
+  The sample-level share keeps its column, renamed to "Sample Undeclared (%)", and
+  carries no status.
+
+  Every column description in that table was rewritten to one instruction per
+  sentence, active voice, and short sentences.
+
+### Patch Changes
+
+- e873489: The fitted background draws the distribution the run holds
+
+  The fitted-background grid is the only way to see whether a tag's counts separated into two
+  populations, so a hump it invents, or one it hides, is the error this surface cannot carry. Three
+  things were wrong with it.
+
+  **The zeros were missing.** The plot was binned from the sparse counts frame, which has no rows for
+  cells that read nothing. Those zeros are most of the background, so the plot showed one decaying hump
+  whatever the fit had found — the left half of the distribution was simply absent. It is now binned over
+  the cells the fit actually ran on, one entry per cell in the sample, and a cell that read nothing counts
+  as a zero.
+
+  **Every bar is now the same width.** Bins sit at `expm1(k * 0.2)`, uniform in `log1p`, which is what
+  the plot's axis already is. The source paper histograms `log1p` counts at a fixed width for the same
+  reason.
+
+  Before, bins were whole numbers stepping geometrically, so their widths ran from 0.301 of a decade at
+  `[0, 1)` down to 0.079 at `[4, 5)`. A raw count then made a wide bar stand above a narrow one holding
+  the same density, so each bar had to be divided by its own width — and dividing by the wrong width hid
+  a real signal component completely: on a mixture whose upper mode was cleanly separated at a mean of
+  60, that hump drew at 0.9% of the background peak. Equal widths remove the division and the error with
+  it. Bar height is a plain cell count again, so the hover readout reports a cell count.
+
+  The cost of equal widths is that the edges are no longer whole numbers, and counts are — consecutive
+  integers sit further apart than one bin until about count 13, so the low end is a comb of separated
+  bars. The paper's own figures show the same gaps. `LOG1P_BIN_WIDTH` is coarser than the paper's 0.075
+  for that reason: at 0.075 a real tag came back with 75 of 97 bins empty.
+
+  **The bound line is drawn.** Under a fitted baseline the threshold is a probability, so a plot in counts
+  had nothing to mark it against. Each fit now resolves the count at which the run's bound probability
+  starts calling a cell bound, and the panel draws it. A fit that reaches no such count draws no line and
+  says so, rather than marking one at the bottom.
+
+  Each (sample, tag) is binned against its own range, so the emitted weight lists have different lengths
+  and are shorter than the shared edge set. The plot pads them, which draws the same picture — past a
+  pair's own maximum every bar is empty either way. Binning inside the fit rather than returning per-cell
+  arrays takes the fitting step from 2.1 million numbers held to 7,764 on a 27-sample run.
+
+- e873489: The fitted-background grid reads one sample at a time
+
+  The fit runs per (sample, tag), so the grid drew one panel per pair — 27 samples and 9 barcodes is 243
+  panels on one page, and every title had to repeat the sample to tell them apart. It now shows one
+  sample, chosen from a selector above it, so a panel is titled by its reagent alone and the sample is
+  named once. Barcodes read in the order the panel file declares them, so a barcode holds the same slot
+  whichever sample is shown.
+
+  What that gives up is reading down one reagent across samples. The grid still supports that shape;
+  nothing asks for it today.
+
+  Each panel's caption now carries the bound count alone, and the fit's own numbers moved to the enlarged
+  panel, where a value is read rather than scanned. The cell count that used to lead the caption was the
+  sample's analysed population — the same number on every panel of the sample — and now sits once above
+  the grid.
+
+  **The Panel column is out of the tables.** It is a hash of the sorted barcode list, because no panel
+  file names its panel, and a run declaring one panel for every sample repeated that hash identically on
+  every row. It stays available in the column picker, and a multi-panel run should switch it on:
+  `Seen in 2/3` cannot be read without knowing which three samples.
+
+  **Fixes**
+
+  - A fitted background mean of 0.000488 printed as `0`, a value the fit cannot produce — three
+    significant figures were computed and then discarded by a formatter keeping three decimal places.
+  - The Run quality page failed to render at all: a watch read a value declared further down the file.
+  - A run computed before the bound count existed reported "no count reaches the bound probability",
+    stating a finding no run had produced. Absent and null now read differently.
+  - Resizing the window redrew every panel on every frame, and each redraw leaks a tooltip node in the
+    uikit. A few pixels of tolerance takes a drag from hundreds of redraws to a handful. The leak itself
+    is the uikit's.
+  - The quality-report JSON was pretty-printed, which roughly doubled it for a file only the UI reads.
+
 ## 3.0.3
 
 ### Patch Changes

@@ -1,5 +1,128 @@
 # @platforma-open/milaboratories.feature-integration.workflow
 
+## 3.2.0
+
+### Minor Changes
+
+- e873489: The fitted baseline states where it starts, and the scientist can move it
+
+  Two settings appear under the fitted baseline, and nowhere else — neither reaches the declared or
+  panel rung, so neither is offered there.
+
+  **Expected binder %.** Roughly what share of cells are expected to bind an antigen. The fit splits the
+  counts at the matching quantile and seeds one component from each side. It is not a threshold: the EM
+  re-estimates both components from there, so the split the run ends up with is an output of the fit.
+
+  It changes answers anyway, because the EM is not globally convergent on these distributions and the
+  start decides which optimum it reaches. On a panel where 27% of cells really did bind, the shipped
+  value put the split at 953 counts; told 30%, the same fit put it at 13 — which is where the gap in that
+  tag's histogram actually is. The published value comes from a rare-binder regime, and the study behind
+  this rung never tested a positive fraction above 25%.
+
+  The trade runs one way, so no single value is right: raising it also makes the fit readier to carve a
+  signal component out of a single population, so a tag that bound nothing invents more binders. Only
+  the scientist knows which side of that to be on, which is why it is a setting.
+
+  **Bound probability.** How sure the fit must be before a cell counts as bound. Previously fixed at
+  0.9 with no way to see or move it. Now shown, with 0.9 as both the default and the lowest accepted
+  value — below it a cell holding none of a tag could cross the line, and the run counts those cells by
+  arithmetic rather than reading each one, so the two halves would disagree with nothing raised.
+
+  **The fit now starts where the method says.** The split was taken at the median, which
+  `what-plays-the-baseline` never specified. A median start begins from two halves of equal size, which
+  is far from the truth on a mostly-background population — every tag here — and pulls the fit toward
+  calling much of that background signal. On a control reagent, whose counts hold one population, a
+  median start gives a background weight near 0.8 against 0.95 from the published split.
+
+  That trade is not free, and the direction is recorded in the suite: on a background whose long tail
+  puts its mean above the binders', the published start decomposes the counts into the bulk and the
+  tail rather than into background and binders, and calls the tail the signal. The median start got that
+  shape right and the mostly-background case wrong instead. Neither wins both. The run gives no warning
+  in either case, which is why the fitted grid puts both means in front of the reader.
+
+- e873489: Per-cell antigen counts are exported, before the minimum is applied
+
+  A new export, keyed `[sampleId, cellId, tagId]`, carrying the UMI count each cell held for each
+  barcode. It is what a downstream per-cell composition plot needs: one bar per cell, split by antigen.
+
+  **Before the count minimum, and that is the point.** The counts the verdicts are computed on have
+  already had every value below the minimum set to zero, and the comparator tag is exempt from that —
+  so on a declared-baseline run the control keeps its small counts while the antigens lose theirs. Those
+  numbers answer "what counted as evidence of binding". This export answers "what did the cell capture",
+  so a cell's tags add up to what that cell actually held. The column's own description says so, because
+  the two do not reconcile and a reader who mixes them draws the wrong conclusion.
+
+  It cannot be derived from the floored counts afterwards: once the minimum has run, a count of 3 and a
+  count that was never there are both 0.
+
+  Partitioned by sample, the only column in the block that is. It is the largest table the run produces,
+  at one row per (cell, tag), and a composition plot reads one sample per view — so a reader after one
+  sample touches one partition instead of the whole run.
+
+- 3af02c5: The undeclared-barcode Status judges each barcode, not the whole sample
+
+  The Status column read the sample's aggregate undeclared share, so it was one
+  word repeated down every row of a sample. A sample carrying one heavy
+  undeclared sequence among many light ones said nothing about which sequence to
+  look at.
+
+  Status now reads each row's own share of its sample's pre-refine reads. It warns
+  above 1% and alerts above 5%. Those two numbers are operator-set and
+  overridable, not inherited: the field publishes 0.50/1.0 for a sample's
+  AGGREGATE undeclared share, and that line does not transfer to one sequence,
+  because an aggregate reaches 0.50 while no single sequence comes near it.
+
+  The alert end changed direction with it. It compared for equality, which fired
+  only at exactly the error threshold and let every larger share read _warn_ — the
+  worse finding being the one that never showed. Both ends now face the same way.
+
+  The sample-level share keeps its column, renamed to "Sample Undeclared (%)", and
+  carries no status.
+
+  Every column description in that table was rewritten to one instruction per
+  sentence, active voice, and short sentences.
+
+### Patch Changes
+
+- e873489: The fitted-background grid reads one sample at a time
+
+  The fit runs per (sample, tag), so the grid drew one panel per pair — 27 samples and 9 barcodes is 243
+  panels on one page, and every title had to repeat the sample to tell them apart. It now shows one
+  sample, chosen from a selector above it, so a panel is titled by its reagent alone and the sample is
+  named once. Barcodes read in the order the panel file declares them, so a barcode holds the same slot
+  whichever sample is shown.
+
+  What that gives up is reading down one reagent across samples. The grid still supports that shape;
+  nothing asks for it today.
+
+  Each panel's caption now carries the bound count alone, and the fit's own numbers moved to the enlarged
+  panel, where a value is read rather than scanned. The cell count that used to lead the caption was the
+  sample's analysed population — the same number on every panel of the sample — and now sits once above
+  the grid.
+
+  **The Panel column is out of the tables.** It is a hash of the sorted barcode list, because no panel
+  file names its panel, and a run declaring one panel for every sample repeated that hash identically on
+  every row. It stays available in the column picker, and a multi-panel run should switch it on:
+  `Seen in 2/3` cannot be read without knowing which three samples.
+
+  **Fixes**
+
+  - A fitted background mean of 0.000488 printed as `0`, a value the fit cannot produce — three
+    significant figures were computed and then discarded by a formatter keeping three decimal places.
+  - The Run quality page failed to render at all: a watch read a value declared further down the file.
+  - A run computed before the bound count existed reported "no count reaches the bound probability",
+    stating a finding no run had produced. Absent and null now read differently.
+  - Resizing the window redrew every panel on every frame, and each redraw leaks a tooltip node in the
+    uikit. A few pixels of tolerance takes a drag from hundreds of redraws to a handful. The leak itself
+    is the uikit's.
+  - The quality-report JSON was pretty-printed, which roughly doubled it for a file only the UI reads.
+
+- Updated dependencies [e873489]
+- Updated dependencies [e873489]
+- Updated dependencies [e873489]
+- Updated dependencies [3af02c5]
+  - @platforma-open/milaboratories.feature-integration.per-cell-metrics@3.2.0
+
 ## 3.1.0
 
 ### Minor Changes
