@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.feature-integration.model
 
+## 3.2.0
+
+### Minor Changes
+
+- ff33d6a: Visual refactoring
+
 ## 3.1.0
 
 ### Minor Changes

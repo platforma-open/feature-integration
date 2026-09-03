@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.feature-integration.per-cell-metrics
 
+## 3.3.0
+
+### Minor Changes
+
+- ff33d6a: Visual refactoring
+
 ## 3.2.0
 
 ### Minor Changes

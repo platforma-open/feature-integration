@@ -1,5 +1,16 @@
 # @platforma-open/milaboratories.feature-integration.ui
 
+## 2.5.0
+
+### Minor Changes
+
+- ff33d6a: Visual refactoring
+
+### Patch Changes
+
+- Updated dependencies [ff33d6a]
+  - @platforma-open/milaboratories.feature-integration.model@3.2.0
+
 ## 2.4.0
 
 ### Minor Changes
