@@ -110,7 +110,7 @@ const settings = computed(() => {
     type: "log-bins" as const,
     // A bin's own bounds travel with its weight, since this form bins nothing itself.
     // Bar height is the plain cell count. Every caller's bars are the same width on screen, so the
-    // height already is the share and there is nothing to divide by. PADDED to the full edge set. 
+    // height already is the share and there is nothing to divide by. PADDED to the full edge set.
     bins: Array.from({ length: Math.max(props.edges.length - 1, 0) }, (_, i) => ({
       from: props.edges[i]!,
       to: props.edges[i + 1]!,

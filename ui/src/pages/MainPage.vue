@@ -997,7 +997,7 @@ const gridOptions = {
             :max-value="99.9"
             :step="5"
             clearable
-            label="Expected binder fraction (%)"
+            label="Expected binder %"
           >
             <template #tooltip>
               Roughly what share of cells you expect to bind a given antigen. It tells the fit where
@@ -1034,6 +1034,10 @@ const gridOptions = {
               the run counts those positions without reading each one.
             </template>
           </PlNumberField>
+        </PlRow>
+        <!-- Its own row. The three fields above are conditions on ONE cell's reading; this one is a
+             condition on how the cell readings agree with each other, so it sits apart from them. -->
+        <PlRow>
           <PlNumberField
             :class="$style.half"
             v-model="agreementPercent"
