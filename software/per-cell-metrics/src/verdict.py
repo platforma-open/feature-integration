@@ -302,13 +302,11 @@ def gate_cells(
 BETA_X, BETA_A_OFFSET, BETA_B_OFFSET = 0.925, 1, 3
 BOUND_CUTOFF = 75.0
 
-# The population rung's own call, and not this block's to move: under a fitted distribution
-# a cell reads *bound* at 0.9 or above, where 0.9 is the probability its count belongs to
-# the signal component. The score below is the declared reagent's rule and does not apply
-# here -- each baseline brings its own rule, and a run selects one baseline.
+# The population rung's line: under a fitted distribution a cell reads *bound* where the probability
+# its count belongs to the signal component reaches this. The score below is the declared reagent's
+# rule and does not apply here -- each baseline brings its own rule, and a run selects one baseline.
 #
-# NOT A SETTING, and it must not become one. It comes from the literature, so a dial would
-# only produce runs that cannot be compared against the work the method came from.
+# The DEFAULT, and the FLOOR of what a run may ask for
 DISTRIBUTION_BOUND_PROBABILITY = 0.9
 
 
@@ -503,7 +501,12 @@ def _comparator(key: tuple[str, str], identity: str, admissibility: Admissibilit
     return reference.get(key)
 
 
-def read_states(identities: pl.DataFrame, admissibility: Admissibility, cutoff: float) -> pl.DataFrame:
+def read_states(
+    identities: pl.DataFrame,
+    admissibility: Admissibility,
+    cutoff: float,
+    probability_cutoff: float = DISTRIBUTION_BOUND_PROBABILITY,
+) -> pl.DataFrame:
     """Give every (cell, identity) row a state.
 
     Two routes to UNRELIABLE, both recorded in `unreliableReason`: the cell has no comparator,
@@ -538,7 +541,7 @@ def read_states(identities: pl.DataFrame, admissibility: Admissibility, cutoff: 
         df = df.with_columns(pl.Series("_pBound", called, dtype=pl.Float64)).with_columns(
             pl.when(pl.col("unreliableReason").is_not_null())
             .then(pl.lit(State.UNRELIABLE.value))
-            .when(pl.col("_pBound") >= DISTRIBUTION_BOUND_PROBABILITY)
+            .when(pl.col("_pBound") >= probability_cutoff)
             .then(pl.lit(State.BOUND.value))
             .otherwise(pl.lit(State.NOT_BOUND.value))
             .alias("state")

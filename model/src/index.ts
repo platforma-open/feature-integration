@@ -6,15 +6,15 @@ import type {
 } from "@platforma-sdk/model";
 import {
   BlockModelV3,
-  createPlDataTableStateV2,
   createPFrameForGraphs,
+  createPlDataTableStateV2,
   createPlDataTableV2,
   createPlDataTableV3,
   DataColumn,
   DataModelBuilder,
+  getAxisId,
   isPColumnSpec,
   parseResourceMap,
-  getAxisId,
 } from "@platforma-sdk/model";
 import { assemblePattern, CELL_TAG, FEATURE_TAG, UMI_TAG, validatePattern } from "./pattern";
 import { getPreset } from "./presets";
@@ -41,6 +41,12 @@ export const VERDICT_DEFAULTS = {
   countFloor: 4,
   // verdict.py BOUND_CUTOFF
   boundCutoff: 75,
+  // verdict.py DISTRIBUTION_BOUND_PROBABILITY. Both the default and the FLOOR: `args()` refuses below it.
+  boundProbability: 0.9,
+  // tag_distribution.py DEFAULT_INITIAL_SIGNAL_WEIGHT, the source paper's own initial weight. A default
+  // only -- unlike the line above this is not a floor, because it states what the EXPERIMENT holds
+  // rather than what the method licenses, and a sorted or synthetic population can sit far from it.
+  expectedBinderFraction: 0.1,
   // combine.py DEFAULT_MIN_VOTERS
   minVotingCells: 1,
   // verdict.py DEFAULT_PANEL_MIN_MEMBERS. Gates rather than tunes: keep above the fifteen-tag cap of an
@@ -216,6 +222,11 @@ export type TagCountBins = {
    */
   tagLabels?: Record<string, string>;
   /**
+   * The barcodes in the order the PANEL declares them, deduplicated on first appearance. A per-sample view
+   * reads in it, so that a barcode holds the same slot in every sample.
+   */
+  tagOrder?: string[];
+  /**
    * The fit's two means and the background's share of cells, at the same (sample, tag) grain as the bins.
    * Here rather than in the p-frame beside them, so a grid of panels costs no driver query per panel.
    *
@@ -224,7 +235,15 @@ export type TagCountBins = {
    */
   fitsBySample: Record<
     string,
-    Record<string, { backgroundMean: number; signalMean: number; backgroundWeight: number }>
+    Record<
+      string,
+      {
+        backgroundMean: number;
+        signalMean: number;
+        backgroundWeight: number;
+        boundAtCount?: number | null;
+      }
+    >
   >;
   /**
    * The run's own two spreads, each on its own LINEAR edges: `score` and `referenceReading`. Linear, unlike
@@ -505,8 +524,10 @@ type BlockDataV2 = Omit<
   | "distributionMinCells"
   | "countFloor"
   | "boundCutoff"
+  | "boundProbability"
   | "minVotingCells"
   | "minAgreement"
+  | "expectedBinderFraction"
   | "gateThreshold"
   | "grouping"
   | "contendingGroups"
@@ -710,6 +731,13 @@ export const platforma = BlockModelV3.create(dataModel)
       );
 
     if (data.countFloor < 0) throw new Error("The count floor cannot be negative");
+    if (
+      typeof data.boundProbability === "number" &&
+      (data.boundProbability < VERDICT_DEFAULTS.boundProbability || data.boundProbability > 1)
+    )
+      throw new Error(
+        `The fitted baseline's probability is at least ${VERDICT_DEFAULTS.boundProbability} and at most 1`,
+      );
     if (data.boundCutoff < 0 || data.boundCutoff > 100)
       throw new Error("The bound cutoff is a score between 0 and 100");
     if (data.minVotingCells < 1) throw new Error("At least one cell must vote");
@@ -722,6 +750,13 @@ export const platforma = BlockModelV3.create(dataModel)
       (data.minAgreement <= 0.5 || data.minAgreement > 1)
     )
       throw new Error("The agreement floor is a share above 50% and at most 100%");
+    // Strictly inside (0, 1). At either end the split hands every cell to one side and the fit silently
+    // falls back, so the run would record a fraction it never used.
+    if (
+      typeof data.expectedBinderFraction === "number" &&
+      (data.expectedBinderFraction <= 0 || data.expectedBinderFraction >= 1)
+    )
+      throw new Error("The expected binder fraction is a share above 0% and below 100%");
     // The cell condition GATES the fitted rung rather than tuning it, so it is a real population size.
     if (data.distributionMinCells < 1)
       throw new Error("A fitted baseline needs at least one cell to be fitted over");
@@ -855,6 +890,8 @@ export const platforma = BlockModelV3.create(dataModel)
       distributionMinCells: Math.round(data.distributionMinCells),
       countFloor: Math.round(data.countFloor),
       boundCutoff: data.boundCutoff,
+      boundProbability: data.boundProbability,
+      expectedBinderFraction: data.expectedBinderFraction,
       minVotingCells: Math.round(data.minVotingCells),
       // Off by default, and off means ABSENT. A minimum agreement of 0 passes every majority instead of skipping
       // the check. A gate of 0 sets aside every cell instead of gating none.

@@ -878,69 +878,64 @@ def deciles_of(values: np.ndarray) -> pl.DataFrame:
     )
 
 
-# The MOST buckets a count distribution is drawn in. `count_bin_edges` returns fewer where the run's
-# range cannot fill them at integer width. Enough bars for two humps to read apart at thumbnail size,
-# few enough that a sparse tag does not dissolve into single-cell spikes.
+# How many buckets the count distributions used to be drawn in, back when their edges were integers.
+# Kept only because `linear_bin_edges` uses it as its default; the count distributions do not.
 COUNT_BIN_COUNT = 24
 
 
-def count_bin_edges(counts: pl.DataFrame) -> list[float]:
-    """INTEGER bin edges spanning every count in the frame, shared by every plot drawn from it.
+# The width of one bar, measured in log1p units. A fixed width is what makes every bar the same size.
+#
+# The source paper uses 0.075. This is deliberately coarser: at 0.075 a real tag came back with 75 of its
+# 97 bins empty, because whole-number counts land on scattered points once you take the log. The paper
+# lives with those gaps by drawing a smooth density curve over them, which these plots cannot do. 0.2
+# keeps the bars equal and still readable at thumbnail size.
+LOG1P_BIN_WIDTH = 0.2
 
-    The caller passes the counts of the CELL LIST where one arrived, so the domain ends at the
-    highest count among cells. Observed barcodes outnumber cells by one to two orders of magnitude.
 
-    ONE edge set for the whole run, not one per tag: a reader compares a grid of tags side by side,
-    and per-tag edges would draw a tag spanning 1-4 and one spanning 1-4000 alike.
+def log1p_bin_edges(top: int, width: float = LOG1P_BIN_WIDTH) -> list[float]:
+    """Bin edges spanning 0 to `top` that all draw the SAME WIDTH. `[]` if there is nothing to span.
 
-    Four invariants, and every one of them is load-bearing:
+    Returned as counts, at `expm1(k * width)`, because counts are what the plot takes. The plot's axis is
+    log1p, so an edge at `expm1(k * width)` lands at `k * width` on screen -- evenly spaced.
 
-    - **Edges are whole numbers.** A UMI count is a whole number. Geometric edges are not, so a bin
-      can fall strictly between two counts and stand empty at every weight the run could produce.
-      `np.geomspace(1, 5155, 25)` puts one at [2.039, 2.911), which held nothing on all 15 tags of a
-      real run and read as a missing bar.
-    - **Strictly increasing, so every bin holds at least one whole number.** Rounding alone does not
-      give this: below a step of 1 the geometric ideal repeats an edge.
-    - **Bins are half-open `[a, b)`, and the last edge is `top + 1`.** A bin holds `b - a` counts,
-      including the top one. An edge at `top` would instead close the last bin and give it one count
-      more than its width.
-    - **Unit width at the low end, geometric above it.** The step is `max(previous + 1, geometric)`,
-      so the ambient population near 1 draws one count per bar. Above the crossover a bar covers
-      several counts and its height carries that width -- the shape is weight, never density.
+    Edges start at 0 so the zeros the fit ran over get a bar of their own. Those zeros are most of the
+    background; drop them and the plot shows one decaying hump whatever the fit found. The last edge is
+    the first step above `top`, so the largest count has a bin to land in.
 
-    At most `COUNT_BIN_COUNT` bins, and fewer where the range cannot fill them. Nothing reads the
-    count: `bin_values`, `per_tag_count_bins` and the UI all take it from `len(edges) - 1`.
+    ONE edge set for the whole run, not one per tag, so a reader can compare a grid of tags side by side.
 
-    Edges start at 1, the smallest count that exists -- a row is only written for an observed
-    reading, so zero never appears. `[]` where the frame holds no counts at all.
+    The cost: THE EDGES ARE NOT WHOLE NUMBERS. Counts are, so consecutive integers sit further apart than
+    one bin until about count 13, and the low end comes out as separated bars with empty gaps between
+    them. Whole-number edges avoided that, which is why they were used here before -- but they bought it
+    with the per-bar division above. The source paper's figures show the same gaps.
+
+    Nothing needs to be told the bin count: `bin_values`, `per_tag_count_bins` and the UI all read it
+    from `len(edges) - 1`.
     """
-    if counts.height == 0:
+    if top < 1 or width <= 0.0:
         return []
-    top = int(counts["umiCount"].max() or 0)
-    if top < 1:
+    return log1p_edges_for(int(np.floor(np.log1p(top) / width)) + 1, width)
+
+
+def log1p_edges_for(steps: int, width: float = LOG1P_BIN_WIDTH) -> list[float]:
+    """The first `steps` bins of the same grid, as counts. `[]` for a non-positive step or width.
+
+    Separate from `log1p_bin_edges` because the edges are ABSOLUTE: they sit at `expm1(k * width)`
+    whatever the data holds, so a bin count alone identifies them. Each (sample, tag) bins against its
+    own range, and the plot then needs one edge list long enough for the widest of them -- which is a
+    bin count, not a frame to re-scan.
+    """
+    if steps < 1 or width <= 0.0:
         return []
-    # Unit bins already reach the top, so a geometric step would only throw resolution away.
-    if top <= COUNT_BIN_COUNT:
-        return [float(x) for x in range(1, top + 2)]
-    # `top + 1` is the last edge, so the ratio is taken against it rather than against `top`.
-    ratio = (top + 1) ** (1.0 / COUNT_BIN_COUNT)
-    edges = [1]
-    while len(edges) < COUNT_BIN_COUNT:
-        nxt = max(edges[-1] + 1, round(edges[-1] * ratio))
-        # `>=`, not `>`: an edge at `top` would leave the last bin holding only the top count.
-        if nxt >= top:
-            break
-        edges.append(nxt)
-    edges.append(top + 1)
-    return [float(x) for x in edges]
+    return [float(np.expm1(k * width)) for k in range(steps + 1)]
 
 
 def linear_bin_edges(values: np.ndarray, count: int = COUNT_BIN_COUNT) -> list[float]:
     """Evenly spaced bin edges spanning `values`. `[]` where there are none.
 
-    Linear, unlike `count_bin_edges`: a specificity score is a 0-100 scale and a reference reading is
-    read against a gate a scientist types in the same units, so a log axis would put the number they
-    are choosing somewhere they cannot find it.
+    Evenly spaced, unlike the count distributions' log1p edges. A specificity score is a 0-100 scale,
+    and a reference reading is judged against a threshold the scientist types in the same units, so a
+    log axis would put the number they are choosing somewhere they cannot find it.
     """
     if values.size == 0:
         return []

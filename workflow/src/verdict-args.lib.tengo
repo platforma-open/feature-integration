@@ -25,6 +25,8 @@ PARAMETER_NAMES := [
 	"aggregateBarcodeError",
 	"aggregateBarcodeWarn",
 	"boundCutoff",
+	"boundProbability",
+	"expectedBinderFraction",
 	"captureMap",
 	"cellBarcodeValidError",
 	"cellBarcodeValidWarn",
@@ -52,6 +54,10 @@ PARAMETER_NAMES := [
 // always on the command line, where the run record and a re-run both see it.
 DEFAULT_COUNT_FLOOR := 4
 DEFAULT_BOUND_CUTOFF := 75
+// verdict.py DISTRIBUTION_BOUND_PROBABILITY. Both the default and the floor of what a run may ask for.
+DEFAULT_BOUND_PROBABILITY := 0.9
+// The source paper's own initial weight. A statement about the experiment, so the form may move it.
+DEFAULT_EXPECTED_BINDER_FRACTION := 0.1
 DEFAULT_MIN_VOTING_CELLS := 1
 DEFAULT_PANEL_MIN_MEMBERS := 25
 DEFAULT_DISTRIBUTION_MIN_CELLS := 300
@@ -131,6 +137,8 @@ build := func(params) {
 	add("--distribution-min-cells", _intArg(_num(params.distributionMinCells, DEFAULT_DISTRIBUTION_MIN_CELLS)))
 	add("--floor", _intArg(_num(params.countFloor, DEFAULT_COUNT_FLOOR)))
 	add("--cutoff", string(_num(params.boundCutoff, DEFAULT_BOUND_CUTOFF)))
+	add("--bound-probability", string(_num(params.boundProbability, DEFAULT_BOUND_PROBABILITY)))
+	add("--initial-signal-weight", string(_num(params.expectedBinderFraction, DEFAULT_EXPECTED_BINDER_FRACTION)))
 	add("--min-voters", _intArg(_num(params.minVotingCells, DEFAULT_MIN_VOTING_CELLS)))
 
 	// A switch, and it carries its value rather than standing alone. The vector is flag/value pairs: `valueOf`

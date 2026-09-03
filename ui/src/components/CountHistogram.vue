@@ -17,9 +17,11 @@ import { valuesFromBins } from "./binValues";
 // 674px default overflows any narrower container and paints over whatever sits beside it. Measured here
 // with a ResizeObserver.
 const props = defineProps<{
-  /** Bin boundaries, `weights.length + 1` of them, shared across every plot of a run. */
+  /** Bin boundaries, shared across every plot of a run. */
   edges: number[];
-  /** Cells per bin, in edge order. */
+  /**
+   * Cells per bin, in edge order.
+   */
   weights: number[];
   /**
    * The x axis. `log` suits counts per cell, which span orders of magnitude: on a linear axis the ambient
@@ -30,20 +32,6 @@ const props = defineProps<{
   title?: string;
   /** Drawn as a marker. Undefined draws none, which is the statement that no gate is declared. */
   threshold?: number;
-  /**
-   * Divides each bin's weight by the number of whole counts it spans, so bar height is cells per count
-   * rather than cells. `log-bins` only.
-   *
-   * Bin width in counts is not constant: `count_bin_edges` steps by 1 near a count of 1 and
-   * geometrically above it, so one real edge set spans 1, 1, 2, 3, 4, 6, 9, 14, 21 counts. Drawn as
-   * weight, a bin spanning 4 counts stands about four times a neighbour spanning 1 at equal density,
-   * and that step reads as a hump the data does not hold.
-   *
-   * COSTS THE HOVER READOUT. `PlChartHistogram` prints the weight it was handed and labels it `count:`,
-   * with no way to supply either, so a hovered bar reports the density. Callers that need the magnitude
-   * put it beside the plot.
-   */
-  density?: boolean;
   /**
    * Zeroes every margin, which drops the axes, the axis labels and the title. Without it the fixed 85px
    * left and 40px bottom margins take most of a small panel, leaving a plot narrower than its own axis
@@ -62,12 +50,24 @@ const MIN_WIDTH = 220;
 const width = ref(MIN_WIDTH);
 let observer: ResizeObserver | undefined;
 
+// Ignore resizes too small to change what is drawn.
+//
+// Any width change rewrites `settings`, which redraws the chart. The uikit's `drawBins` adds a tooltip div
+// to the body on every draw and never removes it, so each redraw leaks one div per panel -- and dragging a
+// window fires a resize every frame. A few pixels of tolerance is invisible to the eye and turns a drag
+// from hundreds of redraws into a handful.
+//
+// Fixing the leak itself belongs in the uikit. This only stops us multiplying it.
+const WIDTH_EPSILON = 4;
+
 onMounted(() => {
   const el = host.value;
   if (el === undefined) return;
   observer = new ResizeObserver((entries) => {
-    const measured = entries[0]?.contentRect.width ?? 0;
-    width.value = Math.max(MIN_WIDTH, Math.floor(measured));
+    const measured = Math.max(MIN_WIDTH, Math.floor(entries[0]?.contentRect.width ?? 0));
+    // The value stored is the exact measurement, not a rounded one. A drag that ends within the
+    // threshold leaves the chart up to 4px off the container, which nobody can see.
+    if (Math.abs(measured - width.value) >= WIDTH_EPSILON) width.value = measured;
   });
   observer.observe(el);
 });
@@ -90,7 +90,7 @@ const settings = computed(() => {
     ...(threshold.value === undefined ? {} : { threshold: threshold.value }),
     ...(props.title === undefined ? {} : { title: props.title }),
     xAxisLabel: props.xAxisLabel ?? "Counts per cell",
-    yAxisLabel: props.yAxisLabel ?? (props.density ? "Cells per count" : "Cells"),
+    yAxisLabel: props.yAxisLabel ?? "Cells",
     totalWidth: width.value,
     totalHeight: props.totalHeight,
     compact: props.compact,
@@ -109,14 +109,13 @@ const settings = computed(() => {
     ...common,
     type: "log-bins" as const,
     // A bin's own bounds travel with its weight, since this form bins nothing itself.
-    bins: props.weights.map((weight, i) => {
-      const from = props.edges[i]!;
-      const to = props.edges[i + 1]!;
-      // `count_bin_edges` returns whole, strictly increasing numbers, so the span is at least 1. The
-      // guard holds for a caller that sets `density` against edges from somewhere else.
-      const span = Math.max(to - from, 1);
-      return { from, to, weight: props.density === true ? weight / span : weight };
-    }),
+    // Bar height is the plain cell count. Every caller's bars are the same width on screen, so the
+    // height already is the share and there is nothing to divide by. PADDED to the full edge set. 
+    bins: Array.from({ length: Math.max(props.edges.length - 1, 0) }, (_, i) => ({
+      from: props.edges[i]!,
+      to: props.edges[i + 1]!,
+      weight: props.weights[i] ?? 0,
+    })),
   };
 });
 </script>

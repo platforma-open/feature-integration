@@ -8,7 +8,9 @@ import {
   PlAgDataTableV2,
   PlAlert,
   PlBlockPage,
+  PlDropdown,
   PlPlaceholder,
+  PlRow,
   PlTabs,
   usePlDataTableSettingsV2,
   useWatchFetch,
@@ -251,6 +253,29 @@ const referenceSpread = computed(() => tagBins.value?.spreads?.referenceReading)
 // because it asks one question and offers no axes to pick.
 const tagBins = computed(() => app.model.outputs.tagCountBins);
 
+const backgroundSample = ref<string | undefined>(undefined);
+
+const backgroundSampleOptions = computed(() => {
+  const labels = app.model.outputs.sampleLabels ?? {};
+  return Object.keys(tagBins.value?.bySample ?? {})
+    .map((id) => ({ value: id, label: labels[id] ?? id }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+});
+
+// Keep the current selection if it still exists, otherwise fall back to the first sample. A re-run can
+// drop the sample that was on screen, and an empty selector next to a full grid looks broken.
+//
+// The selector shows even when there is only one sample, because the panel titles no longer name it.
+watch(
+  backgroundSampleOptions,
+  (options) => {
+    if (!options.some((o) => o.value === backgroundSample.value)) {
+      backgroundSample.value = options[0]?.value;
+    }
+  },
+  { immediate: true },
+);
+
 // Status is rendered as the plain string the workflow emitted, with the discrete filter its spec declares.
 // It stays plain text because of the fourth case a tag cannot render: a measurement with no line behind it
 // leaves this column empty, and an empty cell beside three tags reads as a tag that failed to load. Which
@@ -368,11 +393,24 @@ const tagBins = computed(() => app.model.outputs.tagCountBins);
           No binned count distributions have arrived from this run yet. They are taken by the same
           verdict stage as the measurements, so they arrive with them.
         </PlAlert>
-        <FittedBackgroundGrid
-          v-else
-          :bins="tagBins"
-          :sample-labels="app.model.outputs.sampleLabels ?? {}"
-        />
+        <template v-else>
+          <PlRow>
+            <PlDropdown
+              v-model="backgroundSample"
+              :options="backgroundSampleOptions"
+              label="Sample"
+            />
+          </PlRow>
+          <!-- Barcodes read in the panel's DECLARED order once the grid is scoped to one sample, so a
+                     barcode holds the same slot whichever sample is shown. Across every sample the grid reads
+                     down one reagent instead, where alphabetical-by-label is the order that column needs. -->
+          <FittedBackgroundGrid
+            :bins="tagBins"
+            :sample-labels="app.model.outputs.sampleLabels ?? {}"
+            :only-sample="backgroundSample"
+            :tag-order="tagBins.tagOrder"
+          />
+        </template>
       </div>
     </template>
   </PlBlockPage>

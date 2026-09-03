@@ -1,13 +1,15 @@
 import dataclasses
+import math
 import re
 
+import numpy as np
 import polars as pl
 import pytest
 from qc_measures import (
     _COMPARISON,
-    COUNT_BIN_COUNT,
     DEFAULT_LINES,
     LINE_ROUTES,
+    LOG1P_BIN_WIDTH,
     MEASUREMENTS,
     Coverage,
     Line,
@@ -16,8 +18,9 @@ from qc_measures import (
     Status,
     aggregate_barcode_fraction,
     antigen_count_deciles,
-    count_bin_edges,
+    bin_values,
     detect_aggregate_barcodes,
+    log1p_bin_edges,
     measurement_rows,
     per_antigen_measures,
     per_tag_count_bins,
@@ -1093,66 +1096,21 @@ def _bin_counts(rows: list[tuple[str, str, str, int]]) -> pl.DataFrame:
     )
 
 
-def test_one_edge_set_spans_the_whole_run():
-    # Per-tag edges would rescale every panel to its own range, so a tag spanning 1-4 and one spanning
-    # 1-4000 would draw alike in a grid a reader compares side by side.
-    counts = _bin_counts([("S1", "c1", "AAAA", 2), ("S1", "c2", "BBBB", 4000)])
-    edges = count_bin_edges(counts)
-    assert edges[0] == 1.0
-    # One past the top count, so the last bin is half-open like every other one.
-    assert edges[-1] == 4001.0
-    # Widening, so the ambient population does not collapse into one bar.
-    assert edges[-1] - edges[-2] > edges[1] - edges[0]
+def _log1p_edges(counts) -> list[float]:
+    """The edge set the count distributions are drawn on, for a bin frame."""
+    top = int(counts["umiCount"].max() or 0) if counts.height else 0
+    return log1p_bin_edges(top)
 
 
-def test_every_edge_is_a_whole_number():
-    # A UMI count is a whole number. A fractional edge can put a bin strictly between two counts, and
-    # that bin then stands empty at every weight the run could produce.
-    counts = _bin_counts([("S1", f"c{i}", "AAAA", n) for i, n in enumerate([1, 2, 3, 40, 5155])])
-    edges = count_bin_edges(counts)
-    assert all(edge == float(int(edge)) for edge in edges)
-
-
-def test_no_bin_is_empty_by_construction():
-    # The defect this replaced: geomspace(1, 5155, 25) puts a bin at [2.039, 2.911), which holds no
-    # count at all. On a real 15-tag run it read as a missing bar on every panel.
-    for top in (2, 5, 24, 25, 30, 100, 5155, 23466):
-        edges = count_bin_edges(_bin_counts([("S1", "c1", "AAAA", top)]))
-        widths = [int(edges[i + 1]) - int(edges[i]) for i in range(len(edges) - 1)]
-        assert min(widths) >= 1, top
-        assert len(edges) == len(set(edges)), top
-
-
-def test_the_low_end_draws_one_count_per_bar():
-    # Where the geometric step falls below 1 the step is forced to 1 instead. Without it the first
-    # bars carry two counts each while their neighbours carry one, and the difference reads as a hump.
-    edges = count_bin_edges(_bin_counts([("S1", "c1", "AAAA", 5155)]))
-    assert edges[:4] == [1.0, 2.0, 3.0, 4.0]
-
-
-def test_a_run_that_fits_in_unit_bins_gets_them():
-    # Below the bin budget a geometric step only throws resolution away.
-    edges = count_bin_edges(_bin_counts([("S1", "c1", "AAAA", 5)]))
-    assert edges == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
-
-
-def test_the_bin_budget_is_a_ceiling():
-    for top in (1, 5, 24, 25, 5155, 23466, 200000):
-        edges = count_bin_edges(_bin_counts([("S1", "c1", "AAAA", top)]))
-        assert 1 <= len(edges) - 1 <= COUNT_BIN_COUNT, top
-
-
-def test_a_frame_with_no_counts_has_no_edges_and_no_bins():
-    empty = _bin_counts([])
-    assert count_bin_edges(empty) == []
-    assert per_tag_count_bins(empty, []) == {}
+def test_a_frame_with_no_counts_has_no_bins():
+    assert per_tag_count_bins(_bin_counts([]), []) == {}
 
 
 def test_every_cell_lands_in_a_bin_including_the_largest_count():
     # np.histogram closes the last bin on the right. Without that the run's maximum count falls outside
     # every bucket, and the tag holding it reads one cell short.
     counts = _bin_counts([("S1", f"c{i}", "AAAA", n) for i, n in enumerate([1, 1, 2, 5, 40, 4000])])
-    edges = count_bin_edges(counts)
+    edges = _log1p_edges(counts)
     weights = per_tag_count_bins(counts, edges)["S1"]["AAAA"]
     assert len(weights) == len(edges) - 1
     assert sum(weights) == 6
@@ -1162,8 +1120,7 @@ def test_bins_are_kept_per_sample_and_tag():
     # The fit runs per (sample, tag), so the plots drawn beside it are keyed the same way. Pooling two
     # samples would read as one population.
     counts = _bin_counts([("S1", "c1", "AAAA", 2), ("S2", "c1", "AAAA", 2), ("S1", "c1", "BBBB", 3)])
-    edges = count_bin_edges(counts)
-    out = per_tag_count_bins(counts, edges)
+    out = per_tag_count_bins(counts, _log1p_edges(counts))
     assert sorted(out) == ["S1", "S2"]
     assert sorted(out["S1"]) == ["AAAA", "BBBB"]
     assert sorted(out["S2"]) == ["AAAA"]
@@ -1173,7 +1130,7 @@ def test_a_tag_absent_from_a_sample_gets_no_entry():
     # An absent tag and a tag whose cells all read low are different findings. A list of zeros would state
     # the second, so the absent one carries no list at all.
     counts = _bin_counts([("S1", "c1", "AAAA", 2), ("S2", "c1", "BBBB", 2)])
-    out = per_tag_count_bins(counts, count_bin_edges(counts))
+    out = per_tag_count_bins(counts, _log1p_edges(counts))
     assert "BBBB" not in out["S1"]
     assert "AAAA" not in out["S2"]
 
@@ -1182,5 +1139,47 @@ def test_the_reference_tag_keeps_its_bins():
     # The reference tag is the run's own ambient floor, which is what every other tag is judged against.
     # It is held out of the verdict read, never out of this.
     counts = _bin_counts([("S1", "c1", "CTRL", 6), ("S1", "c1", "AAAA", 500)])
-    out = per_tag_count_bins(counts, count_bin_edges(counts))
+    out = per_tag_count_bins(counts, _log1p_edges(counts))
     assert sorted(out["S1"]) == ["AAAA", "CTRL"]
+
+
+# --- the log1p bin edges the count distributions draw on ----------------------------------------
+
+
+def test_log1p_bin_edges_all_draw_the_same_width():
+    """The whole point of these edges: every bar draws the same width.
+
+    The plot's axis is log1p, so an edge at `expm1(k * width)` lands at `k * width` on screen. Equal
+    widths mean a bar's height is its share directly, which removes the per-bar division that
+    whole-number edges needed -- and that was once got wrong, hiding a real hump.
+    """
+    for top in (30, 1381, 152757):
+        edges = log1p_bin_edges(top)
+        drawn = [math.log1p(edges[i + 1]) - math.log1p(edges[i]) for i in range(len(edges) - 1)]
+        assert drawn, f"no bins for top={top}"
+        for width in drawn:
+            assert width == pytest.approx(LOG1P_BIN_WIDTH, abs=1e-12), f"top={top}"
+
+
+def test_log1p_bin_edges_keep_a_bar_for_the_zeros():
+    # The fit runs over one entry per cell, and a cell that read nothing enters as a zero. Those zeros
+    # are most of the background: drop them and the plot shows one decaying hump whatever the fit found.
+    edges = log1p_bin_edges(1381)
+    assert edges[0] == 0.0
+    assert bin_values(np.array([0, 0, 0, 4]), edges)[0] == 3
+
+
+def test_log1p_bin_edges_cover_the_highest_count():
+    # `np.histogram` closes the last bin on the right, so an edge sitting exactly ON the top count would
+    # give that bin one count more than its width. The last edge is the first step above the top.
+    for top in (1, 7, 30, 1381, 152757):
+        edges = log1p_bin_edges(top)
+        assert edges[-1] > top, f"top={top} has no bin to land in"
+        assert sum(bin_values(np.array([top]), edges)) == 1
+
+
+def test_log1p_bin_edges_are_empty_where_there_is_nothing_to_span():
+    assert log1p_bin_edges(0) == []
+    assert log1p_bin_edges(-1) == []
+    # A width of zero or less would divide by zero or loop forever, so it is refused rather than fixed up.
+    assert log1p_bin_edges(100, 0.0) == []
