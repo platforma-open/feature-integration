@@ -922,7 +922,7 @@ cellTagCountsImportSpec := func(sampleAxisSpec, cellAxisSpec, tagAxisSpec) {
 				name: "pl7.app/antigen/umiCount",
 				valueType: "Int",
 				annotations: a(80000, true, {
-					"pl7.app/label": "Tag UMI count",
+					"pl7.app/label": "Tag UMI count (post-floor)",
 					"pl7.app/description": "Molecules seen for this tag in this cell, after the count floor. Sparse: a cell with no row for a tag saw nothing for it, which is a reading, not a gap. The baseline tag has no row here.",
 					"pl7.app/min": "0",
 					"pl7.app/isAbundance": "true",
@@ -951,8 +951,8 @@ cellRawTagCountsImportSpec := func(sampleAxisSpec, cellAxisSpec, tagAxisSpec) {
 				name: "pl7.app/antigen/rawUmiCount",
 				valueType: "Int",
 				annotations: a(80000, true, {
-					"pl7.app/label": "Tag UMI count (pre-floor)",
-					"pl7.app/description": "Molecules seen for this tag in this cell, BEFORE the count floor: no count has been zeroed and the comparator's exemption from the floor does not apply, so a cell's tags sum to what that cell held.",
+					"pl7.app/label": "Tag UMI count",
+					"pl7.app/description": "Molecules seen for this tag in this cell.",
 					"pl7.app/min": "0",
 					"pl7.app/isAbundance": "true",
 					"pl7.app/abundance/unit": "molecules",

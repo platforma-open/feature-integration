@@ -123,7 +123,6 @@ from qc_rows import (
 )
 from tag_distribution import (
     DEFAULT_DISTRIBUTION_MIN_CELLS,
-    DEFAULT_INITIAL_SIGNAL_WEIGHT,
     TagFits,
     bound_at_count,
     fit_tag_probabilities_by_pair,
@@ -245,7 +244,7 @@ def main() -> None:
     p.add_argument("--min-voters", type=int, default=DEFAULT_MIN_VOTERS)
     p.add_argument("--min-agreement", type=float, default=DEFAULT_MIN_AGREEMENT)
     # Roughly what share of cells are expected to bind an antigen.
-    p.add_argument("--initial-signal-weight", type=float, default=DEFAULT_INITIAL_SIGNAL_WEIGHT)
+    p.add_argument("--initial-signal-weight", type=float, default=None)
     p.add_argument("--gate-threshold", type=int, default=None, help="set aside cells whose comparator reads above this")
     p.add_argument("--grouping", default=None, help="JSON: {'by':'tag'} or {'by':'property','column':...}")
     p.add_argument("--contending", default=None, help="JSON: groups of identities that contend, as a list of lists")
@@ -297,7 +296,9 @@ def main() -> None:
     # Must be above 0 and below 1. At either end the split hands every cell to one side, and the fit
     # quietly falls back to splitting at the mean instead. The run would then report a value it never
     # used, so refuse rather than let that happen silently.
-    if not 0.0 < args.initial_signal_weight < 1.0:
+    # Absent is the ordinary case and means the pivot is derived from each tag's own counts. A value
+    # given is a statement about the experiment, and only then does the range apply.
+    if args.initial_signal_weight is not None and not 0.0 < args.initial_signal_weight < 1.0:
         raise SystemExit(
             f"the expected binder fraction is a share strictly between 0 and 1. Got {args.initial_signal_weight}."
         )

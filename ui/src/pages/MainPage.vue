@@ -1,7 +1,20 @@
 <script setup lang="ts">
+import type {
+  GroupingRule,
+  ReferenceSource,
+} from "@platforma-open/milaboratories.feature-integration.model";
+import {
+  AGGREGATE_DETECTION_DEFAULTS,
+  groupingColumns,
+  QC_LINE_DEFAULTS,
+} from "@platforma-open/milaboratories.feature-integration.model";
+import type { ImportFileHandle } from "@platforma-sdk/model";
 import type { PlAgHeaderComponentParams } from "@platforma-sdk/ui-vue";
 import {
   AgGridTheme,
+  autoSizeRowNumberColumn,
+  createAgGridColDef,
+  makeRowNumberColDef,
   PlAccordionSection,
   PlAgCellStatusTag,
   PlAgChartStackedBarCell,
@@ -9,7 +22,6 @@ import {
   PlAgOverlayNoRows,
   PlAgTextAndButtonCell,
   PlAlert,
-  PlCheckbox,
   PlBlockPage,
   PlBtnGhost,
   PlBtnGroup,
@@ -23,30 +35,15 @@ import {
   PlRow,
   PlSectionSeparator,
   PlSlideModal,
-  autoSizeRowNumberColumn,
-  createAgGridColDef,
-  makeRowNumberColDef,
 } from "@platforma-sdk/ui-vue";
-import type {
-  GroupingRule,
-  ReferenceSource,
-} from "@platforma-open/milaboratories.feature-integration.model";
-import {
-  AGGREGATE_DETECTION_DEFAULTS,
-  groupingColumns,
-  QC_LINE_DEFAULTS,
-  VERDICT_DEFAULTS,
-} from "@platforma-open/milaboratories.feature-integration.model";
-import type { ImportFileHandle } from "@platforma-sdk/model";
-import { parseTagCsvMeta } from "../csvMeta";
-import { readLocalCsvMeta, useRemoteCsvBytes } from "../csvSource";
 import type { ColDef, GridReadyEvent } from "ag-grid-enterprise";
 import { ClientSideRowModelModule, ModuleRegistry } from "ag-grid-enterprise";
 import { AgGridVue } from "ag-grid-vue3";
 import { computed, ref, watch } from "vue";
 import { useApp } from "../app";
 import PatternEditor from "../components/PatternEditor.vue";
-import SampleReportPanel from "./SampleReportPanel.vue";
+import { parseTagCsvMeta } from "../csvMeta";
+import { readLocalCsvMeta, useRemoteCsvBytes } from "../csvSource";
 import {
   sampleResults,
   type ProgressCell,
@@ -54,6 +51,7 @@ import {
   type RecoveryBar,
   type SampleResult,
 } from "../results";
+import SampleReportPanel from "./SampleReportPanel.vue";
 
 const app = useApp();
 
@@ -256,6 +254,11 @@ const agreementPercent = computed({
 
 // The chosen rung, from DATA. Read from data and never from `effectiveReferenceSource`: the form reveals
 // fields against what the scientist picked, and that must not move on its own.
+
+// @TODO: Pending to evaluate in more detail to define the best values for those setings.
+// Once set, remove forever from here and define the values as constants.
+const SHOW_QUALITY_LINES = false;
+
 const chosenSource = computed(() => app.model.data.referenceSource);
 
 // What the chosen rung still needs, if anything. The model computes it, because whether a rung can serve
@@ -997,17 +1000,16 @@ const gridOptions = {
             :max-value="99.9"
             :step="5"
             clearable
+            placeholder="Auto"
             label="Expected binder %"
           >
             <template #tooltip>
-              Roughly what share of cells you expect to bind a given antigen. It tells the fit where
-              to start looking for the split between background and signal.<br /><br />
-              <b>Empty means {{ VERDICT_DEFAULTS.expectedBinderFraction * 100 }}%</b>, the value the
-              published method uses.<br /><br />
-              Raise it for a sorted or synthetic population that really does bind in bulk. Left too
-              low, the fit puts the split well above the gap you can see in the distribution.<br /><br />
-              Raising it also makes the fit readier to find "binders" on a tag that bound nothing,
-              so check the distributions after you change it.
+              <b>Empty is the default</b>: the split between background and signal is worked out for
+              each sample and barcode from its own counts.<br /><br />
+              Set a share only where you already know it — a sorted or spiked population that binds
+              in bulk. One value then applies to every barcode in the run.<br /><br />
+              Too low and the split lands above the gap you can see in the distribution; too high
+              and the fit finds "binders" on a barcode that bound nothing.
             </template>
           </PlNumberField>
           <!-- The fitted rung's line, in the slot the score cutoff occupies on the declared one. The two are
@@ -1021,17 +1023,14 @@ const gridOptions = {
             :min-value="0.9"
             :max-value="1"
             :step="0.01"
-            clearable
-            label="Bound probability"
+            required
+            label="Certainty to call bound"
           >
             <template #tooltip>
-              A cell reads bound where the probability its count belongs to the fitted signal
-              component reaches this.<br /><br />
-              <b>Empty means {{ VERDICT_DEFAULTS.boundProbability }}</b
-              >, the value this baseline ships at and the lowest it accepts. Raise it to keep only
-              the cells the fit is most certain about. <br /><br />
-              Lower is not offered: below it a cell holding none of the tag can reach the line, and
-              the run counts those positions without reading each one.
+              How sure the fit must be that a cell's count belongs to the signal population before
+              that cell reads bound. Raise it to keep only the cells the fit is most certain
+              about.<br /><br />
+              <b>0.9-1.0</b>
             </template>
           </PlNumberField>
         </PlRow>
@@ -1135,7 +1134,7 @@ const gridOptions = {
       <!-- The QC lines, separate from Compute resources: these change what a measurement's own status reads,
            never what the run computes. Every field here is clearable -- empty means the shipped default, the
            same number the tooltip names. -->
-      <PlAccordionSection label="Quality lines">
+      <PlAccordionSection v-if="SHOW_QUALITY_LINES" label="Quality lines">
         <PlRow>
           <PlNumberField
             :class="$style.half"

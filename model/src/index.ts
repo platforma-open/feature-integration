@@ -32,8 +32,8 @@ export type { PTableKey } from "@platforma-sdk/model";
 
 // The reading's own defaults, in one exported map. Exported so a test can compare it against the other
 // two copies: this map is what a workflow-driven run is actually answered under, because
-// verdict-args.lib.tengo emits every one of these flags UNCONDITIONALLY, substituting its own copy
-// wherever the stored value is undefined. The argparse defaults in the Python never govern such a run.
+// verdict-args.lib.tengo emits these flags UNCONDITIONALLY, substituting its own copy wherever the
+// stored value is undefined. The argparse defaults in the Python never govern such a run.
 // `test/src/qcDefaults.test.ts` asserts each value against verdict-args.lib.tengo and the Python module
 // that owns it, the same way it asserts the QC lines below.
 export const VERDICT_DEFAULTS = {
@@ -43,10 +43,6 @@ export const VERDICT_DEFAULTS = {
   boundCutoff: 75,
   // verdict.py DISTRIBUTION_BOUND_PROBABILITY. Both the default and the FLOOR: `args()` refuses below it.
   boundProbability: 0.9,
-  // tag_distribution.py DEFAULT_INITIAL_SIGNAL_WEIGHT, the source paper's own initial weight. A default
-  // only -- unlike the line above this is not a floor, because it states what the EXPERIMENT holds
-  // rather than what the method licenses, and a sorted or synthetic population can sit far from it.
-  expectedBinderFraction: 0.1,
   // combine.py DEFAULT_MIN_VOTERS
   minVotingCells: 1,
   // verdict.py DEFAULT_PANEL_MIN_MEMBERS. Gates rather than tunes: keep above the fifteen-tag cap of an

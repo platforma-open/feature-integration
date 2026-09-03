@@ -93,7 +93,8 @@ TOO_FEW_CELLS = "the sample holds too few cells for a distribution to be fitted"
 NO_FIT = "no two-component fit could be computed for this tag"
 
 
-# Roughly what share of cells are expected to bind an antigen.
+# Roughly what share of cells are expected to bind an antigen. The source paper's own initial weight,
+# and an OVERRIDE here rather than the default.
 DEFAULT_INITIAL_SIGNAL_WEIGHT = 0.1
 
 # The share of the highest counts dropped before the fit, so that a handful of very high readings
@@ -170,9 +171,59 @@ class _Mixture(NamedTuple):
     signal: int
 
 
-def _fit_two_component_nb(
-    counts: np.ndarray, initial_signal_weight: float = DEFAULT_INITIAL_SIGNAL_WEIGHT
-) -> _Mixture | None:
+# @TODO: Review this function in more detail looking for logic flaws that might have been missed
+def _scan_pivot(x: np.ndarray) -> float | None:
+    """The split point that best explains the counts as two negative binomials, or None.
+
+    Scores every cut of the counts into `[0, t]` and the rest, and returns the `t` that scores best.
+    None where the counts hold fewer than two distinct values, or where no cut scores finitely.
+    """
+    # The histogram, not the cells: everything below is sized by the number of DISTINCT counts, which is
+    # why the scan costs milliseconds against the EM's seconds and does not grow with the sample.
+    vals, mult = np.unique(x, return_counts=True)
+    k = vals.size
+    if k < 2:
+        return None
+
+    # Prefix sums of the cell count, of the counts, and of their squares. They make each cut's two-sided
+    # weight, mean and variance a subtraction instead of a pass over the data.
+    n = float(x.size)
+    cum_w = np.cumsum(mult).astype(float)
+    cum_s = np.cumsum(vals * mult)
+    cum_q = np.cumsum((vals**2) * mult)
+
+    # One entry per cut, and `[:-1]` is the cut set: cutting at the highest count leaves the upper side
+    # empty. Variance by `E[x^2] - E[x]^2`, so it can land just below zero on a near-constant side.
+    w_lo = cum_w[:-1]
+    w_hi = n - w_lo
+    m_lo = cum_s[:-1] / w_lo
+    m_hi = (cum_s[-1] - cum_s[:-1]) / w_hi
+    v_lo = cum_q[:-1] / w_lo - m_lo**2
+    v_hi = (cum_q[-1] - cum_q[:-1]) / w_hi - m_hi**2
+    m_lo = np.maximum(m_lo, _MIN_COMPONENT_MEAN)
+    m_hi = np.maximum(m_hi, _MIN_COMPONENT_MEAN)
+
+    # Dispersions through `_nb_size` rather than inline, so each side inherits the same Poisson-limit
+    # fallback the EM's own components get and the two cannot disagree about what a dispersion is.
+    s_lo = np.array([_nb_size(m, v) for m, v in zip(m_lo, np.maximum(v_lo, 0.0), strict=True)])
+    s_hi = np.array([_nb_size(m, v) for m, v in zip(m_hi, np.maximum(v_hi, 0.0), strict=True)])
+
+    # The score, one row per cut and one column per distinct count. It is the CLASSIFICATION
+    # log-likelihood -- every count read against the side its cut assigns it, weighted by that side's
+    # share and by how many cells hold the count.
+    below = vals[None, :] <= vals[:-1, None]
+    lo = _nb_logpmf(vals[None, :], m_lo[:, None], s_lo[:, None]) + np.log(w_lo / n)[:, None]
+    hi = _nb_logpmf(vals[None, :], m_hi[:, None], s_hi[:, None]) + np.log(w_hi / n)[:, None]
+    scored = np.where(below, lo, hi) * mult[None, :]
+
+    # A cut where any count underflowed is dropped rather than left to win the argmax on a -inf.
+    total = np.where(np.all(np.isfinite(scored), axis=1), scored.sum(axis=1), -np.inf)
+    if not np.any(np.isfinite(total)):
+        return None
+    return float(vals[int(np.argmax(total))])
+
+
+def _fit_two_component_nb(counts: np.ndarray, initial_signal_weight: float | None = None) -> _Mixture | None:
     """A two-component negative binomial fitted to `counts`, or None where none exists.
 
     The method: fit a two-component negative binomial mixture and label the higher-median component
@@ -192,9 +243,14 @@ def _fit_two_component_nb(
     if np.unique(x).size < 2:
         return None
 
-    # Split the counts so that `initial_signal_weight` of them sit above the pivot. Each side then
-    # seeds one component, and the two side sizes are the starting weights.
-    pivot = float(np.quantile(x, 1.0 - initial_signal_weight))
+    # Where the scientist stated a share, split the counts so that `initial_signal_weight` of them sit
+    # above the pivot. Otherwise derive the split from the counts themselves. Each side then seeds one
+    # component, and the two side sizes are the starting weights.
+    scanned = _scan_pivot(x) if initial_signal_weight is None else None
+    if scanned is not None:
+        pivot = scanned
+    else:
+        pivot = float(np.quantile(x, 1.0 - (initial_signal_weight or DEFAULT_INITIAL_SIGNAL_WEIGHT)))
     low, high = x[x <= pivot], x[x > pivot]
     if low.size == 0 or high.size == 0:
         # The quantile landed on the maximum, so one side got every cell. Split at the mean instead:
@@ -282,7 +338,7 @@ def fit_tag_probabilities(
     counts: np.ndarray,
     min_cells: int = DEFAULT_DISTRIBUTION_MIN_CELLS,
     scored: np.ndarray | None = None,
-    initial_signal_weight: float = DEFAULT_INITIAL_SIGNAL_WEIGHT,
+    initial_signal_weight: float | None = None,
 ) -> TagFit:
     """One tag's counts across one sample's cells, as a probability of binding per cell.
 
@@ -368,7 +424,7 @@ def fit_tag_probabilities_by_pair(
     min_cells: int = DEFAULT_DISTRIBUTION_MIN_CELLS,
     floor: int = 0,
     reference_tags: Collection[str] = (),
-    initial_signal_weight: float = DEFAULT_INITIAL_SIGNAL_WEIGHT,
+    initial_signal_weight: float | None = None,
 ) -> TagFits:
     """One fit per (sample, tag) the panel declares, scored per cell.
 
