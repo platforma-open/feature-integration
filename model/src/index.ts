@@ -93,6 +93,20 @@ export const CELL_PUNCH_COLUMN_NAME = "pl7.app/antigen/cellPunch";
 // unreachable here.
 export const PUNCH_CELL_COUNT_COLUMN = "pl7.app/antigen/cellCount";
 
+// The clonotype's own V(D)J properties, as every producer names them.
+export const VDJ_SEQUENCE_COLUMN = "pl7.app/vdj/sequence";
+export const VDJ_GENE_HIT_COLUMN = "pl7.app/vdj/geneHit";
+export const CHAIN_INDEX_DOMAIN = "pl7.app/vdj/scClonotypeChain/index";
+export const VDJ_ASSEMBLING_FEATURE_ANNOTATION = "pl7.app/vdj/isAssemblingFeature";
+
+// Axis identity as a comparable string. Domain entries are SORTED, because two specs that mean the same
+// axis can carry their domain keys in different orders and a bare JSON.stringify would call them different.
+function axisKeyOf(axis: Parameters<typeof getAxisId>[0]): string {
+  const id = getAxisId(axis);
+  const domain = Object.entries(id.domain ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  return JSON.stringify([id.name, id.type, domain]);
+}
+
 // User-facing names only. The DATA layer keeps `declared`/`panel`/`none`, which are p-column domain values,
 // and domain is part of column identity. These strings match the labels `referenceSources` offers.
 export const REFERENCE_SOURCE_LABELS: Record<ReferenceSource, string> = {
@@ -1408,10 +1422,68 @@ export const platforma = BlockModelV3.create(dataModel)
       // 96000, between the clonotype label's 100000 and the punches' 92000. To fix a column that "renders last",
       // measure with `aria-colindex`: `querySelectorAll('[role="columnheader"]')` returns AG Grid's recycled
       // header nodes in an order unrelated to column position.
+
+      // The clonotype's own V(D)J properties, joined onto the same axis the punches use.
+      const punchAxisKey = axisKeyOf(cols[0].spec.axesSpec[0]);
+      const vdjColumns = ctx.resultPool
+        .getOptions((spec) => {
+          if (!isPColumnSpec(spec)) return false;
+          if (spec.name !== VDJ_SEQUENCE_COLUMN && spec.name !== VDJ_GENE_HIT_COLUMN) return false;
+          if (spec.domain?.[CHAIN_INDEX_DOMAIN] !== "primary") return false;
+          // Keyed on the clonotype and on NOTHING else. A per-sample column would drag a sample axis in and
+          // re-key the whole card.
+          if (spec.axesSpec.length !== 1) return false;
+          return axisKeyOf(spec.axesSpec[0]) === punchAxisKey;
+        })
+        .map((o) => ctx.resultPool.getPColumnByRef(o.ref))
+        .filter((c): c is NonNullable<typeof c> => c !== undefined);
+
+      // Which sequence a reader sees by default.
+      const aaSequences = vdjColumns.filter(
+        (c) =>
+          c.spec.name === VDJ_SEQUENCE_COLUMN &&
+          c.spec.domain?.["pl7.app/alphabet"] === "aminoacid",
+      );
+      type SequenceMatch = {
+        name: string;
+        domain: Record<string, string | { type: "regex"; value: string }>;
+        annotations?: Record<string, string>;
+      };
+      const shownSequenceMatch: SequenceMatch | undefined = aaSequences.some(
+        (c) => c.spec.annotations?.[VDJ_ASSEMBLING_FEATURE_ANNOTATION] === "true",
+      )
+        ? {
+            name: VDJ_SEQUENCE_COLUMN,
+            domain: { "pl7.app/alphabet": "aminoacid" },
+            annotations: { [VDJ_ASSEMBLING_FEATURE_ANNOTATION]: "true" },
+          }
+        : aaSequences.some((c) => /cdr3/i.test(c.spec.domain?.["pl7.app/vdj/feature"] ?? ""))
+          ? {
+              name: VDJ_SEQUENCE_COLUMN,
+              // The matcher offers only exact and regex, so "contains" is spelled as one.
+              domain: {
+                "pl7.app/alphabet": "aminoacid",
+                "pl7.app/vdj/feature": { type: "regex" as const, value: ".*[Cc][Dd][Rr]3.*" },
+              },
+            }
+          : undefined;
+
       return createPlDataTableV3(ctx, {
         primaryColumns: [...cellCount, ...ordered].map((c) => DataColumn.fromColumn(c)),
-        columns: null,
+        columns: vdjColumns.map((c) => DataColumn.fromColumn(c)),
         tableState: ctx.data.punchcardTableState,
+        // Read in order, first match wins; anything UNMATCHED keeps its own default, which is what leaves the
+        // punches and the cell count showing. Both fallthrough rules are scoped by column name so they can
+        // never reach them.
+        displayOptions: {
+          visibility: [
+            ...(shownSequenceMatch === undefined
+              ? []
+              : [{ match: shownSequenceMatch, visibility: "default" as const }]),
+            { match: { name: VDJ_SEQUENCE_COLUMN }, visibility: "optional" as const },
+            { match: { name: VDJ_GENE_HIT_COLUMN }, visibility: "optional" as const },
+          ],
+        },
       });
     },
     { retentive: true, withStatus: true },
