@@ -107,6 +107,9 @@ function axisKeyOf(axis: Parameters<typeof getAxisId>[0]): string {
   return JSON.stringify([id.name, id.type, domain]);
 }
 
+// The cell list as a joinable column: a row per cell the V(D)J data matched and none otherwise.
+export const CELL_IN_LIST_COLUMN = "pl7.app/antigen/cellInList";
+
 // User-facing names only. The DATA layer keeps `declared`/`panel`/`none`, which are p-column domain values,
 // and domain is part of column identity. These strings match the labels `referenceSources` offers.
 export const REFERENCE_SOURCE_LABELS: Record<ReferenceSource, string> = {
@@ -1343,7 +1346,26 @@ export const platforma = BlockModelV3.create(dataModel)
     (ctx) => {
       const pCols = ctx.outputs?.resolve("perCellTable")?.getPColumns();
       if (pCols === undefined || pCols.length === 0) return undefined;
-      return createPlDataTableV2(ctx, pCols, ctx.data.tableState);
+
+      // Narrowed to the cells the V(D)J data matched.
+      const runMeta = ctx.outputs
+        ?.resolve({ field: "antigenRunMeta", allowPermanentAbsence: true })
+        ?.getDataAsJsonOrUndefined<VerdictRunMeta>();
+      const listed =
+        runMeta === undefined || runMeta.cellListSource === "none"
+          ? []
+          : (
+              ctx.outputs
+                ?.resolve({ field: "antigenCellReference", allowPermanentAbsence: true })
+                ?.getPColumns() ?? []
+            ).filter((c) => c.spec.name === CELL_IN_LIST_COLUMN);
+
+      return createPlDataTableV2(
+        ctx,
+        [...pCols, ...listed],
+        ctx.data.tableState,
+        listed.length > 0 ? { coreJoinType: "inner" } : undefined,
+      );
     },
     { retentive: true, withStatus: true },
   )
@@ -1801,7 +1823,7 @@ export const platforma = BlockModelV3.create(dataModel)
       { type: "link" as const, href: "/" as const, label: "Main" },
       ...(hasRun
         ? [
-            { type: "link" as const, href: "/qc" as const, label: "Sample QC" },
+            //{ type: "link" as const, href: "/qc" as const, label: "Sample QC" },
             { type: "link" as const, href: "/results" as const, label: "Cell counts" },
             { type: "link" as const, href: "/antigen-qc" as const, label: "Tag QC" },
             { type: "link" as const, href: "/punchcard" as const, label: "Clonotype binding" },

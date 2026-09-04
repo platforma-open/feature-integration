@@ -463,6 +463,7 @@ wf.body(func(args) {
 			// cellRawCounts, the same grain BEFORE the floor, IS passed.
 			cellRawCounts: verdictRun.output("cellRawCounts"),
 			cellScalars: verdictRun.output("cellScalars"),
+			cellInList: verdictRun.output("cellInList"),
 			offered: verdictRun.output("offered"),
 			tagIdentity: verdictRun.output("tagIdentity"),
 			identityLabels: verdictRun.output("identityLabels"),

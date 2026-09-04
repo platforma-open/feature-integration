@@ -736,6 +736,10 @@ def main() -> None:
     )
     _write_sorted(_answers(cell_scalars), f"{prefix}_cell_scalars.csv", ["sampleId", "cellId"])
 
+    # The cell list ITSELF, as its own frame: a row per cell the V(D)J data matched and none for any other
+    # barcode.
+    _write_sorted(in_list, f"{prefix}_cell_in_list.csv", ["sampleId", "cellId"])
+
     # Both frames are pure key sets -- what a sample was offered, and which identity a tag feeds -- and
     # each carries a constant value column so it can become a p-column at all. A frame of key columns
     # alone imports as nothing: columns are built from value columns.
