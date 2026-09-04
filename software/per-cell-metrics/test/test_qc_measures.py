@@ -459,8 +459,8 @@ def test_aggregate_barcode_fraction_top_n_narrows_the_tested_slice():
     per_barcode = _per_barcode(list(range(600, 600 + 150 * 10, 10)))
     _, detail_default = aggregate_barcode_fraction(per_barcode, reads_total=1000)
     _, detail_50 = aggregate_barcode_fraction(per_barcode, reads_total=1000, top_n=50)
-    assert "barcodesTested=100" in detail_default
-    assert "barcodesTested=50" in detail_50
+    assert "Barcodes tested: 100" in detail_default
+    assert "Barcodes tested: 50" in detail_50
 
 
 def test_aggregate_barcode_fraction_divides_flagged_reads_by_reads_total():

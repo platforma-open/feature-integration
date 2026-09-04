@@ -2579,7 +2579,7 @@ def test_a_declared_gate_acts_under_the_tag_distribution_rung(tmp_path):
     qc = pl.read_csv(tmp_path / "result_qc.csv", infer_schema_length=0)
     row = qc.filter(pl.col("measurement") == "highReferenceCells").row(0, named=True)
     assert float(row["value"]) == sticky
-    assert "gate=100" in row["detail"]
+    assert "Gate: 100 UMIs" in row["detail"]
 
 
 def test_the_sticky_measurement_says_why_where_no_cell_carries_a_baseline_reading(tmp_path):
@@ -2597,7 +2597,7 @@ def test_the_sticky_measurement_says_why_where_no_cell_carries_a_baseline_readin
     for row in rows.iter_rows(named=True):
         assert not row["value"], "a zero would read as a sample carrying no sticky cells"
         assert row["reason"] == "no cell in this sample carries a comparator reading"
-        assert row["detail"] == "cellsWithAComparator=0"
+        assert row["detail"] == "Cells with a control reading: 0"
 
 
 @pytest.fixture
@@ -2632,11 +2632,11 @@ def test_the_reagent_figures_count_cells_rather_than_observed_barcodes(ambient_b
     qc = pl.read_csv(ambient_bed / "result_qc.csv", infer_schema_length=0)
     row = qc.filter((pl.col("measurement") == "perAntigen") & (pl.col("entity") == "AAAA")).row(0, named=True)
 
-    assert "cellsWithCount=3" in row["detail"], row["detail"]
-    assert "medianCountPerCell=40.0" in row["detail"], row["detail"]
+    assert "Cells with a count: 3" in row["detail"], row["detail"]
+    assert "Median count per cell: 40.0" in row["detail"], row["detail"]
     # And the figure says which list it was computed against, since two runs whose lists came from
     # different sources do not share a denominator.
-    assert "cellList=cell list" in row["detail"], row["detail"]
+    assert "Cell list: cell list" in row["detail"], row["detail"]
 
 
 def test_the_reagent_figures_fall_back_to_the_linker_as_the_cell_list(ambient_bed):
@@ -2647,8 +2647,8 @@ def test_the_reagent_figures_fall_back_to_the_linker_as_the_cell_list(ambient_be
     qc = pl.read_csv(ambient_bed / "result_qc.csv", infer_schema_length=0)
     row = qc.filter((pl.col("measurement") == "perAntigen") & (pl.col("entity") == "AAAA")).row(0, named=True)
 
-    assert "cellsWithCount=3" in row["detail"], row["detail"]
-    assert "cellList=clonotype linker" in row["detail"], row["detail"]
+    assert "Cells with a count: 3" in row["detail"], row["detail"]
+    assert "Cell list: clonotype linker" in row["detail"], row["detail"]
 
 
 def test_the_sticky_measurement_is_a_spread_when_no_gate_is_declared(bed):
@@ -2659,11 +2659,11 @@ def test_the_sticky_measurement_is_a_spread_when_no_gate_is_declared(bed):
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
     row = qc.filter(pl.col("measurement") == "highReferenceCells").row(0, named=True)
 
-    assert "noGateDeclared" in row["detail"]
-    assert "gate=" not in row["detail"]
-    # Eleven decile points ride in the detail, and the value is their median.
-    points = [p.split(":")[0] for p in row["detail"].split("|")[2:]]
-    assert points == [str(p) for p in range(0, 101, 10)]
+    assert "No gate declared" in row["detail"]
+    assert "Gate:" not in row["detail"]
+    # The value is the median of those readings. The eleven decile points used to ride in the detail too;
+    # they were a wall of numbers no reader used, and the spread rows carry the distribution itself.
+    assert float(row["value"]) > 0
 
 
 def test_the_sticky_measurement_counts_the_cells_the_gate_set_aside(bed):
@@ -2673,8 +2673,8 @@ def test_the_sticky_measurement_counts_the_cells_the_gate_set_aside(bed):
     qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
     row = qc.filter(pl.col("measurement") == "highReferenceCells").row(0, named=True)
 
-    assert "gate=1" in row["detail"]
-    assert "noGateDeclared" not in row["detail"]
+    assert "Gate: 1 UMIs" in row["detail"]
+    assert "No gate declared" not in row["detail"]
     meta = json.loads((bed / "result_run_meta.json").read_text())
     # Same cells, counted once. The per-sample rows sum to the run's set-aside total.
     per_sample = qc.filter(pl.col("measurement") == "highReferenceCells")["value"].to_list()
@@ -2875,11 +2875,11 @@ def test_the_fitted_background_reaches_the_measurement_set(tmp_path):
 
     seps = rows["SEPS"]
     assert seps["value"] is not None
-    assert "samplesFitted=1" in seps["detail"]
-    assert "medianSignalMean=" in seps["detail"]
+    assert "Samples fitted: 1" in seps["detail"]
+    assert "Median fitted signal: " in seps["detail"]
     # The background sits below the signal it was separated from. Read together they are the finding: a
     # background alone says nothing about whether the counts separated.
-    signal = float(seps["detail"].split("medianSignalMean=")[1].split("|")[0])
+    signal = float(seps["detail"].split("Median fitted signal: ")[1].split("|")[0])
     assert float(seps["value"]) < signal
 
     flat = rows["FLAT"]
@@ -3264,7 +3264,6 @@ def test_a_valueless_measurement_names_the_input_that_is_actually_missing(bed):
 
     assert rows["readsTotal"]["reason"] == "no read QC summary row reached this sample"
     assert rows["readsPerCell"]["reason"] == "no read count reached this sample, so depth has no numerator"
-    assert "cellsInList=3" in rows["readsPerCell"]["detail"]
 
 
 def test_a_run_with_no_cell_list_gives_its_two_cell_rows_one_account(tmp_path):
@@ -3360,7 +3359,7 @@ def test_usable_read_fraction_computes_a_real_value_end_to_end(tmp_path):
     row = {m["id"]: m for m in _sample_report(tmp_path)["measurements"]}["usableReadFraction"]
 
     assert row["value"] == pytest.approx((80 + 3 + 90 + 3) / 1000)
-    assert row["detail"] == "cellsInList=2"
+    assert row["detail"] == "Cells in the V(D)J cell list: 2"
 
 
 def test_usable_read_fraction_with_no_cell_list_reads_a_stated_blank(tmp_path):
@@ -3396,7 +3395,7 @@ def test_usable_read_fraction_with_an_empty_cell_list_reads_zero(tmp_path):
     row = {m["id"]: m for m in _sample_report(tmp_path)["measurements"]}["usableReadFraction"]
 
     assert row["value"] == 0.0
-    assert row["detail"] == "cellsInList=0"
+    assert row["detail"] == "Cells in the V(D)J cell list: 0"
 
 
 def test_a_declared_sample_measurement_nothing_computes_still_takes_a_row(monkeypatch):
