@@ -371,6 +371,19 @@ tagAxis := func(blockId) {
 	}
 }
 
+// undeclaredTagAxis: one sequence the reads carried that NO panel declares.
+undeclaredTagAxis := func(blockId) {
+	return {
+		name: "pl7.app/antigen/undeclaredTagId",
+		type: "String",
+		domain: {
+			"pl7.app/blockId": blockId,
+			"pl7.app/antigen/tagType": "antigen"
+		},
+		annotations: { "pl7.app/label": "Barcode" }
+	}
+}
+
 // identityAxis: the thing a verdict is about -- one tag, or a group of tags read as one antigen.
 //
 // `groupingId` is in the DOMAIN, and ships even though v1 only ever sets "per-tag". Without it the axis
@@ -1672,6 +1685,7 @@ export {
 	negativeControlColumn: negativeControlColumn,
 
 	tagAxis: tagAxis,
+	undeclaredTagAxis: undeclaredTagAxis,
 	identityAxis: identityAxis,
 	panelAxis: panelAxis,
 	captureAxis: captureAxis,

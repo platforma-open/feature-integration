@@ -265,7 +265,7 @@ self.body(func(inputs) {
 
 	undeclaredFb := pframes.pFrameBuilder()
 	addTo(undeclaredFb, "undeclaredBarcodes", inputs.undeclaredBarcodes,
-		columnSpecs.undeclaredBarcodeImportSpec(sampleAxis, tagAxis))
+		columnSpecs.undeclaredBarcodeImportSpec(sampleAxis, columnSpecs.undeclaredTagAxis(blockId)))
 
 	return {
 		antigenVerdicts: exportFb.build(),

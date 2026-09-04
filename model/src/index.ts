@@ -616,6 +616,12 @@ const dataModel = new DataModelBuilder()
   // rather than rewritten: the saved filters and column set were saved against axes that no longer exist in
   // that order.
   .migrate<BlockData>("v10", (data) => ({ ...data, reagentTableState: createPlDataTableStateV2() }))
+  // v11. The undeclared-barcode grid moved to its own axis, so a saved column set, order or filter names an
+  // axis that table no longer has. Reset rather than rewritten, for the same reason as v10.
+  .migrate<BlockData>("v11", (data) => ({
+    ...data,
+    undeclaredBarcodesTableState: createPlDataTableStateV2(),
+  }))
   .init(() => ({
     runMode: "full" as const, // full run by default. "dry" = read-limited Preview
     // The geometry the block shipped with, 10x 5' v2 BEAM (16 / 10 / 15).
