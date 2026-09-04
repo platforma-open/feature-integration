@@ -991,12 +991,10 @@ const gridOptions = {
             label="Expected binder %"
           >
             <template #tooltip>
-              <b>Empty is the default</b>: the split between background and signal is worked out for
-              each sample and barcode from its own counts.<br /><br />
-              Set a share only where you already know it — a sorted or spiked population that binds
-              in bulk. One value then applies to every barcode in the run.<br /><br />
-              Too low and the split lands above the gap you can see in the distribution; too high
-              and the fit finds "binders" on a barcode that bound nothing.
+              What share of cells you expect to have bound. This is where the fit starts looking,
+              not what it concludes.<br /><br />
+              Leave it empty and the fit works out its own starting point for each sample and each
+              barcode separately. That is almost always better.
             </template>
           </PlNumberField>
           <!-- The fitted rung's line, in the slot the score cutoff occupies on the declared one. The two are

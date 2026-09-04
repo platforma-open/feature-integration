@@ -998,7 +998,7 @@ def main() -> None:
         qc = read_qc.get(sample, {})
 
         reads_matched = _number(qc, "readsMatched")
-        matched_detail = "" if reads_matched is None else f"readsMatched={int(reads_matched)}"
+        matched_detail = "" if reads_matched is None else f"{int(reads_matched):,} reads matched the read pattern"
         add(rows, "sample", sample, "readsTotal", _number(qc, "readsTotal"), matched_detail, reason=NO_READ_QC)
         # `qc_report.py` computes this from the tag-stat TSV directly, the same required input
         # `readsTotal` reads from the parse report -- a missing figure means no read-QC row reached this
@@ -1093,7 +1093,7 @@ def main() -> None:
             if reads_matched is not None and listed_here is not None
             else None
         )
-        detail = f"cellsInList={len(listed_here)}" if listed_here is not None else "no cell list supplied"
+        detail = f"{len(listed_here):,} cells in the V(D)J cell list" if listed_here is not None else "no cell list supplied"
         # Three cases, not two. `reads_per_cell` returns no number for an EMPTY cell list as well as
         # for an absent one, and a sample with no listed cell is the zero-cells finding rather than a
         # missing read count.
@@ -1108,9 +1108,13 @@ def main() -> None:
 
         deciles = antigen_count_deciles(sample_counts)
         sample_decile_rows += _sample_decile_rows(sample, deciles)
-        decile_detail = "|".join(
-            f"{d}:{'' if v is None else round(v, 3)}" for d, v in zip(deciles["decile"], deciles["value"], strict=True)
+        # The top of the range only. All eleven deciles went out as a wall of numbers no reader used;
+        # the value beside it already carries the middle.
+        _top = next(
+            (v for d, v in zip(deciles["decile"], deciles["value"], strict=True) if d == 100 and v is not None),
+            None,
         )
+        decile_detail = "" if _top is None else f"highest {_top:,.0f}"
         middle = deciles.filter(pl.col("decile") == 50)["value"].to_list()
         # An empty input still returns all eleven decile points, each unanswered, so a value of None
         # here means this sample holds no counted reading at all.
@@ -1131,9 +1135,9 @@ def main() -> None:
         agg_fraction = _number(qc, "aggregateBarcodeFraction")
         agg_flagged = _number(qc, "aggregateBarcodesFlagged")
         agg_threshold = _number(qc, "aggregateBarcodeThreshold")
-        agg_detail = "" if agg_fraction is None else f"barcodesFlagged={int(agg_flagged or 0)}"
+        agg_detail = "" if agg_fraction is None else f"{int(agg_flagged or 0):,} barcodes flagged"
         if agg_threshold is not None:
-            agg_detail += f"|threshold={agg_threshold:.1f}"
+            agg_detail += f"|at a threshold of {agg_threshold:,.0f} UMIs"
         # `reads_total` is None where the row carries no readsTotal at all, which is neither of the two
         # cases below: it reports no read count rather than a count of zero.
         agg_reason = (
@@ -1162,7 +1166,7 @@ def main() -> None:
             sample,
             "floorRemoved",
             float(stats["readingsFloored"]),
-            f"cellsEmptied={stats['cellsEmptied']}",
+            f"{stats['cellsEmptied']:,} cell barcodes left with no reading",
         )
 
         listed_totals = (
@@ -1177,7 +1181,7 @@ def main() -> None:
             sample,
             "uniqueCountsPerCell",
             _median([float(v) for v in listed_totals]),
-            f"cellsWithAReading={len(listed_totals)}",
+            f"{len(listed_totals):,} cell barcodes carried a reading",
             # `in_list` is empty whenever no list arrived, so the join yields nothing for every sample of
             # such a run. Branching on the same fact `readsPerCell` branches on keeps the two rows from
             # giving one run two incompatible accounts.

@@ -131,6 +131,8 @@ const cellRendererSelector = (params: { colDef?: { context?: PunchColumnContext 
       antigen: labelOf.value[identity] ?? identity,
       mergedNote: mergedNote(identity),
       showAsked: panelsDiffer.value,
+      minAgreement: runMeta.value?.minAgreement,
+      minVoters: runMeta.value?.minVoters,
     },
   };
 };

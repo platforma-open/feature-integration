@@ -61,10 +61,9 @@ const cellStyle: CSSProperties = {
   height: "100%",
 };
 
-// No token -> sentence map here, deliberately. `UnreliableReason`'s VALUES are already the prose meant for a
-// reader ("no comparator for this cell"), and the enum member is what code compares against. The set-level
-// card expands tokens because its reasons come from `SetUnreliableReason`, a different vocabulary that
-// really is machine values.
+// Keyed by `UnreliableReason`'s VALUES, not by its enum members: the values are what travel in the data
+// ("no comparator for this cell"), and they are already readable -- so an unmapped one falls through to
+// itself under a `Why:` prefix rather than being swallowed. Only these two reach a cell.
 //
 // Prefixed rather than capitalised, for the reason PunchCell gives: a blanket transform would also
 // capitalise the antigen name, which is panel data.
@@ -78,12 +77,18 @@ const EXPLANATION: Record<VerdictState, string> = {
     "No mark: no sample holding this cell declared this antigen, so there was nothing to answer",
 };
 
+const WHY_UNUSABLE: Record<string, string> = {
+  "cell set aside by the admissibility gate":
+    "This cell bound the negative control strongly, so it is taking up reagent non-specifically and its readings were set aside.",
+  "no comparator for this cell": "There was no background reading to compare this cell against.",
+};
+
 const lines = computed<string[]>(() => {
   const r = reading.value;
   if (r.state === "unparsed") return ["No readable reading for this cell at this identity"];
   const out = props.params.antigen === undefined ? [] : [props.params.antigen];
   out.push(r.state.toUpperCase(), EXPLANATION[r.state]);
-  if (r.reason !== undefined) out.push(`Why: ${r.reason}`);
+  if (r.reason !== undefined) out.push(WHY_UNUSABLE[r.reason] ?? `Why: ${r.reason}`);
   return out;
 });
 

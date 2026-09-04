@@ -155,6 +155,16 @@ export type VerdictRunMeta = {
    */
   samplePanelCount?: number;
   /**
+   * The two combining rules the run applied, as applied and not as stored: `args()` substitutes the shipped
+   * default wherever the stored value is undefined, so a reader comparing runs needs the number that served.
+   *
+   * Neither is optional. Both have travelled in the run record since it existed, so no stored run lacks them.
+   * `minAgreement` is null where no floor was set -- off is absent rather than zero, the same convention
+   * `gateThreshold` below follows.
+   */
+  minVoters: number;
+  minAgreement: number | null;
+  /**
    * The read limit the run applied. Absent or null where the run declared none, which is the one signal for
    * "a gate was declared". A gate that set nothing aside must still say so.
    */
