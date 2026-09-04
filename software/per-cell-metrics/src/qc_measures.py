@@ -132,7 +132,7 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "refineRescuedShare",
         "Fraction of reads rescued by barcode correction",
         "sample",
-        "Reads whose barcode sat a base or two off a panel entry and was corrected onto it."
+        "Reads whose barcode sat a base or two off a panel entry and was corrected onto it.",
     ),
     # Ported from Cell Ranger's own read-recovery metric,
     # `_report_genome_agnostic_metrics::frac_feature_reads_usable`: conf-mapped, barcoded reads

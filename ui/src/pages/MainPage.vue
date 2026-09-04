@@ -229,6 +229,8 @@ const allSources = computed(() => referenceSources.value?.options ?? []);
 // The expected binder fraction as a PERCENTAGE, where the data holds a share from 0 to 1. Same display
 // conversion as the agreement limit below, and for the same reason: a scientist states "about 30% of these
 // cells bound", not "0.3". Not rounded on the way out, so a typed value comes back as the number typed.
+const SHOW_EXPECTED_BINDER_FRACTION = false;
+
 const binderPercent = computed({
   get: () => {
     const share = app.model.data.expectedBinderFraction;
@@ -976,11 +978,13 @@ const gridOptions = {
               measure binding strength.
             </template>
           </PlNumberField>
-          <!-- Ordered before the bound probability deliberately. This decides WHICH two populations the
-               fit finds; the probability only sets how sure the fit must be about a cell once it has them.
-               A binder list that looks wrong is usually this one's business, not that one's. -->
+          <!-- HIDDEN FOR NOW, and the field is kept rather than deleted: the override still reaches the CLI,
+               so a project that stored a share keeps being answered under it. Flip the flag to show it again.
+               Ordered before the bound probability deliberately. This decides WHICH two populations the fit
+               finds; the probability only sets how sure the fit must be about a cell once it has them. A
+               binder list that looks wrong is usually this one's business, not that one's. -->
           <PlNumberField
-            v-if="chosenSource === 'distribution'"
+            v-if="SHOW_EXPECTED_BINDER_FRACTION && chosenSource === 'distribution'"
             :class="$style.half"
             v-model="binderPercent"
             :min-value="0.1"
