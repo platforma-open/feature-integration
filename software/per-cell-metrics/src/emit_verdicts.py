@@ -723,11 +723,13 @@ def main() -> None:
 
     # The same (cell, tag) counts as the table above, but taken before the floor and including the
     # control tag.
-    _write_sorted(
-        _listed(counts).select(["sampleId", "cellId", "tag", "umiCount"]),
-        f"{prefix}_cell_raw_counts.csv",
-        ["sampleId", "cellId", "tag"],
-    )
+    raw_cell_counts = _listed(counts).select(["sampleId", "cellId", "tag", "umiCount"])
+    _write_sorted(raw_cell_counts, f"{prefix}_cell_raw_counts.csv", ["sampleId", "cellId", "tag"])
+
+    # The same raw counts pivoted to ONE COLUMN PER TAG, keyed (sampleId, cellId).
+    cell_tag_pivot = raw_cell_counts.pivot(on="tag", index=["sampleId", "cellId"], values="umiCount")
+    _write_sorted(cell_tag_pivot, f"{prefix}_cell_tag_pivot.csv", ["sampleId", "cellId"])
+    cell_tag_pivot_tags = sorted(c for c in cell_tag_pivot.columns if c not in ("sampleId", "cellId"))
 
     cell_scalars = (
         reference_frame.join(in_list, on=["sampleId", "cellId"], how="left")
@@ -1705,6 +1707,13 @@ def main() -> None:
         # say which of the two it was rather than showing an empty tab.
         "cellPunchEmitted": cell_punch_emitted,
         "cellPunchCells": len(cell_punch),
+        # The tags the per-cell pivot laid out, in column order. The workflow builds one p-column per
+        # entry, so an absent list imports the pivot as nothing with no error raised anywhere.
+        "cellTagPivotTags": cell_tag_pivot_tags,
+        # And their names, because the pivot has no tag axis to hang a label column on: the axis became the
+        # headers. Without this every column of the family is titled with a 15-mer barcode. Keyed over
+        # exactly the columns above, and falling back to the barcode for a tag the panel never named.
+        "cellTagPivotLabels": {t: tag_names.get(t, t) for t in cell_tag_pivot_tags},
         "identitySummaryLimit": IDENTITY_SUMMARY_MAX_IDENTITIES,
         "cellPunchLimit": CELL_PUNCH_MAX_CELLS,
         # The undeclared-barcode table holds the heaviest sequences per sample, not every one. The

@@ -978,6 +978,47 @@ cellRawTagCountsImportSpec := func(sampleAxisSpec, cellAxisSpec, tagAxisSpec) {
 	}
 }
 
+// result_cell_tag_pivot.csv, keyed (sampleId, cellId): the counts above with the TAG AXIS PIVOTED INTO
+// COLUMNS, one per barcode.
+cellTagPivotImportSpec := func(sampleAxisSpec, cellAxisSpec, blockId, tags, labels) {
+	cols := []
+	for i, tag in tags {
+		label := is_undefined(labels[tag]) ? tag : labels[tag]
+		cols = append(cols, {
+			column: tag,
+			id: "cellTagPivot_" + strings.substituteSpecialCharacters(tag),
+			allowNA: true,
+			spec: {
+				name: "pl7.app/antigen/rawUmiCount",
+				valueType: "Int",
+				domain: {
+					"pl7.app/blockId": blockId,
+					"pl7.app/antigen/tagType": "antigen",
+					"pl7.app/antigen/tagId": tag
+				},
+				annotations: a(79000 - i, undefined, {
+					"pl7.app/label": label,
+					"pl7.app/description": "Molecules seen for " + label + " in this cell, before the count floor. A cell with no value here saw none of it.",
+					"pl7.app/graph/treatAbsentValuesAs": "0",
+					"pl7.app/min": "0",
+					"pl7.app/isAbundance": "true",
+					"pl7.app/abundance/unit": "molecules",
+					"pl7.app/abundance/normalized": "false"
+				})
+			}
+		})
+	}
+	return {
+		axes: [
+			{ column: "sampleId", spec: sampleAxisSpec },
+			{ column: "cellId", spec: cellAxisSpec }
+		],
+		columns: cols,
+		storageFormat: "Parquet",
+		partitionKeyLength: 1
+	}
+}
+
 // result_cell_scalars.csv, keyed (sampleId, cellId).
 //
 // The comparator is in the domain for the same reason it is on the verdicts: referenceCount and
@@ -1724,6 +1765,7 @@ export {
 	cellPunchImportSpec: cellPunchImportSpec,
 	cellTagCountsImportSpec: cellTagCountsImportSpec,
 	cellRawTagCountsImportSpec: cellRawTagCountsImportSpec,
+	cellTagPivotImportSpec: cellTagPivotImportSpec,
 	cellScalarsImportSpec: cellScalarsImportSpec,
 	cellInListImportSpec: cellInListImportSpec,
 	offeredImportSpec: offeredImportSpec,

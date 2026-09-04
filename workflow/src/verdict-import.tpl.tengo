@@ -267,6 +267,15 @@ self.body(func(inputs) {
 	addTo(cellTagFb, "cellTagLabels", inputs.tagLabels,
 		columnSpecs.tagLabelsImportSpec(tagAxis))
 
+	// The same counts pivoted onto the cell, one column per barcode, so a plot can put one antigen's count
+	// on each axis.
+	cellTagPivotTags := is_undefined(served.cellTagPivotTags) ? [] : served.cellTagPivotTags
+	if len(cellTagPivotTags) > 0 {
+		addTo(cellTagFb, "cellTagPivot", inputs.cellTagPivot,
+			columnSpecs.cellTagPivotImportSpec(sampleAxis, cellAxis, blockId, cellTagPivotTags,
+				is_undefined(served.cellTagPivotLabels) ? {} : served.cellTagPivotLabels))
+	}
+
 	undeclaredFb := pframes.pFrameBuilder()
 	addTo(undeclaredFb, "undeclaredBarcodes", inputs.undeclaredBarcodes,
 		columnSpecs.undeclaredBarcodeImportSpec(sampleAxis, columnSpecs.undeclaredTagAxis(blockId)))

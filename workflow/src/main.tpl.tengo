@@ -462,6 +462,8 @@ wf.body(func(args) {
 			// cellCounts, the POST-floor per-cell per-tag counts, is still deliberately NOT passed.
 			// cellRawCounts, the same grain BEFORE the floor, IS passed.
 			cellRawCounts: verdictRun.output("cellRawCounts"),
+			// The same pre-floor counts pivoted onto the cell, one column per barcode.
+			cellTagPivot: verdictRun.output("cellTagPivot"),
 			cellScalars: verdictRun.output("cellScalars"),
 			cellInList: verdictRun.output("cellInList"),
 			offered: verdictRun.output("offered"),
@@ -529,11 +531,11 @@ wf.body(func(args) {
 		// lead selection can see, the pivoted per-identity summary, the offered scope, the tag -> identity linker
 		// and the label columns.
 		//
-		// No per-cell material is among them: labelling and lead selection both read verdicts, never cells. The
-		// per-cell reference readings are still reported, as an OUTPUT below. The per-cell per-tag counts are not
-		// built at any grain.
+		// Labelling and lead selection both read verdicts, never cells, so no per-cell material is among the
+		// families they join to. The per-cell reference readings are reported as an OUTPUT below instead.
 		blockExports.antigenVerdicts = verdictImport.output("antigenVerdicts")
-		// Per-cell per-tag capture, pre-floor.
+		// The one exported per-cell family: the pre-floor per-tag capture, in BOTH shapes -- long, keyed
+		// (sample, cell, tag), and pivoted onto the cell with one column per barcode. Exported for plotting
 		blockExports.antigenCellTagCounts = verdictImport.output("cellTagCounts")
 		// The same frame as an OUTPUT, because a block's own exports are not in its own result pool. Without
 		// this the block that produced the verdicts would be the one place that cannot read them.

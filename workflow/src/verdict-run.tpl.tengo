@@ -31,6 +31,7 @@ RESULT_TABLES := [
 	{ out: "cellPunch", file: "result_cell_punch.csv" },
 	{ out: "cellCounts", file: "result_cell_counts.csv" },
 	{ out: "cellRawCounts", file: "result_cell_raw_counts.csv" },
+	{ out: "cellTagPivot", file: "result_cell_tag_pivot.csv" },
 	{ out: "cellScalars", file: "result_cell_scalars.csv" },
 	{ out: "cellInList", file: "result_cell_in_list.csv" },
 	{ out: "offered", file: "result_offered.csv" },
