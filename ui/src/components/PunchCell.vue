@@ -29,7 +29,14 @@ import { PUNCH_DIAMETER_PX, PUNCH_PAINT, parsePunch } from "./punchMarks";
 // There is deliberately no score and no binding level here. The tooltip explains a verdict by what it RESTS
 // on and never by how strongly anything bound.
 const props = defineProps<{
-  params: { value: unknown; antigen?: string; mergedNote?: string; showAsked?: boolean };
+  params: {
+    value: unknown;
+    antigen?: string;
+    mergedNote?: string;
+    showAsked?: boolean;
+    minAgreement?: number;
+    minVoters?: number;
+  };
 }>();
 
 const punch = computed<Punch>(() => parsePunch(props.params.value));
@@ -66,20 +73,37 @@ const cellStyle: CSSProperties = {
   height: "100%",
 };
 
-// Why this mark is this colour, in the order a reader asks it: what the verdict is, what it rests on, and
-// -- where the verdict is unsettled -- which of the five ways it failed to settle. The sixth key below is
-// never-offered, which belongs to *never asked* rather than to an unsettled reading. The reason tokens are
-// machine values (`no-comparator`, `tie`, ...), so each is expanded here rather than shown raw.
+// The five ways a reading fails to settle, plus never-offered, which belongs to *not tested* rather than to
+// an unsettled reading. The tokens are machine values (`no-comparator`, `tie`, ...), so each is expanded
+// here rather than shown raw. A token with no case falls through to itself, so an unknown one is shown
+// rather than swallowed.
 //
-// Each line is capitalised at the source rather than by a transform over `lines`. A blanket transform would
-// also capitalise the antigen name, which is panel data.
-const WHY_UNSETTLED: Record<string, string> = {
-  "never-offered": "No sample holding these cells declared this antigen",
-  "no-comparator": "No baseline reading existed for these cells",
-  "all-cells-gated": "Every cell was set aside by the admissibility gate",
-  tie: "The cells split evenly, so no majority settled it",
-  "below-agreement-floor": "The cells agreed less than the run required",
-  "too-few-voters": "Fewer cells answered than the run required",
+// A function rather than a map because two of them quote the run's cutoffs. Each line is capitalised at the
+// source rather than by a transform over `lines`: a blanket transform would also capitalise the antigen
+// name, which is panel data.
+const whyUnsettled = (reason: string): string => {
+  const voters = props.params.minVoters;
+  const agreement = props.params.minAgreement;
+  switch (reason) {
+    case "no-comparator":
+      return "No background value could be worked out for these cells, so there was nothing to compare their counts against.";
+    case "all-cells-gated":
+      return "Every one of these cells bound the negative control strongly, so all were set aside as non-specific.";
+    case "tie":
+      return "The cells split evenly, with no majority either way.";
+    case "below-agreement-floor":
+      return agreement === undefined
+        ? "The cells agreed less than this run requires."
+        : `The cells agreed less than the ${Math.round(agreement * 100)}% this run requires.`;
+    case "too-few-voters":
+      return voters === undefined
+        ? "This run requires more cells with a usable reading."
+        : `This run requires at least ${voters} cell${voters === 1 ? "" : "s"} with a usable reading.`;
+    case "never-offered":
+      return "This antigen was not in the panel for the samples these cells came from.";
+    default:
+      return reason;
+  }
 };
 
 const EXPLANATION: Record<VerdictState, string> = {
@@ -115,7 +139,7 @@ const lines = computed<string[]>(() => {
     if (p.bound !== undefined) out.push(`${p.bound} of them read bound`);
     if (p.agreement !== undefined) out.push(`${Math.round(p.agreement * 100)}% of them agreed`);
   }
-  if (p.reason !== undefined) out.push(WHY_UNSETTLED[p.reason] ?? p.reason);
+  if (p.reason !== undefined) out.push(whyUnsettled(p.reason));
   // Last, because it is about the COLUMN rather than this verdict: why this identity is one merged reagent
   // while its neighbours are single antigens.
   if (props.params.mergedNote !== undefined) out.push(props.params.mergedNote);

@@ -142,6 +142,10 @@ self.body(func(inputs) {
 	cellRefFb := pframes.pFrameBuilder()
 	addTo(cellRefFb, "cellScalars", inputs.cellScalars,
 		columnSpecs.cellScalarsImportSpec(sampleAxis, cellAxis, served))
+	// The cell list as a frame of its own. Same grain as cellScalars beside it, opposite shape: rows only
+	// where the cell matched. The model inner-joins it to narrow the per-cell table.
+	addTo(cellRefFb, "cellInList", inputs.cellInList,
+		columnSpecs.cellInListImportSpec(sampleAxis, cellAxis))
 
 	// The per-cell punchcard, into the SAME frame: one row per cell, one column per identity, that cell's own
 	// reading. The by-cell face of the expansion, and the one place the block shows WHY a clonotype's verdict
@@ -265,7 +269,7 @@ self.body(func(inputs) {
 
 	undeclaredFb := pframes.pFrameBuilder()
 	addTo(undeclaredFb, "undeclaredBarcodes", inputs.undeclaredBarcodes,
-		columnSpecs.undeclaredBarcodeImportSpec(sampleAxis, tagAxis))
+		columnSpecs.undeclaredBarcodeImportSpec(sampleAxis, columnSpecs.undeclaredTagAxis(blockId)))
 
 	return {
 		antigenVerdicts: exportFb.build(),

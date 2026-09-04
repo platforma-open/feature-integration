@@ -371,6 +371,19 @@ tagAxis := func(blockId) {
 	}
 }
 
+// undeclaredTagAxis: one sequence the reads carried that NO panel declares.
+undeclaredTagAxis := func(blockId) {
+	return {
+		name: "pl7.app/antigen/undeclaredTagId",
+		type: "String",
+		domain: {
+			"pl7.app/blockId": blockId,
+			"pl7.app/antigen/tagType": "antigen"
+		},
+		annotations: { "pl7.app/label": "Barcode" }
+	}
+}
+
 // identityAxis: the thing a verdict is about -- one tag, or a group of tags read as one antigen.
 //
 // `groupingId` is in the DOMAIN, and ships even though v1 only ever sets "per-tag". Without it the axis
@@ -543,7 +556,7 @@ verdictsImportSpec := func(setAxisSpec, identityAxisSpec, served) {
 					"pl7.app/label": "Binding verdict",
 					"pl7.app/isDiscreteFilter": "true",
 					"pl7.app/discreteValues": VERDICT_STATES,
-					"pl7.app/description": "One of four states. 'Never asked' means the experiment did not put this antigen to these cells; 'unreliable' means it did and the data cannot settle it. Neither is a kind of 'not bound'."
+					"pl7.app/description": "One of four states. 'Bound' and 'not bound' read the count against the baseline that served. 'Never asked' means the antigen appeared in no read from these cells' samples; 'unreliable' means it was measured and the reading cannot tell bound from not bound. Neither is a kind of 'not bound'."
 				}))
 			}),
 			verdictCol("unreliableReason", "unreliableReason", {
@@ -1008,6 +1021,29 @@ cellScalarsImportSpec := func(sampleAxisSpec, cellAxisSpec, served) {
 					"pl7.app/discreteValues": BOOL_VALUES
 			}))
 		],
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}
+}
+
+// --- The cell list, as a joinable frame ---------------------------------------------------
+//
+// result_cell_in_list.csv, keyed (sampleId, cellId). One row per matched cell (VDJ vs tags)
+cellInListImportSpec := func(sampleAxisSpec, cellAxisSpec) {
+	return {
+		axes: [
+			{ column: "sampleId", spec: sampleAxisSpec },
+			{ column: "cellId", spec: cellAxisSpec }
+		],
+		columns: [{
+			column: "inCellList",
+			id: "cellInList",
+			spec: {
+				name: "pl7.app/antigen/cellInList",
+				valueType: "String",
+				annotations: a(0, undefined, { "pl7.app/label": "In cell list" })
+			}
+		}],
 		storageFormat: "Parquet",
 		partitionKeyLength: 0
 	}
@@ -1672,6 +1708,7 @@ export {
 	negativeControlColumn: negativeControlColumn,
 
 	tagAxis: tagAxis,
+	undeclaredTagAxis: undeclaredTagAxis,
 	identityAxis: identityAxis,
 	panelAxis: panelAxis,
 	captureAxis: captureAxis,
@@ -1688,6 +1725,7 @@ export {
 	cellTagCountsImportSpec: cellTagCountsImportSpec,
 	cellRawTagCountsImportSpec: cellRawTagCountsImportSpec,
 	cellScalarsImportSpec: cellScalarsImportSpec,
+	cellInListImportSpec: cellInListImportSpec,
 	offeredImportSpec: offeredImportSpec,
 	tagIdentityLinkerImportSpec: tagIdentityLinkerImportSpec,
 	identityLabelsImportSpec: identityLabelsImportSpec,

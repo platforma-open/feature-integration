@@ -337,17 +337,14 @@ def _sticky_measure(readings: dict[tuple[str, str], int], gate: int | None) -> t
     run never asked, while the run record reports None for the same condition. So neither form returns a
     number there, and the caller's reason goes out in place of one.
     """
-    comparator_detail = f"cellsWithAComparator={len(readings)}"
+    comparator_detail = f"Cells with a control reading: {len(readings):,}"
     if not readings:
         return None, comparator_detail
     if gate is not None:
-        return float(sum(1 for v in readings.values() if v > gate)), f"{comparator_detail}|gate={gate}"
+        return float(sum(1 for v in readings.values() if v > gate)), f"{comparator_detail}|Gate: {gate:,} UMIs"
     deciles = deciles_of(np.asarray(list(readings.values()), dtype=float))
-    points = "|".join(
-        f"{d}:{'' if v is None else round(v, 3)}" for d, v in zip(deciles["decile"], deciles["value"], strict=True)
-    )
     middle = deciles.filter(pl.col("decile") == 50)["value"].to_list()
-    return (middle[0] if middle else None), f"{comparator_detail}|noGateDeclared|{points}"
+    return (middle[0] if middle else None), f"{comparator_detail}|No gate declared"
 
 
 def _score_spread(states: pl.DataFrame, served: ReferenceChoice) -> tuple[float | None, str]:
@@ -388,11 +385,11 @@ def _fitted_background(tag_fits: TagFits | None, samples: Collection[str], tag: 
     means = [b.mean for b in fitted]
     detail = "|".join(
         [
-            f"samplesFitted={len(fitted)}",
-            f"samplesUnfitted={len(missed)}",
-            f"backgroundRange={min(means):.4g}..{max(means):.4g}",
-            f"medianSignalMean={_median([b.signal_mean for b in fitted]):.4g}",
-            f"medianBackgroundWeight={_median([b.weight for b in fitted]):.4g}",
+            f"Samples fitted: {len(fitted)}",
+            f"Samples not fitted: {len(missed)}",
+            f"Background range: {min(means):.4g} to {max(means):.4g}",
+            f"Median fitted signal: {_median([b.signal_mean for b in fitted]):.4g}",
+            f"Median background share: {_median([b.weight for b in fitted]):.4g}",
         ]
     )
     return _median(means), detail

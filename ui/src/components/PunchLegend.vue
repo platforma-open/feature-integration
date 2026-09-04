@@ -20,22 +20,22 @@ const SET_ENTRIES: Entry[] = [
   {
     glyph: "bound",
     label: "Bound",
-    meaning: "a majority of the cells that answered read it as bound",
+    meaning: "most cells with a usable reading show binding",
   },
   {
     glyph: "not-bound",
     label: "Not bound",
-    meaning: "the cells that answered read it as not bound",
+    meaning: "most cells with a usable reading show no binding",
   },
   {
     glyph: "unreliable",
     label: "Unreliable",
-    meaning: "asked, and the readings could not settle it. Hover for which of the five ways",
+    meaning: "this antigen was in the panel, but nothing usable came back. Hover for why.",
   },
   {
     glyph: "none",
-    label: "Never asked",
-    meaning: "no sample holding these cells declared this antigen",
+    label: "Not tested",
+    meaning: "this antigen was not in the panel for these samples",
   },
 ];
 
@@ -43,25 +43,25 @@ const CELL_ENTRIES: Entry[] = [
   {
     glyph: "bound",
     label: "Bound",
-    meaning: "this cell read the antigen as bound",
+    meaning: "this cell shows binding",
   },
   {
     glyph: "not-bound",
     label: "Not bound",
-    // Said explicitly, because it is the one thing about this face a reader would otherwise get wrong: a cell
-    // that returned no count for an antigen it WAS asked about reads here, never blank. A zero count is a
-    // reading, and the same cell votes that way in its clonotype's verdict.
-    meaning: "this cell read it as not bound, a returned count of zero included",
+    // The zero count is said explicitly, because it is the one thing about this face a reader would otherwise
+    // get wrong: a cell that returned no count for an antigen it WAS asked about reads here, never blank. A
+    // zero count is a reading, and the same cell votes that way in its clonotype's verdict.
+    meaning: "no binding, including where the count came back as zero",
   },
   {
     glyph: "unreliable",
     label: "Unreliable",
-    meaning: "this cell could not be compared at all, so it cast no vote. Hover for why",
+    meaning: "no usable reading from this cell",
   },
   {
     glyph: "none",
-    label: "Never asked",
-    meaning: "no sample holding this cell declared this antigen",
+    label: "Not tested",
+    meaning: "this antigen was not in the panel for this sample",
   },
 ];
 

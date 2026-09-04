@@ -95,13 +95,13 @@ class Measurement:
 MEASUREMENTS: tuple[Measurement, ...] = (
     Measurement(
         "readsTotal",
-        "Reads total and fraction matched",
+        "Reads parsed",
         "sample",
         # No line. Exactly four numbers are inherited from the field, and the matched share is not
         # one of them: usable antigen-read fraction (warn below 0.20), undeclared-barcode fraction
         # (warn above 0.50), aggregate-barcode read fraction (warn above 0.05), barcode validity
         # (warn below 0.75). Nothing published says what a low matched share means.
-        "Every read the parser saw, and the share matching the tag pattern.",
+        "Every read the block read from this sample's files.",
     ),
     # `qc_report._refine_kept_fraction` returns the FEATURE step's outputCount/inputCount -- the share
     # of matched reads whose barcode corrects onto a panel entry. Its complement is the share landing
@@ -119,9 +119,9 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # Renaming it breaks both.
     Measurement(
         "panelAssignedFraction",
-        "Fraction of reads in undeclared barcodes (as its complement)",
+        "Fraction of reads matching a panel barcode",
         "sample",
-        "Reads whose corrected barcode is on the panel, over reads matched.",
+        "Reads whose barcode matches the panel, out of the reads that matched the read pattern.",
     ),
     # No line. The four inherited numbers do not include this one, and nothing published says what a
     # low or high rescued share means -- a panel whose barcodes sit far apart rescues little because
@@ -130,10 +130,9 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # table is not a read the run lost, and this says how much of it was not.
     Measurement(
         "refineRescuedShare",
-        "Fraction of reads correction rescued onto the panel",
+        "Fraction of reads rescued by barcode correction",
         "sample",
-        "Reads on a sequence the panel does not declare that refine-tags then snapped onto a panel "
-        "entry, over reads matched.",
+        "Reads whose barcode sat a base or two off a panel entry and was corrected onto it.",
     ),
     # Ported from Cell Ranger's own read-recovery metric,
     # `_report_genome_agnostic_metrics::frac_feature_reads_usable`: conf-mapped, barcoded reads
@@ -143,9 +142,9 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # panel-recognised FEATURE value, so restricting to the cell list is the only condition left.
     Measurement(
         "usableReadFraction",
-        "Fraction of antigen reads usable",
+        "Fraction of reads usable for antigen calls",
         "sample",
-        "Reads whose corrected barcode is on the panel and whose cell barcode is in the cell list, over readsTotal.",
+        "Reads that both match the panel and come from a cell the V(D)J data matched.",
         "A low share means most of the library's reads are lost before reaching a called cell "
         "with a panel-recognised barcode.",
         "inherited",
@@ -154,7 +153,7 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # putting error at total failure. The refine-tags report already carries the CELL step this reads.
     Measurement(
         "cellBarcodeValidFraction",
-        "Fraction of reads whose cell barcode the chemistry could have produced",
+        "Fraction of reads with a valid cell barcode",
         "sample",
         "Reads whose cell barcode corrects onto the chemistry's whitelist, over reads entering correction.",
         "A low share means the reads carry cell barcodes this chemistry does not produce, "
@@ -174,7 +173,7 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "cellsDetected",
         "Cell barcodes detected",
         "sample",
-        "Distinct cell barcodes in the tag-stat table, before any cell-calling step.",
+        "Distinct cell barcodes seen, before cell calling. Most are empty droplets.",
         "Zero cells means nothing downstream can be computed for this sample.",
         "categorical",
     ),
@@ -196,7 +195,7 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     ),
     Measurement(
         "antigenCountDistribution",
-        "Distribution of antigen count per barcode",
+        "Median antigen count per cell barcode",
         "sample",
         "Deciles of the total antigen count per cell barcode.",
     ),
@@ -215,7 +214,7 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "aggregateBarcodeFraction",
         "Fraction of reads in aggregate barcodes",
         "sample",
-        "Reads in barcodes flagged as aggregates by the top-100 IQR rule, over readsTotal.",
+        "Reads in barcodes carrying far more signal than the rest, which points at clumped droplets.",
         "A high share means much of the run's antigen signal comes from a small number of "
         "clumped droplets rather than single cells.",
         "inherited",
@@ -241,13 +240,13 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     ),
     Measurement(
         "floorRemoved",
-        "Counts removed as below the minimum, and cells left with none",
+        "Counts removed as too low",
         "sample",
         "Readings the minimum zeroed, and cells whose every non-reference reading was removed.",
     ),
     Measurement(
         "uniqueCountsPerCell",
-        "Reads and unique counts per cell",
+        "Median unique counts per cell",
         "sample",
         "Reads and distinct UMIs per cell barcode.",
     ),
@@ -259,9 +258,9 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # reading of any size means.
     Measurement(
         "highReferenceCells",
-        "Sticky cells, or the spread of the readings where no gate is declared",
+        "Sticky cells, or the spread of control readings",
         "sample",
-        "Cells whose reference reading exceeded the declared gate, or the spread of those readings.",
+        "Cells whose control reading exceeded the admissibility gate.",
     ),
     # The id is a value on the `measurement` axis, so renaming it does not break the column -- it
     # splits the rows, and a table holding old and new runs reads as two measurements.
@@ -772,7 +771,7 @@ def usable_read_fraction(
     if not reads_total:
         return None, "no total read count to divide by"
     usable = float(tag_stat.filter(pl.col(cell_col).is_in(list(listed_cells)))["totalWeight"].sum())
-    return usable / reads_total, f"cellsInList={len(listed_cells)}"
+    return usable / reads_total, f"Cells in the V(D)J cell list: {len(listed_cells):,}"
 
 
 # Cell Ranger's own constants for the ANTIGEN branch of `detect_outlier_umis_bcs`
@@ -845,11 +844,11 @@ def aggregate_barcode_fraction(
         detail = "no antigen barcode observed in this sample"
     elif threshold < min_umi_threshold:
         detail = (
-            f"barcodesTested={tested}|threshold={threshold:.1f} "
-            f"(below the {min_umi_threshold:.0f}-UMI floor, no barcode flagged)"
+            f"Barcodes tested: {tested:,}|Threshold: {threshold:,.0f} UMIs "
+            f"(below the {min_umi_threshold:,.0f}-UMI floor, so no barcode is flagged)"
         )
     else:
-        detail = f"barcodesTested={tested}|threshold={threshold:.1f}|barcodesFlagged={len(flagged)}"
+        detail = f"Barcodes tested: {tested:,}|Threshold: {threshold:,.0f} UMIs|Barcodes flagged: {len(flagged):,}"
     flagged_reads = per_barcode.filter(pl.col("barcode").is_in(flagged))["readCount"].sum() if flagged else 0
     return flagged_reads / reads_total, detail
 

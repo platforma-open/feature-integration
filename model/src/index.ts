@@ -93,6 +93,23 @@ export const CELL_PUNCH_COLUMN_NAME = "pl7.app/antigen/cellPunch";
 // unreachable here.
 export const PUNCH_CELL_COUNT_COLUMN = "pl7.app/antigen/cellCount";
 
+// The clonotype's own V(D)J properties, as every producer names them.
+export const VDJ_SEQUENCE_COLUMN = "pl7.app/vdj/sequence";
+export const VDJ_GENE_HIT_COLUMN = "pl7.app/vdj/geneHit";
+export const CHAIN_INDEX_DOMAIN = "pl7.app/vdj/scClonotypeChain/index";
+export const VDJ_ASSEMBLING_FEATURE_ANNOTATION = "pl7.app/vdj/isAssemblingFeature";
+
+// Axis identity as a comparable string. Domain entries are SORTED, because two specs that mean the same
+// axis can carry their domain keys in different orders and a bare JSON.stringify would call them different.
+function axisKeyOf(axis: Parameters<typeof getAxisId>[0]): string {
+  const id = getAxisId(axis);
+  const domain = Object.entries(id.domain ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  return JSON.stringify([id.name, id.type, domain]);
+}
+
+// The cell list as a joinable column: a row per cell the V(D)J data matched and none otherwise.
+export const CELL_IN_LIST_COLUMN = "pl7.app/antigen/cellInList";
+
 // User-facing names only. The DATA layer keeps `declared`/`panel`/`none`, which are p-column domain values,
 // and domain is part of column identity. These strings match the labels `referenceSources` offers.
 export const REFERENCE_SOURCE_LABELS: Record<ReferenceSource, string> = {
@@ -137,6 +154,16 @@ export type VerdictRunMeta = {
    * reader treats absent as one.
    */
   samplePanelCount?: number;
+  /**
+   * The two combining rules the run applied, as applied and not as stored: `args()` substitutes the shipped
+   * default wherever the stored value is undefined, so a reader comparing runs needs the number that served.
+   *
+   * Neither is optional. Both have travelled in the run record since it existed, so no stored run lacks them.
+   * `minAgreement` is null where no floor was set -- off is absent rather than zero, the same convention
+   * `gateThreshold` below follows.
+   */
+  minVoters: number;
+  minAgreement: number | null;
   /**
    * The read limit the run applied. Absent or null where the run declared none, which is the one signal for
    * "a gate was declared". A gate that set nothing aside must still say so.
@@ -616,6 +643,12 @@ const dataModel = new DataModelBuilder()
   // rather than rewritten: the saved filters and column set were saved against axes that no longer exist in
   // that order.
   .migrate<BlockData>("v10", (data) => ({ ...data, reagentTableState: createPlDataTableStateV2() }))
+  // v11. The undeclared-barcode grid moved to its own axis, so a saved column set, order or filter names an
+  // axis that table no longer has. Reset rather than rewritten, for the same reason as v10.
+  .migrate<BlockData>("v11", (data) => ({
+    ...data,
+    undeclaredBarcodesTableState: createPlDataTableStateV2(),
+  }))
   .init(() => ({
     runMode: "full" as const, // full run by default. "dry" = read-limited Preview
     // The geometry the block shipped with, 10x 5' v2 BEAM (16 / 10 / 15).
@@ -1323,7 +1356,26 @@ export const platforma = BlockModelV3.create(dataModel)
     (ctx) => {
       const pCols = ctx.outputs?.resolve("perCellTable")?.getPColumns();
       if (pCols === undefined || pCols.length === 0) return undefined;
-      return createPlDataTableV2(ctx, pCols, ctx.data.tableState);
+
+      // Narrowed to the cells the V(D)J data matched.
+      const runMeta = ctx.outputs
+        ?.resolve({ field: "antigenRunMeta", allowPermanentAbsence: true })
+        ?.getDataAsJsonOrUndefined<VerdictRunMeta>();
+      const listed =
+        runMeta === undefined || runMeta.cellListSource === "none"
+          ? []
+          : (
+              ctx.outputs
+                ?.resolve({ field: "antigenCellReference", allowPermanentAbsence: true })
+                ?.getPColumns() ?? []
+            ).filter((c) => c.spec.name === CELL_IN_LIST_COLUMN);
+
+      return createPlDataTableV2(
+        ctx,
+        [...pCols, ...listed],
+        ctx.data.tableState,
+        listed.length > 0 ? { coreJoinType: "inner" } : undefined,
+      );
     },
     { retentive: true, withStatus: true },
   )
@@ -1402,10 +1454,68 @@ export const platforma = BlockModelV3.create(dataModel)
       // 96000, between the clonotype label's 100000 and the punches' 92000. To fix a column that "renders last",
       // measure with `aria-colindex`: `querySelectorAll('[role="columnheader"]')` returns AG Grid's recycled
       // header nodes in an order unrelated to column position.
+
+      // The clonotype's own V(D)J properties, joined onto the same axis the punches use.
+      const punchAxisKey = axisKeyOf(cols[0].spec.axesSpec[0]);
+      const vdjColumns = ctx.resultPool
+        .getOptions((spec) => {
+          if (!isPColumnSpec(spec)) return false;
+          if (spec.name !== VDJ_SEQUENCE_COLUMN && spec.name !== VDJ_GENE_HIT_COLUMN) return false;
+          if (spec.domain?.[CHAIN_INDEX_DOMAIN] !== "primary") return false;
+          // Keyed on the clonotype and on NOTHING else. A per-sample column would drag a sample axis in and
+          // re-key the whole card.
+          if (spec.axesSpec.length !== 1) return false;
+          return axisKeyOf(spec.axesSpec[0]) === punchAxisKey;
+        })
+        .map((o) => ctx.resultPool.getPColumnByRef(o.ref))
+        .filter((c): c is NonNullable<typeof c> => c !== undefined);
+
+      // Which sequence a reader sees by default.
+      const aaSequences = vdjColumns.filter(
+        (c) =>
+          c.spec.name === VDJ_SEQUENCE_COLUMN &&
+          c.spec.domain?.["pl7.app/alphabet"] === "aminoacid",
+      );
+      type SequenceMatch = {
+        name: string;
+        domain: Record<string, string | { type: "regex"; value: string }>;
+        annotations?: Record<string, string>;
+      };
+      const shownSequenceMatch: SequenceMatch | undefined = aaSequences.some(
+        (c) => c.spec.annotations?.[VDJ_ASSEMBLING_FEATURE_ANNOTATION] === "true",
+      )
+        ? {
+            name: VDJ_SEQUENCE_COLUMN,
+            domain: { "pl7.app/alphabet": "aminoacid" },
+            annotations: { [VDJ_ASSEMBLING_FEATURE_ANNOTATION]: "true" },
+          }
+        : aaSequences.some((c) => /cdr3/i.test(c.spec.domain?.["pl7.app/vdj/feature"] ?? ""))
+          ? {
+              name: VDJ_SEQUENCE_COLUMN,
+              // The matcher offers only exact and regex, so "contains" is spelled as one.
+              domain: {
+                "pl7.app/alphabet": "aminoacid",
+                "pl7.app/vdj/feature": { type: "regex" as const, value: ".*[Cc][Dd][Rr]3.*" },
+              },
+            }
+          : undefined;
+
       return createPlDataTableV3(ctx, {
         primaryColumns: [...cellCount, ...ordered].map((c) => DataColumn.fromColumn(c)),
-        columns: null,
+        columns: vdjColumns.map((c) => DataColumn.fromColumn(c)),
         tableState: ctx.data.punchcardTableState,
+        // Read in order, first match wins; anything UNMATCHED keeps its own default, which is what leaves the
+        // punches and the cell count showing. Both fallthrough rules are scoped by column name so they can
+        // never reach them.
+        displayOptions: {
+          visibility: [
+            ...(shownSequenceMatch === undefined
+              ? []
+              : [{ match: shownSequenceMatch, visibility: "default" as const }]),
+            { match: { name: VDJ_SEQUENCE_COLUMN }, visibility: "optional" as const },
+            { match: { name: VDJ_GENE_HIT_COLUMN }, visibility: "optional" as const },
+          ],
+        },
       });
     },
     { retentive: true, withStatus: true },
@@ -1723,7 +1833,7 @@ export const platforma = BlockModelV3.create(dataModel)
       { type: "link" as const, href: "/" as const, label: "Main" },
       ...(hasRun
         ? [
-            { type: "link" as const, href: "/qc" as const, label: "Sample QC" },
+            //{ type: "link" as const, href: "/qc" as const, label: "Sample QC" },
             { type: "link" as const, href: "/results" as const, label: "Cell counts" },
             { type: "link" as const, href: "/antigen-qc" as const, label: "Tag QC" },
             { type: "link" as const, href: "/punchcard" as const, label: "Clonotype binding" },
