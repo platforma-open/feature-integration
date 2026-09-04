@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.feature-integration.model
 
+## 3.3.0
+
+### Minor Changes
+
+- bf43ed8: New updates
+
 ## 3.2.0
 
 ### Minor Changes

@@ -1,5 +1,16 @@
 # @platforma-open/milaboratories.feature-integration.ui
 
+## 2.6.0
+
+### Minor Changes
+
+- bf43ed8: New updates
+
+### Patch Changes
+
+- Updated dependencies [bf43ed8]
+  - @platforma-open/milaboratories.feature-integration.model@3.3.0
+
 ## 2.5.0
 
 ### Minor Changes

@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.feature-integration.per-cell-metrics
 
+## 3.4.0
+
+### Minor Changes
+
+- bf43ed8: New updates
+
 ## 3.3.0
 
 ### Minor Changes

@@ -1,5 +1,16 @@
 # @platforma-open/milaboratories.feature-integration.workflow
 
+## 3.4.0
+
+### Minor Changes
+
+- bf43ed8: New updates
+
+### Patch Changes
+
+- Updated dependencies [bf43ed8]
+  - @platforma-open/milaboratories.feature-integration.per-cell-metrics@3.4.0
+
 ## 3.3.0
 
 ### Minor Changes

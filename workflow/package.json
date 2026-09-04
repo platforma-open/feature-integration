@@ -1,6 +1,6 @@
 {
   "name": "@platforma-open/milaboratories.feature-integration.workflow",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "private": true,
   "description": "Block Workflow",
   "type": "module",
