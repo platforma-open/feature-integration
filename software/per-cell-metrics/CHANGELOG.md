@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.feature-integration.per-cell-metrics
 
+## 3.5.0
+
+### Minor Changes
+
+- a3c606f: Add/remove exports
+
 ## 3.4.0
 
 ### Minor Changes
