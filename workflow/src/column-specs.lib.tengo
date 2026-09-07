@@ -968,12 +968,22 @@ cellRawTagCountsImportSpec := func(sampleAxisSpec, cellAxisSpec, tagAxisSpec) {
 // result_cell_tag_pivot.csv, keyed (sampleId, cellId): the counts above with the TAG AXIS PIVOTED INTO
 // COLUMNS, one per barcode.
 cellTagPivotImportSpec := func(sampleAxisSpec, cellAxisSpec, blockId, tags, labels) {
+	// Make sure all IDs are unique
+	ids := []
+	seen := {}
+	for tag in tags {
+		base := "cellTagPivot_" + strings.substituteSpecialCharacters(tag)
+		taken := is_undefined(seen[base]) ? 0 : seen[base]
+		ids = append(ids, taken == 0 ? base : base + "__" + string(taken))
+		seen[base] = taken + 1
+	}
+
 	cols := []
 	for i, tag in tags {
 		label := is_undefined(labels[tag]) ? tag : labels[tag]
 		cols = append(cols, {
 			column: tag,
-			id: "cellTagPivot_" + strings.substituteSpecialCharacters(tag),
+			id: ids[i],
 			allowNA: true,
 			spec: {
 				name: "pl7.app/antigen/rawUmiCount",
