@@ -166,11 +166,6 @@ self.body(func(inputs) {
 			columnSpecs.cellPunchImportSpec(sampleAxis, cellAxis, cellPunchIdentities, served.groupingId, served))
 	}
 
-	// Which identities each sample was actually stained with. Without it, "never asked" is a claim a reader
-	// cannot check.
-	addTo(exportFb, "offered", inputs.offered,
-		columnSpecs.offeredImportSpec(sampleAxis, identityAxis))
-
 	// The tag -> identity linker. It lets a reader put a tag's count beside its verdict, and neither layer
 	// needs to know about the other. It carries no sample axis, because neither side of the join has one.
 	addTo(exportFb, "tagIdentity", inputs.tagIdentity,
