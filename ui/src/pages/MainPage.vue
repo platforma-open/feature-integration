@@ -803,7 +803,7 @@ const gridOptions = {
       <PlDropdownMulti
         :model-value="groupingSelection"
         :options="groupingOptions"
-        label="Identity grouping"
+        label="Target Identity"
         :disabled="panelUnread"
         :required="true"
         @update:model-value="setGrouping"

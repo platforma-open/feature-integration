@@ -34,7 +34,7 @@ const SET_ENTRIES: Entry[] = [
   },
   {
     glyph: "none",
-    label: "Not tested",
+    label: "Never asked",
     meaning: "this antigen was not in the panel for these samples",
   },
 ];
@@ -60,7 +60,7 @@ const CELL_ENTRIES: Entry[] = [
   },
   {
     glyph: "none",
-    label: "Not tested",
+    label: "Never asked",
     meaning: "this antigen was not in the panel for this sample",
   },
 ];

@@ -185,6 +185,11 @@ def _cell_keyed_reference(counts, reference_tags, source, analysed_cells, panel_
     )
 
 
+def _counted(n: int, noun: str) -> str:
+    """`n` and its noun, pluralised. A generated label reading "1 tags" looks like a bug in the label."""
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
 # A silent cell's count is zero, and a zero count's best possible score is specificity_score(0, 0).
 # At or below it, the analytic silent count and the row-per-position reference part company over a
 # silent admissible cell, quietly: one calls it bound, the other not bound, and nothing raises.
@@ -870,26 +875,31 @@ def main() -> None:
     for sample in samples:
         samples_of_panel.setdefault(panel_of_sample[sample], []).append(sample)
 
-    # Named for a reader, so the sample is shown under the label the panel file used rather than the
-    # sampleId it was translated to. The KEY is the sampleId, because a key has to join.
+    # No panel file names its panel, so a reader is given a short generated name plus the two figures that
+    # tell two panels apart at a glance.
+    # The number is POSITIONAL, following the panel-id sort the frame is written in, so P-1 is the first row
+    # a reader meets.
+    panel_order = sorted(tags_of_panel)
+    panel_label_of = {
+        panel_id: "P-{} ({}, {})".format(
+            position,
+            _counted(len(tags_of_panel[panel_id]), "tag"),
+            _counted(len(samples_of_panel[panel_id]), "sample"),
+        )
+        for position, panel_id in enumerate(panel_order, start=1)
+    }
     panel_labels = pl.DataFrame(
-        [
-            (
-                panel_id,
-                f"{len(tags_of_panel[panel_id])} tags: "
-                + ", ".join(label_of_sample.get(s, s) for s in samples_of_panel[panel_id]),
-            )
-            for panel_id in sorted(tags_of_panel)
-        ],
+        [(panel_id, panel_label_of[panel_id]) for panel_id in panel_order],
         orient="row",
         schema={"panelId": pl.String, "label": pl.String},
     )
     _write_sorted(panel_labels, f"{prefix}_panel_labels.csv", ["panelId"])
 
+    # The panel a sample was stained with, carrying the LABEL rather than the id.
     sample_panel = pl.DataFrame(
-        [(sample, panel_of_sample[sample]) for sample in samples],
+        [(sample, panel_label_of[panel_of_sample[sample]]) for sample in samples],
         orient="row",
-        schema={"sampleId": pl.String, "panelId": pl.String},
+        schema={"sampleId": pl.String, "panelLabel": pl.String},
     )
     _write_sorted(sample_panel, f"{prefix}_sample_panel.csv", ["sampleId"])
 
