@@ -8,7 +8,6 @@ import pytest
 from qc_measures import (
     _COMPARISON,
     DEFAULT_LINES,
-    LINE_ROUTES,
     LOG1P_BIN_WIDTH,
     MEASUREMENTS,
     Coverage,
@@ -16,12 +15,11 @@ from qc_measures import (
     Measurement,
     Reading,
     Status,
+    _breaches,
     aggregate_barcode_fraction,
-    antigen_count_deciles,
     bin_values,
     detect_aggregate_barcodes,
     log1p_bin_edges,
-    measurement_rows,
     per_antigen_measures,
     per_tag_count_bins,
     reads_per_cell,
@@ -31,32 +29,35 @@ from qc_measures import (
     status_for,
     usable_read_fraction,
 )
+from verdict import DEFAULT_FLOOR
 
 # Every row maps one to one. Built from the spec's own table rather than copied from this module, so
 # a level typo on any id changes the multiset below.
 EXPECTED_LEVEL_BY_ID = {
-    "readsTotal": "sample",
+    "matchedFraction": "sample",
     "cellsDetected": "sample",
     "usableReadFraction": "sample",
+    "cellBarcodeValidFraction": "sample",
     "panelAssignedFraction": "sample",
     "refineRescuedShare": "sample",
-    "cellBarcodeValidFraction": "sample",
     "readsPerCell": "sample",
-    "antigenCountDistribution": "sample",
     "aggregateBarcodeFraction": "sample",
-    "undeclaredBarcodes": "tag",
-    "declaredNeverSeen": "tag",
     "floorRemoved": "sample",
     "uniqueCountsPerCell": "sample",
-    "highReferenceCells": "sample",
-    "perAntigen": "tag",
-    "fittedBackground": "tag",
-    "scoreDistribution": "run",
-    "tagDisagreement": "tag",
-    "siblingDisagreement": "tag",
+    "cellsSetAside": "sample",
+    "medianControlReading": "sample",
 }
 
-DEFERRED_IDS: set[str] = set()
+
+# The one id in `DEFAULT_LINES` / `_COMPARISON` with no `Measurement` behind it: `undeclaredBarcodeShare`
+# scores a BARCODE, not a sample, so it is computed where the barcode rows are and reaches `status_for`
+# under this id.
+LINES_WITHOUT_A_MEASUREMENT = {"undeclaredBarcodeShare"}
+
+# The routes a line may come from, stated here rather than imported so adding one has to be a decision
+# taken twice. "operator-set" is the honest label for a line this block chose with nothing published
+# behind it, and a measurement on it must say so in its `implies`.
+KNOWN_ROUTES = {"inherited", "categorical", "recommended-and-observed", "operator-set"}
 
 
 def test_every_declared_id_is_expected_and_every_expected_id_is_declared():
@@ -66,13 +67,18 @@ def test_every_declared_id_is_expected_and_every_expected_id_is_declared():
 def test_a_comparison_is_not_a_line():
     # A comparison against siblings yields no boundary, so nothing can be computed. A status derived from
     # it would need a multiplier nobody has published, which moves the invention up a level.
-    assert LINE_ROUTES == {"inherited", "categorical", "recommended-and-observed"}
-    assert {m.line for m in MEASUREMENTS if m.line} <= LINE_ROUTES
+    #
+    # Three routes and no fourth. Stated here rather than imported, so adding a route to the module has
+    # to be a decision taken twice.
+    assert {m.line for m in MEASUREMENTS if m.line} <= KNOWN_ROUTES
 
 
-def test_tag_disagreement_reads_unjudged():
-    # Such measurements read unjudged and are shown where the comparison is free to make: a column beside
-    # their siblings. The value still travels.
+def test_a_measurement_with_no_line_reads_unjudged():
+    # Such a measurement reads unjudged and is shown where the comparison is free to make: a column beside
+    # its siblings. The value still travels.
+    assert status_for("floorRemoved", 0.24, DEFAULT_LINES) is None
+    # And an id this module does not declare at all gets the same answer rather than a raise, so a caller
+    # naming a figure that lives on another surface cannot launder it into a judgement.
     assert status_for("tagDisagreement", 0.24, DEFAULT_LINES) is None
 
 
@@ -84,12 +90,23 @@ def test_no_measurement_is_refused_by_status_for():
         assert answer is None or isinstance(answer, Status), m.id
 
 
-def test_self_disagreement_is_measured_at_the_tag_and_nowhere_else():
-    # The identity-level figure has nothing to compare against, so it cannot separate a faulty reagent
-    # from a panel full of weak binders. The tag-level figure is read against the other tags in the same
-    # panel, under the same cells and the same line.
+def test_the_declared_set_is_the_sample_report_and_nothing_else():
+    # The per-tag figures belong to the reagent and undeclared-barcode tables, which declare their own
+    # columns. Declaring them here too put the same numbers on one page twice under two sets of words.
+    # `sibling_disagreement` and `per_antigen_measures` still live in this module; what left is the
+    # DECLARATION.
     ids = {m.id for m in MEASUREMENTS}
-    assert "tagDisagreement" in ids
+    for elsewhere in (
+        "tagDisagreement",
+        "siblingDisagreement",
+        "perAntigen",
+        "fittedBackground",
+        "declaredNeverSeen",
+        "undeclaredBarcodes",
+        "scoreDistribution",
+    ):
+        assert elsewhere not in ids, elsewhere
+    # The identity-level rate has nothing to compare against, so it is measured nowhere at all.
     assert "identityDisagreement" not in ids
 
 
@@ -111,21 +128,34 @@ def test_declared_levels_match_the_spec_as_a_multiset():
     assert declared == expected
 
 
-def test_every_measurement_declares_a_known_level():
-    # `run` is a grain of one: the cutoff is one number for the run, so a per-sample score spread would
-    # answer a question nobody asked.
-    assert {m.level for m in MEASUREMENTS} <= {"sample", "tag", "identity", "run"}
+def test_every_measurement_is_declared_at_the_sample():
+    # The declared set backs one surface, a sample's own report. `level` stays on the dataclass because it
+    # is what says a figure belongs to that report rather than to the reagent or undeclared-barcode table.
+    assert {m.level for m in MEASUREMENTS} == {"sample"}
+
+
+def test_every_description_is_a_whole_sentence():
+    # A description is assembled from adjacent string literals, and an edit that replaces one of them
+    # truncates the sentence with nothing to catch it -- the string is still valid Python and still
+    # non-empty. One shipped mid-clause as "The threshold is automatic". A full stop is the cheapest
+    # check that the tail is still attached.
+    for m in MEASUREMENTS:
+        assert m.counts.rstrip().endswith("."), (m.id, m.counts)
+        if m.implies:
+            assert m.implies.rstrip().endswith("."), (m.id, m.implies)
 
 
 def test_every_measurement_says_what_it_counts():
     assert all(m.counts for m in MEASUREMENTS)
 
 
-def test_measurement_has_no_produced_today_field():
-    # produced_today would answer whether the superseded tool produced this measurement, which reads
-    # backwards: deferred_reason is None already answers whether THIS build does.
+def test_measurement_declares_no_state_that_nothing_sets():
+    # `produced_today` would answer whether the superseded tool produced this measurement, which reads
+    # backwards. `deferred_reason` and `rolls_up` were the same shape of mistake from the other side:
+    # both were designed for a case that never arrived, and every branch reading them was unreachable.
     field_names = {f.name for f in dataclasses.fields(Measurement)}
-    assert "produced_today" not in field_names
+    for absent in ("produced_today", "deferred_reason", "rolls_up"):
+        assert absent not in field_names, absent
 
 
 def test_an_unjudged_measurement_says_nothing_about_a_bad_value():
@@ -199,36 +229,9 @@ def test_no_measurement_carries_advice():
             assert first_word not in IMPERATIVE_OPENERS, (m.id, sentence)
 
 
-def test_deferred_measurements_are_declared_not_omitted():
-    deferred = {m.id for m in MEASUREMENTS if m.deferred_reason}
-    assert deferred == DEFERRED_IDS
-
-
-def test_deferred_measurement_reasons_are_stated():
-    for m in MEASUREMENTS:
-        if m.id in DEFERRED_IDS:
-            assert m.deferred_reason, m.id
-            assert m.implies is None, m.id
-
-
-def test_deferred_measurement_produces_a_row_with_its_reason_and_no_status():
-    rows = measurement_rows()
-    # Never absent: every declared id, deferred or not, has a row.
-    assert {r["id"] for r in rows} == {m.id for m in MEASUREMENTS}
-
-    by_id = {r["id"]: r for r in rows}
-    for deferred_id in DEFERRED_IDS:
-        row = by_id[deferred_id]
-        # A declaration is not a reading, so no row here carries a status. The reason is what tells a
-        # reader nothing computed this one.
-        assert row["status"] is None
-        assert row["reason"]
-
-
-def test_usable_read_fraction_measurement_is_no_longer_deferred():
+def test_usable_read_fraction_is_declared_with_a_line_and_what_it_implies():
     by_id = {m.id: m for m in MEASUREMENTS}
     m = by_id["usableReadFraction"]
-    assert m.deferred_reason is None
     assert m.line == "inherited"
     assert m.implies
 
@@ -253,7 +256,9 @@ def test_usable_read_fraction_sums_listed_cells_over_total_reads():
     tag_stat = _tag_stat(["c1", "c1", "c2", "c3"], [10, 5, 20, 100])
     fraction, detail = usable_read_fraction(tag_stat, "CELL", {"c1", "c2"}, reads_total=1000)
     assert fraction == pytest.approx(0.035)  # (10 + 5 + 20) / 1000
-    assert detail
+    # On success the second element writes the fraction out as its two counts: a share alone does not say
+    # how much signal it is a share of, and `readsTotal` no longer takes a row of its own.
+    assert detail == "35 out of 1,000 reads parsed"
 
 
 def test_usable_read_fraction_excludes_a_read_whose_cell_is_outside_the_list():
@@ -275,15 +280,6 @@ def test_usable_read_fraction_needs_a_reads_total_denominator():
     fraction, reason = usable_read_fraction(tag_stat, "CELL", {"c1"}, reads_total=None)
     assert fraction is None
     assert reason
-
-
-def test_a_computed_measurement_carries_no_status():
-    rows = measurement_rows()
-    by_id = {r["id"]: r for r in rows}
-    for m in MEASUREMENTS:
-        if m.id not in DEFERRED_IDS:
-            assert by_id[m.id]["status"] is None, m.id
-            assert by_id[m.id]["reason"] is None, m.id
 
 
 # --- per_antigen_measures: tag grain -----------------------------------------
@@ -494,10 +490,9 @@ def test_aggregate_barcode_fraction_needs_a_reads_total_denominator():
     assert detail
 
 
-def test_aggregate_barcode_fraction_measurement_is_no_longer_deferred():
+def test_aggregate_barcode_fraction_is_declared_with_a_line_and_what_it_implies():
     by_id = {m.id: m for m in MEASUREMENTS}
     m = by_id["aggregateBarcodeFraction"]
-    assert m.deferred_reason is None
     assert m.line == "inherited"
     assert m.implies
 
@@ -515,44 +510,6 @@ def test_aggregate_barcode_fraction_status_boundaries():
     assert status_for("aggregateBarcodeFraction", 1.0, DEFAULT_LINES) is Status.ALERT
 
 
-# --- antigen_count_deciles -----------------------------------------------------
-
-
-def _cell_counts(totals: dict[str, int], sample_id: str = "S1") -> pl.DataFrame:
-    return pl.DataFrame(
-        {
-            "sampleId": [sample_id] * len(totals),
-            "cellId": list(totals.keys()),
-            "umiCount": list(totals.values()),
-        },
-        schema={"sampleId": pl.String, "cellId": pl.String, "umiCount": pl.Int64},
-    )
-
-
-def test_antigen_count_deciles_on_a_known_distribution():
-    # 11 cells with totals 0, 10, ..., 100. With linear interpolation over 11 sorted points, the p-th
-    # percentile lands exactly on index p/10, so every decile equals its own cell's total.
-    counts = _cell_counts({f"c{i}": i * 10 for i in range(11)})
-    out = antigen_count_deciles(counts)
-    assert out["decile"].to_list() == list(range(0, 101, 10))
-    assert out["value"].to_list() == [float(i * 10) for i in range(11)]
-
-
-def test_antigen_count_deciles_single_cell_sample():
-    counts = _cell_counts({"c0": 42})
-    out = antigen_count_deciles(counts)
-    assert out.height == 11
-    assert all(v == 42.0 for v in out["value"].to_list())
-
-
-def test_antigen_count_deciles_empty_sample():
-    counts = _cell_counts({})
-    out = antigen_count_deciles(counts)
-    assert out.height == 11
-    assert out["decile"].to_list() == list(range(0, 101, 10))
-    assert all(v is None for v in out["value"].to_list())
-
-
 def test_three_statuses_and_no_fourth():
     # Three values and no fourth: a reader meeting five words in one column reads them as a scale. The two
     # cases a fourth word covered are read from the value instead.
@@ -560,7 +517,13 @@ def test_three_statuses_and_no_fourth():
 
 
 def test_a_measurement_with_no_line_carries_no_status_rather_than_a_fourth_word():
-    assert status_for("antigenCountDistribution", 12, DEFAULT_LINES) is None
+    # `floorRemoved` is DECLARED and carries no line, which is the case this pins. An id that is not
+    # declared at all also answers None, so naming a removed measurement here would pass while proving
+    # nothing -- which is exactly what this assert became when `antigenCountDistribution` stood in it and
+    # was later dropped from the set.
+    assert "floorRemoved" in {m.id for m in MEASUREMENTS}
+    assert "floorRemoved" not in DEFAULT_LINES
+    assert status_for("floorRemoved", 12, DEFAULT_LINES) is None
     assert status_for("readsPerCell", None, DEFAULT_LINES) is None
 
 
@@ -569,22 +532,23 @@ def test_a_measurement_with_no_line_carries_no_status_rather_than_a_fourth_word(
 # `DEFAULT_LINES` becoming a second declaration of which measurements carry a line.
 
 
-def test_every_declared_route_is_one_of_the_three():
-    assert {m.line for m in MEASUREMENTS if m.line} <= LINE_ROUTES
+def test_every_declared_route_is_one_of_the_four():
+    assert {m.line for m in MEASUREMENTS if m.line} <= KNOWN_ROUTES
 
 
 def test_a_numeric_route_has_a_line_and_a_comparison_and_nothing_else_does():
-    # The two threshold routes -- inherited, recommended-and-observed -- put an absolute number on the
-    # measurement, so their id set is exactly DEFAULT_LINES' and _COMPARISON's. The categorical route
-    # publishes no threshold, so its member is absent from both.
+    # The THREE threshold routes -- inherited, recommended-and-observed, operator-set -- each put an
+    # absolute number on the measurement, so their id set is exactly DEFAULT_LINES' and _COMPARISON's.
+    # The categorical route publishes no threshold, so its member is absent from both.
     #
     # `undeclaredBarcodeShare` is the one entry in those tables with no `Measurement` behind it: it backs
     # the undeclared-barcode table's own row.
-    numeric_routed = {m.id for m in MEASUREMENTS if m.line in {"inherited", "recommended-and-observed"}}
-    assert set(DEFAULT_LINES) - {"undeclaredBarcodeShare"} == numeric_routed
-    assert set(_COMPARISON) - {"undeclaredBarcodeShare"} == numeric_routed
-    assert "undeclaredBarcodeShare" in DEFAULT_LINES
-    assert "undeclaredBarcodeShare" in _COMPARISON
+    numeric_routed = {m.id for m in MEASUREMENTS if m.line in KNOWN_ROUTES - {"categorical"}}
+    assert set(DEFAULT_LINES) - LINES_WITHOUT_A_MEASUREMENT == numeric_routed
+    assert set(_COMPARISON) - LINES_WITHOUT_A_MEASUREMENT == numeric_routed
+    for held in LINES_WITHOUT_A_MEASUREMENT:
+        assert held in DEFAULT_LINES, held
+        assert held in _COMPARISON, held
 
 
 def test_the_categorical_route_carries_cells_detected_and_nothing_else():
@@ -619,30 +583,130 @@ def test_the_undeclared_barcode_line_alerts_above_its_error_not_only_at_it():
     assert status_for("undeclaredBarcodeShare", 1.0, DEFAULT_LINES) is Status.ALERT
 
 
-def test_panel_assigned_fraction_carries_no_line_any_more():
-    # The line moved to the barcode's own row, because that status is the barcode's and does not become a
-    # sample's. This measurement keeps its value and is never judged.
-    assert "panelAssignedFraction" not in DEFAULT_LINES
-    assert "panelAssignedFraction" not in _COMPARISON
-    assert status_for("panelAssignedFraction", 0.1, DEFAULT_LINES) is None
+def test_the_aggregate_and_per_barcode_panel_lines_are_different_lines():
+    # These were once ONE line, and moving it was the error. The published 0.50 is an AGGREGATE: Cell
+    # Ranger's `ANTIGEN_unrecognized_feature_bc_frac`, a share of a whole library's reads. It was moved
+    # off this aggregate row onto the undeclared-barcode table, correctly rejected there because an
+    # aggregate line does not apply to one sequence, replaced with operator-set per-barcode numbers --
+    # and never moved back. So the aggregate row went unjudged while its own line sat unused.
+    #
+    # Two grains, two lines, two routes. Neither may borrow the other's numbers.
+    assert DEFAULT_LINES["panelAssignedFraction"] == Line(warn=0.50, error=0.0)
+    assert _COMPARISON["panelAssignedFraction"] == ("at-least", "alerting-at")
+    assert status_for("panelAssignedFraction", 0.51, DEFAULT_LINES) is Status.OK
+    assert status_for("panelAssignedFraction", 0.49, DEFAULT_LINES) is Status.WARN
+    assert status_for("panelAssignedFraction", 0.0, DEFAULT_LINES) is Status.ALERT
+
+    # The per-sequence line is the operator-set one, and it is nowhere near the aggregate's numbers.
+    assert DEFAULT_LINES["undeclaredBarcodeShare"] == Line(warn=0.01, error=0.05)
+    assert DEFAULT_LINES["undeclaredBarcodeShare"] != DEFAULT_LINES["panelAssignedFraction"]
 
 
-def test_barcode_validity_is_the_line_with_a_gradient_at_both_ends():
-    # The one inherited line whose thresholds step the same way twice, and the reason a third status level
-    # exists at all. The other three put error at total failure.
-    line = DEFAULT_LINES["cellBarcodeValidFraction"]
-    assert (line.warn, line.error) == (0.75, 0.50)
+def test_the_match_rate_line_is_operator_set_and_says_so():
+    # Borrowed from blocks/peptide-extraction, which ships it at 0.8 / 0.5 -- but that block's pattern
+    # has constant flanking regions and this one's is all fixed-length N-runs, so neither the meaning nor
+    # the numbers carry across. Ours are an estimate, and `implies` has to say so.
+    by_id = {m.id: m for m in MEASUREMENTS}
+    m = by_id["matchedFraction"]
+    assert m.line == "operator-set"
+    assert "estimate" in m.implies
+
+    line = DEFAULT_LINES["matchedFraction"]
+    assert (line.warn, line.error) == (0.90, 0.50)
+    assert _COMPARISON["matchedFraction"] == ("at-least", "at-least")
+    assert status_for("matchedFraction", 0.91, DEFAULT_LINES) is Status.OK
+    assert status_for("matchedFraction", 0.90, DEFAULT_LINES) is Status.OK
+    assert status_for("matchedFraction", 0.89, DEFAULT_LINES) is Status.WARN
+    # Both ends face the same way, so 0.50 itself still only warns.
+    assert status_for("matchedFraction", 0.50, DEFAULT_LINES) is Status.WARN
+    assert status_for("matchedFraction", 0.49, DEFAULT_LINES) is Status.ALERT
+
+
+def test_the_cell_barcode_quality_line_is_operator_set_and_says_so():
+    # The inherited 0.75 / 0.50 pair was published for validity against a whitelist, and this figure is a
+    # read-QUALITY share, so the numbers are this block's own. The route says so, and `implies` has to
+    # tell a reader the same thing -- an uncalibrated line that presents itself as published is worse
+    # than no line at all.
+    by_id = {m.id: m for m in MEASUREMENTS}
+    m = by_id["cellBarcodeValidFraction"]
+    assert m.line == "operator-set"
+    assert "estimate" in m.implies
+
+    assert (DEFAULT_LINES["cellBarcodeValidFraction"].warn, DEFAULT_LINES["cellBarcodeValidFraction"].error) == (
+        0.95,
+        0.75,
+    )
     assert _COMPARISON["cellBarcodeValidFraction"] == ("at-least", "at-least")
-    assert status_for("cellBarcodeValidFraction", 0.80, DEFAULT_LINES) is Status.OK
-    assert status_for("cellBarcodeValidFraction", 0.75, DEFAULT_LINES) is Status.OK
-    assert status_for("cellBarcodeValidFraction", 0.60, DEFAULT_LINES) is Status.WARN
-    assert status_for("cellBarcodeValidFraction", 0.40, DEFAULT_LINES) is Status.ALERT
+    assert status_for("cellBarcodeValidFraction", 0.96, DEFAULT_LINES) is Status.OK
+    assert status_for("cellBarcodeValidFraction", 0.95, DEFAULT_LINES) is Status.OK
+    assert status_for("cellBarcodeValidFraction", 0.94, DEFAULT_LINES) is Status.WARN
+    # Both ends face the same way, so 0.75 itself still only warns and the alert starts below it.
+    assert status_for("cellBarcodeValidFraction", 0.75, DEFAULT_LINES) is Status.WARN
+    assert status_for("cellBarcodeValidFraction", 0.74, DEFAULT_LINES) is Status.ALERT
 
 
-def test_no_measurement_declares_rolls_up_false():
-    # The undeclared-barcode line no longer sits on a sample measurement at all, so no declared measurement
-    # needs the rollup exemption `rolls_up=False` exists for.
-    assert [m.id for m in MEASUREMENTS if not m.rolls_up] == []
+def test_the_rescued_share_line_is_operator_set_and_says_so():
+    # Nothing published covers this quantity, and the reading is two-sided by nature: a high share can
+    # mean correction is doing real work or that base quality is poor, and a low one can mean a clean run
+    # or a panel whose barcodes sit too far apart for anything to need rescuing. The numbers pick the
+    # side that costs the run something, and `implies` has to tell a reader both that they are ours and
+    # that the quantity reads both ways.
+    by_id = {m.id: m for m in MEASUREMENTS}
+    m = by_id["refineRescuedShare"]
+    assert m.line == "operator-set"
+    assert "estimate" in m.implies
+
+    line = DEFAULT_LINES["refineRescuedShare"]
+    assert (line.warn, line.error) == (0.05, 0.10)
+    # Both ends face the same way. There is no catastrophe value to alert AT: a rescued read is one the
+    # pattern already matched and the panel already assigned, so 1.0 cannot occur.
+    assert _COMPARISON["refineRescuedShare"] == ("at-most", "at-most")
+    assert status_for("refineRescuedShare", 0.04, DEFAULT_LINES) is Status.OK
+    assert status_for("refineRescuedShare", 0.05, DEFAULT_LINES) is Status.OK
+    assert status_for("refineRescuedShare", 0.06, DEFAULT_LINES) is Status.WARN
+    assert status_for("refineRescuedShare", 0.10, DEFAULT_LINES) is Status.WARN
+    assert status_for("refineRescuedShare", 0.11, DEFAULT_LINES) is Status.ALERT
+    # Zero is a measurement rather than an absence: nothing needed rescuing.
+    assert status_for("refineRescuedShare", 0.0, DEFAULT_LINES) is Status.OK
+
+
+def test_the_vdj_antigen_count_line_alerts_at_the_floor_of_its_own_quantity():
+    # The warn is the minimum count a single reading needs to survive flooring (`verdict.DEFAULT_FLOOR`),
+    # restated as a literal so moving one does not move the other. A median below it means most of the
+    # typical cell's readings are zeroed before any call is made, which is a real derivable failure
+    # rather than a guessed boundary -- but the NUMBER is still ours, so the route says operator-set.
+    by_id = {m.id: m for m in MEASUREMENTS}
+    m = by_id["uniqueCountsPerCell"]
+    assert m.line == "operator-set"
+
+    line = DEFAULT_LINES["uniqueCountsPerCell"]
+    assert (line.warn, line.error) == (4, 1)
+    assert line.warn == DEFAULT_FLOOR, "the warn is the minimum count, and the two must not drift apart"
+    # ALERTING AT 1, not below it. The population is barcodes holding at least one counted reading, so 1
+    # is the floor of the quantity: an "at-least 1" error could never fire, because no median below 1 can
+    # be produced. `test_the_smallest_median_this_quantity_can_show_is_one` pins that floor.
+    assert _COMPARISON["uniqueCountsPerCell"] == ("at-least", "alerting-at")
+    assert status_for("uniqueCountsPerCell", 1, DEFAULT_LINES) is Status.ALERT
+    assert status_for("uniqueCountsPerCell", 1.5, DEFAULT_LINES) is Status.WARN
+    assert status_for("uniqueCountsPerCell", 3, DEFAULT_LINES) is Status.WARN
+    assert status_for("uniqueCountsPerCell", 4, DEFAULT_LINES) is Status.OK
+    assert status_for("uniqueCountsPerCell", 506, DEFAULT_LINES) is Status.OK
+
+
+def test_the_line_alerts_at_one_because_no_lower_median_exists():
+    # Why the line above alerts AT 1 rather than below it. The median runs over cell barcodes holding at
+    # least one counted reading -- a barcode with no reading contributes no total at all, since crediting
+    # it zero would read as a reading rather than the absence it is -- and every count in the table is at
+    # least 1, because tag-stat emits a row only for a pair it observed. So 1 is the floor.
+    #
+    # Zero is therefore not a low value of this quantity but an unreachable one, and an "at-least 1"
+    # error could never fire. `_breaches` is what that turns on, so it is what this reads.
+    #
+    # The same floor is why the OBSERVED-barcode median carried no line, and in the end why it left the
+    # set: no bad value existed for a line to name.
+    assert _breaches(1, 1, "alerting-at") is True
+    assert _breaches(1, 1, "at-least") is False, "at-least 1 passes AT 1, so it could only fire below the floor"
+    assert _breaches(0.5, 1, "at-least") is True, "...and that is a value this quantity cannot produce"
 
 
 def test_a_line_without_an_error_threshold_declares_no_error_comparison():
@@ -656,20 +720,33 @@ def test_a_line_without_an_error_threshold_declares_no_error_comparison():
 def test_an_unjudged_measurement_claims_nothing_about_a_bad_value():
     # Where no line can be defended, nothing is said about what a bad value would mean.
     for m in MEASUREMENTS:
-        if m.line is None and m.deferred_reason is None:
+        if m.line is None:
             assert m.implies is None, m.id
 
 
-def test_reads_total_and_high_reference_cells_are_unjudged():
+def test_the_control_tag_rows_are_unjudged():
+    # Nothing published says what share of cells is too sticky, nor what a control reading of any size
+    # means, so both rows carry their number and claim nothing.
     by_id = {m.id: m for m in MEASUREMENTS}
-    assert by_id["readsTotal"].line is None
-    assert by_id["highReferenceCells"].line is None
-    assert status_for("readsTotal", 0.5, DEFAULT_LINES) is None
+    assert by_id["cellsSetAside"].line is None
+    assert by_id["medianControlReading"].line is None
+    assert status_for("medianControlReading", 0.5, DEFAULT_LINES) is None
 
 
-def test_the_invented_matched_fraction_line_is_gone():
-    assert "matchedFraction" not in DEFAULT_LINES
+def test_the_matched_fraction_line_is_only_allowed_on_the_operator_set_route():
+    # It was removed once as an INVENTED line (c0d50fd): no route backed an operator-chosen number, so
+    # any line here was invented by definition. The route is what changed, not the standard -- so the
+    # line is allowed back only while it declares itself operator-set and says so to a reader. Absence
+    # was never the invariant; the terms were.
+    by_id = {m.id: m for m in MEASUREMENTS}
+    if "matchedFraction" in DEFAULT_LINES:
+        assert by_id["matchedFraction"].line == "operator-set"
+        assert "estimate" in by_id["matchedFraction"].implies
+
+    # `readsTotal` stays out either way. It is not a measurement at all: a count of reads in a file is a
+    # denominator, and no share of it has a boundary anyone has published or estimated.
     assert "readsTotal" not in DEFAULT_LINES
+    assert "readsTotal" not in {m.id for m in MEASUREMENTS}
 
 
 # --- lines are parameters, and every boundary is pinned --------------------
@@ -749,24 +826,24 @@ def test_at_most_is_acceptable_exactly_at_the_line():
     assert status_for("undeclaredBarcodeShare", 0.011, DEFAULT_LINES) is Status.WARN
 
 
-def test_the_undeclared_barcode_fraction_ships_unjudged():
-    # The field publishes 0.50, but for one aggregate library fraction, while this measurement is per
-    # sequence at tag level. A fraction's line does not transfer to a list of sequences, and given a count
-    # any upper bound collapses into "alerting if a single undeclared barcode exists".
-    by_id = {m.id: m for m in MEASUREMENTS}
-    assert by_id["undeclaredBarcodes"].line is None
-    assert by_id["undeclaredBarcodes"].implies is None
-    assert "undeclaredBarcodes" not in DEFAULT_LINES
-    assert status_for("undeclaredBarcodes", 0.4, DEFAULT_LINES) is None
+def test_the_only_line_outside_the_declared_set_is_the_undeclared_barcode_share():
+    # `undeclaredBarcodeShare` is the one line with no declared `Measurement` behind it: the status is a
+    # BARCODE's, so it is computed where the barcode rows are and reaches `status_for` under this id.
+    # Every other line backs a declared measurement, which is what keeps `DEFAULT_LINES` from becoming a
+    # second declaration of which measurements carry a line.
+    declared = {m.id for m in MEASUREMENTS}
+    assert set(DEFAULT_LINES) - declared == LINES_WITHOUT_A_MEASUREMENT
 
 
-def test_a_tag_the_reads_never_show_carries_no_status():
-    # The verdict took this job: a tag with no reads removes its cells from what could answer, so the
-    # position reads *never asked* rather than a confident negative. Warning a reader off an answer that
-    # already says so would be a second voice on one fact.
-    assert status_for("declaredNeverSeen", 0, DEFAULT_LINES) is None
-    assert status_for("declaredNeverSeen", 1, DEFAULT_LINES) is None
-    assert "declaredNeverSeen" not in DEFAULT_LINES
+def test_a_figure_that_left_the_declared_set_carries_no_line():
+    # Each of these belongs to the reagent or undeclared-barcode table now. None may pick up a line on
+    # the way out: the field publishes 0.50 for one aggregate library fraction, and that does not
+    # transfer to a per-sequence figure or, given a count, to anything but "alerting if a single
+    # undeclared barcode exists". A tag the reads never show is the verdict's job -- it reads *never
+    # asked* -- and a status would be a second voice on one fact.
+    for elsewhere in ("undeclaredBarcodes", "declaredNeverSeen", "perAntigen", "tagDisagreement"):
+        assert elsewhere not in DEFAULT_LINES, elsewhere
+        assert status_for(elsewhere, 0.4, DEFAULT_LINES) is None, elsewhere
 
 
 def test_cells_detected_alerts_at_zero_and_reads_ok_above_it():
@@ -792,7 +869,9 @@ def test_cells_detected_claims_nothing_about_yield():
 
 
 def test_no_defensible_line_means_unjudged():
-    assert status_for("antigenCountDistribution", 12, DEFAULT_LINES) is None
+    # Declared, computed, and no route backs a boundary for it -- so it carries its number and no status.
+    assert "floorRemoved" in {m.id for m in MEASUREMENTS}
+    assert status_for("floorRemoved", 12, DEFAULT_LINES) is None
 
 
 def test_a_missing_value_is_not_evaluated():

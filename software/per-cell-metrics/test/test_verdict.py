@@ -112,14 +112,16 @@ def test_a_disabled_floor_is_a_no_op_even_for_a_zero_reading():
     df = _counts([("S1", "c1", "AAAA", 0)])
     out, stats = apply_floor(df, floor=0, reference_tags=set())
     assert out["umiCount"].to_list() == [0]
-    assert stats == {"readingsFloored": 0, "cellsEmptied": 0}
+    # The population is still reported: the emptied count is read as a share of the cells the minimum
+    # could have emptied, and that denominator exists whether or not a minimum ran.
+    assert stats == {"readingsFloored": 0, "cellsEmptied": 0, "cellsWithAntigenReadings": 1}
 
 
 def test_an_empty_frame_floors_to_nothing():
     df = _counts([])
     out, stats = apply_floor(df, floor=4, reference_tags=set())
     assert out.height == 0
-    assert stats == {"readingsFloored": 0, "cellsEmptied": 0}
+    assert stats == {"readingsFloored": 0, "cellsEmptied": 0, "cellsWithAntigenReadings": 0}
 
 
 def test_a_reading_that_was_already_zero_still_counts_as_evidence_lost():

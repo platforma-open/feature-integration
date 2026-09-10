@@ -1,10 +1,14 @@
 """Per-sample QC summary for the Feature Integration block.
 
 One row per sample: read-level metrics from mitool's parse JSON report (parseReport.total/.matched),
-cell/feature/UMI metrics from the tag-stat TSV, the panel-assigned fraction from the refine-tags JSON
-report, and the aggregate-barcode read fraction (`qc_measures.detect_aggregate_barcodes`) computed
-from the tag-stat TSV's per-barcode UMI and read totals. panelAssignedFraction is left blank only
-when no refine report is available.
+cell/feature/UMI metrics from the tag-stat TSV, the panel-assigned and antigen-dropped shares from the
+refine-tags JSON report, and the aggregate-barcode read fraction
+(`qc_measures.detect_aggregate_barcodes`) computed from the tag-stat TSV's per-barcode UMI and read
+totals.
+
+EVERY READ SHARE HERE IS OVER MATCHED READS, and that is load-bearing: it lets any two of them be
+subtracted. A share taken over one refine-tags step's own input cannot, because each level is fed from
+the previous level's survivors, so no two steps share a denominator.
 """
 
 import argparse
@@ -30,7 +34,12 @@ FIELDNAMES = [
     "totalUniqueUmis",
     "medianUmisPerCell",
     "panelAssignedFraction",
+    "featureDroppedShare",
     "cellBarcodeValidFraction",
+    # The two counts behind the share above, so the sample's own report can state them. The share alone
+    # cannot: 0.98 over 400 reads and 0.98 over 40M are the same number and not the same finding.
+    "cellBarcodeIn",
+    "cellBarcodeOut",
     "aggregateBarcodeFraction",
     "aggregateBarcodesFlagged",
     "aggregateBarcodeThreshold",
@@ -44,16 +53,18 @@ def _parse_report(path: str) -> tuple[int, int]:
     return int(pr.get("total", 0)), int(pr.get("matched", 0))
 
 
-def _refine_kept_fraction(path: str | None, tag_name: str = "FEATURE") -> float | None:
-    """The share of reads one refine-tags step kept, as ``outputCount / inputCount``.
+def _refine_step_counts(path: str | None, tag_name: str) -> tuple[int, int] | None:
+    """One refine-tags step's ``(inputCount, outputCount)``, or None where it cannot be read.
 
-    Each step corrects one tag's barcode against a whitelist and drops reads whose barcode is
-    not within correction distance of any entry. Which whitelist depends on the tag: the
-    FEATURE step corrects against the panel, the CELL step against the chemistry's barcodes.
-    ``tag_name`` is the mitool tag to match against the report's ``tagName``.
+    The COUNTS, not the ratio, because two of this file's figures divide them by `readsMatched`
+    rather than by the step's own input. Each level of refine-tags is fed from the previous level's
+    survivors -- the tag order is CELL, FEATURE, UMI -- so the FEATURE step's `inputCount` is what
+    survived cell-barcode correction, NOT the matched-read count. A figure built on that input is
+    over a denominator no other read-level figure here shares, and subtracting two such figures is
+    what produced a unit error in `rescued_share`. One denominator for every read share removes the
+    class rather than the instance.
 
-    Returns None, blank in the CSV, when the report is absent or unreadable, carries no
-    matching step, or that step has zero input reads. QC never crashes on an edge-case report.
+    Returns None where the report is absent or unreadable, or carries no matching step.
     """
     if not path:
         return None
@@ -65,16 +76,11 @@ def _refine_kept_fraction(path: str | None, tag_name: str = "FEATURE") -> float 
     steps = rep.get("steps", [])
     for step in steps:
         if step.get("tagName") == tag_name:
-            input_count = step.get("inputCount", 0)
-            if not input_count:
-                return None
-            return step.get("outputCount", 0) / input_count
-    # A report with steps but none matching the feature tag means the schema or tag naming drifted.
-    # Surface it rather than silently blanking the metric for every sample.
+            return int(step.get("inputCount", 0)), int(step.get("outputCount", 0))
     if steps:
         print(
             f"[qc-report] refine report has no {tag_name!r} step "
-            f"(saw tags {[s.get('tagName') for s in steps]}); panel-assigned fraction left blank",
+            f"(saw tags {[s.get('tagName') for s in steps]}); its figures are left blank",
             file=sys.stderr,
         )
     return None
@@ -150,11 +156,27 @@ def main() -> None:
     # findings: a sample whose reads never arrived would otherwise sit beside its neighbours
     # reading a median of nothing, which is a library that failed rather than a library missing.
     median_umis = float(per_cell["u"].median()) if per_cell.height else ""
-    assigned = _refine_kept_fraction(args.refine_report, args.feature_col)
-    # The same report's CELL step. It corrects each cell barcode against the chemistry's whitelist rather
-    # than against the panel, so its kept share is the share of reads whose barcode the chemistry could
-    # have produced.
-    cell_valid = _refine_kept_fraction(args.refine_report, args.cell_col)
+    # Both FEATURE figures are over MATCHED READS, so every read share this file writes shares one
+    # denominator and any two of them can be subtracted. `panelAssignedFraction` is what reached the
+    # panel; `featureDroppedShare` is what the antigen-barcode step could not place there. They do not
+    # sum to 1 -- the cell-barcode and UMI steps take their own reads in between, which is exactly the
+    # information a single ratio over the step's own input threw away.
+    feature_counts = _refine_step_counts(args.refine_report, args.feature_col)
+    assigned = None
+    feature_dropped = None
+    if feature_counts is not None and matched:
+        feature_in, feature_out = feature_counts
+        assigned = feature_out / matched
+        feature_dropped = (feature_in - feature_out) / matched
+    # The same report's CELL step. No chemistry whitelist is selectable here, so the step runs de-novo
+    # correction and drops a read whose barcode is too poor in quality to place -- its kept share is a
+    # read-QUALITY share, which is what the measurement's label and route now say.
+    #
+    # The counts and the share come from ONE read of the report, and the share is derived from the counts
+    # rather than read separately: two figures a reader sees side by side must not be able to disagree.
+    cell_counts = _refine_step_counts(args.refine_report, args.cell_col)
+    cell_in, cell_out = cell_counts if cell_counts is not None else (None, None)
+    cell_valid = (cell_out / cell_in) if cell_in else None
     agg_fraction, agg_flagged, agg_threshold = _aggregate_barcode_metrics(
         stat,
         args.cell_col,
@@ -176,7 +198,10 @@ def main() -> None:
         "totalUniqueUmis": total_umis,
         "medianUmisPerCell": median_umis,
         "panelAssignedFraction": "" if assigned is None else assigned,
+        "featureDroppedShare": "" if feature_dropped is None else feature_dropped,
         "cellBarcodeValidFraction": "" if cell_valid is None else cell_valid,
+        "cellBarcodeIn": "" if cell_in is None else cell_in,
+        "cellBarcodeOut": "" if cell_out is None else cell_out,
         "aggregateBarcodeFraction": "" if agg_fraction is None else agg_fraction,
         "aggregateBarcodesFlagged": agg_flagged,
         "aggregateBarcodeThreshold": "" if agg_threshold is None else agg_threshold,

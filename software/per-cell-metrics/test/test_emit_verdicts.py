@@ -1,4 +1,6 @@
+import ast
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -11,10 +13,12 @@ from emit_verdicts import _build_grouping, _identity_properties, _linker_frame
 from frame_io import undeclared_feature_counts
 from identity_tables import CELL_PUNCH_MAX_CELLS, IDENTITY_SUMMARY_MAX_IDENTITIES, REFERENCE_IDENTITY_LABEL
 from panel import ANY_SAMPLE, consistent_properties, property_columns
-from qc_measures import DEFAULT_LINES, MEASUREMENTS, Line, Measurement
+from qc_measures import DEFAULT_LINES, MEASUREMENTS, Line, Measurement, Status
 from verdict import DEFAULT_PANEL_MIN_MEMBERS, ReferenceChoice
 
 SRC = Path(__file__).resolve().parents[1] / "src"
+# The block root, for the cross-language checks that read a Tengo file as text.
+ROOT = Path(__file__).resolve().parents[3]
 
 
 def _run(cwd, *args, expect_failure=False):
@@ -273,12 +277,12 @@ def test_a_tag_noisy_in_one_panel_reads_clean_on_the_panel_it_was_clean_in(bed):
     )
 
     _run(bed, *BASE)
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    t00 = qc.filter((pl.col("measurement") == "tagDisagreement") & (pl.col("entity") == shared[0]))
+    reagents = pl.read_csv(bed / "result_reagents.csv", infer_schema_length=0)
+    t00 = reagents.filter(pl.col("tag") == shared[0])
     assert t00.height == 2, "T00 is declared by both panels, so it carries a row in each"
 
     by_panel = {r["panelId"]: r for r in t00.iter_rows(named=True)}
-    rates = {p: float(r["value"]) for p, r in by_panel.items()}
+    rates = {p: float(r["selfDisagreement"]) for p, r in by_panel.items()}
     assert len(set(rates.values())) == 2, f"one rate on both panels means the run-global figure: {rates}"
 
     clean = min(rates, key=lambda p: rates[p])
@@ -287,10 +291,9 @@ def test_a_tag_noisy_in_one_panel_reads_clean_on_the_panel_it_was_clean_in(bed):
     # Two cells of four sit in the minority of their own set, pooled over the cells of sets that had
     # something to compare: 2 of 4.
     assert rates[noisy] == pytest.approx(0.5)
-    # Neither row carries a status. A comparison against the other tags in a panel is not a line, so
-    # the value travels instead for a reader to compare.
-    assert by_panel[clean]["status"] is None
-    assert by_panel[noisy]["status"] is None
+    # The reagent table publishes no status column at all. A comparison against the other tags in a
+    # panel is not a line, so the value travels instead for a reader to compare.
+    assert "status" not in reagents.columns
 
 
 def test_the_key_only_frames_carry_a_value_column_so_they_can_become_columns(bed):
@@ -369,9 +372,8 @@ def test_zero_cells_detected_alerts(bed):
     )
     r = _run(bed, *BASE, "--qc-summary", "qc.csv")
     assert r.returncode == 0, r.stderr
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    row = qc.filter(pl.col("measurement") == "cellsDetected").row(0, named=True)
-    assert row["value"] == "0.0"
+    row = _sample_measure(bed, "cellsDetected")
+    assert row["value"] == 0.0
     assert row["status"] == "alert"
 
 
@@ -385,9 +387,8 @@ def test_a_positive_cell_count_reads_ok_and_claims_nothing_about_yield(bed):
     )
     r = _run(bed, *BASE, "--qc-summary", "qc.csv")
     assert r.returncode == 0, r.stderr
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    row = qc.filter(pl.col("measurement") == "cellsDetected").row(0, named=True)
-    assert row["value"] == "1.0"
+    row = _sample_measure(bed, "cellsDetected")
+    assert row["value"] == 1.0
     assert row["status"] == "OK"
 
     (bed / "qc.csv").write_text(
@@ -397,9 +398,8 @@ def test_a_positive_cell_count_reads_ok_and_claims_nothing_about_yield(bed):
     )
     r = _run(bed, *BASE, "--qc-summary", "qc.csv")
     assert r.returncode == 0, r.stderr
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    row = qc.filter(pl.col("measurement") == "cellsDetected").row(0, named=True)
-    assert row["value"] == "50000.0"
+    row = _sample_measure(bed, "cellsDetected")
+    assert row["value"] == 50000.0
     assert row["status"] == "OK"
 
 
@@ -420,11 +420,11 @@ def test_no_cell_list_leaves_membership_unknown_and_depth_unevaluated(bed):
     assert meta["cellListSource"] == "none"
     assert meta["cellsInList"] is None
 
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    depth = qc.filter(pl.col("measurement") == "readsPerCell").row(0, named=True)
-    # No cell list, so no rate. No number means no status, and the row is still there.
+    depth = _sample_measure(bed, "readsPerCell")
+    # No cell list, so no rate. No number means no status, and the row is still there, with its reason.
     assert depth["status"] is None
     assert depth["value"] is None
+    assert depth["reason"]
 
     counts = pl.read_csv(bed / "result_cell_counts.csv", infer_schema_length=0)
     assert set(counts["inCellList"].to_list()) == {"unknown"}, "unclassified is not the same as classified 'no'"
@@ -435,59 +435,64 @@ def test_only_the_sample_rolls_up(bed):
     # categorical and the rest are read only as outliers against the other tags in the same panel. A
     # capture status was then the worst of every sample and every panel, which only repeats the samples.
     _run(bed, *BASE)
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    rollups = qc.filter(pl.col("measurement") == "rollup")
-    levels = set(rollups["level"].to_list())
-    assert levels == {"sample"}, f"only the sample rolls up, got {sorted(levels)}"
-
-    def _triple(level):
-        r = rollups.filter(pl.col("level") == level)
-        return [int(r[c].cast(pl.Int64).sum()) for c in ("judged", "unjudged", "notEvaluated")]
-
-    assert sum(_triple("sample")) > 0, "the sample rollup still counts what was checked"
+    # One rollup, and one surface carrying it. A panel status assumed its per-tag measurements would
+    # mostly carry statuses; the reagent table publishes no status column at all, which is that
+    # decision made structural.
+    report = _sample_report(bed)
+    assert report["status"] in (None, "OK", "warn", "alert")
+    triple = [report[c] for c in ("judged", "unjudged", "notEvaluated")]
+    assert sum(triple) > 0, "the sample rollup still counts what was checked"
+    assert "status" not in pl.read_csv(bed / "result_reagents.csv", infer_schema_length=0).columns
 
 
-def test_panel_assigned_fraction_keeps_its_value_and_carries_no_status(bed):
-    # The undeclared-barcode line is the barcode's, and it never becomes a sample's. This sample-grain
-    # measurement keeps its number and is never judged, so it never reaches the sample's rollup.
-    (bed / "qc.csv").write_text(
-        "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
-        "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction,"
-        "cellBarcodeValidFraction\n"
-        "S1,20000,18000,0.9,4,2,1200,300,0.82,0.91\n"
-    )
-    r = _run(bed, *BASE, "--qc-summary", "qc.csv")
-    assert r.returncode == 0, r.stderr
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+def test_panel_assigned_fraction_is_judged_against_its_inherited_line(bed):
+    # END TO END, through the CLI, and that is the point of the test rather than an implementation
+    # detail. The status a run shows comes from a `lines` dict built from the command line, NOT from
+    # `DEFAULT_LINES` -- so this line shipped once declared in `DEFAULT_LINES` and absent from that
+    # dict, which made `status_for` answer None while every unit test reading `DEFAULT_LINES` straight
+    # still passed. Only a run can catch that.
+    def _qc(assigned: str) -> None:
+        (bed / "qc.csv").write_text(
+            "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
+            "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction,"
+            "cellBarcodeValidFraction\n"
+            f"S1,20000,18000,0.9,4,2,1200,300,{assigned},0.91\n"
+        )
 
-    row = qc.filter(pl.col("measurement") == "panelAssignedFraction").row(0, named=True)
-    assert row["value"] == "0.82"
-    assert row["status"] is None
-    # Computed but never judged: it counts as unjudged, never judged, and never not-evaluated.
-    assert (row["judged"], row["unjudged"], row["notEvaluated"]) == ("0", "1", "0")
+    _qc("0.82")
+    assert _run(bed, *BASE, "--qc-summary", "qc.csv").returncode == 0
+    row = _sample_measure(bed, "panelAssignedFraction")
+    assert row["value"] == pytest.approx(0.82)
+    assert row["status"] == "OK"
 
-    sample = row["level"], row["entity"]
-    rollup = qc.filter(
-        (pl.col("measurement") == "rollup") & (pl.col("level") == sample[0]) & (pl.col("entity") == sample[1])
-    ).row(0, named=True)
-    judged_in_rollup = int(rollup["judged"])
-    others = qc.filter(
-        (pl.col("level") == "sample")
-        & (pl.col("entity") == sample[1])
-        & (~pl.col("measurement").is_in(["rollup", "panelAssignedFraction"]))
-        & (pl.col("status").is_not_null())
-    ).height
-    assert judged_in_rollup == others, "the rollup counts every judged sample measurement except this one"
+    # Judged, so the rollup counts it -- it used to sit under `unjudged`.
+    report = _sample_report(bed)
+    assert report["judged"] == sum(1 for e in report["measurements"] if e["status"] is not None)
+
+    # Both boundaries, on the published pair: warn below 0.50, alert at total failure.
+    _qc("0.40")
+    assert _run(bed, *BASE, "--qc-summary", "qc.csv").returncode == 0
+    assert _sample_measure(bed, "panelAssignedFraction")["status"] == "warn"
+
+    _qc("0.0")
+    assert _run(bed, *BASE, "--qc-summary", "qc.csv").returncode == 0
+    assert _sample_measure(bed, "panelAssignedFraction")["status"] == "alert"
+
+    # And the operator can move it: 0.82 warns once the line is raised past it.
+    _qc("0.82")
+    assert _run(bed, *BASE, "--qc-summary", "qc.csv", "--panel-assigned-warn", "0.95").returncode == 0
+    assert _sample_measure(bed, "panelAssignedFraction")["status"] == "warn"
 
 
 def test_per_tag_measurements_survive_the_removed_panel_rollup(bed):
     # This removes aggregation, not measurement. A reagent finding still lands on its own row, keyed by
     # the panel that has it.
     _run(bed, *BASE)
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    tags = qc.filter((pl.col("level") == "tag") & (pl.col("measurement") != "rollup"))
-    assert tags.height > 0, "per-tag measurement rows are untouched by the rollup removal"
-    assert all(p != "" for p in tags["panelId"].to_list()), "each still names its panel"
+    reagents = pl.read_csv(bed / "result_reagents.csv", infer_schema_length=0)
+    assert reagents.height > 0, "the per-tag figures are untouched by the rollup removal"
+    # panelId is an AXIS of the imported frame, and a null is not a usable p-column key.
+    assert reagents["panelId"].null_count() == 0
+    assert all(p != "" for p in reagents["panelId"].to_list()), "each still names its panel"
 
 
 def test_contending_groups_reach_the_note(bed):
@@ -725,25 +730,44 @@ def test_run_meta_records_the_comparator_served_not_the_one_requested(bed):
     assert not (bed / "result_verdicts.csv").exists(), "nothing is written for a rung that cannot serve"
 
 
-def test_sequencing_depth_divides_by_the_cell_list_not_by_observed_barcodes(bed):
-    # The vendor's five thousand is per called cell. Observed barcodes exceed called cells by one to two
-    # orders of magnitude in droplet data, so dividing by them would let a badly undersequenced run read
-    # acceptable. The bed makes the two differ: four barcodes carry counts, three are in the cell list.
-    (bed / "counts.csv").write_text((bed / "counts.csv").read_text() + "S1,zzz,AAAA,7\n")
-    (bed / "qc.csv").write_text(
-        "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
-        "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction\n"
-        "S1,20000,18000,0.9,4,2,1200,300,0.82\n"
+def test_sequencing_depth_reads_one_population_top_and_bottom(bed):
+    """Depth counts the reads INSIDE the listed cells, over those same cells.
+
+    Both halves matter and each has its own failure. Dividing by observed barcodes instead would let a
+    badly undersequenced run read acceptable -- droplet data has one to two orders of magnitude more
+    barcodes than cells. And counting every matched read in the library, which is what this did until
+    the numerator was scoped, makes the figure track the V(D)J MATCH RATE rather than this library's
+    depth: it then rises when fewer cells match, so the amber fires only where V(D)J recovery is good.
+
+    The bed separates the two: `zzz` carries reads and is not in the cell list.
+    """
+    (bed / "counts.csv").write_text(
+        "sampleId,cellId,tag,umiCount,totalWeight\n"
+        "S1,c1,AAAA,500,5000\n"
+        "S1,c1,CTRL,6,1000\n"
+        "S1,c2,AAAA,600,6000\n"
+        "S1,c2,CTRL,6,1000\n"
+        "S1,c3,CTRL,6,5000\n"
+        "S1,zzz,AAAA,7,90000\n"  # an unlisted barcode hoarding reads
     )
-    r = _run(bed, *BASE, "--qc-summary", "qc.csv")
+    r = _run(bed, *BASE)
     assert r.returncode == 0, r.stderr
 
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    depth = qc.filter(pl.col("measurement") == "readsPerCell").row(0, named=True)
-    # 18000 / 3 listed cells = 6000, which clears the 5000 line.
-    # 18000 / 4 observed barcodes = 4500, which would not.
-    assert float(depth["value"]) == pytest.approx(6000.0)
+    depth = _sample_measure(bed, "readsPerCell")
+    # 18,000 read weight inside c1, c2 and c3, over 3 listed cells = 6,000, which clears the line.
+    assert depth["value"] == pytest.approx(6000.0)
     assert depth["status"] == "OK"
+
+    # The two numbers this must NOT be. 108,000 total weight over 3 listed cells = 36,000 would clear the
+    # line on a library whose reads are almost all in one unlisted droplet; over 4 observed barcodes it is
+    # 27,000. Both read far better than the truth.
+    assert depth["value"] != pytest.approx(36000.0)
+    assert depth["value"] != pytest.approx(27000.0)
+
+    # And the numerator is the same set the usable-read share is taken over, so the two rows cannot
+    # describe different reads. No --qc-summary here, so that share has no denominator and says so --
+    # which is itself the point: depth no longer needs the read-QC row at all.
+    assert _sample_measure(bed, "usableReadFraction")["value"] is None
 
 
 # Every module the entrypoint reaches, not just the entrypoint file. The check is on source text, so
@@ -955,21 +979,23 @@ def test_a_computed_but_unjudged_measurement_is_not_reported_as_unchecked(bed):
     # and the coverage triple beside it. "Computed, and no line stands behind it" and "nothing computed
     # this" are the pair the status set exists to keep apart.
     _run(bed, *BASE)
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
 
-    # Computed, no line: a number, and the triple counts it unjudged.
-    floor_row = qc.filter(pl.col("measurement") == "floorRemoved").row(0, named=True)
+    # Computed, no line: a number, and no reason to give in its place.
+    floor_row = _sample_measure(bed, "floorRemoved")
     assert floor_row["status"] is None
     assert floor_row["value"] is not None
-    assert (floor_row["judged"], floor_row["unjudged"], floor_row["notEvaluated"]) == ("0", "1", "0")
+    assert floor_row["reason"] is None
 
-    # Nothing computed it: no number, the reason in its place, and the triple counts it not-evaluated.
-    # Same empty status column, opposite finding.
-    deferred = qc.filter(pl.col("measurement") == "aggregateBarcodeFraction").row(0, named=True)
-    assert deferred["status"] is None
-    assert deferred["value"] is None
-    assert (deferred["judged"], deferred["unjudged"], deferred["notEvaluated"]) == ("0", "0", "1")
-    assert deferred["reason"]  # a deferred measurement says why nothing computed it
+    # Nothing computed it: no number, the reason in its place. Same empty status, opposite finding.
+    unsupplied = _sample_measure(bed, "aggregateBarcodeFraction")
+    assert unsupplied["status"] is None
+    assert unsupplied["value"] is None
+    assert unsupplied["reason"]
+
+    # And the rollup's triple keeps the two apart, which is what the status set cannot do alone.
+    report = _sample_report(bed)
+    assert report["unjudged"] >= 1
+    assert report["notEvaluated"] >= 1
 
 
 def test_a_capture_map_is_accepted_and_changes_no_row(bed):
@@ -977,9 +1003,11 @@ def test_a_capture_map_is_accepted_and_changes_no_row(bed):
     # status now. The argument stays accepted because the capture axis ships on the QC columns. So
     # supplying a map must not fail, and must not put a row anywhere either.
     _run(bed, *BASE, "--capture-map", json.dumps({"S1": "C1"}))
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    assert "capture" not in set(qc["level"].to_list())
-    assert "C1" not in set(qc["entity"].to_list())
+    # No surface takes a capture key: the report is keyed by sampleId and the reagent table by panel.
+    report = json.loads((bed / "result_qc_by_sample.json").read_text())
+    assert "C1" not in report
+    reagents = pl.read_csv(bed / "result_reagents.csv", infer_schema_length=0)
+    assert "C1" not in set(reagents["panelId"].to_list())
 
 
 def test_a_cell_list_of_its_own_overrides_the_linker_and_is_recorded(bed):
@@ -1381,17 +1409,15 @@ def test_every_asked_cell_reading_still_counts_when_both_samples_offered_it(bed)
     assert row["state"] == "bound"  # two bound against one silent
 
 
-def test_no_qc_row_carries_a_null_panel_key(bed):
-    # panelId is an AXIS of the imported QC frame, and a null is not a usable p-column key. Sample-level
-    # and capture-level rows belong to no panel, so they carry an empty string.
+def test_no_reagent_row_carries_a_null_axis_key(bed):
+    # panelId, tag and identity are the AXES of the imported reagent frame, and a null is not a usable
+    # p-column key. Every row is keyed by all three, so none of them may go missing.
     _run(bed, *BASE, "--capture-map", json.dumps({"S1": "C1"}))
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    assert qc["panelId"].null_count() == 0
-
-    # Both kinds must be present, or the assertion above proves nothing.
-    panels = set(qc["panelId"].to_list())
-    assert "" in panels, "sample and capture rows belong to no panel and must carry an empty key"
-    assert any(p for p in panels), "tag and identity rows must carry a real panel id"
+    reagents = pl.read_csv(bed / "result_reagents.csv", infer_schema_length=0)
+    assert reagents.height > 0
+    for axis in ("panelId", "tag", "identity"):
+        assert reagents[axis].null_count() == 0, axis
+        assert all(v != "" for v in reagents[axis].to_list()), axis
 
 
 # --- the shape a real panel file arrives in -----------------------------------------------------
@@ -2576,13 +2602,12 @@ def test_a_declared_gate_acts_under_the_tag_distribution_rung(tmp_path):
     assert meta["cellsSetAside"] == sticky, "the gate has to have acted"
 
     # And the exposure is a count rather than a reason, because the population now exists.
-    qc = pl.read_csv(tmp_path / "result_qc.csv", infer_schema_length=0)
-    row = qc.filter(pl.col("measurement") == "highReferenceCells").row(0, named=True)
-    assert float(row["value"]) == sticky
-    assert "Gate: 100 UMIs" in row["detail"]
+    row = _sample_measure(tmp_path, "cellsSetAside")
+    assert row["value"] == sticky
+    assert row["detail"] == "Gate set at 100 UMIs"
 
 
-def test_the_sticky_measurement_says_why_where_no_cell_carries_a_baseline_reading(tmp_path):
+def test_the_control_rows_are_absent_where_no_control_tag_is_declared(tmp_path):
     # Both forms of this measurement read a cell's own baseline reading, which only a declared baseline
     # tag supplies. Under the tag-distribution rung no cell has one, so a gated count is taken over an
     # empty population and comes out 0.0 -- reporting the sample as checked and clean on a question the
@@ -2591,13 +2616,29 @@ def test_the_sticky_measurement_says_why_where_no_cell_carries_a_baseline_readin
     _distribution_bed(tmp_path)
     _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv", "--gate-threshold", "50")
 
-    qc = pl.read_csv(tmp_path / "result_qc.csv", infer_schema_length=0)
-    rows = qc.filter(pl.col("measurement") == "highReferenceCells")
-    assert rows.height > 0, "the measurement keeps its row whether or not the run could compute it"
-    for row in rows.iter_rows(named=True):
-        assert not row["value"], "a zero would read as a sample carrying no sticky cells"
-        assert row["reason"] == "no cell in this sample carries a comparator reading"
-        assert row["detail"] == "Cells with a control reading: 0"
+    report = json.loads((tmp_path / "result_qc_by_sample.json").read_text())
+    assert report
+
+    # NO ROW, not a row with a reason. This rung reads no control tag at all, so there is no such thing
+    # as a control reading here -- the question was never put. A reason would claim we looked and could
+    # not tell, and a zero would claim the sample was checked and found clean. Both are false.
+    for sample in report:
+        listed = {m["id"] for m in report[sample]["measurements"]}
+        assert "cellsSetAside" not in listed, sample
+        assert "medianControlReading" not in listed, sample
+
+    # And the rest of the declared set is untouched: dropping the two is scoped to them, not a licence
+    # to drop any measurement the run could not compute.
+    for sample in report:
+        listed = {m["id"] for m in report[sample]["measurements"]}
+        assert "floorRemoved" in listed, sample
+        assert "uniqueCountsPerCell" in listed, sample
+
+    # The coverage triple counts what is applicable. The two are not "not evaluated" -- they are not
+    # part of this run, so they must not inflate that count either.
+    for sample in report:
+        r = report[sample]
+        assert r["judged"] + r["unjudged"] + r["notEvaluated"] == len(r["measurements"]), sample
 
 
 @pytest.fixture
@@ -2629,14 +2670,16 @@ def test_the_reagent_figures_count_cells_rather_than_observed_barcodes(ambient_b
     # table reports a reagent delivering under the level at which anything is credited, so every tag in
     # the panel reads as a failed reagent.
     _run(ambient_bed, *BASE, "--cells", "cells.csv")
-    qc = pl.read_csv(ambient_bed / "result_qc.csv", infer_schema_length=0)
-    row = qc.filter((pl.col("measurement") == "perAntigen") & (pl.col("entity") == "AAAA")).row(0, named=True)
+    reagents = pl.read_csv(ambient_bed / "result_reagents.csv", infer_schema_length=0)
+    row = reagents.filter(pl.col("tag") == "AAAA").row(0, named=True)
 
-    assert "Cells with a count: 3" in row["detail"], row["detail"]
-    assert "Median count per cell: 40.0" in row["detail"], row["detail"]
-    # And the figure says which list it was computed against, since two runs whose lists came from
-    # different sources do not share a denominator.
-    assert "Cell list: cell list" in row["detail"], row["detail"]
+    assert int(row["cellsWithCount"]) == 3, row
+    assert float(row["medianCountPerCell"]) == 40.0, row
+    # And which list every figure was computed against, since two runs whose lists came from different
+    # sources do not share a denominator. One list serves the whole run, so it is stated once in the run
+    # record rather than repeated on each row.
+    meta = json.loads((ambient_bed / "result_run_meta.json").read_text())
+    assert meta["cellListSource"] == "cell list"
 
 
 def test_the_reagent_figures_fall_back_to_the_linker_as_the_cell_list(ambient_bed):
@@ -2644,11 +2687,12 @@ def test_the_reagent_figures_fall_back_to_the_linker_as_the_cell_list(ambient_be
     # and the ordinary case for this block. The figures are scoped to it and say so, so a reader can
     # tell a run counted against one list from a run counted against the other.
     _run(ambient_bed, *BASE)
-    qc = pl.read_csv(ambient_bed / "result_qc.csv", infer_schema_length=0)
-    row = qc.filter((pl.col("measurement") == "perAntigen") & (pl.col("entity") == "AAAA")).row(0, named=True)
+    reagents = pl.read_csv(ambient_bed / "result_reagents.csv", infer_schema_length=0)
+    row = reagents.filter(pl.col("tag") == "AAAA").row(0, named=True)
 
-    assert "Cells with a count: 3" in row["detail"], row["detail"]
-    assert "Cell list: clonotype linker" in row["detail"], row["detail"]
+    assert int(row["cellsWithCount"]) == 3, row
+    meta = json.loads((ambient_bed / "result_run_meta.json").read_text())
+    assert meta["cellListSource"] == "clonotype linker"
 
 
 def test_the_sticky_measurement_is_a_spread_when_no_gate_is_declared(bed):
@@ -2656,29 +2700,30 @@ def test_the_sticky_measurement_is_a_spread_when_no_gate_is_declared(bed):
     # is no *high* to count, and the measurement is the distribution of those readings instead -- which is
     # what a scientist reads in order to declare a gate.
     _run(bed, *BASE)
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    row = qc.filter(pl.col("measurement") == "highReferenceCells").row(0, named=True)
+    # The median is reported whether or not a gate exists -- it is the number a gate is CHOSEN from.
+    median = _sample_measure(bed, "medianControlReading")
+    assert median["value"] > 0
+    assert "carry a non-zero control count" in median["detail"]
 
-    assert "No gate declared" in row["detail"]
-    assert "Gate:" not in row["detail"]
-    # The value is the median of those readings. The eleven decile points used to ride in the detail too;
-    # they were a wall of numbers no reader used, and the spread rows carry the distribution itself.
-    assert float(row["value"]) > 0
+    # And the set-aside count has no number, because only a declared gate supplies a *high*. A zero here
+    # would read as a sample checked and found free of sticky cells.
+    set_aside = _sample_measure(bed, "cellsSetAside")
+    assert set_aside["value"] is None
+    assert set_aside["reason"] == "no admissibility gate is declared, so no cell is set aside"
 
 
 def test_the_sticky_measurement_counts_the_cells_the_gate_set_aside(bed):
     # With a gate declared the two jobs are one number: the cells counted high are the cells set aside, by
     # construction. A second line used to let those two sets differ.
     _run(bed, *BASE, "--gate-threshold", "1")
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    row = qc.filter(pl.col("measurement") == "highReferenceCells").row(0, named=True)
+    row = _sample_measure(bed, "cellsSetAside")
 
-    assert "Gate: 1 UMIs" in row["detail"]
-    assert "No gate declared" not in row["detail"]
+    assert row["detail"] == "Gate set at 1 UMIs"
     meta = json.loads((bed / "result_run_meta.json").read_text())
-    # Same cells, counted once. The per-sample rows sum to the run's set-aside total.
-    per_sample = qc.filter(pl.col("measurement") == "highReferenceCells")["value"].to_list()
-    assert sum(int(float(v)) for v in per_sample if v is not None) == meta["cellsSetAside"]
+    # Same cells, counted once. The per-sample figures sum to the run's set-aside total.
+    report = json.loads((bed / "result_qc_by_sample.json").read_text())
+    per_sample = [_sample_measure(bed, "cellsSetAside", s)["value"] for s in report]
+    assert sum(int(v) for v in per_sample if v is not None) == meta["cellsSetAside"]
 
 
 def test_no_observation_line_parameter_survives(bed):
@@ -2690,17 +2735,19 @@ def test_no_observation_line_parameter_survives(bed):
     assert "highReferenceLine" not in json.loads((bed / "result_run_meta.json").read_text())
 
 
-def test_the_distributions_are_emitted_as_plottable_frames(bed):
+def test_the_distributions_are_emitted_as_plottable_bins(bed):
     # Three distributions go last in the readout, and a scientist settles the cutoff and the gate by
-    # looking at them. A decile encoded inside a measurement's detail string is a number nobody can plot.
+    # looking at them. They travel BINNED, not as eleven decile points: points suggest a shape and cannot
+    # show where it separates, which is the one thing these plots are read for. Two p-columns of decile
+    # points used to ride alongside and nothing plotted either.
     _run(bed, *BASE)
 
-    deciles = pl.read_csv(bed / "result_qc_deciles.csv", infer_schema_length=0)
-    kinds = set(deciles["distribution"].to_list())
-    assert kinds == {"score", "referenceReading"}
-    for kind in kinds:
-        points = deciles.filter(pl.col("distribution") == kind)["decile"].to_list()
-        assert [int(p) for p in points] == list(range(0, 101, 10)), kind
+    bins = json.loads((bed / "result_qc_tag_bins.json").read_text())
+    assert set(bins["spreads"]) == {"score", "referenceReading"}
+    for kind, spread in bins["spreads"].items():
+        assert len(spread["edges"]) == len(spread["weights"]) + 1, kind
+        assert spread["edges"] == sorted(spread["edges"]), kind
+        assert sum(spread["weights"]) > 0, kind
 
     # Header-only rather than absent where a run fitted no background: a consumer meeting a header knows
     # the step ran and found nothing.
@@ -2734,64 +2781,9 @@ def test_the_spreads_are_taken_over_the_cell_list_not_over_observed_barcodes(bed
     # Three readings: every listed cell carries a comparator whether or not it read an antigen.
     assert sum(bins["spreads"]["referenceReading"]["weights"]) == 3
 
-    deciles = pl.read_csv(bed / "result_qc_deciles.csv", infer_schema_length=0)
-    readings = deciles.filter(pl.col("distribution") == "referenceReading")["value"].to_list()
-    assert {float(v) for v in readings} == {6.0}, readings
-
-
-@pytest.fixture
-def sample_decile_bed(tmp_path):
-    # Three samples: S1 and S2 each hold cells with an antigen count, at different scales so their decile
-    # series cannot coincide by accident. S3 is declared in the panel but carries no counted reading.
-    (tmp_path / "counts.csv").write_text(
-        "sampleId,cellId,tag,umiCount\n"
-        "S1,c1,AAAA,500\nS1,c1,CTRL,6\nS1,c2,AAAA,900\nS1,c2,CTRL,6\n"
-        "S2,c1,AAAA,50\nS2,c1,CTRL,6\nS2,c2,AAAA,80\nS2,c2,CTRL,6\n"
-    )
-    (tmp_path / "panel.csv").write_text(
-        "Samples,Name,Sequence,Type\n"
-        "S1,AgA,AAAA,Target\nS1,Ctrl,CTRL,Control\n"
-        "S2,AgA,AAAA,Target\nS2,Ctrl,CTRL,Control\n"
-        "S3,Ctrl,CTRL,Control\n"
-    )
-    (tmp_path / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS1,c2,K1\nS2,c1,K2\nS2,c2,K2\n")
-    return tmp_path
-
-
-def test_sample_deciles_reach_a_frame_keyed_by_sample(sample_decile_bed):
-    # The distribution's deciles must reach a p-frame keyed by sample, not only a decile string buried in
-    # the measurement's detail field.
-    _run(sample_decile_bed, *BASE)
-    deciles = pl.read_csv(sample_decile_bed / "result_qc_sample_deciles.csv", infer_schema_length=0)
-    assert set(deciles.columns) == {"sampleId", "decile", "value"}
-    assert set(deciles.filter(pl.col("sampleId") == "S1")["decile"].to_list()) == set(str(p) for p in range(0, 101, 10))
-
-
-def test_two_samples_carry_different_decile_series(sample_decile_bed):
-    # S1's cells hold 500-900 antigen counts, S2's hold 50-80. Their decile series must differ -- a plot
-    # showing this sample alone is the point.
-    _run(sample_decile_bed, *BASE)
-    deciles = pl.read_csv(sample_decile_bed / "result_qc_sample_deciles.csv")
-    s1 = deciles.filter(pl.col("sampleId") == "S1").sort("decile")["value"].to_list()
-    s2 = deciles.filter(pl.col("sampleId") == "S2").sort("decile")["value"].to_list()
-    assert s1 != s2
-    assert max(s1) > max(s2)
-
-
-def test_a_sample_with_no_antigen_counts_yields_no_decile_rows(sample_decile_bed):
-    # S3 is declared in the panel but no read ever carried a count for it. A flat run of zeros would read
-    # as a real, narrow distribution; the right answer is no rows for S3 at all, with the sample's own
-    # measurement carrying the reason instead.
-    _run(sample_decile_bed, *BASE)
-    deciles = pl.read_csv(sample_decile_bed / "result_qc_sample_deciles.csv", infer_schema_length=0)
-    assert deciles.filter(pl.col("sampleId") == "S3").height == 0
-
-    qc = pl.read_csv(sample_decile_bed / "result_qc.csv", infer_schema_length=0)
-    row = qc.filter((pl.col("entity") == "S3") & (pl.col("measurement") == "antigenCountDistribution")).row(
-        0, named=True
-    )
-    assert row["value"] is None or row["value"] == ""
-    assert row["reason"]
+    # And the readings themselves are the listed cells', all 6: `zzz`'s 999 would widen the edge set.
+    edges = bins["spreads"]["referenceReading"]["edges"]
+    assert edges[0] == 6.0 and edges[-1] <= 7.0, edges
 
 
 def test_the_fitted_backgrounds_are_emitted_at_the_fits_own_grain(tmp_path):
@@ -2809,45 +2801,44 @@ def test_the_fitted_backgrounds_are_emitted_at_the_fits_own_grain(tmp_path):
     assert 0.0 < row["backgroundWeight"] < 1.0
 
 
-def test_a_population_baseline_emits_no_score_deciles(tmp_path):
-    # No score exists under that rung, so the frame carries the reference-reading rows and nothing claiming
-    # to be a score.
+def test_a_population_baseline_emits_no_score_spread(tmp_path):
+    # No score exists under that rung, so the key is absent rather than present and empty -- which is what
+    # the page branches on to say the served rung produces no such quantity.
     _distribution_bed(tmp_path)
     _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
 
-    deciles = pl.read_csv(tmp_path / "result_qc_deciles.csv", infer_schema_length=0)
-    assert "score" not in set(deciles["distribution"].to_list())
+    bins = json.loads((tmp_path / "result_qc_tag_bins.json").read_text())
+    assert "score" not in bins["spreads"]
 
 
 def test_the_run_carries_its_score_spread(bed):
     # At the run grain because the cutoff is one number for the run, and carried so a scientist can move
     # that cutoff to where their own scores separate. A cutoff set with no sight of the scores is blind.
     _run(bed, *BASE)
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-
-    rows = qc.filter(pl.col("measurement") == "scoreDistribution")
-    assert rows.height == 1, "one figure for the run, not one per sample"
-    row = rows.row(0, named=True)
-    assert row["level"] == "run"
-    assert row["value"] is not None
-    # Eleven decile points, 0 through 100 by 10.
-    points = [p.split(":")[0] for p in row["detail"].split("|")]
-    assert points == [str(p) for p in range(0, 101, 10)]
-    # A score is 0 to 100, and the deciles are ordered.
-    values = [float(p.split(":")[1]) for p in row["detail"].split("|")]
-    assert values == sorted(values)
-    assert 0.0 <= values[0] and values[-1] <= 100.0
+    # ONE spread for the run, binned over every scored position. Eleven decile points suggest a shape;
+    # they cannot show WHERE the scores separate, which is the one thing this plot is read for.
+    bins = json.loads((bed / "result_qc_tag_bins.json").read_text())
+    spread = bins["spreads"]["score"]
+    edges, weights = spread["edges"], spread["weights"]
+    assert len(edges) == len(weights) + 1
+    assert edges == sorted(edges)
+    # A score is 0 to 100, and the bins span the scores the run actually produced.
+    assert 0.0 <= edges[0] and edges[-1] <= 100.0
+    assert sum(weights) > 0
     # No line stands behind it: the spread is carried so a scientist places the cutoff, and a line here
-    # would be the block placing it instead.
-    assert row["status"] is None
+    # would be the block placing it instead. The reagent and sample surfaces publish no status for it.
+    assert "scoreDistribution" not in {m["id"] for m in _sample_report(bed)["measurements"]}
 
 
 def test_the_run_score_spread_stays_out_of_every_sample_rollup(bed):
     # It is emitted outside the sample loop, and a sample's rollup covers its OWN measurements. A run
     # figure folded into a sample would say something about that sample it does not know.
     _run(bed, *BASE)
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    assert qc.filter((pl.col("measurement") == "rollup") & (pl.col("level") == "run")).height == 0
+    # The spread is one number for the run and never enters a sample's declared set, so no sample's
+    # rollup can be taken over it.
+    report = json.loads((bed / "result_qc_by_sample.json").read_text())
+    for sample in report:
+        assert "scoreDistribution" not in {m["id"] for m in report[sample]["measurements"]}
 
 
 def test_a_population_baseline_has_no_score_to_spread(tmp_path):
@@ -2856,39 +2847,36 @@ def test_a_population_baseline_has_no_score_to_spread(tmp_path):
     _distribution_bed(tmp_path)
     _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
 
-    qc = pl.read_csv(tmp_path / "result_qc.csv", infer_schema_length=0)
-    row = qc.filter(pl.col("measurement") == "scoreDistribution").row(0, named=True)
-    assert row["value"] is None
-    assert "yields no score" in row["detail"]
+    # No score spread is drawn at all: the key is absent rather than present and empty, which is what
+    # the page branches on to say the served rung produces no such quantity.
+    bins = json.loads((tmp_path / "result_qc_tag_bins.json").read_text())
+    assert "score" not in bins["spreads"]
 
 
-def test_the_fitted_background_reaches_the_measurement_set(tmp_path):
+def test_the_fitted_background_reaches_its_own_frame(tmp_path):
     # The fit's parameters used to die inside the function that made them, so a scientist could not see
     # whether a tag's counts separated -- which has to be read BEFORE the baseline is settled. SEPS
     # separates and FLAT does not. Both rows exist: absence and non-separation are different facts.
     _distribution_bed(tmp_path)
     _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
 
-    qc = pl.read_csv(tmp_path / "result_qc.csv", infer_schema_length=0)
-    rows = {r["entity"]: r for r in qc.filter(pl.col("measurement") == "fittedBackground").iter_rows(named=True)}
-    assert set(rows) == {"SEPS", "FLAT"}
+    # One row per (sample, tag) the fit scored, at the fit's own grain. A pair that established nothing
+    # contributes no row and says why in the run record instead -- absence and non-separation are
+    # different facts, and this is where they are told apart.
+    backgrounds = pl.read_csv(tmp_path / "result_qc_backgrounds.csv", infer_schema_length=0)
+    fitted = {r["tag"]: r for r in backgrounds.iter_rows(named=True)}
+    assert set(fitted) == {"SEPS"}, "SEPS separates and FLAT does not"
 
-    seps = rows["SEPS"]
-    assert seps["value"] is not None
-    assert "Samples fitted: 1" in seps["detail"]
-    assert "Median fitted signal: " in seps["detail"]
+    seps = fitted["SEPS"]
     # The background sits below the signal it was separated from. Read together they are the finding: a
     # background alone says nothing about whether the counts separated.
-    signal = float(seps["detail"].split("Median fitted signal: ")[1].split("|")[0])
-    assert float(seps["value"]) < signal
+    assert float(seps["backgroundMean"]) < float(seps["signalMean"])
+    assert 0.0 <= float(seps["backgroundWeight"]) <= 1.0
 
-    flat = rows["FLAT"]
-    assert flat["value"] is None
-    assert "fitted in no sample" in flat["detail"]
-
-    # No line stands behind either, so neither carries a status.
-    assert seps["status"] is None
-    assert flat["status"] is None
+    meta = json.loads((tmp_path / "result_run_meta.json").read_text())
+    unfitted = meta["distributionUnfitted"]
+    assert any(key.endswith("/FLAT") for key in unfitted), unfitted
+    assert not any(key.endswith("/SEPS") for key in unfitted), unfitted
 
 
 def test_a_declared_baseline_fits_no_background_and_the_rows_say_so(bed):
@@ -2896,11 +2884,16 @@ def test_a_declared_baseline_fits_no_background_and_the_rows_say_so(bed):
     # apart from "nothing here measures that" by the row being missing.
     _run(bed, *BASE)
 
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    rows = qc.filter(pl.col("measurement") == "fittedBackground")
-    assert rows.height > 0, "a declared-baseline run still carries a row for every declared tag"
-    assert set(rows["value"].to_list()) == {None}
-    assert all("no population baseline served" in d for d in rows["detail"].to_list())
+    # Header-only, never absent: a consumer meeting a header knows the stage ran and fitted nothing,
+    # where an absent file reads as a stage that crashed.
+    backgrounds = pl.read_csv(bed / "result_qc_backgrounds.csv", infer_schema_length=0)
+    assert backgrounds.columns == ["sampleId", "tag", "backgroundMean", "signalMean", "backgroundWeight"]
+    assert backgrounds.height == 0, "a declared baseline fits nothing, so no pair has a background"
+
+    # And nothing is reported as UNFITTED either: no fit was attempted, which is a third state from
+    # "attempted and failed".
+    meta = json.loads((bed / "result_run_meta.json").read_text())
+    assert meta["distributionUnfitted"] == {}
 
 
 def test_a_tag_that_could_not_be_fitted_leaves_its_identity_alone_unreliable(tmp_path):
@@ -3033,24 +3026,28 @@ def test_a_tag_holding_no_cell_is_not_blamed_on_its_siblings(bed):
     (bed / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS1,c2,K1\n")
 
     _run(bed, *BASE, "--grouping", json.dumps({"by": "property", "column": "Family"}))
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    by_tag = {r["entity"]: r for r in qc.filter(pl.col("measurement") == "siblingDisagreement").iter_rows(named=True)}
+    reagents = pl.read_csv(bed / "result_reagents.csv", infer_schema_length=0)
+    by_tag = {r["tag"]: r for r in reagents.iter_rows(named=True)}
 
-    assert by_tag["AAAA"]["value"] == "0.0"
-    assert by_tag["BBBB"]["value"] == "0.0"
-    assert by_tag["CCCC"]["value"] is None
-    assert by_tag["CCCC"]["detail"] == "this tag holds no cell beside a sibling"
-    assert by_tag["AAAA"]["detail"] is None
+    assert float(by_tag["AAAA"]["siblingDisagreement"]) == 0.0
+    assert float(by_tag["BBBB"]["siblingDisagreement"]) == 0.0
+    assert by_tag["CCCC"]["siblingDisagreement"] is None
+    # The words the column prints where no rate exists, one per cause. `reason` carries the same cause
+    # in full, so a reader who cannot fit the cell can still sort and filter on it.
+    assert by_tag["CCCC"]["siblingDisagreementShown"] == "no cell beside a sibling"
+    assert "siblingDisagreement=this tag holds no cell beside a sibling" in by_tag["CCCC"]["reason"]
+    assert by_tag["AAAA"]["siblingDisagreementShown"] == "0.00"
 
 
 def test_a_tag_that_is_the_only_one_on_its_identity_says_so(bed):
     # The shipped bed groups per tag, so AAAA's identity is AAAA and carries nothing else. The reason has
     # to name the missing sibling, not the siblings' failure to agree.
     _run(bed, *BASE)
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    row = qc.filter((pl.col("measurement") == "siblingDisagreement") & (pl.col("entity") == "AAAA")).row(0, named=True)
-    assert row["value"] is None
-    assert row["detail"] == "this identity carries one tag, so it has no sibling"
+    reagents = pl.read_csv(bed / "result_reagents.csv", infer_schema_length=0)
+    row = reagents.filter(pl.col("tag") == "AAAA").row(0, named=True)
+    assert row["siblingDisagreement"] is None
+    assert row["siblingDisagreementShown"] == "no sibling"
+    assert "siblingDisagreement=this identity carries one tag, so it has no sibling" in row["reason"]
 
 
 REAGENT_COLUMNS = [
@@ -3208,6 +3205,19 @@ def _sample_report(bed, sample: str = "S1") -> dict:
     return json.loads((bed / "result_qc_by_sample.json").read_text())[sample]
 
 
+def _sample_measure(bed, measurement: str, sample: str = "S1") -> dict:
+    """One sample-level measurement, from the one surface that carries them.
+
+    The long `result_qc.csv` frame these tests used to read is gone: every measurement it held has a
+    purpose-built surface, and the sample level's is this report. Read as JSON rather than as a frame
+    with `infer_schema_length=0`, so a number arrives as a float and an absent one as None -- where the
+    frame gave a string and an empty cell.
+    """
+    entries = {e["id"]: e for e in _sample_report(bed, sample)["measurements"]}
+    assert measurement in entries, f"{measurement} is not a declared sample measurement"
+    return entries[measurement]
+
+
 def test_the_sample_report_lists_every_sample_measurement(bed):
     # A measurement that did not run takes a row rather than being omitted, so a reader meets it instead of
     # noticing an absence. The set is the declaration order of every sample-level measurement.
@@ -3229,7 +3239,6 @@ def test_the_sample_report_lists_every_sample_measurement(bed):
             "status",
             "counts",
             "implies",
-            "rollsUp",
         }
 
 
@@ -3258,12 +3267,13 @@ def test_no_sample_measurement_is_blank_without_a_reason(bed):
 def test_a_valueless_measurement_names_the_input_that_is_actually_missing(bed):
     # Truthiness is not the test. A measurement with more than one route to having no number has to name
     # the one that happened. This bed passes a linker, so a cell list exists and depth is missing its
-    # NUMERATOR, not its denominator.
+    # NUMERATOR, not its denominator -- and the numerator is now the read weight inside those cells, so
+    # the input it names is the counts table's `totalWeight` column rather than a read count.
     _run(bed, *BASE)
     rows = {m["id"]: m for m in _sample_report(bed)["measurements"]}
 
-    assert rows["readsTotal"]["reason"] == "no read QC summary row reached this sample"
-    assert rows["readsPerCell"]["reason"] == "no read count reached this sample, so depth has no numerator"
+    assert rows["matchedFraction"]["reason"] == "no read QC summary row reached this sample"
+    assert rows["readsPerCell"]["reason"] == "the counts file carries no totalWeight column, so depth has no numerator"
 
 
 def test_a_run_with_no_cell_list_gives_its_two_cell_rows_one_account(tmp_path):
@@ -3303,28 +3313,31 @@ def test_an_empty_cell_list_is_the_zero_cells_finding_and_not_a_missing_read_cou
     row = {m["id"]: m for m in report["S2"]["measurements"]}["readsPerCell"]
     assert row["value"] is None
     assert row["reason"] == "no cell of this sample is in the cell list, so depth has no denominator"
-    # The read count IS present, which is what makes the missing-numerator reason false here.
-    assert {m["id"]: m for m in report["S2"]["measurements"]}["readsTotal"]["value"] == 2000
+    # The read count IS present, which is what makes the missing-numerator reason false here. Read from
+    # the matched SHARE, since both counts are now that row's two numbers rather than rows of their own.
+    matched = {m["id"]: m for m in report["S2"]["measurements"]}["matchedFraction"]
+    assert matched["value"] == pytest.approx(1800 / 2000)
+    assert matched["detail"] == "1,800 out of 2,000 reads parsed"
 
 
-def test_the_sample_report_carries_the_rollup_the_qc_frame_carries(bed):
+def test_the_sample_report_carries_a_rollup_over_its_own_list(bed):
     # The Main grid's tag is this rollup, and the report beside it lists the measurements it was taken
-    # over. One number in two places would let the tag and the list disagree about one sample.
+    # over. ONE surface carries both, so the tag and the list cannot disagree about one sample -- which
+    # is the whole reason the second copy in the long measurement frame went.
     _run(bed, *BASE)
     report = _sample_report(bed)
 
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    rollup = qc.filter(
-        (pl.col("measurement") == "rollup") & (pl.col("level") == "sample") & (pl.col("entity") == "S1")
-    ).row(0, named=True)
+    # Coverage accounts for every measurement listed, and for no others.
+    assert report["judged"] + report["unjudged"] + report["notEvaluated"] == len(report["measurements"])
 
-    assert report["status"] == rollup["status"]
-    assert report["judged"] == int(rollup["judged"])
-    assert report["unjudged"] == int(rollup["unjudged"])
-    assert report["notEvaluated"] == int(rollup["notEvaluated"])
-    # Coverage accounts for every measurement the rollup was taken over.
-    counted = [m for m in report["measurements"] if m["rollsUp"]]
-    assert report["judged"] + report["unjudged"] + report["notEvaluated"] == len(counted)
+    # The status is the worst among the ones that carried one, and None where none did.
+    ordinal = {"OK": 0, "warn": 1, "alert": 2}
+    carried = [m["status"] for m in report["measurements"] if m["status"] is not None]
+    assert report["judged"] == len(carried)
+    if carried:
+        assert report["status"] == max(carried, key=lambda st: ordinal[st])
+    else:
+        assert report["status"] is None
 
 
 def test_usable_read_fraction_reads_blank_where_the_counts_file_carries_no_total_weight(bed):
@@ -3359,7 +3372,9 @@ def test_usable_read_fraction_computes_a_real_value_end_to_end(tmp_path):
     row = {m["id"]: m for m in _sample_report(tmp_path)["measurements"]}["usableReadFraction"]
 
     assert row["value"] == pytest.approx((80 + 3 + 90 + 3) / 1000)
-    assert row["detail"] == "Cells in the V(D)J cell list: 2"
+    # The detail writes the fraction out as its two counts. `readsTotal` has no row of its own, so this
+    # is the only place a reader meets the denominator.
+    assert row["detail"] == "176 out of 1,000 reads parsed"
 
 
 def test_usable_read_fraction_with_no_cell_list_reads_a_stated_blank(tmp_path):
@@ -3395,7 +3410,7 @@ def test_usable_read_fraction_with_an_empty_cell_list_reads_zero(tmp_path):
     row = {m["id"]: m for m in _sample_report(tmp_path)["measurements"]}["usableReadFraction"]
 
     assert row["value"] == 0.0
-    assert row["detail"] == "Cells in the V(D)J cell list: 0"
+    assert row["detail"] == "0 out of 1,000 reads parsed"
 
 
 def test_a_declared_sample_measurement_nothing_computes_still_takes_a_row(monkeypatch):
@@ -3420,86 +3435,100 @@ def test_a_declared_sample_measurement_nothing_computes_still_takes_a_row(monkey
     assert coverage.not_evaluated >= 1
 
 
-def test_qc_frame_carries_the_line_and_route_for_an_inherited_measurement():
-    # cellBarcodeValidFraction is on the inherited route with a published warn/error pair. A reader who
-    # sees `warn` in the frame must be able to see the number it warned against.
-    rows = []
-    qc_rows._add(rows, "sample", "S1", "cellBarcodeValidFraction", 0.6)
-    frame = qc_rows._qc_frame(rows).row(0, named=True)
-
-    assert frame["lineWarn"] == pytest.approx(0.75)
-    assert frame["lineAlert"] == pytest.approx(0.50)
-    assert frame["route"] == "inherited"
-
-
-def test_qc_frame_leaves_the_numbers_null_for_the_categorical_route():
-    # cellsDetected carries a route -- its status is a fact, not a threshold -- but no numeric line:
-    # `route` is non-null while `lineWarn` and `lineAlert` stay null.
-    rows = []
-    qc_rows._add(rows, "sample", "S1", "cellsDetected", 12.0)
-    frame = qc_rows._qc_frame(rows).row(0, named=True)
-
-    assert frame["lineWarn"] is None
-    assert frame["lineAlert"] is None
-    assert frame["route"] == "categorical"
-
-
-def test_qc_frame_leaves_all_three_null_where_no_line_backs_the_measurement():
-    # readsTotal has no line on any route.
-    rows = []
-    qc_rows._add(rows, "sample", "S1", "readsTotal", 1000.0)
-    frame = qc_rows._qc_frame(rows).row(0, named=True)
-
-    assert frame["lineWarn"] is None
-    assert frame["lineAlert"] is None
-    assert frame["route"] is None
-
-
-def test_qc_frame_reads_the_lines_it_was_given_not_the_shipped_default():
-    # `_qc_frame` renders whatever `lines` the caller passes, the same dict `_add` used to score the row --
-    # an operator override must show up here, not the shipped default.
+def test_add_scores_against_the_lines_it_was_given_not_the_shipped_default():
+    # `_add` scores against whatever `lines` the caller passes, so an operator override reaches the
+    # status a reader sees. The thresholds themselves are no longer carried beside it: they were columns
+    # of the long measurement frame, and the surfaces that replaced it publish the status alone.
     overridden = dict(DEFAULT_LINES)
-    overridden["cellBarcodeValidFraction"] = Line(warn=0.9, error=0.6)
+    overridden["usableReadFraction"] = Line(warn=0.9, error=0.0)
 
     rows = []
-    qc_rows._add(rows, "sample", "S1", "cellBarcodeValidFraction", 0.8, lines=overridden)
-    frame = qc_rows._qc_frame(rows, lines=overridden).row(0, named=True)
+    qc_rows._add(rows, "sample", "S1", "usableReadFraction", 0.8, lines=overridden)
+    # 0.8 is OK against the shipped 0.20 line and below the raised one.
+    assert rows[0].status is Status.WARN
+    assert qc_rows.status_for("usableReadFraction", 0.8, DEFAULT_LINES) is Status.OK
 
-    assert frame["lineWarn"] == pytest.approx(0.9)
-    assert frame["lineAlert"] == pytest.approx(0.6)
-    # And the status was scored against the override too: 0.8 is below the raised warn line.
-    assert frame["status"] == "warn"
+
+def test_every_declared_line_reaches_the_dict_that_scores_a_run(bed):
+    """`DEFAULT_LINES` declares which measurements carry a line. `main`'s own dict is what applies them.
+
+    A line in the first and not the second does nothing, and does it silently: `status_for` answers None
+    for a measurement it cannot find, so the measurement reads unjudged while every unit test that
+    consults `DEFAULT_LINES` straight still passes. `panelAssignedFraction` shipped exactly that way.
+
+    Read from the SOURCE, not from a run. The failure is a missing key, and a run cannot exhibit the
+    absence of a status it was never asked for -- an unjudged measurement is a legitimate state here.
+    """
+    literal = _scoring_dict_literal()
+    scored = {key.value for key in literal.keys}
+    assert scored == set(DEFAULT_LINES), (
+        f"declared and never applied: {sorted(set(DEFAULT_LINES) - scored)}; "
+        f"applied and never declared: {sorted(scored - set(DEFAULT_LINES))}"
+    )
+
+
+def test_every_threshold_that_scores_a_run_comes_off_the_command_line(bed):
+    """The other half of the same contract, and it has two halves of its own.
+
+    A threshold written as a literal in that dict is a line no layer above the CLI can reach, so a
+    scientist cannot move it however many controls the UI grows -- and the shipped value would still look
+    right in every report. So each threshold must be an `args` attribute, AND that attribute must be a
+    flag the parser actually declares.
+
+    Reading the flags alone is not enough: a hard-coded threshold reads no attribute, so a check that
+    only walks the attributes it finds passes by having nothing to look at.
+    """
+    literal = _scoring_dict_literal()
+    read_from = set()
+    for key, value in zip(literal.keys, literal.values):
+        assert isinstance(value, ast.Call) and value.func.id == "Line", f"{key.value} is not a Line(...)"
+        assert value.keywords, f"{key.value} passes no threshold at all"
+        for keyword in value.keywords:
+            where = f"{key.value}.{keyword.arg}"
+            assert isinstance(keyword.value, ast.Attribute), f"{where} is not read from the command line"
+            assert isinstance(keyword.value.value, ast.Name) and keyword.value.value.id == "args", where
+            read_from.add(keyword.value.attr)
+
+    assert read_from, "the dict reads no parsed argument at all; this check would pass vacuously"
+    help_text = _run(bed, "--help").stdout
+    for attr in sorted(read_from):
+        assert f"--{attr.replace('_', '-')}" in help_text, attr
+
+
+def _scoring_dict_literal():
+    """The `lines` dict literal from inside `emit_verdicts.main`, as an AST node."""
+    tree = ast.parse((SRC / "emit_verdicts.py").read_text())
+    main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
+    built = [
+        n
+        for n in ast.walk(main)
+        if isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.target.id == "lines"
+    ]
+    assert len(built) == 1, "main() builds the scoring dict exactly once"
+    literal = built[0].value
+    assert isinstance(literal, ast.Dict), "the scoring dict is a literal, which is what lets this be read"
+    assert all(isinstance(key, ast.Constant) for key in literal.keys), "every key is a plain string"
+    return literal
 
 
 def test_cli_flags_move_a_line_end_to_end(bed):
-    # 0.91 reads OK against the shipped 0.75 warn line, and alert against a raised 0.95 one. This is the
-    # CLI surface an operator actually reaches, not the Python function alone.
+    # An aggregate share of 0.02 reads OK against the shipped 0.05 warn line and warns against a lowered
+    # 0.01 one. This is the CLI surface an operator actually reaches, not the Python function alone.
     (bed / "qc.csv").write_text(
         "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
         "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction,"
-        "cellBarcodeValidFraction\n"
-        "S1,20000,18000,0.9,4,2,1200,300,0.82,0.91\n"
+        "aggregateBarcodeFraction,aggregateBarcodesFlagged,aggregateBarcodeThreshold\n"
+        "S1,20000,18000,0.9,4,2,1200,300,0.82,0.02,3,1500\n"
     )
-    r = _run(
-        bed, *BASE, "--qc-summary", "qc.csv", "--cell-barcode-valid-warn", "0.95", "--cell-barcode-valid-error", "0.92"
-    )
+    r = _run(bed, *BASE, "--qc-summary", "qc.csv")
     assert r.returncode == 0, r.stderr
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
+    assert _sample_measure(bed, "aggregateBarcodeFraction")["status"] == "OK"
 
-    row = qc.filter(pl.col("measurement") == "cellBarcodeValidFraction").row(0, named=True)
-    assert row["status"] == "alert"
-    assert row["lineWarn"] == "0.95"
-    assert row["lineAlert"] == "0.92"
-
-
-def test_qc_frame_rollup_row_carries_no_line_or_route():
-    # The rollup measurement has no declaration at all, so all three fields are null there too.
-    rows = [qc_rows.QcRow("sample", "S1", qc_rows.ROLLUP, None, "", "", None, qc_rows.roll_up([]))]
-    frame = qc_rows._qc_frame(rows).row(0, named=True)
-
-    assert frame["lineWarn"] is None
-    assert frame["lineAlert"] is None
-    assert frame["route"] is None
+    r = _run(bed, *BASE, "--qc-summary", "qc.csv", "--aggregate-barcode-warn", "0.01")
+    assert r.returncode == 0, r.stderr
+    row = _sample_measure(bed, "aggregateBarcodeFraction")
+    assert row["value"] == pytest.approx(0.02)
+    assert row["status"] == "warn"
 
 
 def test_a_value_that_is_not_a_finite_number_is_no_value_and_says_which(monkeypatch):
@@ -3559,6 +3588,27 @@ def test_the_wide_summary_carries_every_sample_level_measurement_as_a_column(bed
     assert "panelAssignedFraction" in summary.columns
     assert "cellBarcodeValidFraction" in summary.columns
 
+    # BOTH DIRECTIONS against the Tengo import spec, which is the contract this frame is read under.
+    # A column the spec declares and the CSV lacks is not a missing number -- xsv fails the import and
+    # the whole Sample QC page dies with `ColumnNotFoundError` from inside ptabler, nowhere near the
+    # declaration that caused it. That is exactly how `featureDroppedShare` shipped broken: added to the
+    # spec and to the per-sample CSV, and not to the frame in between.
+    #
+    # Read as TEXT because one source is Tengo and the other Python, the same way `qcDefaults.test.ts`
+    # cross-checks the line defaults.
+    spec = (ROOT / "workflow" / "src" / "column-specs.lib.tengo").read_text()
+    spec = spec[spec.index("qcSampleSummaryImportSpec := func(") :]
+    spec = spec[: spec.index("\n}\n")]
+    spec_columns = set(re.findall(r'num(?:Optional)?\("[^"]+",\s*"([^"]+)"', spec))
+    assert spec_columns, "the spec's column list could not be parsed; this check would pass vacuously"
+    assert not spec_columns - set(summary.columns), (
+        f"declared by the import spec, absent from the CSV: {sorted(spec_columns - set(summary.columns))}"
+    )
+    assert not set(summary.columns) - spec_columns - {"sampleId"}, (
+        f"written to the CSV, undeclared by the import spec: "
+        f"{sorted(set(summary.columns) - spec_columns - {'sampleId'})}"
+    )
+
 
 def test_the_wide_summary_carries_no_rollup_column(bed):
     """The rollup lives in one place, and this table is not it.
@@ -3586,9 +3636,8 @@ def test_a_missing_read_qc_row_names_the_row_not_the_denominator(bed):
     # there is no row to read a denominator from.
     r = _run(bed, *BASE)
     assert r.returncode == 0, r.stderr
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    row = qc.filter(pl.col("measurement") == "aggregateBarcodeFraction").row(0, named=True)
-    assert row["value"] in ("", None)
+    row = _sample_measure(bed, "aggregateBarcodeFraction")
+    assert row["value"] is None
     assert "reached this sample" in row["reason"]
 
 
@@ -3603,9 +3652,8 @@ def test_a_present_read_qc_row_with_no_reads_names_the_denominator_not_the_row(b
     )
     r = _run(bed, *BASE, "--qc-summary", "qc.csv")
     assert r.returncode == 0, r.stderr
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    row = qc.filter(pl.col("measurement") == "aggregateBarcodeFraction").row(0, named=True)
-    assert row["value"] in ("", None)
+    row = _sample_measure(bed, "aggregateBarcodeFraction")
+    assert row["value"] is None
     assert "no denominator" in row["reason"]
     assert "reached this sample" not in row["reason"]
 
@@ -3621,9 +3669,8 @@ def test_a_present_read_qc_row_with_reads_but_no_figure_names_neither_the_row_no
     )
     r = _run(bed, *BASE, "--qc-summary", "qc.csv")
     assert r.returncode == 0, r.stderr
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    row = qc.filter(pl.col("measurement") == "aggregateBarcodeFraction").row(0, named=True)
-    assert row["value"] in ("", None)
+    row = _sample_measure(bed, "aggregateBarcodeFraction")
+    assert row["value"] is None
     assert "no denominator" not in row["reason"]
     assert "reached this sample" not in row["reason"]
 
@@ -3639,9 +3686,8 @@ def test_a_read_qc_row_with_no_read_count_names_the_missing_count(bed):
     )
     r = _run(bed, *BASE, "--qc-summary", "qc.csv")
     assert r.returncode == 0, r.stderr
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    row = qc.filter(pl.col("measurement") == "aggregateBarcodeFraction").row(0, named=True)
-    assert row["value"] in ("", None)
+    row = _sample_measure(bed, "aggregateBarcodeFraction")
+    assert row["value"] is None
     assert "carries no read count" in row["reason"]
     assert "nonzero reads" not in row["reason"]
     assert "reached this sample" not in row["reason"]
@@ -3657,11 +3703,10 @@ def test_a_valueless_usable_fraction_carries_its_reason_and_no_detail(bed):
     )
     r = _run(bed, *BASE, "--qc-summary", "qc.csv")
     assert r.returncode == 0, r.stderr
-    qc = pl.read_csv(bed / "result_qc.csv", infer_schema_length=0)
-    row = qc.filter(pl.col("measurement") == "usableReadFraction").row(0, named=True)
-    assert row["value"] in ("", None)
+    row = _sample_measure(bed, "usableReadFraction")
+    assert row["value"] is None
     assert row["reason"]
-    assert row["detail"] in ("", None)
+    assert row["detail"] is None
 
 
 def test_a_reused_barcode_reads_as_its_joined_names_not_its_sequence(tmp_path):
@@ -3696,14 +3741,18 @@ def test_a_reused_barcode_reads_as_its_joined_names_not_its_sequence(tmp_path):
 
 
 def test_rescued_share_is_the_undeclared_reads_correction_recovered():
-    # 30% of reads sat on an undeclared sequence; refine-tags kept 80%, so it dropped 20%. The 10%
-    # between them corrected onto a panel entry.
-    assert qc_rows.rescued_share(0.30, 0.80) == pytest.approx(0.10)
+    # 30% of MATCHED reads sat on an undeclared sequence; the antigen-barcode step could not place 20%
+    # of matched reads on the panel. The 10% between them corrected onto a panel entry.
+    #
+    # Both arguments are shares of the same denominator, which is what makes this a subtraction. The
+    # second used to be `1 - panelAssignedFraction`, a share of that step's OWN input -- the reads that
+    # survived cell-barcode correction -- so the difference came out systematically low.
+    assert qc_rows.rescued_share(0.30, 0.20) == pytest.approx(0.10)
 
 
 def test_rescued_share_is_zero_where_correction_recovered_nothing():
     # Every undeclared read was too far from the panel to correct. Zero is a measurement, not an absence.
-    assert qc_rows.rescued_share(0.30, 0.70) == pytest.approx(0.0)
+    assert qc_rows.rescued_share(0.30, 0.30) == pytest.approx(0.0)
 
 
 def test_rescued_share_has_no_value_without_both_sides():
@@ -3720,13 +3769,78 @@ def test_rescued_share_refuses_a_negative_rather_than_publishing_one():
 
 def test_the_rescued_share_reaches_the_samples_own_report(bed):
     # It is a sample's measurement, unlike the undeclared share beside it, so it belongs in the sample's
-    # report. It carries no line, so it is computed and unjudged rather than green.
+    # report. Without `--qc-summary` the subtrahend never arrives, so the row is present and unjudged --
+    # a subtraction missing a term, NOT a measurement without a line. It has one, and
+    # `test_the_rescued_share_is_judged_against_its_operator_set_line` is where that is read.
     _write_raw_feature_counts(bed, [("S1", "AAAA", 40), ("S1", "CTRL", 10), ("S1", "ZZZZ", 10)])
     r = _run(bed, *BASE, "--raw-feature-counts", "raw_feature_counts.csv")
     assert r.returncode == 0, r.stderr
     report = json.loads((bed / "result_qc_by_sample.json").read_text())
     entry = next(m for m in report["S1"]["measurements"] if m["id"] == "refineRescuedShare")
+    assert entry["value"] is None
     assert entry["status"] is None
+
+
+def test_the_rescued_share_is_judged_against_its_operator_set_line(bed):
+    # END TO END, because the status a run shows comes from the dict `main` builds off the command line
+    # and not from `DEFAULT_LINES`.
+    #
+    # One pre-refine bed throughout: ZZZZ is undeclared and carries 10 of 60 matched reads, so the
+    # undeclared share is 1/6. The drop share moves instead, and the rescued share is the difference.
+    _write_raw_feature_counts(bed, [("S1", "AAAA", 40), ("S1", "CTRL", 10), ("S1", "ZZZZ", 10)])
+
+    def _at(dropped: str) -> dict:
+        (bed / "qc.csv").write_text(
+            "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,"
+            "featuresDetected,totalUniqueUmis,medianUmisPerCell,panelAssignedFraction,"
+            "featureDroppedShare\n"
+            f"S1,20000,18000,0.9,4,2,1200,300,0.82,{dropped}\n"
+        )
+        _run(bed, *BASE, "--raw-feature-counts", "raw_feature_counts.csv", "--qc-summary", "qc.csv")
+        return _sample_measure(bed, "refineRescuedShare")
+
+    row = _at("0.14")
+    assert row["value"] == pytest.approx(1 / 6 - 0.14)
+    assert row["status"] == "OK"
+
+    # Both boundaries face the same way, so 0.10 itself still only warns and the alert starts above it.
+    assert _at("0.10")["status"] == "warn"
+    row = _at("0.0")
+    assert row["value"] == pytest.approx(1 / 6)
+    assert row["status"] == "alert"
+
+    # And the operator can move it: the OK reading warns once the line is lowered under it.
+    _at("0.14")
+    _run(
+        bed,
+        *BASE,
+        "--raw-feature-counts",
+        "raw_feature_counts.csv",
+        "--qc-summary",
+        "qc.csv",
+        "--rescued-share-warn",
+        "0.01",
+    )
+    assert _sample_measure(bed, "refineRescuedShare")["status"] == "warn"
+
+
+def test_the_vdj_antigen_count_line_alerts_only_at_its_floor(bed):
+    # The bed's listed cells total 506 each, well above the shipped warn of 4, so the lines move instead
+    # of the data -- which is the surface an operator actually reaches.
+    _run(bed, *BASE)
+    assert _sample_measure(bed, "uniqueCountsPerCell")["value"] == pytest.approx(506)
+    assert _sample_measure(bed, "uniqueCountsPerCell")["status"] == "OK"
+
+    _run(bed, *BASE, "--vdj-antigen-count-warn", "600")
+    assert _sample_measure(bed, "uniqueCountsPerCell")["status"] == "warn"
+
+    # ALERTING AT the error threshold, not below it: 506 alerts against 506 and only warns against 507.
+    # That direction is the point of the line -- 1 is the floor of this quantity, so an error read as
+    # "below" could never fire.
+    _run(bed, *BASE, "--vdj-antigen-count-warn", "600", "--vdj-antigen-count-error", "506")
+    assert _sample_measure(bed, "uniqueCountsPerCell")["status"] == "alert"
+    _run(bed, *BASE, "--vdj-antigen-count-warn", "600", "--vdj-antigen-count-error", "507")
+    assert _sample_measure(bed, "uniqueCountsPerCell")["status"] == "warn"
 
 
 def test_the_rescued_share_says_why_where_no_pre_refine_pass_reached_the_run(bed):

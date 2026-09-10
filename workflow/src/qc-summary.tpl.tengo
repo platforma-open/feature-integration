@@ -22,17 +22,10 @@ self.defineOutputs("qcSummaryCsv")
 
 self.body(func(inputs) {
 	qcData := inputs.qcData // ResourceMap: [sampleId] -> per-sample QC CSV file
-	sampleAxisSpec := inputs.sampleAxisSpec
 
-	columnsSpec := columnSpecs.qcSummaryColumnsSpec(sampleAxisSpec)
-
-	// Metric column names to carry through from each per-sample CSV. The CSV's own sampleId column is
+	// The metric columns to carry through from each per-sample CSV. The CSV's own sampleId column is
 	// deliberately NOT selected: the real sampleId is injected from the resource-map key below.
-	// qcSummaryColumnsSpec is read for its column NAMES only.
-	metricCols := []
-	for col in columnsSpec.columns {
-		metricCols = append(metricCols, col.column)
-	}
+	metricCols := columnSpecs.QC_SUMMARY_COLUMNS
 
 	inputsMap := qcData.inputs()
 	ll.assert(len(inputsMap) > 0, "no per-sample QC files to combine")

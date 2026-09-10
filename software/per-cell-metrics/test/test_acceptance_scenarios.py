@@ -194,10 +194,12 @@ def test_a_live_mutant_nothing_bound_is_still_reported_as_seen(epitope_bed):
     # reagent worked, because it returned ambient counts in every cell, so the panel-versus-reads check must
     # NOT report it as a tag the reads never show.
     assert _run(epitope_bed, *BASE).returncode == 0
-    qc = pl.read_csv(epitope_bed / "result_qc.csv", infer_schema_length=0)
-    never_seen = qc.filter((pl.col("measurement") == "declaredNeverSeen") & (pl.col("entity") == "M4"))
-    assert never_seen.height == 1
-    assert float(never_seen.row(0, named=True)["value"]) > 0.0, "M4 returned reads, so it was seen"
+    # "A declared barcode no read carried" is the reagent table's `Seen in 0/N`, so that is where the
+    # reagent's own finding is read.
+    reagents = pl.read_csv(epitope_bed / "result_reagents.csv", infer_schema_length=0)
+    m4 = reagents.filter(pl.col("tag") == "M4")
+    assert m4.height == 1
+    assert int(m4.row(0, named=True)["samplesSeenIn"]) > 0, "M4 returned reads, so it was seen"
     assert _row(epitope_bed, "K1", "M4")["state"] == "not bound"
 
 
@@ -219,11 +221,14 @@ def test_a_dead_reagent_reads_never_asked_not_a_confident_negative(dead_reagent_
     assert int(m4["cellsAsked"]) == 0, "cells in a sample where the tag returned nothing do not vote"
 
     # And the reagent finding is still stated on its own row, for the reagent's sake rather than the
-    # answer's.
-    qc = pl.read_csv(dead_reagent_bed / "result_qc.csv", infer_schema_length=0)
-    never_seen = qc.filter((pl.col("measurement") == "declaredNeverSeen") & (pl.col("entity") == "M4"))
-    assert never_seen.height == 1
-    assert float(never_seen.row(0, named=True)["value"]) == 0.0
+    # answer's: a declared barcode no read carried reads `Seen in 0/N`.
+    reagents = pl.read_csv(dead_reagent_bed / "result_reagents.csv", infer_schema_length=0)
+    dead = reagents.filter(pl.col("tag") == "M4")
+    assert dead.height == 1, "a dead reagent keeps its row, or a reader cannot tell it from an absence"
+    row = dead.row(0, named=True)
+    assert int(row["samplesSeenIn"]) == 0
+    assert int(row["cellsWithCount"]) == 0
+    assert row["seenIn"].startswith("0/")
 
 
 # ---------------------------------------------------------------------------

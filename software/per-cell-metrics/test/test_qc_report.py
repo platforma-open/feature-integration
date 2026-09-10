@@ -3,12 +3,16 @@
 import csv
 import json
 import pathlib
+import re
 import subprocess
 import sys
 
 import pytest
+from qc_report import FIELDNAMES
 
 SRC = pathlib.Path(__file__).parents[1] / "src" / "qc_report.py"
+# The block root, for the checks that read the Tengo gather template as text.
+ROOT = pathlib.Path(__file__).resolve().parents[3]
 
 
 def _refine_report(steps):
@@ -93,30 +97,43 @@ def test_qc_survives_missing_refine_report(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "input_count, output_count, expected",
-    [(100, 90, 0.9), (100, 100, 1.0), (200, 50, 0.25)],
-    ids=["90pct-kept", "all-kept", "quarter-kept"],
+    "matched, cell_out, feature_out, expected",
+    [
+        (100, 100, 90, 0.9),
+        (100, 100, 100, 1.0),
+        # The regression case. Cell-barcode correction drops 20 of the 100 matched reads, so the antigen
+        # step sees 80 and places 40. Over MATCHED reads that is 0.4. Over the step's own input -- what
+        # this figure used to divide by -- it would read 0.5, and every read share in the set would then
+        # sit on a denominator no other one shared.
+        (100, 80, 40, 0.4),
+    ],
+    ids=["90pct-on-panel", "all-on-panel", "cell-loss-does-not-inflate-the-panel-share"],
 )
-def test_panel_assigned_fraction_from_feature_step(tmp_path, input_count, output_count, expected):
-    # The FEATURE refine step's outputCount/inputCount is the fraction of reads kept after correcting the
-    # feature barcode against the panel whitelist.
+def test_panel_assigned_fraction_is_over_matched_reads(tmp_path, matched, cell_out, feature_out, expected):
+    # The FEATURE step's outputCount over MATCHED READS -- not over that step's own input. Each refine
+    # level is fed from the previous level's survivors, so the step's input is post-cell-correction and
+    # is a denominator no other read share here has.
     tagstat = tmp_path / "tagstat.tsv"
     tagstat.write_text("CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\ncell1\tAAAA\t1\t1\t1\n")
     parse_report = tmp_path / "parse.json"
-    parse_report.write_text(json.dumps({"parseReport": {"total": 100, "matched": 100}}))
+    parse_report.write_text(json.dumps({"parseReport": {"total": matched, "matched": matched}}))
     refine_report = tmp_path / "refine.json"
     refine_report.write_text(
         json.dumps(
             _refine_report(
                 [
-                    {"tagName": "CELL", "inputCount": input_count, "outputCount": input_count},
-                    {"tagName": "FEATURE", "inputCount": input_count, "outputCount": output_count},
+                    {"tagName": "CELL", "inputCount": matched, "outputCount": cell_out},
+                    {"tagName": "FEATURE", "inputCount": cell_out, "outputCount": feature_out},
                 ]
             )
         )
     )
     row = _run(tmp_path, tagstat, parse_report, refine_report=refine_report)
     assert float(row["panelAssignedFraction"]) == pytest.approx(expected)
+    # Its sibling, over the same denominator: what the antigen step could not place on the panel. The two
+    # do not sum to 1 -- the cell-barcode step took its own reads in between, and that gap is the
+    # information a ratio over the step's own input threw away.
+    assert float(row["featureDroppedShare"]) == pytest.approx((cell_out - feature_out) / matched)
 
 
 def _tagstat_lines(umi_by_cell: dict[str, int], read_by_cell: dict[str, int]) -> str:
@@ -198,3 +215,89 @@ def test_panel_assigned_fraction_blank_without_feature_step(tmp_path):
     refine_report.write_text(json.dumps(_refine_report([{"tagName": "CELL", "inputCount": 10, "outputCount": 10}])))
     row = _run(tmp_path, tagstat, parse_report, refine_report=refine_report)
     assert row["panelAssignedFraction"] == ""
+
+
+# --- the read-QC CSV's three-layer contract -----------------------------------------------------
+#
+# The per-sample CSV this module writes does NOT reach the verdict stage whole. qc-summary.tpl.tengo
+# concatenates the per-sample files and carries through an EXPLICIT list of columns,
+# `columnSpecs.QC_SUMMARY_COLUMNS`, injecting the real sampleId over the constant one. So a figure has
+# to be declared in three places to arrive, and skipping the middle one fails in two different ways:
+#
+#   in FIELDNAMES only        -> the gather drops it; every reader downstream sees a missing value and
+#                                reports "nothing computed this". SILENT.
+#   in QC_SUMMARY_COLUMNS only -> `pt.col()` finds no such column and the gather dies at run time. LOUD.
+#
+# Both have happened. `featureDroppedShare` shipped as the loud one (through the import spec rather than
+# the gather, same shape of mistake); `cellBarcodeIn`/`cellBarcodeOut` were written as the silent one and
+# caught here before running. Read as TEXT, because one side is Tengo.
+
+
+def _carried_through():
+    """The column names qc-summary.tpl.tengo carries out of each per-sample CSV."""
+    src = (ROOT / "workflow" / "src" / "column-specs.lib.tengo").read_text()
+    block = src[src.index("QC_SUMMARY_COLUMNS := [") :]
+    block = block[: block.index("]")]
+    names = re.findall(r'"([A-Za-z]+)"', block)
+    assert names, "QC_SUMMARY_COLUMNS could not be parsed; this check would pass vacuously"
+    return names
+
+
+def test_every_carried_column_is_one_this_module_writes():
+    # The loud failure. A name here that FIELDNAMES lacks makes the gather's `pt.col()` reference a
+    # column no per-sample CSV has, and the whole QC stage dies.
+    missing = [c for c in _carried_through() if c not in FIELDNAMES]
+    assert not missing, f"carried through by the gather, never written here: {missing}"
+
+
+def test_every_figure_the_verdict_stage_reads_survives_the_gather():
+    # The silent failure, and the one worth a test. `emit_verdicts` reads the GATHERED file, so a column
+    # written here but absent from the carry-through list reaches it as a missing value -- and a missing
+    # value is a legitimate state, reported as "nothing computed this". Nothing crashes, nothing warns,
+    # and the figure is simply never seen again.
+    read_by_verdicts = set(re.findall(r'_number\(qc, "([A-Za-z]+)"\)', (SRC.parent / "emit_verdicts.py").read_text()))
+    assert read_by_verdicts, "no read of the gathered row was found; this check would pass vacuously"
+    carried = set(_carried_through())
+    lost = sorted(read_by_verdicts - carried)
+    assert not lost, f"read by the verdict stage, dropped by the gather: {lost}"
+
+
+def test_the_cell_step_counts_travel_with_the_share_they_make():
+    # The share and its two counts are one reading, and a reader sees them on one row. Either all three
+    # arrive or the row states a share over an unstated scale.
+    carried = _carried_through()
+    for col in ("cellBarcodeValidFraction", "cellBarcodeIn", "cellBarcodeOut"):
+        assert col in FIELDNAMES, col
+        assert col in carried, col
+
+
+def test_the_cell_step_share_is_derived_from_the_counts_it_reports(tmp_path):
+    # One read of the refine report, one division. The share used to be read by a second helper that
+    # divided the same two numbers itself, which is a way for a row to disagree with its own detail line.
+    tagstat = tmp_path / "ts.tsv"
+    tagstat.write_text("CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\nAAA\tAgA\t5\t5\t3\n")
+    parse = tmp_path / "parse.json"
+    parse.write_text(json.dumps({"parseReport": {"total": 20000, "matched": 18000}}))
+    refine = tmp_path / "refine.json"
+    refine.write_text(json.dumps(_refine_report([{"tagName": "CELL", "inputCount": 18000, "outputCount": 17500}])))
+
+    row = _run(tmp_path, tagstat, parse, refine_report=refine)
+    assert int(row["cellBarcodeIn"]) == 18000
+    assert int(row["cellBarcodeOut"]) == 17500
+    assert float(row["cellBarcodeValidFraction"]) == pytest.approx(17500 / 18000)
+
+
+def test_the_cell_step_counts_are_blank_without_a_step_to_read(tmp_path):
+    # No CELL step in the report: the share has always come back blank, and the counts must too rather
+    # than reading as zero reads entering correction.
+    tagstat = tmp_path / "ts.tsv"
+    tagstat.write_text("CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\nAAA\tAgA\t5\t5\t3\n")
+    parse = tmp_path / "parse.json"
+    parse.write_text(json.dumps({"parseReport": {"total": 20000, "matched": 18000}}))
+    refine = tmp_path / "refine.json"
+    refine.write_text(json.dumps(_refine_report([{"tagName": "UMI", "inputCount": 10, "outputCount": 9}])))
+
+    row = _run(tmp_path, tagstat, parse, refine_report=refine)
+    assert row["cellBarcodeValidFraction"] == ""
+    assert row["cellBarcodeIn"] == ""
+    assert row["cellBarcodeOut"] == ""
