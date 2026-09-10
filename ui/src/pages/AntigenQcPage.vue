@@ -1,7 +1,5 @@
 <script setup lang="ts">
 import type { QcMeasurementStatus } from "@platforma-open/milaboratories.feature-integration.model";
-import type { PlDataTableSheet } from "@platforma-sdk/model";
-import { getAxisId, PFrameImpl, pTableValue } from "@platforma-sdk/model";
 import {
   PL_PLACEHOLDER_TEXTS,
   PlAgCellStatusTag,
@@ -13,13 +11,11 @@ import {
   PlRow,
   PlTabs,
   usePlDataTableSettingsV2,
-  useWatchFetch,
 } from "@platforma-sdk/ui-vue";
 import { computed, ref, watch } from "vue";
 import { useApp } from "../app";
 import CountHistogram from "../components/CountHistogram.vue";
 import FittedBackgroundGrid from "../components/FittedBackgroundGrid.vue";
-import QcEntityCell from "../components/QcEntityCell.vue";
 import { qcStatusTag } from "../results";
 
 const app = useApp();
@@ -29,7 +25,6 @@ const app = useApp();
 // spec the table was built from, which is how a column is recognised by p-column name rather than by
 // header text or position.
 const UNDECLARED_STATUS = "pl7.app/antigen/undeclaredBarcodeStatus";
-const QC_ENTITY_AXIS = "pl7.app/antigen/qcEntity";
 
 type RendererParams = {
   value?: unknown;
@@ -56,77 +51,12 @@ function undeclaredCellRenderer(params: RendererParams) {
   return tag === undefined ? undefined : { component: PlAgCellStatusTag, params: { type: tag } };
 }
 
-function qcCellRenderer(params: RendererParams) {
-  if (params.colDef?.context?.type !== "axis") return undefined;
-  const axis = params.colDef?.context?.id as { name?: string } | undefined;
-  if (axis?.name !== QC_ENTITY_AXIS) return undefined;
-  return {
-    component: QcEntityCell,
-    params: { value: params.value, labels: app.model.outputs.sampleLabels ?? {} },
-  };
-}
-
-// Two readings of the same run, on one page: did the measurements pass, and did the panel we declared match
-// the barcodes the sequencer returned.
+// Two readings of the same run, on one page: how each reagent behaved, and whether the barcodes the
+// sequencer returned were the ones we declared.
 //
 // This page is the RUN's quality, never the sample's. "Per-sample QC" shows the mitool per-sample stats,
-// one row per sample. What is below is keyed (level, panel, entity, measurement). The two pages are named
-// apart for that reason, since "QC" alone would read as two views of one set of numbers.
-//
-// The measurements grid holds run, sample and tag rows behind one `entity` column whose meaning changes
-// with the level, so `qcLevel` splits it into one sheet per level. Sheet options are the axis's own values
-// in this frame, never a listed set of level names.
-//
-// A level with no rows here gets no sheet. `_qc_frame` builds from the rows its call sites added, not from
-// `MEASUREMENTS`.
-const QC_LEVEL_AXIS_NAME = "pl7.app/antigen/qcLevel";
-
-const qcLevelPframeHandle = computed(() => {
-  const output = app.model.outputs.runQualityTable;
-  return output?.ok ? output.value?.fullPframeHandle : undefined;
-});
-
-const qcLevelSheetsFetch = useWatchFetch(qcLevelPframeHandle, async (handle) => {
-  if (handle === undefined) return undefined;
-  const pFrame = new PFrameImpl(handle);
-  const columns = await pFrame.listColumns();
-  const levelColumns = columns.filter((c) =>
-    c.spec.axesSpec.some((a) => a.name === QC_LEVEL_AXIS_NAME),
-  );
-  if (levelColumns.length === 0) return undefined;
-
-  const axis = levelColumns[0].spec.axesSpec.find((a) => a.name === QC_LEVEL_AXIS_NAME)!;
-  const axisId = getAxisId(axis);
-  const seen = new Map<string | number, string | number>();
-  for (const column of levelColumns) {
-    const response = await pFrame.getUniqueValues({
-      columnId: column.columnId,
-      axis: axisId,
-      filters: [],
-      limit: 1000,
-    });
-    for (let i = 0; i < response.values.data.length; i++) {
-      const value = pTableValue(response.values, i) as string | number;
-      seen.set(value, value);
-    }
-  }
-  // Sorted: `listColumns` fixes no order, and an unsorted first element makes the sheet the page
-  // opens on vary run to run.
-  const values = [...seen.values()].sort((a, b) => String(a).localeCompare(String(b)));
-
-  const sheet: PlDataTableSheet = {
-    axis,
-    options: values.map((v) => ({ value: v, label: String(v) })),
-    defaultValue: values[0],
-  };
-  return [sheet];
-});
-
-const qcSettings = usePlDataTableSettingsV2({
-  model: () => app.model.outputs.runQualityTable,
-  sheets: () => qcLevelSheetsFetch.value,
-});
-
+// one row per sample, and each sample's own Quality Checks tab carries its declared measurement list. The
+// pages are named apart for that reason, since "QC" alone would read as two views of one set of numbers.
 const reagentSettings = usePlDataTableSettingsV2({
   model: () => app.model.outputs.reagentTable,
 });
@@ -162,20 +92,11 @@ const noDataset = computed(() => app.model.data.datasetRef === undefined);
 //
 // While the run is in flight the plot shows the processing placeholder, never a sentence saying the
 // distributions have not arrived: that sentence reads as a finished run that reported nothing.
-const distributions = computed(() => app.model.outputs.runQualityDistributions);
-
-// Not settled yet. `stable` lives on the ok branch alone, so an errored output is not pending: it falls
-// through to the grid, which renders the error it was handed.
-const distributionsPending = computed(() => {
-  const output = distributions.value;
-  return output === undefined || (output.ok && !output.stable);
-});
-
-// Settled, and the verdict stage produced no frame at all.
-const distributionsAbsent = computed(() => {
-  const output = distributions.value;
-  return output !== undefined && output.ok && output.stable && output.value === undefined;
-});
+//
+// Readiness is read from `isRunning` and from the JSON itself, below. It used to be read from a separate
+// decile p-frame's status wrapper -- a frame none of these plots ever touched, which is now gone with
+// the decile columns. The tab strip above already gates on `isRunning`, so this is one signal rather
+// than two that could disagree.
 
 // The rung that actually SERVED, not the one requested. Undefined until the run reports its own meta, and
 // that case is NOT "some other rung served" -- reading it that way told a reader both that there were no
@@ -200,21 +121,9 @@ const noReferenceReadings = computed(() => !rungUnknown.value && served.value ==
 // A plot the served baseline cannot produce gets NO tab. The four grids are always there. While the run has
 // not reported which rung served it, all three plots are offered and each says so when opened -- the rung
 // is unknown at that point, not known to be wrong.
-type ViewTab = "measurements" | "reagents" | "undeclared" | "score" | "reference" | "background";
+type ViewTab = "reagents" | "undeclared" | "score" | "reference" | "background";
 
 const VIEW_TABS = computed(() => [
-  // DEFERRED, potentially to be deleted. Every measurement it holds now has a purpose-built surface:
-  // the sample level on Per-sample QC and in each sample's own Quality Checks, the tag level on Reagents
-  // and Undeclared barcodes, the fitted background on the grid below, and the run's score spread on the
-  // Scores plot.
-  //
-  // What only it carries is a row for a measurement NOTHING computed, the coverage triple, and the rollup
-  // rows. A declared measurement must keep its place whether or not a run could compute it, and no other
-  // surface honours that.
-  //
-  // The model output, the workflow emission and the p-column spec are all untouched, so re-enabling is
-  // this entry plus the grid below.
-  // { label: "Measurements", value: "measurements" as const },
   { label: "Reagents", value: "reagents" as const },
   { label: "Undeclared barcodes", value: "undeclared" as const },
   ...(noScores.value ? [] : [{ label: "Scores", value: "score" as const }]),
@@ -299,19 +208,6 @@ watch(
 
       <PlTabs v-if="!isRunning" v-model="activeView" :options="VIEW_TABS" />
 
-      <!-- DEFERRED with its tab above, potentially to be deleted. Uncomment both together; `qcSettings`,
-           `qcCellRenderer` and the sheet fetch behind them are all still live.
-      <PlAgDataTableV2
-        v-if="activeView === 'measurements'"
-        v-model="app.model.data.runQualityTableState"
-        :settings="qcSettings"
-        :cell-renderer-selector="qcCellRenderer"
-        not-ready-text="The verdict stage produced no quality report for this run."
-        no-rows-text="The report imported with no measurements in it. Every declared measurement should keep a row — a deferred one carries no status and gives its reason in place of a value — so an empty report means the measurements were lost on the way here, not that the run was clean."
-        show-export-button
-      />
-      -->
-
       <PlAgDataTableV2
         v-if="activeView === 'reagents'"
         v-model="app.model.data.reagentTableState"
@@ -331,7 +227,7 @@ watch(
         show-export-button
       />
 
-      <div v-else-if="distributionsPending" :class="$style.plot">
+      <div v-else-if="isRunning" :class="$style.plot">
         <PlPlaceholder
           variant="graph"
           :title="PL_PLACEHOLDER_TEXTS.RUNNING.title"
@@ -339,9 +235,9 @@ watch(
         />
       </div>
 
-      <PlAlert v-else-if="distributionsAbsent" type="info">
+      <PlAlert v-else-if="tagBins === undefined" type="info">
         The verdict stage produced no distributions for this run. They are taken by the same stage
-        as the measurements, so they arrive with them.
+        as the reagent figures, so they arrive with them.
       </PlAlert>
 
       <!-- No "wrong rung" alert in any of the three plot bodies. A rung that cannot produce the plot takes
@@ -353,7 +249,7 @@ watch(
         </PlAlert>
         <PlAlert v-else-if="scoreSpread === undefined" type="info">
           No score spread has arrived from this run yet. It is taken by the same verdict stage as
-          the measurements, so it arrives with them.
+          the reagent figures, so it arrives with them.
         </PlAlert>
         <CountHistogram
           v-else
@@ -371,7 +267,7 @@ watch(
         </PlAlert>
         <PlAlert v-else-if="referenceSpread === undefined" type="info">
           No reference readings have arrived from this run yet. They are taken by the same verdict
-          stage as the measurements, so they arrive with them.
+          stage as the reagent figures, so they arrive with them.
         </PlAlert>
         <!-- `threshold` is the declared gate, and undefined where none is declared. No marker is then drawn,
              and its absence is the statement that there is no gate. -->
@@ -391,7 +287,7 @@ watch(
         </PlAlert>
         <PlAlert v-else-if="tagBins === undefined" type="info">
           No binned count distributions have arrived from this run yet. They are taken by the same
-          verdict stage as the measurements, so they arrive with them.
+          verdict stage as the reagent figures, so they arrive with them.
         </PlAlert>
         <template v-else>
           <PlRow>

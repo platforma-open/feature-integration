@@ -39,8 +39,12 @@ function pythonConstIn(file: string, name: string): number {
 
 describe("QC_LINE_DEFAULTS matches verdict-args.lib.tengo", () => {
   const pairs: [keyof typeof QC_LINE_DEFAULTS, string][] = [
-    ["cellBarcodeValidWarn", "DEFAULT_CELL_BARCODE_VALID_WARN"],
-    ["cellBarcodeValidError", "DEFAULT_CELL_BARCODE_VALID_ERROR"],
+    ["panelAssignedWarn", "DEFAULT_PANEL_ASSIGNED_WARN"],
+    ["panelAssignedError", "DEFAULT_PANEL_ASSIGNED_ERROR"],
+    ["matchRateWarn", "DEFAULT_MATCH_RATE_WARN"],
+    ["matchRateError", "DEFAULT_MATCH_RATE_ERROR"],
+    ["cellBarcodeQualityWarn", "DEFAULT_CELL_BARCODE_QUALITY_WARN"],
+    ["cellBarcodeQualityError", "DEFAULT_CELL_BARCODE_QUALITY_ERROR"],
     ["readsPerCellWarn", "DEFAULT_READS_PER_CELL_WARN"],
     ["aggregateBarcodeWarn", "DEFAULT_AGGREGATE_BARCODE_WARN"],
     ["aggregateBarcodeError", "DEFAULT_AGGREGATE_BARCODE_ERROR"],
@@ -48,6 +52,10 @@ describe("QC_LINE_DEFAULTS matches verdict-args.lib.tengo", () => {
     ["undeclaredBarcodeError", "DEFAULT_UNDECLARED_BARCODE_ERROR"],
     ["usableReadWarn", "DEFAULT_USABLE_READ_WARN"],
     ["usableReadError", "DEFAULT_USABLE_READ_ERROR"],
+    ["rescuedShareWarn", "DEFAULT_RESCUED_SHARE_WARN"],
+    ["rescuedShareError", "DEFAULT_RESCUED_SHARE_ERROR"],
+    ["vdjAntigenCountWarn", "DEFAULT_VDJ_ANTIGEN_COUNT_WARN"],
+    ["vdjAntigenCountError", "DEFAULT_VDJ_ANTIGEN_COUNT_ERROR"],
   ];
 
   it.each(pairs)("%s", (key, tengoName) => {
@@ -57,7 +65,7 @@ describe("QC_LINE_DEFAULTS matches verdict-args.lib.tengo", () => {
   it("covers every line the tengo file declares", () => {
     const declared = [
       ...tengo.matchAll(
-        /^(DEFAULT_(?:CELL_BARCODE_VALID|READS_PER_CELL|AGGREGATE_BARCODE|UNDECLARED_BARCODE|USABLE_READ)_[A-Z]+)\s*:=/gm,
+        /^(DEFAULT_(?:PANEL_ASSIGNED|MATCH_RATE|CELL_BARCODE_QUALITY|READS_PER_CELL|AGGREGATE_BARCODE|UNDECLARED_BARCODE|USABLE_READ|RESCUED_SHARE|VDJ_ANTIGEN_COUNT)_[A-Z]+)\s*:=/gm,
       ),
     ].map((m) => m[1]);
     expect(new Set(declared)).toStrictEqual(new Set(pairs.map(([, name]) => name)));

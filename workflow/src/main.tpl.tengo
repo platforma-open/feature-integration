@@ -298,13 +298,13 @@ wf.body(func(args) {
 	addXsvTo(tableFb, "perCellSummary")
 	tablePf := tableFb.build()
 
-	// Per-sample QC summary, outputs-only: concatenate the per-sample one-row QC CSVs collected above as a
-	// [sampleId] file map into one table, and import it keyed [sampleId]. Done in a child template
-	// (qc-summary.tpl.tengo) because the file map must be awaited before its per-sample keys can be iterated.
-	// An xsv import cannot produce a per-sample scalar table.
+	// Per-sample QC summary: concatenate the per-sample one-row QC CSVs collected above as a [sampleId]
+	// file map into one file, which the verdict stage reads through --qc-summary. Done in a child template
+	// (qc-summary.tpl.tengo) because the file map must be awaited before its per-sample keys can be
+	// iterated. It imports no p-frame of its own -- the across-samples TABLE is built by verdict-import
+	// from result_qc_summary.csv, which carries the measurement set and the rolled-up status.
 	qcSummaryResult := render.create(qcSummaryTpl, {
-		qcData: perSampleResults.outputData("qc"),
-		sampleAxisSpec: sampleAxis
+		qcData: perSampleResults.outputData("qc")
 	})
 
 	// --- per-feature properties ---
@@ -420,8 +420,12 @@ wf.body(func(args) {
 		setParam("grouping", args.grouping)
 		setParam("contendingGroups", args.contendingGroups)
 		setParam("captureMap", args.captureMap)
-		setParam("cellBarcodeValidWarn", args.cellBarcodeValidWarn)
-		setParam("cellBarcodeValidError", args.cellBarcodeValidError)
+		setParam("panelAssignedWarn", args.panelAssignedWarn)
+		setParam("panelAssignedError", args.panelAssignedError)
+		setParam("matchRateWarn", args.matchRateWarn)
+		setParam("matchRateError", args.matchRateError)
+		setParam("cellBarcodeQualityWarn", args.cellBarcodeQualityWarn)
+		setParam("cellBarcodeQualityError", args.cellBarcodeQualityError)
 		setParam("readsPerCellWarn", args.readsPerCellWarn)
 		setParam("aggregateBarcodeWarn", args.aggregateBarcodeWarn)
 		setParam("aggregateBarcodeError", args.aggregateBarcodeError)
@@ -429,6 +433,10 @@ wf.body(func(args) {
 		setParam("undeclaredBarcodeError", args.undeclaredBarcodeError)
 		setParam("usableReadWarn", args.usableReadWarn)
 		setParam("usableReadError", args.usableReadError)
+		setParam("rescuedShareWarn", args.rescuedShareWarn)
+		setParam("rescuedShareError", args.rescuedShareError)
+		setParam("vdjAntigenCountWarn", args.vdjAntigenCountWarn)
+		setParam("vdjAntigenCountError", args.vdjAntigenCountError)
 
 		verdictRun = render.createEphemeral(verdictRunTpl, {
 			columns: verdictBundle,
@@ -474,10 +482,7 @@ wf.body(func(args) {
 			panelLabels: verdictRun.output("panelLabels"),
 			samplePanel: verdictRun.output("samplePanel"),
 			undeclaredBarcodes: verdictRun.output("undeclaredBarcodes"),
-			qc: verdictRun.output("qc"),
 			qcSummary: verdictRun.output("qcSummary"),
-			qcDeciles: verdictRun.output("qcDeciles"),
-			qcSampleDeciles: verdictRun.output("qcSampleDeciles"),
 			qcBackgrounds: verdictRun.output("qcBackgrounds"),
 			reagents: verdictRun.output("reagents")
 		})
@@ -549,7 +554,7 @@ wf.body(func(args) {
 		// columns, so the shape the punchcard needs is built here rather than in the model.
 		blockOutputs.antigenPunchcardTable = pframes.exportFrame(verdictImport.output("punchcard"))
 		// The run's own report. Outputs rather than exports: these are read by this block's model and UI.
-		blockOutputs.antigenQcTable = pframes.exportFrame(verdictImport.output("qcTable"))
+		//
 		// One row per sample, one column per sample-level measurement, carrying that sample's rolled-up status.
 		// Gated behind a chosen V(D)J dataset, unlike the earlier mitool-only qcSummaryTable it replaces: the
 		// rolled-up status comes from the verdict stage, and that stage has no clonotype set to run against
@@ -559,9 +564,10 @@ wf.body(func(args) {
 		// run's quality surface publishes outside the measurement list -- the share of a sample's reads landing
 		// in undeclared barcodes. Usually empty.
 		blockOutputs.antigenUndeclaredBarcodesTable = pframes.exportFrame(verdictImport.output("undeclaredBarcodesTable"))
-		// The distributions the readout draws. Outputs rather than exports, like the report above: nothing
-		// downstream reads them.
-		blockOutputs.antigenQcDistributions = pframes.exportFrame(verdictImport.output("qcDistributions"))
+		// The fitted backgrounds, at the fit's own (sample, tag) grain. Named for what it holds: it carried
+		// two decile frames as well until nothing turned out to plot either. Outputs rather than exports,
+		// like the report above -- nothing downstream reads it.
+		blockOutputs.antigenBackgrounds = pframes.exportFrame(verdictImport.output("backgroundsFrame"))
 		blockOutputs.antigenReagentTable = pframes.exportFrame(verdictImport.output("reagentTable"))
 		// The per-cell reference readings, kept inside the block. One row per cell: the reading itself, and
 		// whether a declared gate set the cell aside. A reader checks here why a cell could or could not be

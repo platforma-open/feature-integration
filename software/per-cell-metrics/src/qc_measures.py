@@ -1,16 +1,19 @@
-"""The quality measurements a run carries.
+"""The quality measurements a run carries, and the figures the other quality surfaces are built from.
 
-Every measurement carries what it counts, because the reader who meets it is not the person
-who chose it. Where a line can be defended, it also carries what a bad value implies. Where
-none can, it carries nothing -- the number and its distribution are shown and the reader
-judges. None carries what to do about it, because advice depends on the run, the study and
-what else is available.
+`MEASUREMENTS` is the declared set behind one surface: a SAMPLE's own report. Every entry carries
+what it counts, because the reader who meets it is not the person who chose it. Where a line can be
+defended, it also carries what a bad value implies. Where none can, it carries nothing -- the number
+and its distribution are shown and the reader judges. None carries what to do about it, because
+advice depends on the run, the study and what else is available.
 
-A measurement this module cannot compute is declared anyway, with the reason, so a reader
-never mistakes "nothing computed this yet" for "checked and found fine". Most of the set is
-computed elsewhere and only declared here: undeclared barcodes and declared-but-unseen tags
-in ``panel.py``, the floor's counts and the high-reference-cell count in ``verdict.py``,
-per-tag self-disagreement in ``combine.py``, read and per-cell totals in ``qc_report.py``.
+A declared measurement keeps its place in that report whether or not the run could compute it, with
+the reason in place of a number, so a reader never mistakes "nothing computed this" for "checked and
+found fine". Most of the set is computed elsewhere and only declared here: the floor's counts and the
+high-reference-cell count in ``verdict.py``, read and per-cell totals in ``qc_report.py``.
+
+The per-TAG figures are NOT declared here. They belong to the reagent and undeclared-barcode tables,
+which declare their own columns; the functions computing them live below (`per_antigen_measures`,
+`sibling_disagreement`) alongside the binning the run-quality plots draw from.
 """
 
 from __future__ import annotations
@@ -81,30 +84,89 @@ class Coverage:
 class Measurement:
     id: str
     label: str
-    level: str  # "sample" | "tag" | "identity" | "run"
+    # Which surface owns the figure. Every declaration is "sample" today: the tag-level figures moved to
+    # the reagent and undeclared-barcode tables, which declare their own columns, and the run's score
+    # spread moved to its plot. The field stays because it is what says a figure belongs to the sample's
+    # own report rather than to one of those, and `sample_report_rows` reads it.
+    level: str
     counts: str  # what went into it
     implies: str | None = None  # what a bad value means, where a line exists
     line: str | None = None  # which defence route backs `implies`, if any
-    deferred_reason: str | None = None  # set only when nothing computes this yet
-    # Whether this measurement's status reaches its level's rollup. False only where the
-    # measurement is a property of a reagent rather than of the sample it was measured on, which
-    # keeps a reagent's failure off every sample.
-    rolls_up: bool = True
 
 
 MEASUREMENTS: tuple[Measurement, ...] = (
+    # --- Did the sequencing produce usable reads? Every share below is a share of READS, and they
+    # follow the order the pipeline runs in: match the pattern, correct the cell barcode, correct the
+    # antigen barcode against the panel.
+    # `readsTotal` is NOT declared here. It is a denominator rather than a finding: the usable-read share
+    # divides by it and now prints it beside its own numerator, and the Main page's Read recovery bar
+    # splits it. A row of its own said only how big the file was. It still reaches the across-samples QC
+    # table, where comparing depth between samples is the actual use.
+    #
+    # The SHARE, not the count. `readsMatched` is not declared: it rides in this row's detail as the
+    # numerator, the way `usableReadFraction` carries its own two counts, so the quantity
+    # `panelAssignedFraction` is a fraction OF still appears on the page without taking a row that says
+    # only how many reads survived.
+    #
+    # Named rather than placed: the order here is the pipeline's, not this dependency's, so "the row
+    # below" would go stale the next time the list is reordered.
+    #
+    # Borrowed from blocks/peptide-extraction, which ships this as `ParseMatchRate` at warn 0.8 / alert
+    # 0.5 -- but the MEANING does not carry across and neither do the numbers. That block's pattern has
+    # constant flanking regions, so a low rate there means the flanks mutated. This block's pattern is
+    # all fixed-length N-runs: there is nothing in it to mutate, so a read either covers the geometry or
+    # it does not, and the share is close to binary. Hence a much higher warn.
+    #
+    # This is the only check that catches a wrong read-geometry preset. Nothing else in the set does.
     Measurement(
-        "readsTotal",
-        "Reads parsed",
+        "matchedFraction",
+        "Fraction of reads matching the read pattern",
         "sample",
-        # No line. Exactly four numbers are inherited from the field, and the matched share is not
-        # one of them: usable antigen-read fraction (warn below 0.20), undeclared-barcode fraction
-        # (warn above 0.50), aggregate-barcode read fraction (warn above 0.05), barcode validity
-        # (warn below 0.75). Nothing published says what a low matched share means.
-        "Every read the block read from this sample's files.",
+        "Reads whose layout matched the read pattern, so the cell barcode, the UMI and the antigen "
+        "barcode could be cut out of them, over every read in this sample's files.",
+        "A low share means most reads do not fit the read geometry this run was configured with. The "
+        "pattern is all fixed-length positions, so there is nothing in it to mutate: a read either "
+        "covers the geometry or it does not, which makes a low share a fact about the read-geometry "
+        "preset or the read length rather than about the library. A 15-base antigen barcode at a "
+        "10-base offset takes 25 bases of Read 2. Both thresholds are this block's own estimate rather "
+        "than a published number.",
+        "operator-set",
     ),
-    # `qc_report._refine_kept_fraction` returns the FEATURE step's outputCount/inputCount -- the share
-    # of matched reads whose barcode corrects onto a panel entry. Its complement is the share landing
+    # The id is kept even though the label no longer says "valid". The id is a p-column name and a value
+    # on the measurement axis, so renaming it would split the rows and leave a table holding old and new
+    # runs reading as two measurements.
+    #
+    # What it measures, verified in mitool's `TagCorrector.kt`: refine-tags' CELL step, which with no
+    # chemistry whitelist selectable runs DE-NOVO correction -- it clusters the barcodes the reads carry
+    # and merges rare ones onto frequent neighbours rather than rejecting them against a declared list.
+    # Reads are dropped there by BASE QUALITY (`minQuality`, 12 by default): a tag below it is secondary,
+    # and if clustering does not absorb it the read goes. So the figure is a read-quality share, which is
+    # why the label says quality and not validity.
+    #
+    # The line is OPERATOR-SET, and the route says so. The inherited pair (warn 0.75 / alert 0.50) was
+    # published for validity against a whitelist and does not transfer to a quality filter, so it was not
+    # reused; 0.95 / 0.75 are this block's own estimate, `implies` tells a reader that, and both are
+    # movable from the form. Nothing here is calibrated against a corpus of runs.
+    #
+    # Two caveats for whoever does. `postFilter` drops (the 10x presets attach Otsu group filters) are NOT
+    # in this ratio -- they land in the top-level record counts. And where correction is disabled for a
+    # level, mitool sets inputCount and outputCount from one counter, so the ratio is hard-wired to 1.0.
+    Measurement(
+        "cellBarcodeValidFraction",
+        "Fraction of reads whose cell barcode passed quality correction",
+        "sample",
+        "Reads whose cell barcode survived correction, out of the reads that entered it. Correction "
+        "clusters the cell barcodes the reads actually carry and merges rare ones onto close, frequent "
+        "neighbours; a read whose barcode is too poor in quality to place is dropped.",
+        "A low share means the cell barcodes were read at poor quality, so reads are being lost before "
+        "anything can be counted per cell. Both thresholds are this block's own estimate rather than a "
+        "published number, and a shallow library can dip under the warn line without anything being "
+        "wrong -- correction rescues a poor barcode by clustering it onto a frequent neighbour, and a "
+        "shallow run has fewer neighbours to rescue onto.",
+        "operator-set",
+    ),
+    # `qc_report._refine_step_counts` reads the FEATURE step's (inputCount, outputCount) -- the share of
+    # matched reads whose barcode corrects onto a panel entry. Its complement is the share landing
     # in barcodes the panel never declared, which is a property of a barcode and not of a sample. The
     # line that used to sit here now backs the undeclared-barcode table's own row
     # (`undeclaredBarcodeShare` below), keyed by sequence and computed on the pre-refine counts. This
@@ -121,45 +183,47 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "panelAssignedFraction",
         "Fraction of reads matching a panel barcode",
         "sample",
-        "Reads whose barcode matches the panel, out of the reads that matched the read pattern.",
+        # Over MATCHED READS, which every read share in this set shares. It was over the FEATURE step's
+        # own input -- the reads that survived cell-barcode correction before it -- a denominator no
+        # other figure here had, and subtracting two such shares is what produced the unit error in
+        # `rescued_share`. One denominator for every read share removes that class of error.
+        "Reads whose antigen barcode matches the panel, out of the reads matching the read pattern.",
+        "A low share means most reads carry an antigen barcode the panel does not declare, which points "
+        "at the wrong panel file or a reagent that is not in it.",
+        "inherited",
     ),
     # No line. The four inherited numbers do not include this one, and nothing published says what a
     # low or high rescued share means -- a panel whose barcodes sit far apart rescues little because
     # little needs rescuing, and one whose barcodes sit close rescues more. The number is here to be
     # read against the undeclared-barcode table, whose rows are the PRE-refine pass: a row of that
     # table is not a read the run lost, and this says how much of it was not.
+    #
+    # The allowance is mitool's `refine-tags` preset default, verified in
+    # mitool/src/main/kotlin/com/milaboratory/mitool/refinement/TagCorrector.kt (`TagCorrectorParameters
+    # .Default`: maxSubstitutions 2, maxIndels 2, maxTotalErrors 3) and in mitool_presets.yaml. This
+    # block passes no override. `maxErrorsFor()` in the same file pulls the effective limit BELOW those
+    # caps for a barcode with few reads or poor quality, which is why the text says "a tighter limit".
+    #
+    # Note what the whitelist is NOT: refine-tags clusters over the sequences actually observed and only
+    # then filters the substitution table to panel entries, so a declared barcode absent from the reads
+    # can never be a correction target. Nothing is rescued ONTO a barcode no read carried.
     Measurement(
         "refineRescuedShare",
         "Fraction of reads rescued by barcode correction",
         "sample",
-        "Reads whose barcode sat a base or two off a panel entry and was corrected onto it.",
+        "Reads carrying an antigen barcode the panel does not list, close enough to a listed one that "
+        "correction moved it there. Up to two substituted bases and two indels are allowed, three "
+        "errors in total, and a barcode seen in few reads or at low quality gets a tighter limit than "
+        "that. Without the correction these reads would have been thrown away.",
+        "A high share means a large part of the library reached the panel by inference rather than by "
+        "matching a declared barcode outright. Both numbers are this block's own estimate, and the "
+        "reading is two-sided by nature: a high share can mean correction is doing real work or that "
+        "base quality is poor, and a low one can mean a clean run or a panel whose barcodes sit too far "
+        "apart for anything to need rescuing.",
+        "operator-set",
     ),
-    # Ported from Cell Ranger's own read-recovery metric,
-    # `_report_genome_agnostic_metrics::frac_feature_reads_usable`: conf-mapped, barcoded reads
-    # restricted to the called-cell partition, over the whole library's read count.
-    # `usable_read_fraction` sums the post-refine tag-stat's `totalWeight` over rows whose cell barcode
-    # is in the cell list, divided by readsTotal. Every row of that table already carries a
-    # panel-recognised FEATURE value, so restricting to the cell list is the only condition left.
-    Measurement(
-        "usableReadFraction",
-        "Fraction of reads usable for antigen calls",
-        "sample",
-        "Reads that both match the panel and come from a cell the V(D)J data matched.",
-        "A low share means most of the library's reads are lost before reaching a called cell "
-        "with a panel-recognised barcode.",
-        "inherited",
-    ),
-    # The fourth inherited line, and the only one whose thresholds step the same way twice rather than
-    # putting error at total failure. The refine-tags report already carries the CELL step this reads.
-    Measurement(
-        "cellBarcodeValidFraction",
-        "Fraction of reads with a valid cell barcode",
-        "sample",
-        "Reads whose cell barcode corrects onto the chemistry's whitelist, over reads entering correction.",
-        "A low share means the reads carry cell barcodes this chemistry does not produce, "
-        "which points at the wrong whitelist or the wrong read geometry.",
-        "inherited",
-    ),
+    # --- What did the run see? Every figure below is over EVERY OBSERVED cell barcode, ambient
+    # droplets included, before the V(D)J data has narrowed anything.
     # The categorical route's member. That route is kept for an alerting
     # condition that is a fact rather than a quantity, and says the route stays because the next
     # measurement may need it. This is that measurement: no cell barcode observed at all is a fact, and
@@ -177,28 +241,6 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "Zero cells means nothing downstream can be computed for this sample.",
         "categorical",
     ),
-    # Saturation is deliberately NOT measured. The vendor's own report carries it, and a scientist
-    # cannot act on it for the run already collected; whether the run was deep enough is answered by
-    # reads per cell below.
-    #
-    # Per *cell*, not per observed barcode. The vendor's five thousand is per-cell, and in droplet data
-    # the observed-barcode count exceeds the called-cell count by one to two orders of magnitude, so
-    # dividing by it would alert on a healthy library. The cell list arrives later than this module,
-    # which is why the division happens in the entrypoint.
-    Measurement(
-        "readsPerCell",
-        "Reads per cell",
-        "sample",
-        "Reads matched, over cells in the cell list.",
-        "Below the vendor's recommended minimum the library is undersequenced.",
-        "recommended-and-observed",
-    ),
-    Measurement(
-        "antigenCountDistribution",
-        "Median antigen count per cell barcode",
-        "sample",
-        "Deciles of the total antigen count per cell barcode.",
-    ),
     # Ports Cell Ranger's `detect_outlier_umis_bcs`, which it calls for the ANTIGEN library
     # type while removing antibody and antigen aggregates.
     # (`detect_aggregate_barcodes`, cross-feature co-elevation against gene expression) is a different
@@ -214,98 +256,118 @@ MEASUREMENTS: tuple[Measurement, ...] = (
         "aggregateBarcodeFraction",
         "Fraction of reads in aggregate barcodes",
         "sample",
-        "Reads in barcodes carrying far more signal than the rest, which points at clumped droplets.",
+        "Reads in cell barcodes carrying far more signal than the rest, which points at clumped "
+        "droplets. The threshold is automatic.",
         "A high share means much of the run's antigen signal comes from a small number of "
         "clumped droplets rather than single cells.",
         "inherited",
     ),
-    # No line, and worth spelling out because the spec looks like it supplies one. The field publishes
-    # 0.50, but for one aggregate library fraction. This measurement is per sequence at tag level, and
-    # a fraction's line does not transfer to a list of sequences. Given a count instead, any at-most
-    # line collapses into "alerting if a single undeclared barcode exists".
-    Measurement(
-        "undeclaredBarcodes",
-        "Undeclared barcodes, and which sequences",
-        "tag",
-        "Barcodes the reads carry that the sample's panel does not declare, and which sequences they are.",
-    ),
-    # No status. A fact on the tag's row, reported for the reagent's sake rather than the answer's:
-    # cells in a sample where the tag returned nothing do not count toward what could answer there, so
-    # the verdict already reads *never asked*.
-    Measurement(
-        "declaredNeverSeen",
-        "Declared tags the reads never show",
-        "tag",
-        "Tags on the sample's panel with no reads at all.",
-    ),
-    Measurement(
-        "floorRemoved",
-        "Counts removed as too low",
-        "sample",
-        "Readings the minimum zeroed, and cells whose every non-reference reading was removed.",
-    ),
+    # --- What reached the analysis? Every figure below is over the V(D)J-MATCHED cells alone.
+    #
+    # The same sum over every OBSERVED cell barcode was declared here too, as the other half of a pair:
+    # one population either side of this seam, and the gap between them was how much signal sat in
+    # droplets that held no recovered receptor. The observed half is gone. It could not be judged -- its
+    # floor is 1, since the population is barcodes holding at least one counted reading, so there was no
+    # bad value for a line to name -- and a row a reader cannot act on, whose only use was a comparison
+    # they had to make in their head, was answering no question. The gap it measured is no longer
+    # reported anywhere.
     Measurement(
         "uniqueCountsPerCell",
-        "Median unique counts per cell",
+        "Median antigen count per V(D)J-matched cell barcode",
         "sample",
-        "Reads and distinct UMIs per cell barcode.",
+        "How much antigen a V(D)J-matched cell barcode holds. Counts from all antigens are added up per "
+        "barcode to then compute this median. Barcodes with no V(D)J match are left out.",
+        "A low median means the typical analysed cell carries little antigen signal for a call to rest on.",
+        "operator-set",
     ),
-    # Two forms, and the gate decides which: how many are high needs a high, and only a declared gate
-    # supplies one. With a gate the value counts the cells it set aside; with none it is the median of
-    # the readings and the detail carries their deciles.
-    #
-    # No line either way. Nothing published says what share of cells is too high, nor what a background
-    # reading of any size means.
+    # Ported from Cell Ranger's own read-recovery metric,
+    # `_report_genome_agnostic_metrics::frac_feature_reads_usable`: conf-mapped, barcoded reads
+    # restricted to the called-cell partition, over the whole library's read count.
+    # `usable_read_fraction` sums the post-refine tag-stat's `totalWeight` over rows whose cell barcode
+    # is in the cell list, divided by readsTotal. Every row of that table already carries a
+    # panel-recognised FEATURE value, so restricting to the cell list is the only condition left.
     Measurement(
-        "highReferenceCells",
-        "Sticky cells, or the spread of control readings",
+        "usableReadFraction",
+        "Fraction of reads usable for antigen calls",
         "sample",
-        "Cells whose control reading exceeded the admissibility gate.",
+        # BOTH ends, because the label names neither and the numerator's condition invites the wrong
+        # denominator: a reader who meets "usable for antigen calls" beside a V(D)J condition reads it as
+        # a share of V(D)J-matched CELLS. It is a share of READS -- every read parsed.
+        "Reads that both match the panel and come from a cell the V(D)J data matched, over every read parsed.",
+        "A low share means most of the library's reads are lost before reaching a called cell "
+        "with a panel-recognised barcode.",
+        "inherited",
     ),
-    # The id is a value on the `measurement` axis, so renaming it does not break the column -- it
-    # splits the rows, and a table holding old and new runs reads as two measurements.
+    # Saturation is deliberately NOT measured. The vendor's own report carries it, and a scientist
+    # cannot act on it for the run already collected; whether the run was deep enough is answered by
+    # reads per cell below.
     #
-    # Its three figures: cells-with-count is read before the minimum, the median is taken over every
-    # cell holding a count rather than over the bound ones, and every declared tag keeps a row so a
-    # dead reagent reads as a zero rather than as an absence.
+    # Per *cell*, not per observed barcode. The vendor's five thousand is per-cell, and in droplet data
+    # the observed-barcode count exceeds the called-cell count by one to two orders of magnitude, so
+    # dividing by it would alert on a healthy library. The cell list arrives later than this module,
+    # which is why the division happens in the entrypoint.
     Measurement(
-        "perAntigen",
-        "Per antigen: cells with a count, cells called bound, and the median",
-        "tag",
-        "Per tag: cells with any count and their median count, both before the minimum, "
-        "and cells called bound after it.",
+        "readsPerCell",
+        "Mean reads per V(D)J-matched cell",
+        "sample",
+        # Two sentences and nothing else. What the 5,000 is and where it comes from lives on the control
+        # that moves it, under More options -> Quality lines, which is where a reader who wants to argue
+        # with a number goes. Restating it here made the longest text on the page out of the row with the
+        # simplest meaning.
+        "The average antigen read depth of one analysed cell.",
+        "A low value means the analysed cells are thinly sequenced for antigen, so each call rests on few reads.",
+        "recommended-and-observed",
     ),
-    # One figure for the run rather than per sample, because the cutoff is one number for the run. Only
-    # the declared rung produces a score at all: a population baseline yields a probability.
-    #
-    # No line. A scientist may move the cutoff to where their own run's scores separate, and that
-    # licence is unusable unless the scores are in front of them.
+    # --- What the reading rules then removed, and the numbers behind them. The minimum count acts on
+    # readings; the admissibility gate acts on cells, and the control-tag median above it is the number
+    # a gate is chosen from.
     Measurement(
-        "scoreDistribution",
-        "Distribution of the run's scores",
-        "run",
-        "Deciles of the score over every cell and identity the declared rule scored.",
+        "floorRemoved",
+        "Cell-antigen readings zeroed by the minimum",
+        "sample",
+        # Counted in READINGS -- one cell with five antigens under the floor contributes five. The cell
+        # count beside it is a different unit, which is why it is a line of its own rather than a second
+        # number on this one.
+        "Each cell-and-antigen reading below the minimum count is set to zero rather than dropped: too "
+        "small to be evidence of binding, but still a reading that happened, so it votes not bound. The "
+        "baseline tag is exempt.",
     ),
-    # Only a population baseline fits one, so under a declared baseline this carries no value and says
-    # so. It is the only way to see whether a tag's counts separated at all, which a scientist reads
-    # BEFORE settling the baseline, so it must not depend on any cutoff.
-    #
-    # No line. A background is read against the signal mean beside it and against the other tags of the
-    # panel, which is a comparison rather than a boundary.
-    #
-    # The FIT runs per (sample, tag); this row is keyed (tag, panel), so its value is the median over
-    # the panel's samples that fitted and the detail carries the spread and the unfitted count. The
-    # `counts` text says so. The per-(sample, tag) reading is the fitted-background GRID on the
-    # run-quality page, drawn from the binned counts.
     Measurement(
-        "fittedBackground",
-        "Fitted background, where a population baseline served",
-        "tag",
-        "The background component's mean count, its share of cells, and the signal mean beside it -- "
-        "each the median over this panel's samples that fitted, since the fit runs per sample. The "
-        "detail carries the spread and how many samples fitted; the run-quality grid draws each fit "
-        "on its own.",
+        "medianControlReading",
+        # "V(D)J-matched" hyphenated as the compound adjective it is, and singular after "per", matching
+        # the two median rows above. The label carries the population, so the text does not repeat it.
+        "Median control-tag reading per V(D)J-matched cell",
+        "sample",
+        "The control tag is declared to bind nothing, so this is the run's own noise floor -- and the "
+        "number to read when choosing where to put the admissibility gate.",
     ),
+    # TWO rows, not one with an "or" in its label. These were one measurement whose value was a count of
+    # cells where a gate was declared and a median UMI count where none was, so its units changed with a
+    # setting and only the folded detail said which. A label is a declaration; it cannot describe two
+    # quantities.
+    #
+    # Both read the control tag -- the reagent the panel marks as binding nothing -- and both are taken
+    # over the V(D)J-matched cells alone, as every other per-cell figure on this page is. Neither carries
+    # a line: nothing published says what share of cells is too sticky, nor what a control reading of any
+    # size means.
+    Measurement(
+        "cellsSetAside",
+        "Cells set aside as sticky",
+        "sample",
+        "Cells whose control-tag count is above the admissibility gate. A cell set aside answers nothing "
+        "at any antigen, so it leaves every verdict rather than voting in one.",
+    ),
+    # The per-TAG figures are deliberately NOT declared here. Each has a purpose-built surface that
+    # declares its own columns: cells-with-a-count, the median count, cells called bound and the two
+    # disagreement rates are the reagent table's (`qc_rows._REAGENT_SCHEMA`, computed by
+    # `per_antigen_measures` and `sibling_disagreement` here and `combine.self_disagreement`); the
+    # undeclared sequences are the undeclared-barcode table's; the fitted background is the
+    # run-quality page's per-(sample, tag) grid, drawn from the binned counts. Declaring them a second
+    # time as measurements put the same numbers on one page twice under two sets of words.
+    #
+    # The run's score spread is not declared either. It is one number for the run, and the plot a
+    # scientist moves the cutoff against draws the binned spread rather than eleven decile points.
+    #
     # Self-disagreement at an IDENTITY is deliberately not measured. Marginal binding inflates
     # disagreement everywhere, so comparing one tag against its siblings under the same cells, run and
     # line leaves a tag that stands clear standing clear for a reason that is not biology. The
@@ -313,25 +375,6 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # the reading sits clear of the line, so for anything marginal disagreement is near certain and the
     # rate measures how many clonotypes sit near it.
     #
-    # No line, so it reads unjudged beside its siblings. Applying a threshold would need a multiplier
-    # nobody published.
-    Measurement(
-        "tagDisagreement",
-        "Clonotype self-disagreement at a single tag",
-        "tag",
-        "Of the cells whose set had another cell to compare against, the share reading the opposite way "
-        "from the rest of their own set, by this tag's count alone. Two states cap it at half.",
-    ),
-    # Available only where an identity carries more than one tag. Distinct from tagDisagreement:
-    # cross-tag within one cell, not within-tag across cells. No line: nothing published says what
-    # share is too high.
-    Measurement(
-        "siblingDisagreement",
-        "Disagreement with the tags sharing its identity",
-        "tag",
-        "Of the cells whose siblings reached a majority, the share reading the opposite way from it. The "
-        "tag casts no vote in the majority it is judged against, and tied siblings judge nothing.",
-    ),
     # Whether a clonotype of known specificity came back correctly is deliberately NOT measured. It
     # would be the only end-to-end check of the pipeline, and nothing computes it because no surface
     # asks a scientist which clonotype they already know the answer for.
@@ -347,26 +390,29 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # did not assemble are classified as empty and inflate the very quantity being measured.
 )
 
-# The three places a line can come from, and nowhere else. `Measurement.line` names one or None,
-# and it is the *only* declaration of which measurements carry a line -- the tables below are
-# derived facts about the route. A test asserts the correspondence in both directions.
+# `Measurement.line` names where a line comes from, and it is the *only* declaration of which
+# measurements carry one -- the tables below are derived facts about the route. Four routes exist and no
+# fifth: "inherited", "categorical", "recommended-and-observed" and "operator-set".
+#
+# "operator-set" is the honest label for a line WE chose, with nothing published behind it. It earns its
+# place because the alternative was worse in both directions: calling such a line "inherited" claims a
+# provenance it does not have, and refusing it leaves a real failure mode unflagged. A measurement on
+# this route must say in its `implies` that the number is an estimate, and its threshold must be
+# operator-movable -- an uncalibrated line nobody can move is the one a reader cannot argue with.
 #
 # A comparison against the other tags in a panel is NOT a line. It yields no boundary, and a status
 # derived from it would need a multiplier nobody has published. Such a measurement reads unjudged
 # beside its siblings. The cost is real and accepted: a barcoded reagent binding something other
 # than the receptor no longer announces itself.
 #
-# The categorical route has one member: `cellsDetected`. A declared tag the reads never show was its
-# earlier example until the verdict took the job.
-LINE_ROUTES: frozenset[str] = frozenset({"inherited", "categorical", "recommended-and-observed"})
-
 # The categorical route's member ids. Derived from `Measurement.line`, never a second declaration.
-# A categorical fact carries no numeric threshold, so its id is deliberately absent from
-# `DEFAULT_LINES` and `_COMPARISON` -- `status_for` answers it before either table is consulted.
+# It has one member, `cellsDetected`. A categorical fact carries no numeric threshold, so its id is
+# deliberately absent from `DEFAULT_LINES` and `_COMPARISON` -- `status_for` answers it before either
+# table is consulted.
 _CATEGORICAL: frozenset[str] = frozenset(m.id for m in MEASUREMENTS if m.line == "categorical")
 
 # Every line is a parameter with a shipped default, and the operator may override any of them. No
-# line is invented -- where none of the three routes applies the measurement carries no status.
+# line is invented -- where none of the four routes applies the measurement carries no status.
 #
 # `undeclaredBarcodeShare` backs the undeclared-barcode table's own row rather than a declared
 # `Measurement`: that status is the barcode's, never a sample's, so it is computed and carried where
@@ -376,13 +422,37 @@ _CATEGORICAL: frozenset[str] = frozenset(m.id for m in MEASUREMENTS if m.line ==
 # It reads the ROW's own share, `barcodeShare`, not the sample-level `readShare` the id is named for.
 # The sample-level share keeps its column and carries no status.
 DEFAULT_LINES: dict[str, Line] = {
-    # Both thresholds step the same way. This is the line with a real gradient at the far end.
-    "cellBarcodeValidFraction": Line(warn=0.75, error=0.50),
     # One published number gives one boundary, so depth warns and never alerts.
     "readsPerCell": Line(warn=5_000),
     # Published values for the aggregate-barcode read fraction: warn above 0.05, error at total
     # failure (1.0).
     "aggregateBarcodeFraction": Line(warn=0.05, error=1.0),
+    # Reads whose antigen barcode is on the panel: warn below 0.50, alert at total failure (0.0).
+    # INHERITED, as the complement of Cell Ranger's `ANTIGEN_unrecognized_feature_bc_frac`, which the
+    # Antigen Capture library publishes at warn 0.50 / error 1.0
+    # (cellranger-10.1.0, lib/rust/cr_websummary/src/multi/metrics_etl.toml, [antigen_physical_library_metrics]).
+    # Pinned to that file and tag deliberately: the LEGACY count webshim
+    # (lib/python/cellranger/webshim/constants/gex.py, METRIC_ALARMS) publishes a different number for
+    # the ANTIBODY equivalent, and a future reader must not "fix" this against that table.
+    #
+    # This block carried the same 0.50 once. It was moved onto the undeclared-barcode table, correctly
+    # rejected there as non-transferable -- an aggregate line does not apply to one sequence -- and never
+    # moved back to the aggregate quantity it belongs to. This is that quantity.
+    #
+    # The line is LAX against a healthy run, which sits near 1.00. It is kept as published rather than
+    # tightened, because an inherited line a reader can trace beats a tighter one this block invented.
+    "panelAssignedFraction": Line(warn=0.50, error=0.0),
+    # Reads matching the read pattern: warn below 0.90, alert below 0.50. OPERATOR-SET. The share is
+    # close to binary on an all-N pattern -- a read covers the geometry or it does not -- so a healthy
+    # run sits near 1.00 and 0.90 is already a signal. 0.50 is half the library unusable.
+    "matchedFraction": Line(warn=0.90, error=0.50),
+    # Reads whose cell barcode survived correction: warn below 0.95, alert below 0.75. OPERATOR-SET, and
+    # the route says so. The drop mechanism is base quality -- mitool's `minQuality`, 12 by default -- so
+    # a healthy run sits near 1.00 and 0.95 is meant to catch a real slide rather than ordinary variation.
+    # 0.75 is the far end: a quarter of reads lost before per-cell counting is a failed library whatever
+    # the chemistry. Neither number is calibrated against a corpus of runs; check them against your own
+    # before trusting the amber.
+    "cellBarcodeValidFraction": Line(warn=0.95, error=0.75),
     # ONE BARCODE's share of its sample's pre-refine reads: warn above 0.01, alert above 0.05.
     # Operator-set, not inherited. The field publishes 0.50/1.0 for a sample's AGGREGATE undeclared
     # share, and that line does not transfer to a single sequence: the aggregate reaches 0.50 while no
@@ -391,6 +461,20 @@ DEFAULT_LINES: dict[str, Line] = {
     # Published values for the usable antigen-read fraction: warn below 0.20, error at total
     # failure (0.0).
     "usableReadFraction": Line(warn=0.20, error=0.0),
+    # Reads a correction snapped onto a panel barcode: warn above 0.05, alert above 0.10. OPERATOR-SET,
+    # and the route says so. Both ends face the same way, because this line has a gradient and no
+    # catastrophe value to alert at -- 1.0 cannot occur, since a rescued read is one the pattern already
+    # matched and the panel already assigned. The quantity is two-sided (`implies` says so) and these
+    # numbers pick the side that costs the run something: a tenth of the matched library placed by
+    # inference is a panel whose barcodes sit close enough together to be confused for each other.
+    "refineRescuedShare": Line(warn=0.05, error=0.10),
+    # The typical analysed cell's antigen total: warn below 4, alert at 1. OPERATOR-SET, and the route
+    # says so. The warn is `verdict.DEFAULT_FLOOR`, the count a single reading needs to survive
+    # flooring -- restated as a literal rather than imported, since an operator moving one must not move
+    # the other -- so a median below it means most of the typical cell's readings are zeroed before any
+    # call. The error ALERTS AT 1 rather than below it: the population is barcodes holding at least one
+    # counted reading, so 1 is the floor of this quantity and no value below it exists to alert on.
+    "uniqueCountsPerCell": Line(warn=4, error=1),
 }
 
 # How each line's thresholds are read. Deliberately *not* in DEFAULT_LINES: an operator moves a
@@ -403,23 +487,37 @@ DEFAULT_LINES: dict[str, Line] = {
 # In every case the named value satisfies the condition it names. The second entry is None where
 # the line published no error threshold.
 #
-# The two thresholds of one line are read INDEPENDENTLY. Three of the four inherited lines warn on
-# a direction and put error at total failure -- "at 0", "at 1.0" -- which is alerting AT failure, not
-# a further step along the warn direction. Only barcode validity steps the same way twice: warn
-# below 0.75, error below 0.50. One direction per measurement collapsed those into one, and a
+# The two thresholds of one line are read INDEPENDENTLY, and `undeclaredBarcodeShare` is why. Every
+# inherited line here warns on a direction and puts error at total failure -- "at 0", "at 1.0" -- which
+# is alerting AT failure rather than a further step along the warn direction. That one alerts ABOVE its
+# error threshold instead. One direction per measurement collapsed the two cases into one, and a
 # fraction whose error sits "at 0" could then never alert.
 _COMPARISON: dict[str, tuple[str, str | None]] = {
+    # Both ends face the same way on these two: each line has a real gradient rather than an error
+    # sitting at total failure, so a run can slide from OK through warn into alert on one direction.
+    # Error at total failure (alerting at 0.0): no read on the panel at all. The published pair puts its
+    # error at the catastrophe end rather than a further step past warn, which inverts to this.
+    "panelAssignedFraction": ("at-least", "alerting-at"),
+    "matchedFraction": ("at-least", "at-least"),
     "cellBarcodeValidFraction": ("at-least", "at-least"),
     "readsPerCell": ("at-least", None),
     # Error at total failure (alerting at 1.0) rather than a further step past warn: every
     # inherited share sits at either "at least" or "at most" with error at the catastrophe end, and
     # this is one of the two upward-facing members of that set.
     "aggregateBarcodeFraction": ("at-most", "alerting-at"),
-    # Both ends face the same way, unlike the four inherited shares: this line alerts ABOVE its error
+    # Both ends face the same way, unlike the inherited shares: this line alerts ABOVE its error
     # threshold rather than at a catastrophe value, so alerting at failure would fire only at 0.05.
     "undeclaredBarcodeShare": ("at-most", "at-most"),
     # Error at total failure (alerting at 0.0), the downward-facing member of that same set.
     "usableReadFraction": ("at-least", "alerting-at"),
+    # Both ends face the same way, like `undeclaredBarcodeShare` and for the same reason: the line has a
+    # gradient rather than an error sitting at a catastrophe value, so alerting AT the error threshold
+    # would fire only at exactly 0.10.
+    "refineRescuedShare": ("at-most", "at-most"),
+    # Alerting AT 1 -- the floor of the quantity rather than a step past warn. Every barcode in the
+    # population holds at least one counted reading, so no median below 1 can be produced and an
+    # "at-least 1" error could never fire.
+    "uniqueCountsPerCell": ("at-least", "alerting-at"),
 }
 
 
@@ -447,8 +545,6 @@ def _breaches_expr(value: pl.Expr, threshold: float, comparison: str) -> pl.Expr
 
 _ORDINAL = {Status.OK: 0, Status.WARN: 1, Status.ALERT: 2}
 
-_DEFERRED: frozenset[str] = frozenset(m.id for m in MEASUREMENTS if m.deferred_reason)
-
 
 def is_computed(value: float | None) -> bool:
     """Whether a number came back at all.
@@ -464,18 +560,14 @@ def is_computed(value: float | None) -> bool:
 def status_for(measurement: str, value: float | None, lines: dict[str, Line]) -> Status | None:
     """How one measurement reads, given the lines in force. None where no line stands behind it.
 
-    Three answers and no fourth. A deferred measurement, a measurement with no number, and a
-    measurement with no line all carry no status -- and which of those happened is read from the
-    value.
-
-    A deferred measurement carries none whatever it is handed: nothing computes it, so a value
-    reaching here is a caller's mistake and must not be laundered into a judgement about the run.
+    Three answers and no fourth. A measurement with no number and a measurement with no line both
+    carry no status -- and which of the two happened is read from the value.
 
     The categorical route is read before `lines`: its fact is not a threshold, so neither
     `DEFAULT_LINES` nor `_COMPARISON` carries an entry for it. Zero alerts; any other finite value
     reads OK and claims nothing about how many cells the sample should have yielded.
     """
-    if measurement in _DEFERRED or not is_computed(value):
+    if not is_computed(value):
         return None
     if measurement in _CATEGORICAL:
         return Status.ALERT if value == 0 else Status.OK
@@ -504,8 +596,6 @@ def status_expr(measurement: str, value: pl.Expr, lines: dict[str, Line]) -> pl.
     reads. Only the evaluator differs, and a test pins the two together.
     """
     null = pl.lit(None, pl.String)
-    if measurement in _DEFERRED:
-        return null
     # `is_computed` over a column: a null, a NaN or an infinity is not a number. Kleene `&` makes a
     # null value read False here rather than propagating a null into the branch below.
     computed = (value.is_not_null() & value.is_finite()).fill_null(False)  # noqa: FBT003
@@ -563,31 +653,6 @@ def roll_up(readings: list[Reading]) -> Coverage:
 #
 # Nothing hides. A reagent finding states itself on its own per-tag row, keyed by the panel that
 # has it, and a sample's own report names the measurement that set it alerting.
-
-
-def measurement_row(m: Measurement) -> dict:
-    """One declared measurement, rendered for a reader who never opens this module.
-
-    A deferred measurement renders with its reason attached and keeps its place in the set. The
-    difference between "checked and fine" and "never checked" is lost the moment a deferred id
-    simply has no row.
-    """
-    return {
-        "id": m.id,
-        "label": m.label,
-        "level": m.level,
-        "counts": m.counts,
-        "implies": m.implies,
-        # No status, ever. A declaration is not a reading, and a deferred measurement carries its
-        # reason in place of a number rather than a fourth status word.
-        "status": None,
-        "reason": m.deferred_reason,
-    }
-
-
-def measurement_rows() -> list[dict]:
-    """Every declared measurement, deferred ones included, in declaration order."""
-    return [measurement_row(m) for m in MEASUREMENTS]
 
 
 def per_antigen_measures(
@@ -725,24 +790,42 @@ def sibling_disagreement(
     return rates
 
 
-def reads_per_cell(reads_matched: int, cells_in_list: int) -> float | None:
-    """Reads matched, over cells in the cell list.
+def reads_per_cell(usable: float, cells_in_list: int) -> float | None:
+    """Usable reads over the cells they landed in -- the mean antigen depth of one analysed cell.
 
-    The denominator is the **cell list**, not the barcodes the reads happened to touch. The vendor's
-    five-thousand recommendation is per called cell, and in droplet data the observed-barcode count
-    runs one to two orders of magnitude higher, so dividing by observed barcodes would make a
-    healthy library alert.
+    ONE POPULATION, top and bottom: `usable` counts the reads inside the listed cells (see
+    `usable_reads`), and `cells_in_list` counts those same cells. That is what makes this a mean.
 
-    `reads_matched` already exists in the per-sample QC row. The cell list arrives with gene
-    expression or with the receptors, so the caller supplies its size. Deliberately not
-    `cellsDetected` from that row -- that is the observed-barcode count warned against here.
+    It used to divide EVERY matched read in the library by the listed-cell count, which is Cell
+    Ranger's `Mean Reads per Cell` with its denominator swapped for an intersection with an external
+    dataset. The two then moved independently, and the figure tracked the V(D)J match rate rather than
+    this library's depth: holding one antigen library fixed at 2,500 reads in each of 8,000 barcodes,
+    it read 40,000 against 500 matched cells and 2,500 against 8,000 -- a sixteen-fold swing, warning
+    only where V(D)J recovery was GOOD. Scoping the numerator to the same cells removes the class.
+
+    The vendor's number is not computable here at all: it divides the whole library by the cells that
+    library called, and this block calls no cells -- the list arrives with the receptors. So this runs
+    LOWER than the vendor's equivalent, by the ambient and off-panel reads it excludes, and the
+    5,000 line inherited from it errs toward firing early.
 
     None when the cell list is empty. A rate over no cells is no number, which is distinct from a
     computed rate that happens to be zero.
     """
     if cells_in_list <= 0:
         return None
-    return reads_matched / cells_in_list
+    return usable / cells_in_list
+
+
+def usable_reads(tag_stat: pl.DataFrame, cell_col: str, listed_cells: Collection[str]) -> float:
+    """Read weight landing on a listed cell with a panel-recognised antigen barcode.
+
+    The numerator BOTH `usable_read_fraction` and `reads_per_cell` are taken over, computed once here
+    so the share and the depth cannot describe different sets of reads. `tag_stat` is the post-refine
+    table -- every FEATURE value outside the panel is already gone, which is the recognition condition.
+
+    0.0 for an empty cell list: no read landing on a listed cell is a finding, not a missing input.
+    """
+    return float(tag_stat.filter(pl.col(cell_col).is_in(list(listed_cells)))["totalWeight"].sum())
 
 
 def usable_read_fraction(
@@ -765,13 +848,17 @@ def usable_read_fraction(
     Returns `(None, reason)` where `listed_cells` is None, or where `reads_total` is absent or zero.
     An empty (non-None) cell list still returns 0.0: no read landing on a called cell is a real
     finding, not a missing input.
+
+    The second element is the DETAIL where a number came back and the REASON where none did. On success
+    it is the fraction written out as its two counts, because a share alone does not say how much signal
+    it is a share of -- and the denominator is `readsTotal`, which no longer takes a row of its own.
     """
     if listed_cells is None:
         return None, "no cell list supplied, so the called-cell condition cannot be evaluated"
     if not reads_total:
         return None, "no total read count to divide by"
-    usable = float(tag_stat.filter(pl.col(cell_col).is_in(list(listed_cells)))["totalWeight"].sum())
-    return usable / reads_total, f"Cells in the V(D)J cell list: {len(listed_cells):,}"
+    usable = usable_reads(tag_stat, cell_col, listed_cells)
+    return usable / reads_total, f"{int(usable):,} out of {int(reads_total):,} reads parsed"
 
 
 # Cell Ranger's own constants for the ANTIGEN branch of `detect_outlier_umis_bcs`
@@ -851,27 +938,6 @@ def aggregate_barcode_fraction(
         detail = f"Barcodes tested: {tested:,}|Threshold: {threshold:,.0f} UMIs|Barcodes flagged: {len(flagged):,}"
     flagged_reads = per_barcode.filter(pl.col("barcode").is_in(flagged))["readCount"].sum() if flagged else 0
     return flagged_reads / reads_total, detail
-
-
-# The extremes are included alongside the interior deciles so the distribution's edges are visible,
-# not only its middle: eleven points, 0 through 100 by 10.
-DECILE_POINTS: tuple[int, ...] = tuple(range(0, 101, 10))
-
-
-def deciles_of(values: np.ndarray) -> pl.DataFrame:
-    """The eleven decile points of `values`, or eleven unanswered points where there are none.
-
-    Split out of `antigen_count_deciles` so a second spread reports the same shape. An empty input
-    still returns all eleven rows with a null value.
-    """
-    if values.size == 0:
-        return pl.DataFrame(
-            {"decile": list(DECILE_POINTS), "value": [None] * len(DECILE_POINTS)},
-            schema={"decile": pl.Int64, "value": pl.Float64},
-        )
-    return pl.DataFrame(
-        {"decile": list(DECILE_POINTS), "value": [float(np.quantile(values, p / 100)) for p in DECILE_POINTS]}
-    )
 
 
 # How many buckets the count distributions used to be drawn in, back when their edges were integers.
@@ -977,20 +1043,3 @@ def per_tag_count_bins(counts: pl.DataFrame, edges: list[float]) -> dict[str, di
         weights, _ = np.histogram(values, bins=bounds)
         out.setdefault(str(sample), {})[str(tag)] = [int(w) for w in weights]
     return out
-
-
-def antigen_count_deciles(counts: pl.DataFrame) -> pl.DataFrame:
-    """Deciles of the total antigen count per cell barcode.
-
-    `counts` is the sparse per-(cell, tag) frame -- one row per observed reading, columns sampleId,
-    cellId, umiCount -- taken before flooring or identity-combining. A cell's total sums every tag it
-    shows any reading for. A cell with no row contributes no total, since crediting it zero would
-    read as a reading rather than the absence it is.
-
-    Returns one row per decile point, columns `decile` and `value`. An empty input still returns all
-    eleven rows with `value` null.
-    """
-    if counts.height == 0:
-        return deciles_of(np.empty(0))
-    totals = counts.group_by(["sampleId", "cellId"]).agg(pl.col("umiCount").sum().alias("total"))["total"].to_numpy()
-    return deciles_of(totals)

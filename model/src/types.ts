@@ -104,11 +104,16 @@ export type BlockArgs = {
   // sorted, groups sorted, groups of fewer than two members dropped.
   contendingGroups?: string[][];
 
-  // The four inherited lines, each undefined meaning the shipped default. All four are round numbers carried
-  // over from the field rather than calibrated for this assay. There is no error line for readsPerCellWarn,
-  // because the field published one boundary.
-  cellBarcodeValidWarn?: number;
-  cellBarcodeValidError?: number;
+  // Every quality line, each undefined meaning the shipped default. Some are inherited from the field and
+  // some are this block's own estimate -- the route on each `Measurement` in qc_measures.py says which, and
+  // the Quality Checks tab tells a reader the same. There is no error line for readsPerCellWarn, because
+  // the field published one boundary.
+  panelAssignedWarn?: number;
+  panelAssignedError?: number;
+  matchRateWarn?: number;
+  matchRateError?: number;
+  cellBarcodeQualityWarn?: number;
+  cellBarcodeQualityError?: number;
   readsPerCellWarn?: number;
   aggregateBarcodeWarn?: number;
   aggregateBarcodeError?: number;
@@ -116,6 +121,10 @@ export type BlockArgs = {
   undeclaredBarcodeError?: number;
   usableReadWarn?: number;
   usableReadError?: number;
+  rescuedShareWarn?: number;
+  rescuedShareError?: number;
+  vdjAntigenCountWarn?: number;
+  vdjAntigenCountError?: number;
 };
 
 /**
@@ -196,9 +205,13 @@ export type BlockData = {
   minAgreement?: number;
   gateThreshold?: number;
   grouping?: GroupingRule;
-  // The four inherited lines. See BlockArgs for what each means to the reading.
-  cellBarcodeValidWarn?: number;
-  cellBarcodeValidError?: number;
+  // Every quality line. See BlockArgs for what each means to the reading.
+  panelAssignedWarn?: number;
+  panelAssignedError?: number;
+  matchRateWarn?: number;
+  matchRateError?: number;
+  cellBarcodeQualityWarn?: number;
+  cellBarcodeQualityError?: number;
   readsPerCellWarn?: number;
   aggregateBarcodeWarn?: number;
   aggregateBarcodeError?: number;
@@ -206,6 +219,10 @@ export type BlockData = {
   undeclaredBarcodeError?: number;
   usableReadWarn?: number;
   usableReadError?: number;
+  rescuedShareWarn?: number;
+  rescuedShareError?: number;
+  vdjAntigenCountWarn?: number;
+  vdjAntigenCountError?: number;
   /**
    * Written on a user gesture only. A watcher that copied the identityOptions model output into data would
    * make that output depend on the data it feeds, and two open clients would race.
@@ -257,10 +274,6 @@ export type BlockData = {
   defaultBlockLabel?: string; // UI-only: sidebar subtitle, mirrored from the suggestedBlockLabel output
   tableState: PlDataTableStateV2; // per-cell results grid state (UI-only, never projected to args)
   qcSummaryTableState: PlDataTableStateV2; // per-sample QC summary grid state (UI-only)
-  // The Per-tag QC page's two grids (UI-only). Deliberately NOT named `antigenQcTableState` /
-  // `panelMismatchTableState`: the v3 -> v4 migration strips those two keys. A stored grid state means
-  // something only against the frame it was saved on.
-  runQualityTableState: PlDataTableStateV2; // run-level quality measurements grid state
   // GraphMaker's own chart configuration, one per plot. Opaque to this block: the widget owns the shape and
   // reads it back. Separate rather than shared, so picking an axis on one chart does not move another.
   scoreDistributionGraphState: GraphMakerState;

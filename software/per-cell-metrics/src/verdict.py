@@ -57,20 +57,32 @@ def apply_floor(counts: pl.DataFrame, floor: int, reference_tags: set[str]) -> F
     `reference_tags` is global by design: a tag is a comparator in every sample or in
     none. The panel's (tag, sample) keying carries what a tag IS, not its role.
 
-    Returns the floored counts and {"readingsFloored", "cellsEmptied"} for this sample's
-    QC row. Both assume the SPARSE frame. Never densify first: manufactured rows would
+    Returns the floored counts and {"readingsFloored", "cellsEmptied",
+    "cellsWithAntigenReadings"} for this sample's QC row. The third is the population the
+    second is a count OUT OF: cells carrying at least one non-reference reading before the
+    minimum ran. Reported so the emptied count is read as a share of the cells it could
+    have emptied, rather than against the sample's whole barcode count.
+
+    All three assume the SPARSE frame. Never densify first: manufactured rows would
     inflate readingsFloored and count every unbound cell as emptied.
     """
-    # Not an optimisation: falling through would count a cell whose only reading is
-    # already zero as "emptied", when the floor removed nothing.
-    if floor <= 0:
-        return Floored(counts, {"readingsFloored": 0, "cellsEmptied": 0})
-
     # is_in yields null for a null tag, so a null-tag row would escape both the floor and
     # the emptied population. The panel reader never emits one.
     is_ref = pl.col("tag").is_in(list(reference_tags)) if reference_tags else pl.lit(False)
-    exempt = is_ref
-    below = (pl.col("umiCount") < floor) & ~exempt
+    counted = ~is_ref
+    # The population every counter below is scoped to, computed before the branch so the
+    # floor-off case reports it too.
+    with_readings = counts.filter(counted).select(CELL_KEY).unique().height
+
+    # Not an optimisation: falling through would count a cell whose only reading is
+    # already zero as "emptied", when the floor removed nothing.
+    if floor <= 0:
+        return Floored(
+            counts,
+            {"readingsFloored": 0, "cellsEmptied": 0, "cellsWithAntigenReadings": with_readings},
+        )
+
+    below = (pl.col("umiCount") < floor) & counted
 
     readings_floored = int(counts.select(below.sum()).item())
     out = counts.with_columns(
@@ -82,12 +94,18 @@ def apply_floor(counts: pl.DataFrame, floor: int, reference_tags: set[str]) -> F
     # binding to remove. Scoping one way while flooring the other reports a cell as keeping
     # evidence it lost, or losing evidence it never had. had_evidence deliberately does not
     # filter on umiCount > 0 -- that is the sparse-frame assumption.
-    counted = ~exempt
     had_evidence = counts.filter(counted).select(CELL_KEY).unique()
     kept_evidence = out.filter(counted & (pl.col("umiCount") > 0)).select(CELL_KEY).unique()
     cells_emptied = had_evidence.join(kept_evidence, on=CELL_KEY, how="anti").height
 
-    return Floored(out, {"readingsFloored": readings_floored, "cellsEmptied": cells_emptied})
+    return Floored(
+        out,
+        {
+            "readingsFloored": readings_floored,
+            "cellsEmptied": cells_emptied,
+            "cellsWithAntigenReadings": with_readings,
+        },
+    )
 
 
 def cells_reading_nothing(floored: pl.DataFrame, cells: set[tuple[str, str]]) -> set[tuple[str, str]]:

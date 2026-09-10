@@ -73,7 +73,7 @@ const cellStyle: CSSProperties = {
   height: "100%",
 };
 
-// The five ways a reading fails to settle, plus never-offered, which belongs to *not tested* rather than to
+// The five ways a reading fails to settle, plus never-offered, which belongs to *never asked* rather than to
 // an unsettled reading. The tokens are machine values (`no-comparator`, `tie`, ...), so each is expanded
 // here rather than shown raw. A token with no case falls through to itself, so an unknown one is shown
 // rather than swallowed.

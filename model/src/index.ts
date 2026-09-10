@@ -61,8 +61,17 @@ export const VERDICT_DEFAULTS = {
 // Each value MUST equal its counterpart in verdict-args.lib.tengo (the lines) and qc_measures.py (the knobs).
 // `test/src/qcDefaults.test.ts` asserts both sets against those files.
 export const QC_LINE_DEFAULTS = {
-  cellBarcodeValidWarn: 0.75,
-  cellBarcodeValidError: 0.5,
+  // OPERATOR-SET, unlike the inherited entries here: nothing published backs any of these four numbers.
+  // The match rate is close to binary on an all-N pattern, so a healthy run sits near 1.00 and 0.90 is
+  // already a signal; 0.50 is half the library unusable.
+  // INHERITED, as the complement of Cell Ranger's published antigen-capture line.
+  panelAssignedWarn: 0.5,
+  panelAssignedError: 0.0,
+  matchRateWarn: 0.9,
+  matchRateError: 0.5,
+  // A healthy run sits near 1.00 here too, so 0.95 catches a real slide; 0.75 is a failed library.
+  cellBarcodeQualityWarn: 0.95,
+  cellBarcodeQualityError: 0.75,
   readsPerCellWarn: 5000,
   aggregateBarcodeWarn: 0.05,
   aggregateBarcodeError: 1.0,
@@ -70,6 +79,15 @@ export const QC_LINE_DEFAULTS = {
   undeclaredBarcodeError: 0.05,
   usableReadWarn: 0.2,
   usableReadError: 0.0,
+  // OPERATOR-SET both. Reads reaching the panel by correction rather than an outright match: a tenth of
+  // the matched library placed by inference is a panel whose barcodes can be confused for each other.
+  rescuedShareWarn: 0.05,
+  rescuedShareError: 0.1,
+  // The warn is the default minimum count -- below it most of the typical cell's readings are zeroed
+  // before any call. The error is the floor of the quantity: every barcode counted here holds at least
+  // one reading, so a median of 1 is as low as it can go.
+  vdjAntigenCountWarn: 4,
+  vdjAntigenCountError: 1,
 } as const;
 
 export const AGGREGATE_DETECTION_DEFAULTS = {
@@ -204,11 +222,6 @@ export type SampleQcMeasurement = {
   status: QcMeasurementStatus | null;
   counts: string;
   implies: string | null;
-  /**
-   * Whether this measurement's status reaches the sample's rollup. False for a measurement whose finding
-   * belongs to a reagent and not to the sample it was measured on.
-   */
-  rollsUp: boolean;
 };
 
 export type SampleQcReport = {
@@ -511,8 +524,12 @@ const INITIAL_GRAPH_STATES = {
   "scoreDistributionGraphState" | "referenceReadingGraphState" | "fittedBackgroundGraphState"
 >;
 
-// v8 data shape: the current shape with the panel-versus-reads grid's state, which v9 strips.
-type BlockDataV8 = BlockData & { runQualityMismatchTableState: PlDataTableStateV2 };
+// v11 data shape: the current shape with the long measurement grid's state, which v12 strips. Every shape
+// below carries it too, since they all predate v12.
+type BlockDataV11 = BlockData & { runQualityTableState: PlDataTableStateV2 };
+
+// v8 data shape: v11 with the panel-versus-reads grid's state, which v9 strips.
+type BlockDataV8 = BlockDataV11 & { runQualityMismatchTableState: PlDataTableStateV2 };
 
 // v6 data shape: v8 without the undeclared-barcode grid's state. Every shape below hangs off V8: they all
 // predate v9, so they all still carry the panel-versus-reads grid state that v9 strips.
@@ -607,7 +624,8 @@ const dataModel = new DataModelBuilder()
   // filter is meaningful only against the frame it was saved on. The block still EMITS what those pages
   // showed.
   //
-  // Never reuse a stripped key. `runQualityTableState` is NOT one of the two this migration strips.
+  // Never reuse a stripped key. The v12 migration strips `runQualityTableState`, which is NOT one of the
+  // two this one takes.
   .migrate<BlockDataV4>(
     "v4",
     ({ verdictTableState: _v, antigenQcTableState: _q, panelMismatchTableState: _m, ...rest }) => ({
@@ -638,17 +656,24 @@ const dataModel = new DataModelBuilder()
   }))
   // v8 -> v9. The panel-versus-reads view is gone and its grid state goes with it. Never reuse the stripped
   // key: a saved column set and filter means something only against the frame it was saved on.
-  .migrate<BlockData>("v9", ({ runQualityMismatchTableState: _m, ...rest }) => ({ ...rest }))
+  .migrate<BlockDataV11>("v9", ({ runQualityMismatchTableState: _m, ...rest }) => ({ ...rest }))
   // v10. A stored `columnOrder.orderedColIds` is an explicit list and beats anything the model asks for. Reset
   // rather than rewritten: the saved filters and column set were saved against axes that no longer exist in
   // that order.
-  .migrate<BlockData>("v10", (data) => ({ ...data, reagentTableState: createPlDataTableStateV2() }))
+  .migrate<BlockDataV11>("v10", (data) => ({
+    ...data,
+    reagentTableState: createPlDataTableStateV2(),
+  }))
   // v11. The undeclared-barcode grid moved to its own axis, so a saved column set, order or filter names an
   // axis that table no longer has. Reset rather than rewritten, for the same reason as v10.
-  .migrate<BlockData>("v11", (data) => ({
+  .migrate<BlockDataV11>("v11", (data) => ({
     ...data,
     undeclaredBarcodesTableState: createPlDataTableStateV2(),
   }))
+  // v11 -> v12. The long measurement grid is gone and its state goes with it: every measurement it held
+  // has a purpose-built surface, so the frame behind that grid is no longer emitted. Never reuse the
+  // stripped key -- a saved column set and filter means something only against the frame it was saved on.
+  .migrate<BlockData>("v12", ({ runQualityTableState: _q, ...rest }) => ({ ...rest }))
   .init(() => ({
     runMode: "full" as const, // full run by default. "dry" = read-limited Preview
     // The geometry the block shipped with, 10x 5' v2 BEAM (16 / 10 / 15).
@@ -660,8 +685,6 @@ const dataModel = new DataModelBuilder()
     tableState: createPlDataTableStateV2(),
     qcSummaryTableState: createPlDataTableStateV2(),
     punchcardTableState: createPlDataTableStateV2(),
-    // These names avoid the two keys the v3 -> v4 migration strips.
-    runQualityTableState: createPlDataTableStateV2(),
     ...INITIAL_GRAPH_STATES,
     reagentTableState: createPlDataTableStateV2(),
     undeclaredBarcodesTableState: createPlDataTableStateV2(),
@@ -941,8 +964,12 @@ export const platforma = BlockModelV3.create(dataModel)
       contendingGroups: contendingGroups.length > 0 ? contendingGroups : undefined,
       // Each undefined projects as undefined, and emit_verdicts.py's own shipped default stands. Passed through
       // raw rather than gated on positivity: 0.0 is a real published threshold (usableReadError).
-      cellBarcodeValidWarn: data.cellBarcodeValidWarn,
-      cellBarcodeValidError: data.cellBarcodeValidError,
+      panelAssignedWarn: data.panelAssignedWarn,
+      panelAssignedError: data.panelAssignedError,
+      matchRateWarn: data.matchRateWarn,
+      matchRateError: data.matchRateError,
+      cellBarcodeQualityWarn: data.cellBarcodeQualityWarn,
+      cellBarcodeQualityError: data.cellBarcodeQualityError,
       readsPerCellWarn: data.readsPerCellWarn,
       aggregateBarcodeWarn: data.aggregateBarcodeWarn,
       aggregateBarcodeError: data.aggregateBarcodeError,
@@ -950,6 +977,10 @@ export const platforma = BlockModelV3.create(dataModel)
       undeclaredBarcodeError: data.undeclaredBarcodeError,
       usableReadWarn: data.usableReadWarn,
       usableReadError: data.usableReadError,
+      rescuedShareWarn: data.rescuedShareWarn,
+      rescuedShareError: data.rescuedShareError,
+      vdjAntigenCountWarn: data.vdjAntigenCountWarn,
+      vdjAntigenCountError: data.vdjAntigenCountError,
       // Projected only when dry, so a switch back to full changes the args hash and re-runs on the complete input.
       ...(data.runMode === "dry" && data.limitInput
         ? { limitInput: Math.round(data.limitInput) }
@@ -1694,31 +1725,18 @@ export const platforma = BlockModelV3.create(dataModel)
     },
     { retentive: true, withStatus: true },
   )
-  // Read from `outputs` and not from the exports, because a block's own exports are not in its own result
-  // pool.
+  // The fitted backgrounds at the fit's own (sample, tag) grain. Two decile frames used to ride here
+  // too, eleven quantile points each, and nothing plotted either -- every distribution on the
+  // run-quality page is drawn from the binned counts in `tagCountBins`.
   //
-  // `allowPermanentAbsence` for the same reason punchcardTable needs it: a chosen V(D)J dataset gates the whole
-  // verdict stage, and a resolve that treats a permanent absence as a pending one waits forever.
-  //
-  // A frame with no rows is NOT folded into undefined. Absent means the verdict stage did not run. Empty means
-  // it ran and had nothing to report, which for the mismatch check is the good outcome.
+  // No grid reads this today: the fitted-background page reads the same numbers out of that JSON,
+  // because a grid of small multiples is what a reader judges a fit from. Held open for the comparison
+  // the JSON cannot serve -- one background sorted across every sample and tag.
   .output(
-    "runQualityTable",
+    "runQualityBackgrounds",
     (ctx) => {
       const pCols = ctx.outputs
-        ?.resolve({ field: "antigenQcTable", allowPermanentAbsence: true })
-        ?.getPColumns();
-      if (pCols === undefined) return undefined;
-      return createPlDataTableV2(ctx, pCols, ctx.data.runQualityTableState);
-    },
-    { retentive: true, withStatus: true },
-  )
-  // ONE p-frame for GraphMaker, and not rows in the measurement table.
-  .output(
-    "runQualityDistributions",
-    (ctx) => {
-      const pCols = ctx.outputs
-        ?.resolve({ field: "antigenQcDistributions", allowPermanentAbsence: true })
+        ?.resolve({ field: "antigenBackgrounds", allowPermanentAbsence: true })
         ?.getPColumns();
       if (pCols === undefined) return undefined;
       return createPFrameForGraphs(ctx, pCols);

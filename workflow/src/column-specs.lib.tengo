@@ -281,45 +281,35 @@ featurePropertyImportColumns := func(propertyColumns, valuesByColumn) {
 	return cols
 }
 
-// qcSummaryColumnsSpec: the xsv.importFile spec for the COMBINED per-sample QC table, one row per sample,
-// used by qc-summary.tpl.tengo. Keyed [sampleId] with the axis spec inherited verbatim from the block's
-// sampleId axis, so this table's sampleId unifies with the per-cell contract columns. Not part of the
-// per-cell export contract, outputs-only.
-qcSummaryColumnsSpec := func(sampleAxisSpec) {
-	numCol := func(id, colName, label, order, fmt, ...desc) {
-		spec := {
-			name: "pl7.app/qc/" + id,
-			valueType: "Double",
-			annotations: a(order, true, { "pl7.app/label": label })
-		}
-		if !is_undefined(fmt) {
-			spec.annotations["pl7.app/format"] = fmt
-		}
-		if len(desc) > 0 && !is_undefined(desc[0]) && desc[0] != "" {
-			spec.annotations["pl7.app/description"] = desc[0]
-		}
-		return { column: colName, id: id, spec: spec }
-	}
-	return {
-		axes: [{ column: "sampleId", spec: sampleAxisSpec }],
-		columns: [
-			numCol("readsTotal", "readsTotal", "Reads parsed", 90000, undefined),
-			numCol("readsMatched", "readsMatched", "Reads matched", 89000, undefined),
-			numCol("matchedFraction", "matchedFraction", "Matched fraction", 88000, ".2p"),
-			numCol("cellsDetected", "cellsDetected", "Cell barcodes detected", 87000, undefined),
-			numCol("featuresDetected", "featuresDetected", "Features detected", 86000, undefined),
-			numCol("totalUniqueUmis", "totalUniqueUmis", "Total distinct UMIs", 85000, undefined),
-			numCol("medianUmisPerCell", "medianUmisPerCell", "Median UMIs / cell", 84000, ".1f"),
-			numCol("panelAssignedFraction", "panelAssignedFraction", "Panel-assigned fraction", 83000, ".2p"),
-			numCol("cellBarcodeValidFraction", "cellBarcodeValidFraction", "Valid cell-barcode fraction", 82000, ".2p"),
-			numCol("aggregateBarcodeFraction", "aggregateBarcodeFraction", "Aggregate-barcode read fraction", 81000, ".2p"),
-			numCol("aggregateBarcodesFlagged", "aggregateBarcodesFlagged", "Aggregate barcodes flagged", 80000, undefined),
-			numCol("aggregateBarcodeThreshold", "aggregateBarcodeThreshold", "Aggregate-barcode UMI threshold", 79000, ".1f")
-		],
-		storageFormat: "Parquet",
-		partitionKeyLength: 0
-	}
-}
+// QC_SUMMARY_COLUMNS: the metric columns qc_report.py writes into each per-sample QC CSV, in the order
+// qc-summary.tpl.tengo carries them through when it concatenates those CSVs into the file the verdict
+// stage reads through --qc-summary.
+//
+// A LIST OF NAMES, not an import spec. This was a full xsv.importFile spec -- axes, labels, orders,
+// formats -- back when this template imported a p-frame of its own. It does not: the across-samples table
+// is built by verdict-import from result_qc_summary.csv, which carries the measurement set and the
+// rolled-up status this template cannot produce. Everything but the names went unread, and the seven
+// columns it shares with `qcSampleSummaryImportSpec` declared the same p-column names twice.
+//
+// The CSV's own sampleId column is deliberately absent: the real sampleId is injected from the
+// resource-map key, because the per-sample execs are handed a constant one.
+QC_SUMMARY_COLUMNS := [
+	"readsTotal",
+	"readsMatched",
+	"matchedFraction",
+	"cellsDetected",
+	"featuresDetected",
+	"totalUniqueUmis",
+	"medianUmisPerCell",
+	"panelAssignedFraction",
+	"featureDroppedShare",
+	"cellBarcodeValidFraction",
+	"cellBarcodeIn",
+	"cellBarcodeOut",
+	"aggregateBarcodeFraction",
+	"aggregateBarcodesFlagged",
+	"aggregateBarcodeThreshold"
+]
 
 // negativeControlColumn: the xsv.importFile `columns` entry for the negative-control marker CSV
 // (emit_feature_properties.py `<prefix>_negative_control.csv`, holding "true" for the control). Hidden and
@@ -433,37 +423,6 @@ captureAxis := func(blockId) {
 	}
 }
 
-// The QC key is three axes, not two. emit_verdicts.py writes result_qc.csv keyed
-// (level, entity, measurement), and `entity` is load-bearing: under the default per-tag grouping a tag id
-// and an identity id are the SAME string, so without it a tag row and an identity row for the same barcode
-// collide. A measurement is an axis VALUE, so the fifteenth measurement costs a row, not a column.
-qcLevelAxis := func(blockId) {
-	return {
-		name: "pl7.app/antigen/qcLevel",
-		type: "String",
-		domain: { "pl7.app/blockId": blockId },
-		annotations: { "pl7.app/label": "Level" }
-	}
-}
-
-qcEntityAxis := func(blockId) {
-	return {
-		name: "pl7.app/antigen/qcEntity",
-		type: "String",
-		domain: { "pl7.app/blockId": blockId },
-		annotations: { "pl7.app/label": "Measurement subject" }
-	}
-}
-
-qcMeasurementAxis := func(blockId) {
-	return {
-		name: "pl7.app/antigen/qcMeasurement",
-		type: "String",
-		domain: { "pl7.app/blockId": blockId },
-		annotations: { "pl7.app/label": "Measurement" }
-	}
-}
-
 // --- Value vocabularies ---------------------------------------------------------------
 //
 // Each mirrors a closed enum in the software, so a filter offers every value the data can take. There is
@@ -480,9 +439,6 @@ ADMISSIBILITY_VALUES := string(json.encode([
 // Three and no fourth. A measurement with no line behind it leaves this column EMPTY rather than
 // taking a fourth word: a number means computed-with-no-line, its absence means nothing computed it.
 QC_STATUSES := string(json.encode(["OK", "warn", "alert"]))
-// The three defence routes `Measurement.line` names, and no fourth: qc_measures.py's `LINE_ROUTES` plus
-// the categorical route. Empty means the measurement carries no line.
-QC_ROUTES := string(json.encode(["inherited", "categorical", "recommended-and-observed"]))
 MISMATCH_DIRECTIONS := string(json.encode(["declared-never-seen", "undeclared-in-panel"]))
 
 // servedDomain: which comparator and which cell list actually served this run.
@@ -994,8 +950,8 @@ cellTagPivotImportSpec := func(sampleAxisSpec, cellAxisSpec, blockId, tags, labe
 					"pl7.app/antigen/tagId": tag
 				},
 				annotations: a(79000 - i, undefined, {
-					"pl7.app/label": label,
-					"pl7.app/description": "Molecules seen for " + label + " in this cell, before the count floor. A cell with no value here saw none of it.",
+					"pl7.app/label": label + " UMI count",
+					"pl7.app/description": "Molecules seen for " + label + " in this cell. A cell with no value here saw none of it.",
 					"pl7.app/graph/treatAbsentValuesAs": "0",
 					"pl7.app/min": "0",
 					"pl7.app/isAbundance": "true",
@@ -1276,7 +1232,7 @@ samplePanelImportSpec := func(sampleAxisSpec) {
 	return {
 		axes: [{ column: "sampleId", spec: sampleAxisSpec }],
 		columns: [{
-			column: "panelId",
+			column: "panelLabel",
 			id: "panelOfSample",
 			spec: {
 				name: "pl7.app/antigen/panelOfSample",
@@ -1344,8 +1300,8 @@ panelMismatchImportSpec := func(panelAxisSpec, tagAxisSpec) {
 // Barcodes the reads carried that no panel declares get their own table, keyed by sequence, because they
 // have no row above -- they are not in the panel. It is the one thing on this surface that carries a
 // status, and that status reads the ROW's own share of its sample's pre-refine reads. It stays the
-// barcode's and never the sample's, so it sits here rather than on any row of qcImportSpec's per-sample
-// list. The sample-level share keeps its own column beside it and carries no status.
+// barcode's and never the sample's, so it sits here rather than on any sample's own measurement list.
+// The sample-level share keeps its own column beside it and carries no status.
 //
 // Usually this table has no row for a sample at all, and that is the wanted outcome. The description
 // below says so, since an empty grid otherwise reads as a check that never ran.
@@ -1431,88 +1387,15 @@ undeclaredBarcodeImportSpec := func(sampleAxisSpec, tagAxisSpec) {
 // silently keeps one row and loses the rest.
 //
 // A row that belongs to no panel -- every sample-level and capture-level row -- leaves `panelId` empty.
-// --- The distributions a scientist reads in order to settle a number -------------------------
+// --- The fitted backgrounds -------------------------------------------------------------------
 //
-// Two of the three distributions exist so a scientist can place the cutoff and the gate. That makes them
-// plots rather than table rows: a decile encoded in a measurement's detail string is a number nobody can
-// draw.
+// The one frame left of what used to be three. The other two carried eleven decile points each -- the
+// score spread and the reference-reading spread, pooled over the run -- and nothing plotted either: the
+// plots a scientist settles the cutoff and the gate from are drawn from the BINNED counts in
+// `result_qc_tag_bins.json`, because points suggest a shape and cannot show where it separates.
 //
-// Both decile sets are taken over the WHOLE run and share one frame, told apart by the `distribution`
-// axis. The cutoff is one number for the run and so is the gate, so each plot has to show every cell the
-// number will act on.
-qcDistributionAxis := func(blockId) {
-	return {
-		name: "pl7.app/antigen/qcDistribution",
-		type: "String",
-		domain: { "pl7.app/blockId": blockId },
-		annotations: {
-			"pl7.app/label": "Distribution",
-			"pl7.app/isDiscreteFilter": "true",
-			"pl7.app/discreteValues": string(json.encode(["score", "referenceReading"]))
-		}
-	}
-}
-
-qcDecileAxis := func(blockId) {
-	return {
-		name: "pl7.app/antigen/qcDecile",
-		type: "Int",
-		domain: { "pl7.app/blockId": blockId },
-		annotations: { "pl7.app/label": "Percentile" }
-	}
-}
-
-qcDecileImportSpec := func(distributionAxisSpec, decileAxisSpec) {
-	return {
-		axes: [
-			{ column: "distribution", spec: distributionAxisSpec },
-			{ column: "decile", spec: decileAxisSpec }
-		],
-		columns: [{
-			column: "value", id: "value",
-			spec: {
-				name: "pl7.app/antigen/qcDecileValue",
-				valueType: "Double",
-				annotations: a(90000, true, guardNoScore({
-					"pl7.app/label": "Value",
-					"pl7.app/description": "The score at this percentile of the run's scores, or the reference reading at this percentile of the run's readings. Which one a row is about is on the Distribution axis."
-				}))
-			}
-		}],
-		storageFormat: "Parquet",
-		partitionKeyLength: 0
-	}
-}
-
-// The same shape as qcDecileImportSpec, kept PER SAMPLE: the antigen-count distribution is read as one
-// sample's own plot, never pooled across samples the way the score and the reference reading are. A
-// separate column (`qcSampleDecileValue`), because adding a sample axis to `qcDecileValue` would change
-// that column's identity rather than add to it.
-qcSampleDecileImportSpec := func(sampleAxisSpec, decileAxisSpec) {
-	return {
-		axes: [
-			{ column: "sampleId", spec: sampleAxisSpec },
-			{ column: "decile", spec: decileAxisSpec }
-		],
-		columns: [{
-			column: "value", id: "value",
-			spec: {
-				name: "pl7.app/antigen/qcSampleDecileValue",
-				valueType: "Double",
-				annotations: a(90000, true, guardNoScore({
-					"pl7.app/label": "Value",
-					"pl7.app/description": "The total antigen count per cell barcode at this percentile, for this sample alone."
-				}))
-			}
-		}],
-		storageFormat: "Parquet",
-		partitionKeyLength: 0
-	}
-}
-
-// One row per (sample, tag) a population baseline fitted, at the fit's OWN grain. Aggregating to the
-// tag would hide a reagent that separated in one sample and not in another. The two means are read
-// together: a background alone says nothing about whether the counts separated.
+// This frame survives at the fit's own (sample, tag) grain, for the comparison that JSON cannot serve:
+// one background sorted across every sample and tag at once, rather than judged panel by panel.
 qcBackgroundImportSpec := func(sampleAxisSpec, tagAxisSpec) {
 	num := func(colName, name, label, order, description) {
 		return {
@@ -1540,66 +1423,6 @@ qcBackgroundImportSpec := func(sampleAxisSpec, tagAxisSpec) {
 				"Mean count of the signal component. Read beside the background: two means close together are a tag whose counts did not separate."),
 			num("backgroundWeight", "pl7.app/antigen/fittedBackgroundWeight", "Background share", 88000,
 				"Share of the sample's cells the background component holds.")
-		],
-		storageFormat: "Parquet",
-		partitionKeyLength: 0
-	}
-}
-
-qcImportSpec := func(levelAxisSpec, entityAxisSpec, measurementAxisSpec, panelAxisSpec) {
-	col := func(colName, name, valueType, label, order, visible, annotations) {
-		return {
-			column: colName,
-			id: colName,
-			spec: {
-				name: name,
-				valueType: valueType,
-				annotations: a(order, visible, maps.merge(annotations, { "pl7.app/label": label }))
-			}
-		}
-	}
-	return {
-		axes: [
-			{ column: "level", spec: levelAxisSpec },
-			{ column: "panelId", spec: panelAxisSpec },
-			{ column: "entity", spec: entityAxisSpec },
-			{ column: "measurement", spec: measurementAxisSpec }
-		],
-		columns: [
-			// The measurement's readable name, ordered ahead of the value so a row reads as a sentence. The
-			// `measurement` AXIS carries the id, which must stay stable: renaming it splits the rows, and a table
-			// holding both old and new runs reads as two measurements. Without this column the page shows a
-			// scientist `antigenCountDistribution`.
-			col("label", "pl7.app/antigen/qcLabel", "String", "Measurement name", 73000, true, {}),
-			col("value", "pl7.app/antigen/qcValue", "Double", "Value", 72000, true, {}),
-			col("detail", "pl7.app/antigen/qcDetail", "String", "Detail", 71000, true, {}),
-			col("status", "pl7.app/antigen/qcStatus", "String", "Status", 70000, true, {
-				"pl7.app/isDiscreteFilter": "true",
-				"pl7.app/discreteValues": QC_STATUSES,
-				"pl7.app/description": "Empty means no line stands behind this measurement, which is not a pass. Its value says which: a number was computed and nothing judges it, or the reason there is no number."
-			}),
-			// The coverage triple is shown by default, beside the status rather than folded into it. A status
-			// says whether what was checked is wrong, and the triple says how much of the level was checked at all.
-			col("judged", "pl7.app/antigen/qcJudged", "Int", "Judged", 69000, true, { "pl7.app/min": "0" }),
-			col("unjudged", "pl7.app/antigen/qcUnjudged", "Int", "Unjudged", 68000, true, { "pl7.app/min": "0" }),
-			col("notEvaluated", "pl7.app/antigen/qcNotEvaluated", "Int", "Not evaluated", 67000, true, { "pl7.app/min": "0" }),
-			// Shown by default, both of them. The reader who meets a row is not the person who built the run.
-			// Behind the column chooser they satisfy the obligation in the data and defeat it on the page.
-			col("counts", "pl7.app/antigen/qcCounts", "String", "What it counts", 66000, true, {}),
-			col("implies", "pl7.app/antigen/qcImplies", "String", "What a bad value means", 65000, true, {}),
-			// The line itself, so a reader who meets `warn` can see what it warned against. Empty where
-			// no line stands behind the measurement; the categorical route (`cellsDetected`) has a route
-			// but no numeric threshold, so both stay empty there too.
-			col("lineWarn", "pl7.app/antigen/qcLineWarn", "Double", "Warn threshold", 63500, true, {}),
-			col("lineAlert", "pl7.app/antigen/qcLineAlert", "Double", "Alert threshold", 63400, true, {}),
-			col("route", "pl7.app/antigen/qcRoute", "String", "Line's defence route", 63300, true, {
-				"pl7.app/isDiscreteFilter": "true",
-				"pl7.app/discreteValues": QC_ROUTES,
-				"pl7.app/description": "Which of the three routes backs this measurement's line: a published number, a categorical fact, or a stated recommendation. Empty where no line stands behind it."
-			}),
-			// Also shown by default. A row nothing computed carries the reason in place of a value, and a blank
-			// cell reads as "checked, and fine".
-			col("reason", "pl7.app/antigen/qcReason", "String", "Why deferred", 64000, true, {})
 		],
 		storageFormat: "Parquet",
 		partitionKeyLength: 0
@@ -1687,48 +1510,71 @@ qcReagentImportSpec := func(panelAxisSpec, tagAxisSpec, identityAxisSpec) {
 // Every description below is copied verbatim from qc_measures.py `Measurement.counts` for the matching
 // id; the two are not read from one shared definition.
 qcSampleSummaryImportSpec := func(sampleAxisSpec) {
-	num := func(id, colName, label, order, fmt, description) {
+	col := func(id, colName, label, order, fmt, description, visible) {
 		spec := {
 			name: "pl7.app/qc/" + id,
 			valueType: "Double",
-			annotations: a(order, true, { "pl7.app/label": label, "pl7.app/description": description })
+			annotations: a(order, visible, { "pl7.app/label": label, "pl7.app/description": description })
 		}
 		if !is_undefined(fmt) {
 			spec.annotations["pl7.app/format"] = fmt
 		}
 		return { column: colName, id: id, spec: spec }
 	}
+	num := func(id, colName, label, order, fmt, description) {
+		return col(id, colName, label, order, fmt, description, true)
+	}
+	// "optional", not "hidden": behind the column chooser rather than out of the frame, so a reader who
+	// wants the figure can still reach it, sort it and export it.
+	numOptional := func(id, colName, label, order, fmt, description) {
+		return col(id, colName, label, order, fmt, description, false)
+	}
 	return {
 		axes: [{ column: "sampleId", spec: sampleAxisSpec }],
 		columns: [
+			// No declared measurement behind it any more -- a per-sample row of it said only how big the file
+			// was. Comparing depth BETWEEN samples is this table's job, so the column stays.
 			num("readsTotal", "readsTotal", "Reads parsed", 95000, undefined,
 				"Every read the parser saw, before pattern matching."),
-			num("readsMatched", "readsMatched", "Reads matched", 94000, undefined, undefined),
-			num("matchedFraction", "matchedFraction", "Matched fraction", 93000, ".2p", undefined),
+			// A COUNT with no declared measurement behind it: the matched share below carries it as its
+			// numerator, so a per-sample row of it said only how many reads survived.
+			num("readsMatched", "readsMatched", "Reads matched", 94000, undefined,
+				"Reads whose layout matched the read pattern, so the cell barcode, the UMI and the antigen barcode could be cut out of them."),
+			num("matchedFraction", "matchedFraction", "Matched fraction", 93000, ".2p",
+				"The same reads over every read parsed. The pattern is all fixed-length positions, so a low share points at the wrong read-geometry preset or reads too short for it."),
 			num("cellsDetected", "cellsDetected", "Cell barcodes detected", 92000, undefined, undefined),
 			num("featuresDetected", "featuresDetected", "Features detected", 91000, undefined, undefined),
 			num("totalUniqueUmis", "totalUniqueUmis", "Total distinct UMIs", 90000, undefined, undefined),
 			num("medianUmisPerCell", "medianUmisPerCell", "Median UMIs / cell", 89000, ".1f", undefined),
 			num("panelAssignedFraction", "panelAssignedFraction", "Panel-assigned fraction", 88000, ".2p",
-				"Reads whose corrected barcode is on the panel, over reads matched."),
+				"Reads whose corrected antigen barcode is on the panel, over the reads matching the read pattern. Warns below 0.50, the line Cell Ranger publishes for the Antigen Capture library."),
+			// The other side of the antigen-barcode step, over the same matched-read denominator. Optional: it
+			// is the subtrahend the rescued share is computed from rather than a figure a reader opens the
+			// table for, and the two it sits between are the ones worth reading.
+			numOptional("featureDroppedShare", "featureDroppedShare", "Antigen-barcode dropped fraction", 87750, ".2p",
+				"Reads the antigen-barcode correction step could not place on the panel, over the reads matching the read pattern. Together with the undeclared-barcode share it gives what correction rescued."),
 			num("refineRescuedShare", "refineRescuedShare", "Reads correction rescued onto the panel", 87500, ".2p",
 				"Reads on a sequence the panel does not declare that refine-tags then snapped onto a panel entry, over reads matched. Read it against the undeclared-barcode table, whose rows are the pre-refine pass: this is the part of that table the run did not lose."),
-			num("cellBarcodeValidFraction", "cellBarcodeValidFraction", "Valid cell-barcode fraction", 87000, ".2p",
-				"Reads whose cell barcode corrects onto the chemistry's whitelist, over reads entering correction."),
+			// Named for what it measures. With no chemistry whitelist selectable, refine-tags' CELL step runs
+			// de-novo correction and drops reads by BASE QUALITY, so this is a quality share rather than a
+			// check against a declared list. The id is unchanged: it is this column's name.
+			num("cellBarcodeValidFraction", "cellBarcodeValidFraction", "Cell-barcode quality fraction", 87000, ".2p",
+				"Reads whose cell barcode survived refine-tags' CELL correction, over the reads that entered it. Correction drops a read whose barcode is too poor in quality to place."),
 			num("usableReadFraction", "usableReadFraction", "Usable antigen-read fraction", 86000, ".2p",
 				"Reads whose corrected barcode is on the panel and whose cell barcode is in the cell list, over readsTotal."),
-			num("readsPerCell", "readsPerCell", "Reads per cell", 85000, ".1f",
-				"Reads matched, over cells in the cell list."),
-			num("antigenCountDistribution", "antigenCountDistribution", "Median antigen count per cell", 84000, ".1f",
-				"The median total antigen count per cell barcode. Its deciles ride in the measurement's detail."),
+			num("readsPerCell", "readsPerCell", "Mean reads per V(D)J-matched cell", 85000, ".1f",
+				"The average antigen read depth of one analysed cell: reads on the panel inside a cell the V(D)J data matched, over the number of those cells."),
 			num("aggregateBarcodeFraction", "aggregateBarcodeFraction", "Aggregate-barcode read fraction", 83000, ".2p",
 				"Reads in barcodes flagged as aggregates by the top-100 IQR rule, over readsTotal."),
 			num("floorRemoved", "floorRemoved", "Counts removed by the minimum", 82000, undefined,
 				"Readings the minimum count set to zero, summed over the sample. The baseline tag is exempt."),
 			num("uniqueCountsPerCell", "uniqueCountsPerCell", "Median unique counts per listed cell", 81000, ".1f",
 				"The median of each listed cell's total unique count across all tags. Cells outside the cell list are excluded."),
-			num("highReferenceCells", "highReferenceCells", "Sticky reference cells", 80000, undefined,
-				"With a gate set, how many cells read above it on the baseline tag. With no gate, the median baseline reading.")
+			// Two columns, not one whose units change with a setting. Both are over the V(D)J-matched cells.
+			num("cellsSetAside", "cellsSetAside", "Cells set aside as sticky", 80000, undefined,
+				"Cells whose control-tag count is above the admissibility gate. Blank where no gate is declared."),
+			num("medianControlReading", "medianControlReading", "Median control-tag reading per cell", 79500, ".1f",
+				"The middle control-tag count across this sample's V(D)J-matched cells. The control tag is declared to bind nothing, so this is the run's own noise floor.")
 		],
 		storageFormat: "Parquet",
 		partitionKeyLength: 0
@@ -1741,7 +1587,7 @@ export {
 	valueOutputs: valueOutputs,
 	perCellSummaryOutput: perCellSummaryOutput,
 	qcFileMapOutput: qcFileMapOutput,
-	qcSummaryColumnsSpec: qcSummaryColumnsSpec,
+	QC_SUMMARY_COLUMNS: QC_SUMMARY_COLUMNS,
 	featurePropertyImportColumns: featurePropertyImportColumns,
 	negativeControlColumn: negativeControlColumn,
 
@@ -1750,9 +1596,6 @@ export {
 	identityAxis: identityAxis,
 	panelAxis: panelAxis,
 	captureAxis: captureAxis,
-	qcLevelAxis: qcLevelAxis,
-	qcEntityAxis: qcEntityAxis,
-	qcMeasurementAxis: qcMeasurementAxis,
 
 	verdictsImportSpec: verdictsImportSpec,
 	setCountsImportSpec: setCountsImportSpec,
@@ -1774,11 +1617,6 @@ export {
 	samplePanelImportSpec: samplePanelImportSpec,
 	panelMismatchImportSpec: panelMismatchImportSpec,
 	undeclaredBarcodeImportSpec: undeclaredBarcodeImportSpec,
-	qcImportSpec: qcImportSpec,
-	qcDistributionAxis: qcDistributionAxis,
-	qcDecileAxis: qcDecileAxis,
-	qcDecileImportSpec: qcDecileImportSpec,
-	qcSampleDecileImportSpec: qcSampleDecileImportSpec,
 	qcBackgroundImportSpec: qcBackgroundImportSpec,
 	qcReagentImportSpec: qcReagentImportSpec,
 	qcSampleSummaryImportSpec: qcSampleSummaryImportSpec,

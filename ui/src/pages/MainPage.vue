@@ -71,8 +71,12 @@ function setting(key: SettingKey) {
   });
 }
 
-const cellBarcodeValidWarn = setting("cellBarcodeValidWarn");
-const cellBarcodeValidError = setting("cellBarcodeValidError");
+const panelAssignedWarn = setting("panelAssignedWarn");
+const panelAssignedError = setting("panelAssignedError");
+const matchRateWarn = setting("matchRateWarn");
+const matchRateError = setting("matchRateError");
+const cellBarcodeQualityWarn = setting("cellBarcodeQualityWarn");
+const cellBarcodeQualityError = setting("cellBarcodeQualityError");
 const readsPerCellWarn = setting("readsPerCellWarn");
 const aggregateBarcodeWarn = setting("aggregateBarcodeWarn");
 const aggregateBarcodeError = setting("aggregateBarcodeError");
@@ -80,6 +84,10 @@ const undeclaredBarcodeWarn = setting("undeclaredBarcodeWarn");
 const undeclaredBarcodeError = setting("undeclaredBarcodeError");
 const usableReadWarn = setting("usableReadWarn");
 const usableReadError = setting("usableReadError");
+const rescuedShareWarn = setting("rescuedShareWarn");
+const rescuedShareError = setting("rescuedShareError");
+const vdjAntigenCountWarn = setting("vdjAntigenCountWarn");
+const vdjAntigenCountError = setting("vdjAntigenCountError");
 // No binding for the three aggregate-detection knobs. They keep their entries in SETTING_DEFAULTS, because
 // the same defaults answer a stored project and the workflow, and only their controls are gone.
 // Auto-open Settings for a fresh block. Stays closed once configured.
@@ -803,7 +811,7 @@ const gridOptions = {
       <PlDropdownMulti
         :model-value="groupingSelection"
         :options="groupingOptions"
-        label="Identity grouping"
+        label="Target Identity"
         :disabled="panelUnread"
         :required="true"
         @update:model-value="setGrouping"
@@ -1125,36 +1133,112 @@ const gridOptions = {
            never what the run computes. Every field here is clearable -- empty means the shipped default, the
            same number the tooltip names. -->
       <PlAccordionSection v-if="SHOW_QUALITY_LINES" label="Quality lines">
+        <!-- The OPERATOR-SET pairs in this section: nothing published backs any of these four numbers,
+             which is precisely why they are here to move. Every other field below carries an inherited
+             line. -->
         <PlRow>
           <PlNumberField
             :class="$style.half"
-            v-model="cellBarcodeValidWarn"
+            v-model="matchRateWarn"
             :min-value="0"
             :max-value="1"
             :step="0.01"
             clearable
-            label="Barcode validity warn"
+            label="Pattern match warn"
           >
             <template #tooltip>
-              The share of reads whose cell barcode corrects onto the chemistry's whitelist. The
-              measurement warns below this share.<br /><br />
-              Default 0.75. The block inherits this number from published quality thresholds.
-              Nothing calibrates it against your own data.
+              The share of reads whose layout matched the read pattern. The measurement warns below
+              this share.<br /><br />
+              Default 0.90. This block's own estimate. The pattern is all fixed-length positions, so
+              a read either covers the geometry or it does not — a healthy run sits near 1.00, and a
+              low share points at the wrong read-geometry preset or reads too short for it.
             </template>
           </PlNumberField>
           <PlNumberField
             :class="$style.half"
-            v-model="cellBarcodeValidError"
+            v-model="matchRateError"
             :min-value="0"
             :max-value="1"
             :step="0.01"
             clearable
-            label="Barcode validity alert"
+            label="Pattern match alert"
           >
             <template #tooltip>
               The same share. The measurement alerts below this share instead of warning.<br /><br />
-              Default 0.50. The block inherits this number from published quality thresholds.
-              Nothing calibrates it against your own data.
+              Default 0.50. Also this block's own estimate: half the library not fitting the
+              geometry.
+            </template>
+          </PlNumberField>
+        </PlRow>
+        <PlRow>
+          <PlNumberField
+            :class="$style.half"
+            v-model="cellBarcodeQualityWarn"
+            :min-value="0"
+            :max-value="1"
+            :step="0.01"
+            clearable
+            label="Barcode quality warn"
+          >
+            <template #tooltip>
+              The share of reads whose cell barcode survived correction. The measurement warns below
+              this share.<br /><br />
+              Default 0.95. This block's own estimate, not a published number: a healthy run sits
+              near 1.00. A shallow library can dip under it without anything being wrong, because
+              correction rescues a poor barcode by clustering it onto a frequent neighbour and a
+              shallow run has fewer neighbours to rescue onto.
+            </template>
+          </PlNumberField>
+          <PlNumberField
+            :class="$style.half"
+            v-model="cellBarcodeQualityError"
+            :min-value="0"
+            :max-value="1"
+            :step="0.01"
+            clearable
+            label="Barcode quality alert"
+          >
+            <template #tooltip>
+              The same share. The measurement alerts below this share instead of warning.<br /><br />
+              Default 0.75. Also this block's own estimate. A quarter of reads lost before anything
+              can be counted per cell is a failed library whatever the chemistry.
+            </template>
+          </PlNumberField>
+        </PlRow>
+        <!-- INHERITED, unlike the two pairs above: the complement of the line Cell Ranger publishes for
+             the Antigen Capture library. Movable all the same -- every line in this block is a
+             parameter with a shipped default. -->
+        <PlRow>
+          <PlNumberField
+            :class="$style.half"
+            v-model="panelAssignedWarn"
+            :min-value="0"
+            :max-value="1"
+            :step="0.01"
+            clearable
+            label="Panel barcode warn"
+          >
+            <template #tooltip>
+              The share of reads whose antigen barcode is on the panel, out of the reads matching
+              the read pattern. The measurement warns below this share.<br /><br />
+              Default 0.50, inherited from Cell Ranger's antigen-capture line. It is lax against a
+              healthy run, which sits near 1.00 — kept as published rather than tightened, so the
+              number stays one you can trace.
+            </template>
+          </PlNumberField>
+          <PlNumberField
+            :class="$style.half"
+            v-model="panelAssignedError"
+            :min-value="0"
+            :max-value="1"
+            :step="0.01"
+            clearable
+            label="Panel barcode alert"
+          >
+            <template #tooltip>
+              The same share. The measurement alerts at this value rather than below it.<br /><br />
+              Default 0.00: no read on the panel at all. The published pair puts its alert at total
+              failure rather than a step past the warning.
             </template>
           </PlNumberField>
         </PlRow>
@@ -1166,10 +1250,14 @@ const gridOptions = {
           label="Reads per cell warn"
         >
           <template #tooltip>
-            Reads matched per cell in the cell list. The measurement warns below this count. It has
-            no alert line, because the vendor published one boundary.<br /><br />
-            Default 5000. The vendor recommends this minimum for this assay type. Nothing calibrates
-            it against your own data.
+            The average antigen read depth of one analysed cell. The measurement warns below this
+            count, and has no alert line, because the vendor published one boundary.<br /><br />
+            Default 5000, the vendor's stated minimum sequencing depth for 5&prime; Feature Barcode
+            libraries. It is not published for antigen capture, so it reaches this measurement by
+            analogy from a sibling library &mdash; and the vendor counts every read in the library
+            against every called cell, while this counts only panel-recognised reads inside the
+            matched cells. So this figure runs the lower of the two and the line errs toward firing
+            early. Nothing calibrates it against your own data.
           </template>
         </PlNumberField>
         <PlRow>
@@ -1270,6 +1358,73 @@ const gridOptions = {
               The same share. The measurement alerts only at this value, and not below it.<br /><br />
               Default 0.0, where no read is usable. The block inherits this number from published
               quality thresholds. Nothing calibrates it against your own data.
+            </template>
+          </PlNumberField>
+        </PlRow>
+        <PlRow>
+          <PlNumberField
+            :class="$style.half"
+            v-model="rescuedShareWarn"
+            :min-value="0"
+            :max-value="1"
+            :step="0.01"
+            clearable
+            label="Rescued reads warn"
+          >
+            <template #tooltip>
+              The share of matched reads whose antigen barcode was off the panel and close enough to
+              be corrected onto it. The measurement warns above this share.<br /><br />
+              Default 0.05. This is the block's own line, not a published one. The quantity reads
+              both ways -- correction doing real work looks the same as poor base quality -- so this
+              catches the side that costs the run something.
+            </template>
+          </PlNumberField>
+          <PlNumberField
+            :class="$style.half"
+            v-model="rescuedShareError"
+            :min-value="0"
+            :max-value="1"
+            :step="0.01"
+            clearable
+            label="Rescued reads alert"
+          >
+            <template #tooltip>
+              The same share. The measurement alerts above this value.<br /><br />
+              Default 0.10, a tenth of the matched library placed by inference. This is the block's
+              own line, not a published one.
+            </template>
+          </PlNumberField>
+        </PlRow>
+        <PlRow>
+          <PlNumberField
+            :class="$style.half"
+            v-model="vdjAntigenCountWarn"
+            :min-value="1"
+            :step="1"
+            clearable
+            label="Antigen counts per cell warn"
+          >
+            <template #tooltip>
+              The median cell barcode's antigen count, summed across the panel, over the cells the
+              V(D)J data matched. The measurement warns below this count.<br /><br />
+              Default 4, the same as the minimum count a single reading needs to survive. Below it
+              most of the typical cell's readings are zeroed before any call is made. This is the
+              block's own line, not a published one.
+            </template>
+          </PlNumberField>
+          <PlNumberField
+            :class="$style.half"
+            v-model="vdjAntigenCountError"
+            :min-value="1"
+            :step="1"
+            clearable
+            label="Antigen counts per cell alert"
+          >
+            <template #tooltip>
+              The same count. The measurement alerts only at this value, and not below it.<br /><br />
+              Default 1, the floor of the quantity: every barcode counted here holds at least one
+              reading, so no median below 1 can occur. This is the block's own line, not a published
+              one.
             </template>
           </PlNumberField>
         </PlRow>

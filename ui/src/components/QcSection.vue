@@ -18,13 +18,13 @@ const data = reactive({
 
 const tag = computed(() => qcStatusTag(props.value.status));
 
-// What went into the number, folded with the description. Two measurements take more than one form and
-// the value alone cannot say which: the sticky count is a count of cells above a declared gate OR the
-// median of the readings where none is declared, and every distribution-shaped measurement prints its
-// median while its deciles ride here. A reader who cannot see this reads one form as the other.
+// What went into the number, folded with the description and set in the same style. Two measurements take
+// more than one form and the value alone cannot say which: the sticky count is a count of cells above a
+// declared gate OR the median of the readings where none is declared. A reader who cannot see this reads
+// one form as the other.
 //
-// Rendered as written, only re-joined: the parts are `key=value` pairs and bare markers such as
-// `noGateDeclared`, which say what they mean without a second vocabulary here to keep in step.
+// Rendered as written, one line per part: each is a short sentence or a `Label: value` pair, so it reads
+// on from the description above it rather than needing a second vocabulary here to keep in step.
 const detailParts = computed(() =>
   (props.value.detail ?? "")
     .split("|")
@@ -44,23 +44,24 @@ const printedValue = computed(() => {
   return v.toLocaleString(undefined, { maximumFractionDigits: 3 });
 });
 
-// The second line, under the value: the reason where the measurement has no number, what a bad value implies
-// where it carries one and is not OK, and, for a measurement that does not roll up, that its status is not
-// the sample's.
-const notes = computed(() => {
+// The one line that stays visible under the value: why there is no number. A reader must not have to open
+// a row to find out that nothing computed it.
+//
+// Every measurement in this list is the SAMPLE's, so none of them needs a line saying its finding belongs
+// somewhere else. A reagent's figures are on the Per-tag QC page, and they were never in this list.
+const reasonLine = computed(() => {
   const m = props.value;
-  const lines: string[] = [];
-  if (m.value === null && m.reason) lines.push(m.reason);
-  if (m.value !== null && m.implies && m.status !== null && m.status !== "OK")
-    lines.push(m.implies);
-  // Not gated on having a value. The row is left out of the rollup either way, so a valueless one
-  // is still a row the coverage line beneath the status does not account for.
-  if (!m.rollsUp)
-    lines.push(
-      "This measurement is about a reagent rather than about this sample, so it stays off the " +
-        "sample's own status and out of the coverage below. It is reported on the run quality page.",
-    );
-  return lines;
+  return m.value === null && m.reason ? m.reason : undefined;
+});
+
+// What a bad value MEANS, folded with the description rather than standing beside the number. Collapsed,
+// a row is its label and its value; opening it is what asks for the interpretation. Set in the
+// description's own style, since both answer "what am I looking at" rather than "what happened here".
+const impliesLine = computed(() => {
+  const m = props.value;
+  return m.value !== null && m.implies && m.status !== null && m.status !== "OK"
+    ? m.implies
+    : undefined;
 });
 </script>
 
@@ -76,9 +77,12 @@ const notes = computed(() => {
       <div class="qc-section__label" @click.stop="data.expanded = !data.expanded">
         {{ props.value.label }}<template v-if="printedValue">: {{ printedValue }}</template>
       </div>
-      <div v-for="(note, i) in notes" :key="i" class="qc-section__note">{{ note }}</div>
+      <div v-if="reasonLine" class="qc-section__note">{{ reasonLine }}</div>
       <div class="qc-section__description">{{ props.value.counts }}</div>
-      <div v-if="detailParts.length" class="qc-section__detail">{{ detailParts.join(" · ") }}</div>
+      <div v-if="impliesLine" class="qc-section__description">{{ impliesLine }}</div>
+      <div v-for="(part, i) in detailParts" :key="i" class="qc-section__description">
+        {{ part }}
+      </div>
     </div>
   </div>
 </template>
@@ -145,18 +149,6 @@ const notes = computed(() => {
   color: var(--color-txt-03);
   line-height: 20px;
   white-space: pre-wrap;
-  margin-top: 4px;
-}
-
-/* Folded with the description, so the row stays one line until a reader opens it. */
-.qc-section__detail {
-  display: var(--display);
-  font-family: var(--font-family-monospace, monospace);
-  font-size: 12px;
-  color: var(--color-txt-03);
-  line-height: 18px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
   margin-top: 4px;
 }
 

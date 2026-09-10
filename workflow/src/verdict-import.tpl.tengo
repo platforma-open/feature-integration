@@ -199,32 +199,24 @@ self.body(func(inputs) {
 		columnSpecs.samplePanelImportSpec(sampleAxis))
 
 	// --- block-local: the run's own report ----------------------------------------------------------
-	qcFb := pframes.pFrameBuilder()
-	addTo(qcFb, "qc", inputs.qc, columnSpecs.qcImportSpec(
-		columnSpecs.qcLevelAxis(blockId),
-		columnSpecs.qcEntityAxis(blockId),
-		columnSpecs.qcMeasurementAxis(blockId),
-		columnSpecs.panelAxis(blockId)))
-
+	//
 	// The across-samples table: one row per sample, one column per sample-level measurement, plus the
-	// sample's own rolled-up status. Its own frame, because its columns are per-measurement rather than per
-	// (level, entity, measurement) like qcFb above.
+	// sample's own rolled-up status. The long (level, entity, measurement) frame that used to sit beside it
+	// is gone: every measurement it held has a purpose-built surface, and the sample level's are this table
+	// and `result_qc_by_sample.json`.
 	qcSummaryFb := pframes.pFrameBuilder()
 	addTo(qcSummaryFb, "qcSummary", inputs.qcSummary, columnSpecs.qcSampleSummaryImportSpec(sampleAxis))
 
-	// The distributions the readout puts last, as plots rather than table rows. A number encoded in a
-	// detail string is one nobody can draw.
-	distributionFb := pframes.pFrameBuilder()
-	addTo(distributionFb, "qcDeciles", inputs.qcDeciles, columnSpecs.qcDecileImportSpec(
-		columnSpecs.qcDistributionAxis(blockId),
-		columnSpecs.qcDecileAxis(blockId)))
-	// The antigen-count distribution's own deciles, kept per sample beside the two pooled decile sets
-	// above. Its own column: adding a sample axis to `qcDecileValue` would re-identify that column rather
-	// than mint a new one.
-	addTo(distributionFb, "qcSampleDeciles", inputs.qcSampleDeciles, columnSpecs.qcSampleDecileImportSpec(
-		sampleAxis,
-		columnSpecs.qcDecileAxis(blockId)))
-	addTo(distributionFb, "qcBackgrounds", inputs.qcBackgrounds,
+	// The fitted backgrounds, one row per (sample, tag) the fit scored -- the fit's own grain. Two decile
+	// frames used to sit beside this one, eleven quantile points each; nothing plotted either, because
+	// every distribution on the run-quality page is drawn from the BINNED counts in
+	// `result_qc_tag_bins.json`. They are gone, and this frame is what is left.
+	//
+	// Its p-columns have no grid today: the fitted-background page reads the same numbers out of that
+	// JSON, because a grid of small multiples is what a reader judges a fit from. This is held open for
+	// the comparison the JSON cannot serve -- one background sorted against 44 samples x 64 tags.
+	backgroundsFb := pframes.pFrameBuilder()
+	addTo(backgroundsFb, "qcBackgrounds", inputs.qcBackgrounds,
 		columnSpecs.qcBackgroundImportSpec(sampleAxis, tagAxis))
 
 	// One row per (panel, tag, identity). Its own frame, at its own grain: the measurement table is keyed
@@ -279,9 +271,8 @@ self.body(func(inputs) {
 		antigenVerdicts: exportFb.build(),
 		punchcard: punchFb.build(),
 		cellReference: cellRefFb.build(),
-		qcTable: qcFb.build(),
 		qcSummaryTable: qcSummaryFb.build(),
-		qcDistributions: distributionFb.build(),
+		backgroundsFrame: backgroundsFb.build(),
 		reagentTable: reagentFb.build(),
 		undeclaredBarcodesTable: undeclaredFb.build(),
 		cellTagCounts: cellTagFb.build()

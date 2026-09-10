@@ -26,8 +26,10 @@ _full := {
 	grouping: { by: "property", column: "family" },
 	contendingGroups: [["AgA", "AgB"]],
 	captureMap: { S1: "lane1" },
-	cellBarcodeValidWarn: 0.8,
-	cellBarcodeValidError: 0.55,
+	matchRateWarn: 0.85,
+	matchRateError: 0.45,
+	cellBarcodeQualityWarn: 0.9,
+	cellBarcodeQualityError: 0.55,
 	readsPerCellWarn: 6000,
 	aggregateBarcodeWarn: 0.07,
 	aggregateBarcodeError: 0.9,
@@ -49,7 +51,8 @@ Test_every_flag_is_threaded := func() {
 		"--floor", "--cutoff",
 		"--min-voters", "--min-agreement", "--gate-threshold",
 		"--grouping", "--contending", "--capture-map", "--output-prefix",
-		"--cell-barcode-valid-warn", "--cell-barcode-valid-error", "--reads-per-cell-warn",
+		"--match-rate-warn", "--match-rate-error",
+		"--cell-barcode-quality-warn", "--cell-barcode-quality-error", "--reads-per-cell-warn",
 		"--aggregate-barcode-warn", "--aggregate-barcode-error",
 		"--undeclared-barcode-warn", "--undeclared-barcode-error",
 		"--usable-read-warn", "--usable-read-error"
@@ -72,8 +75,10 @@ Test_every_flag_is_threaded := func() {
 		"--min-voters": "3",
 		"--min-agreement": "0.6",
 		"--gate-threshold": "40",
-		"--cell-barcode-valid-warn": "0.8",
-		"--cell-barcode-valid-error": "0.55",
+		"--match-rate-warn": "0.85",
+		"--match-rate-error": "0.45",
+		"--cell-barcode-quality-warn": "0.9",
+		"--cell-barcode-quality-error": "0.55",
 		"--reads-per-cell-warn": "6000",
 		"--aggregate-barcode-warn": "0.07",
 		"--aggregate-barcode-error": "0.9",
@@ -157,8 +162,6 @@ Test_shaping_parameters_are_always_present := func() {
 // number that produced it, defaulted or not.
 Test_line_thresholds_are_always_present := func() {
 	args := va.build({ barcodeSeqColumn: "Sequence", featureNameColumn: "Name" })
-	test.isEqual("0.75", va.valueOf(args, "--cell-barcode-valid-warn"), "the barcode-validity warn line is stated")
-	test.isEqual("0.5", va.valueOf(args, "--cell-barcode-valid-error"), "the barcode-validity alert line is stated")
 	test.isEqual("5000", va.valueOf(args, "--reads-per-cell-warn"), "the depth line is stated")
 	test.isEqual("0.05", va.valueOf(args, "--aggregate-barcode-warn"), "the aggregate-barcode warn line is stated")
 	test.isEqual("1", va.valueOf(args, "--aggregate-barcode-error"), "the aggregate-barcode alert line is stated")
