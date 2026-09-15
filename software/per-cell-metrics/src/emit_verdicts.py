@@ -59,6 +59,7 @@ from identity_tables import (
     IDENTITY_KEY_COLUMN,
     IDENTITY_SUMMARY_MAX_IDENTITIES,
     REFERENCE_IDENTITY_LABEL,
+    SET_TAG_MEDIAN_MAX_TAGS,
     CellKey,
     _build_grouping,
     _cells_by_set,
@@ -669,6 +670,77 @@ def main() -> None:
     if missing:
         raise SystemExit(f"sets carry verdicts but no cells, which cannot happen: {missing[:8]}")
     _write_sorted(_answers(counts_frame), f"{prefix}_set_counts.csv", ["setId"])
+
+    # --- Median antigen depth per (clonotype, tag): result_set_tag_median.csv ------------------
+    #
+    # One row per clonotype, one COLUMN per tag.
+    # The population for (set, tag) is the clonotype's cells whose SAMPLE was offered that tag.
+    # Raw counts, never floored.
+    #
+    # The following section is meant to compute the median without building the dense grid
+
+    # Build the (sample, tag) pairs each sample's panel actually offered:
+    offered_tag_pairs = pl.DataFrame(
+        [(sample, tag) for sample, tags in sorted(tag_offered_by_sample.items()) for tag in sorted(tags)],
+        orient="row",
+        schema={"sampleId": pl.String, "tag": pl.String},
+    )
+    # Which cell is in which clonotype
+    set_of_cell = pl.DataFrame(
+        [(set_id, sample, cell) for set_id, cells in sorted(cells_by_set.items()) for sample, cell in cells],
+        orient="row",
+        schema={"setId": pl.String, "sampleId": pl.String, "cellId": pl.String},
+    )
+    # Count the non-zero clonotype's cells, but only in samples where the barcode was found ("nz").
+    nonzero_by_set_tag = (
+        # Glue each cell to its reads. Keep only the ones present in a clonotype.
+        set_of_cell.join(
+            counts.select(["sampleId", "cellId", "tag", "umiCount"]), on=["sampleId", "cellId"], how="inner"
+        )
+        # Only keep cells whose (sample, tag) was already offered in offered_tag_pairs
+        .join(offered_tag_pairs, on=["sampleId", "tag"], how="inner")
+        # Then pile the numbers up per (set, tag) and count how many we get per pile (nz)
+        # With this we filter-out (set, tag) combinations with zero presence
+        .group_by(["setId", "tag"])
+        .agg(pl.col("umiCount").alias("values"), pl.len().alias("nz"))
+    )
+    # Count the clonotype's cells, but only in samples where the barcode was found ("n").
+    # Cells are counted per (set, sample) first, so this never expands to a row per cell per tag.
+    cells_per_set_sample = set_of_cell.group_by(["setId", "sampleId"]).agg(pl.len().alias("cells"))
+    population_by_set_tag = (
+        nonzero_by_set_tag.select(["setId", "tag"])
+        #  for each pair, list every sample the clonotype has cells in:
+        .join(cells_per_set_sample, on="setId", how="inner")
+        # Drop samples that where not offered in offered_tag_pairs
+        .join(offered_tag_pairs, on=["sampleId", "tag"], how="inner")
+        .group_by(["setId", "tag"])
+        .agg(pl.col("cells").sum().alias("n"))
+    )
+    # Check the pairs whose median can clear zero
+    set_tag_median = (
+        nonzero_by_set_tag.join(population_by_set_tag, on=["setId", "tag"], how="inner")
+        # If non-zero cells (nz) * 2 >= number of cells (n), then the median wont be zero
+        .filter(pl.col("nz") * 2 >= pl.col("n"))
+        .with_columns(pl.col("values").list.concat(pl.lit(0, dtype=pl.Int64).repeat_by(pl.col("n") - pl.col("nz"))))
+        .select("setId", "tag", pl.col("values").list.median().alias("medianUmiCount"))
+    )
+    # Take the tag column list from the panel
+    set_tag_median_tags = sorted({tag for tag, _sample in by_tag_grouping})
+    # One p-column per tag as long as we don't have too many (SET_TAG_MEDIAN_MAX_TAGS)
+    if len(set_tag_median_tags) > SET_TAG_MEDIAN_MAX_TAGS:
+        set_tag_median_tags = []
+    if set_tag_median_tags:
+        pivoted = set_tag_median.pivot(on="tag", index="setId", values="medianUmiCount")
+        # A tag no clonotype cleared zero for is missing from the pivot. Add it back as a column of
+        # nulls, so the header carries every declared tag.
+        set_tag_median_frame = pivoted.with_columns(
+            [pl.lit(None, dtype=pl.Float64).alias(tag) for tag in set_tag_median_tags if tag not in pivoted.columns]
+        ).select(["setId", *set_tag_median_tags])
+    else:
+        # Headers only. A key-only frame imports as no columns, where a missing file would fail the import.
+        set_tag_median_frame = pl.DataFrame(schema={"setId": pl.String})
+    # Store (set, tag) median values
+    _write_sorted(set_tag_median_frame, f"{prefix}_set_tag_median.csv", ["setId"])
 
     summary, punch, summary_emitted = _pivot_identity_summary(verdicts, universe)
     _write_sorted(_answers(summary), f"{prefix}_identity_summary.csv", ["setId"])
@@ -1633,6 +1705,11 @@ def main() -> None:
         # headers. Without this every column of the family is titled with a 15-mer barcode. Keyed over
         # exactly the columns above, and falling back to the barcode for a tag the panel never named.
         "cellTagPivotLabels": {t: tag_names.get(t, t) for t in cell_tag_pivot_tags},
+        # The tags the per-clonotype median pivot laid out, and their names, on the same terms as the
+        # per-cell pivot above. Unlike that one this is every barcode the panel declares, not every
+        # barcode with something to report, so the column set holds still between runs.
+        "setTagMedianTags": set_tag_median_tags,
+        "setTagMedianLabels": {t: tag_names.get(t, t) for t in set_tag_median_tags},
         "identitySummaryLimit": IDENTITY_SUMMARY_MAX_IDENTITIES,
         "cellPunchLimit": CELL_PUNCH_MAX_CELLS,
         # The undeclared-barcode table holds the heaviest sequences per sample, not every one. The
