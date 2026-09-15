@@ -677,7 +677,7 @@ def main() -> None:
     # The population for (set, tag) is the clonotype's cells whose SAMPLE was offered that tag.
     # Raw counts, never floored.
     #
-    # The following section is meant to compute the median without densifying the whole dataset
+    # The following section is meant to compute the median without building the dense grid
 
     # Build the (sample, tag) pairs each sample's panel actually offered:
     offered_tag_pairs = pl.DataFrame(
