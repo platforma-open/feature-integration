@@ -464,6 +464,7 @@ wf.body(func(args) {
 			runMeta: verdictRun.output("runMeta"),
 			verdicts: verdictRun.output("verdicts"),
 			setCounts: verdictRun.output("setCounts"),
+			setTagMedian: verdictRun.output("setTagMedian"),
 			identitySummary: verdictRun.output("identitySummary"),
 			identityPunch: verdictRun.output("identityPunch"),
 			cellPunch: verdictRun.output("cellPunch"),

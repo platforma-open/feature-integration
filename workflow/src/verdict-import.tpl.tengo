@@ -87,6 +87,15 @@ self.body(func(inputs) {
 	addTo(exportFb, "setCounts", inputs.setCounts,
 		columnSpecs.setCountsImportSpec(setAxis, served))
 
+	// Median antigen depth per (clonotype, tag), one column per tag. Gated on the tag list the run
+	// recorded.
+	setTagMedianTags := is_undefined(served.setTagMedianTags) ? [] : served.setTagMedianTags
+	if len(setTagMedianTags) > 0 {
+		addTo(exportFb, "setTagMedian", inputs.setTagMedian,
+			columnSpecs.setTagMedianImportSpec(setAxis, blockId, setTagMedianTags,
+				is_undefined(served.setTagMedianLabels) ? {} : served.setTagMedianLabels, served))
+	}
+
 	// The pivoted per-identity summary is the only per-antigen state lead selection can see: a column carrying
 	// an axis the clonotype anchor does not have is dropped there with no error. The pivot costs one column per
 	// identity, so the software gates it on an identity count and records the limit and whether it emitted.

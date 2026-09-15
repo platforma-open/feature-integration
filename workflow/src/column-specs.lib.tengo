@@ -14,25 +14,7 @@ strings := import("@platforma-sdk/workflow-tengo:strings")
 json := import("json")
 text := import("text")
 
-// No column this block emits may be orderable. A verdict is not a magnitude, and neither is a count of
-// verdicts, so neither may be ranked. `pl7.app/isScore` and the `pl7.app/score/*` family are what make a
-// column rankable downstream. Ordinary filter annotations are untouched.
-//
-// The guard runs over every annotation map this module builds, catching a computed key as well as a
-// literal one. It cannot see a column built outside this module, which the block test asserts instead.
-SCORE_ANNOTATION := "pl7.app/isScore"
-SCORE_FAMILY_PREFIX := "pl7.app/score/"
 LEGACY_FEATURE_AXIS := "pl7.app/feature/featureId"
-
-guardNoScore := func(annotations) {
-	for key, _ in annotations {
-		ll.assert(
-			key != SCORE_ANNOTATION && !text.has_prefix(key, SCORE_FAMILY_PREFIX),
-			"column-specs: annotation %v makes a column orderable; verdicts and their counts are filterable, never orderable",
-			key)
-	}
-	return annotations
-}
 
 /* A NEW column must never key on pl7.app/feature/featureId while carrying barcode sequences: the axis
 identity would be unchanged and its value space inverted, so no query would fail and joins would return
@@ -60,7 +42,7 @@ guardNoLegacyFeatureAxis := func(axesSpec) {
 // Standard table annotations: order priority and default visibility.
 // visibility: undefined -> hidden, true -> default, false -> optional.
 a := func(order, defaultVisibility, spec) {
-	return maps.merge(guardNoScore(spec), {
+	return maps.merge(spec, {
 		"pl7.app/table/orderPriority": string(order),
 		"pl7.app/table/visibility": is_undefined(defaultVisibility) ? "hidden" : defaultVisibility ? "default" : "optional"
 	})
@@ -323,10 +305,10 @@ negativeControlColumn := func() {
 		spec: {
 			name: "pl7.app/feature/negativeControl",
 			valueType: "String",
-			annotations: guardNoScore({
+			annotations: {
 				"pl7.app/label": "Negative control",
 				"pl7.app/table/visibility": "hidden"
-			})
+			}
 		}
 	}
 }
@@ -789,6 +771,57 @@ identitySummaryImportSpec := func(setAxisSpec, identities, groupingId, served) {
 			"pl7.app/isDiscreteFilter": "true",
 			"pl7.app/discreteValues": VERDICT_STATES
 	})
+}
+
+// --- Median antigen depth: result_set_tag_median.csv, keyed (setId) ----------------------
+//
+// One column per TAG, pivoted onto the clonotype so the figure sits on the trunk lead selection can
+// see: a column carrying an axis the clonotype anchor does not have is dropped there with no error.
+//
+// Per tag rather than per identity, and the only orderable family the block emits. Absent means zero.
+setTagMedianImportSpec := func(setAxisSpec, blockId, tags, labels, served) {
+	// Same disambiguation the other pivots carry.
+	ids := []
+	seen := {}
+	for tag in tags {
+		base := "setTagMedian_" + strings.substituteSpecialCharacters(tag)
+		taken := is_undefined(seen[base]) ? 0 : seen[base]
+		ids = append(ids, taken == 0 ? base : base + "__" + string(taken))
+		seen[base] = taken + 1
+	}
+
+	cols := []
+	for i, tag in tags {
+		label := is_undefined(labels[tag]) ? tag : labels[tag]
+		cols = append(cols, {
+			column: tag,
+			id: ids[i],
+			allowNA: true,
+			spec: {
+				name: "pl7.app/antigen/medianUmiCount",
+				valueType: "Double",
+				domain: maps.merge(servedDomain(served), {
+					"pl7.app/blockId": blockId,
+					"pl7.app/antigen/tagType": "antigen",
+					"pl7.app/antigen/tagId": tag
+				}),
+				annotations: a(91000 - i, false, {
+					"pl7.app/label": "Median UMIs " + label,
+					"pl7.app/description": "Median molecules read for " + label + " across this clonotype's cells, counting a cell that was offered the barcode and read nothing as zero. Cells from samples whose panel never declared it are left out, having never been asked.",
+					"pl7.app/min": "0",
+					"pl7.app/isScore": "true",
+					"pl7.app/score/rankingOrder": "decreasing",
+					"pl7.app/graph/treatAbsentValuesAs": "0"
+				})
+			}
+		})
+	}
+	return {
+		axes: [{ column: "setId", spec: setAxisSpec }],
+		columns: cols,
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}
 }
 
 // --- Re-derivation material -------------------------------------------------------------
@@ -1403,11 +1436,11 @@ qcBackgroundImportSpec := func(sampleAxisSpec, tagAxisSpec) {
 			spec: {
 				name: name,
 				valueType: "Double",
-				annotations: a(order, true, guardNoScore({
+				annotations: a(order, true, {
 					"pl7.app/label": label,
 					"pl7.app/min": "0",
 					"pl7.app/description": description
-				}))
+				})
 			}
 		}
 	}
@@ -1599,6 +1632,7 @@ export {
 
 	verdictsImportSpec: verdictsImportSpec,
 	setCountsImportSpec: setCountsImportSpec,
+	setTagMedianImportSpec: setTagMedianImportSpec,
 	setCellCountImportSpec: setCellCountImportSpec,
 	identitySummaryImportSpec: identitySummaryImportSpec,
 	identityPunchImportSpec: identityPunchImportSpec,

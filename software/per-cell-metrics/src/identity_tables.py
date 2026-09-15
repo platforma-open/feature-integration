@@ -31,6 +31,9 @@ CellKey = tuple[str, str]
 # One column per identity, so this bounds the pivot's WIDTH and not its length. A pMHC panel
 # carries more than a thousand identities and is out of this version's scope.
 IDENTITY_SUMMARY_MAX_IDENTITIES = 10_000
+# The block exports one median p-column per tag, so a panel declaring more than this exports none at
+# all rather than minting a column apiece.
+SET_TAG_MEDIAN_MAX_TAGS = 2_000
 # What joins several grouping columns into one identity key. A scientist may group on more than
 # one column, and the identity is the distinct combination of their values. A panel value
 # containing this separator would let two different combinations produce one key. That is reported

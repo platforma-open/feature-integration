@@ -26,6 +26,7 @@ verdictsSw := assets.importSoftware("@platforma-open/milaboratories.feature-inte
 RESULT_TABLES := [
 	{ out: "verdicts", file: "result_verdicts.csv" },
 	{ out: "setCounts", file: "result_set_counts.csv" },
+	{ out: "setTagMedian", file: "result_set_tag_median.csv" },
 	{ out: "identitySummary", file: "result_identity_summary.csv" },
 	{ out: "identityPunch", file: "result_identity_punch.csv" },
 	{ out: "cellPunch", file: "result_cell_punch.csv" },
