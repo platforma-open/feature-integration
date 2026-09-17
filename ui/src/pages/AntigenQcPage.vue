@@ -275,7 +275,6 @@ watch(
           v-else
           :edges="referenceSpread.edges"
           :weights="referenceSpread.weights"
-          scale="linear"
           :threshold="app.model.data.gateThreshold"
           x-axis-label="Reference reading (counts)"
         />

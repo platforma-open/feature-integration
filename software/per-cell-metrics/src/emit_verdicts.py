@@ -1526,7 +1526,7 @@ def main() -> None:
     listed_readings = [value for key, value in reference.by_cell.items() if cell_list is None or key in cell_list]
     if listed_readings:
         readings = np.asarray(listed_readings, dtype=float)
-        reading_edges = linear_bin_edges(readings)
+        reading_edges = log1p_bin_edges(int(readings.max())) or log1p_edges_for(1)
         spread_bins["referenceReading"] = {
             "edges": reading_edges,
             "weights": bin_values(readings, reading_edges),

@@ -282,9 +282,11 @@ export type TagCountBins = {
     >
   >;
   /**
-   * The run's own two spreads, each on its own LINEAR edges: `score` and `referenceReading`. Linear, unlike
-   * the count bins, because a score is a 0-100 scale and a reference reading is read against a gate typed in
-   * the same units.
+   * The run's own two spreads, each on its own edges: `score` and `referenceReading`.
+   *
+   * `score` is LINEAR, because it is a 0-100 scale and the cutoff is typed in those same units, which a log
+   * axis would put where the reader cannot find it. `referenceReading` is on the SAME log1p grid as the count
+   * bins, because it is a count distribution.
    *
    * One distribution for the whole run, never per sample, because the cutoff and the gate are each one number
    * for the run. A key is absent where the served rung produces no such quantity.

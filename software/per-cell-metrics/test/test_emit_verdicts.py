@@ -2782,8 +2782,11 @@ def test_the_spreads_are_taken_over_the_cell_list_not_over_observed_barcodes(bed
     assert sum(bins["spreads"]["referenceReading"]["weights"]) == 3
 
     # And the readings themselves are the listed cells', all 6: `zzz`'s 999 would widen the edge set.
+    # The grid is `log1p_bin_edges`, so it starts at 0 whatever the readings hold and ends at the first
+    # step above the largest one. Six lands under `expm1(2.0)` = 6.39; 999 would push the top past 1,000.
     edges = bins["spreads"]["referenceReading"]["edges"]
-    assert edges[0] == 6.0 and edges[-1] <= 7.0, edges
+    assert edges[0] == 0.0, edges
+    assert 6.0 < edges[-1] < 7.0, edges
 
 
 def test_the_fitted_backgrounds_are_emitted_at_the_fits_own_grain(tmp_path):
