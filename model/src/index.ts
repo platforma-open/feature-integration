@@ -24,6 +24,11 @@ export { assemblePattern, parsePattern, validatePattern } from "./pattern";
 export type { PatternParts } from "./pattern";
 export { allPresets, getPreset } from "./presets";
 export type { Preset } from "./presets";
+export {
+  QC_MEASUREMENT_DESCRIPTIONS,
+  qcMeasurementDescription,
+  type QcMeasurementDescription,
+} from "./qcDescriptions";
 export type { BlockArgs, BlockData, CsvMeta, GroupingRule, ReferenceSource } from "./types";
 
 // ui-vue does not re-export this factory, and the ui package depends on ui-vue alone.
@@ -210,9 +215,11 @@ export type QcMeasurementStatus = "OK" | "warn" | "alert";
 
 // As emit_verdicts.py writes it into result_qc_by_sample.json.
 export type SampleQcMeasurement = {
-  /** Stable: it is also a value on the `measurement` axis and a p-column name. */
+  /**
+   * Stable: it is also a value on the `measurement` axis and a p-column name. It is what the reader's
+   * words are looked up under -- see `QC_MEASUREMENT_DESCRIPTIONS`.
+   */
   id: string;
-  label: string;
   /** Null where the run could not compute one. `reason` then says why, and is never empty. */
   value: number | null;
   detail: string | null;
@@ -220,8 +227,6 @@ export type SampleQcMeasurement = {
   reason: string | null;
   /** Null where no line stands behind the measurement, or where there is no value to judge. */
   status: QcMeasurementStatus | null;
-  counts: string;
-  implies: string | null;
 };
 
 export type SampleQcReport = {

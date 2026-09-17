@@ -122,13 +122,10 @@ def sample_report_rows(
         entries.append(
             {
                 "id": m.id,
-                "label": m.label,
                 "value": value,
                 "detail": (row.detail if row is not None else "") or None,
                 "reason": reason,
                 "status": None if status is None else status.value,
-                "counts": m.counts,
-                "implies": m.implies,
             }
         )
         readings.append(Reading(status, value))
