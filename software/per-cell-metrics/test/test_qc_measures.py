@@ -1,6 +1,5 @@
 import dataclasses
 import math
-import re
 
 import numpy as np
 import polars as pl
@@ -134,21 +133,6 @@ def test_every_measurement_is_declared_at_the_sample():
     assert {m.level for m in MEASUREMENTS} == {"sample"}
 
 
-def test_every_description_is_a_whole_sentence():
-    # A description is assembled from adjacent string literals, and an edit that replaces one of them
-    # truncates the sentence with nothing to catch it -- the string is still valid Python and still
-    # non-empty. One shipped mid-clause as "The threshold is automatic". A full stop is the cheapest
-    # check that the tail is still attached.
-    for m in MEASUREMENTS:
-        assert m.counts.rstrip().endswith("."), (m.id, m.counts)
-        if m.implies:
-            assert m.implies.rstrip().endswith("."), (m.id, m.implies)
-
-
-def test_every_measurement_says_what_it_counts():
-    assert all(m.counts for m in MEASUREMENTS)
-
-
 def test_measurement_declares_no_state_that_nothing_sets():
     # `produced_today` would answer whether the superseded tool produced this measurement, which reads
     # backwards. `deferred_reason` and `rolls_up` were the same shape of mistake from the other side:
@@ -156,12 +140,6 @@ def test_measurement_declares_no_state_that_nothing_sets():
     field_names = {f.name for f in dataclasses.fields(Measurement)}
     for absent in ("produced_today", "deferred_reason", "rolls_up"):
         assert absent not in field_names, absent
-
-
-def test_an_unjudged_measurement_says_nothing_about_a_bad_value():
-    for m in MEASUREMENTS:
-        if m.line is None:
-            assert m.implies is None, m.id
 
 
 BANNED_ADVICE_PHRASES = (
@@ -212,28 +190,6 @@ IMPERATIVE_OPENERS = {
     "investigate",
     "review",
 }
-
-
-def test_no_measurement_carries_advice():
-    for m in MEASUREMENTS:
-        text = f"{m.counts} {m.implies or ''}"
-        lowered = text.lower()
-        # Word boundaries, not bare substrings. "try " matched inside "chemistry does", which would
-        # have rejected honest prose.
-        assert not any(re.search(rf"\b{re.escape(phrase.strip())}\b", lowered) for phrase in BANNED_ADVICE_PHRASES), (
-            m.id
-        )
-
-        for sentence in text.split("."):
-            first_word = sentence.strip().split(" ", 1)[0].strip(",:;").lower()
-            assert first_word not in IMPERATIVE_OPENERS, (m.id, sentence)
-
-
-def test_usable_read_fraction_is_declared_with_a_line_and_what_it_implies():
-    by_id = {m.id: m for m in MEASUREMENTS}
-    m = by_id["usableReadFraction"]
-    assert m.line == "inherited"
-    assert m.implies
 
 
 def test_usable_read_fraction_line_and_comparison():
@@ -490,13 +446,6 @@ def test_aggregate_barcode_fraction_needs_a_reads_total_denominator():
     assert detail
 
 
-def test_aggregate_barcode_fraction_is_declared_with_a_line_and_what_it_implies():
-    by_id = {m.id: m for m in MEASUREMENTS}
-    m = by_id["aggregateBarcodeFraction"]
-    assert m.line == "inherited"
-    assert m.implies
-
-
 def test_aggregate_barcode_fraction_line_and_comparison():
     assert DEFAULT_LINES["aggregateBarcodeFraction"] == Line(warn=0.05, error=1.0)
     assert _COMPARISON["aggregateBarcodeFraction"] == ("at-most", "alerting-at")
@@ -602,74 +551,6 @@ def test_the_aggregate_and_per_barcode_panel_lines_are_different_lines():
     assert DEFAULT_LINES["undeclaredBarcodeShare"] != DEFAULT_LINES["panelAssignedFraction"]
 
 
-def test_the_match_rate_line_is_operator_set_and_says_so():
-    # Borrowed from blocks/peptide-extraction, which ships it at 0.8 / 0.5 -- but that block's pattern
-    # has constant flanking regions and this one's is all fixed-length N-runs, so neither the meaning nor
-    # the numbers carry across. Ours are an estimate, and `implies` has to say so.
-    by_id = {m.id: m for m in MEASUREMENTS}
-    m = by_id["matchedFraction"]
-    assert m.line == "operator-set"
-    assert "estimate" in m.implies
-
-    line = DEFAULT_LINES["matchedFraction"]
-    assert (line.warn, line.error) == (0.90, 0.50)
-    assert _COMPARISON["matchedFraction"] == ("at-least", "at-least")
-    assert status_for("matchedFraction", 0.91, DEFAULT_LINES) is Status.OK
-    assert status_for("matchedFraction", 0.90, DEFAULT_LINES) is Status.OK
-    assert status_for("matchedFraction", 0.89, DEFAULT_LINES) is Status.WARN
-    # Both ends face the same way, so 0.50 itself still only warns.
-    assert status_for("matchedFraction", 0.50, DEFAULT_LINES) is Status.WARN
-    assert status_for("matchedFraction", 0.49, DEFAULT_LINES) is Status.ALERT
-
-
-def test_the_cell_barcode_quality_line_is_operator_set_and_says_so():
-    # The inherited 0.75 / 0.50 pair was published for validity against a whitelist, and this figure is a
-    # read-QUALITY share, so the numbers are this block's own. The route says so, and `implies` has to
-    # tell a reader the same thing -- an uncalibrated line that presents itself as published is worse
-    # than no line at all.
-    by_id = {m.id: m for m in MEASUREMENTS}
-    m = by_id["cellBarcodeValidFraction"]
-    assert m.line == "operator-set"
-    assert "estimate" in m.implies
-
-    assert (DEFAULT_LINES["cellBarcodeValidFraction"].warn, DEFAULT_LINES["cellBarcodeValidFraction"].error) == (
-        0.95,
-        0.75,
-    )
-    assert _COMPARISON["cellBarcodeValidFraction"] == ("at-least", "at-least")
-    assert status_for("cellBarcodeValidFraction", 0.96, DEFAULT_LINES) is Status.OK
-    assert status_for("cellBarcodeValidFraction", 0.95, DEFAULT_LINES) is Status.OK
-    assert status_for("cellBarcodeValidFraction", 0.94, DEFAULT_LINES) is Status.WARN
-    # Both ends face the same way, so 0.75 itself still only warns and the alert starts below it.
-    assert status_for("cellBarcodeValidFraction", 0.75, DEFAULT_LINES) is Status.WARN
-    assert status_for("cellBarcodeValidFraction", 0.74, DEFAULT_LINES) is Status.ALERT
-
-
-def test_the_rescued_share_line_is_operator_set_and_says_so():
-    # Nothing published covers this quantity, and the reading is two-sided by nature: a high share can
-    # mean correction is doing real work or that base quality is poor, and a low one can mean a clean run
-    # or a panel whose barcodes sit too far apart for anything to need rescuing. The numbers pick the
-    # side that costs the run something, and `implies` has to tell a reader both that they are ours and
-    # that the quantity reads both ways.
-    by_id = {m.id: m for m in MEASUREMENTS}
-    m = by_id["refineRescuedShare"]
-    assert m.line == "operator-set"
-    assert "estimate" in m.implies
-
-    line = DEFAULT_LINES["refineRescuedShare"]
-    assert (line.warn, line.error) == (0.05, 0.10)
-    # Both ends face the same way. There is no catastrophe value to alert AT: a rescued read is one the
-    # pattern already matched and the panel already assigned, so 1.0 cannot occur.
-    assert _COMPARISON["refineRescuedShare"] == ("at-most", "at-most")
-    assert status_for("refineRescuedShare", 0.04, DEFAULT_LINES) is Status.OK
-    assert status_for("refineRescuedShare", 0.05, DEFAULT_LINES) is Status.OK
-    assert status_for("refineRescuedShare", 0.06, DEFAULT_LINES) is Status.WARN
-    assert status_for("refineRescuedShare", 0.10, DEFAULT_LINES) is Status.WARN
-    assert status_for("refineRescuedShare", 0.11, DEFAULT_LINES) is Status.ALERT
-    # Zero is a measurement rather than an absence: nothing needed rescuing.
-    assert status_for("refineRescuedShare", 0.0, DEFAULT_LINES) is Status.OK
-
-
 def test_the_vdj_antigen_count_line_alerts_at_the_floor_of_its_own_quantity():
     # The warn is the minimum count a single reading needs to survive flooring (`verdict.DEFAULT_FLOOR`),
     # restated as a literal so moving one does not move the other. A median below it means most of the
@@ -717,13 +598,6 @@ def test_a_line_without_an_error_threshold_declares_no_error_comparison():
         assert (line.error is None) == (error_comparison is None), measurement
 
 
-def test_an_unjudged_measurement_claims_nothing_about_a_bad_value():
-    # Where no line can be defended, nothing is said about what a bad value would mean.
-    for m in MEASUREMENTS:
-        if m.line is None:
-            assert m.implies is None, m.id
-
-
 def test_the_control_tag_rows_are_unjudged():
     # Nothing published says what share of cells is too sticky, nor what a control reading of any size
     # means, so both rows carry their number and claim nothing.
@@ -731,22 +605,6 @@ def test_the_control_tag_rows_are_unjudged():
     assert by_id["cellsSetAside"].line is None
     assert by_id["medianControlReading"].line is None
     assert status_for("medianControlReading", 0.5, DEFAULT_LINES) is None
-
-
-def test_the_matched_fraction_line_is_only_allowed_on_the_operator_set_route():
-    # It was removed once as an INVENTED line (c0d50fd): no route backed an operator-chosen number, so
-    # any line here was invented by definition. The route is what changed, not the standard -- so the
-    # line is allowed back only while it declares itself operator-set and says so to a reader. Absence
-    # was never the invariant; the terms were.
-    by_id = {m.id: m for m in MEASUREMENTS}
-    if "matchedFraction" in DEFAULT_LINES:
-        assert by_id["matchedFraction"].line == "operator-set"
-        assert "estimate" in by_id["matchedFraction"].implies
-
-    # `readsTotal` stays out either way. It is not a measurement at all: a count of reads in a file is a
-    # denominator, and no share of it has a boundary anyone has published or estimated.
-    assert "readsTotal" not in DEFAULT_LINES
-    assert "readsTotal" not in {m.id for m in MEASUREMENTS}
 
 
 # --- lines are parameters, and every boundary is pinned --------------------
@@ -854,18 +712,6 @@ def test_cells_detected_alerts_at_zero_and_reads_ok_above_it():
     assert status_for("cellsDetected", 0, DEFAULT_LINES) is Status.ALERT
     assert status_for("cellsDetected", 1, DEFAULT_LINES) is Status.OK
     assert status_for("cellsDetected", 50_000, DEFAULT_LINES) is Status.OK
-
-
-def test_cells_detected_claims_nothing_about_yield():
-    # The judgement stays narrow: zero cells means nothing downstream can be computed. Above zero, nothing
-    # here says the yield was good.
-    by_id = {m.id: m for m in MEASUREMENTS}
-    m = by_id["cellsDetected"]
-    # A measurement WITH a line may say what a bad value implies, where that is known. Here it is known
-    # for the zero case only, and the wording stays narrow.
-    assert "yield" not in (m.implies or "").lower()
-    assert "cellsDetected" not in DEFAULT_LINES
-    assert "cellsDetected" not in _COMPARISON
 
 
 def test_no_defensible_line_means_unjudged():

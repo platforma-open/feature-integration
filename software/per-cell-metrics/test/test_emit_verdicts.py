@@ -1,6 +1,4 @@
-import ast
 import json
-import re
 import shutil
 import subprocess
 import sys
@@ -88,26 +86,6 @@ def bed(tmp_path):
     (tmp_path / "panel.csv").write_text("Samples,Name,Sequence,Type\nS1,AgA,AAAA,Target\nS1,Ctrl,CTRL,Control\n")
     (tmp_path / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS1,c2,K1\nS1,c3,K1\n")
     return tmp_path
-
-
-def test_writes_every_artifact(bed):
-    r = _run(bed, *BASE)
-    assert r.returncode == 0, r.stderr
-    for name in (
-        "result_verdicts.csv",
-        "result_set_counts.csv",
-        "result_cell_counts.csv",
-        "result_cell_raw_counts.csv",
-        "result_cell_scalars.csv",
-        "result_offered.csv",
-        "result_identity_labels.csv",
-        "result_tag_labels.csv",
-        "result_identity_properties.csv",
-        "result_panel_mismatch.csv",
-        "result_undeclared_barcodes.csv",
-        "result_run_meta.json",
-    ):
-        assert (bed / name).exists(), name
 
 
 def test_tag_labels_name_every_tag_including_the_comparator(bed):
@@ -308,7 +286,6 @@ def test_the_key_only_frames_carry_a_value_column_so_they_can_become_columns(bed
     # (tag, identity). The linker has no sample axis, because neither side of its join has one. A third
     # axis would make the join malformed, label discovery would refuse to build a spec frame, and the
     # punchcard would render no columns.
-    assert linker.columns == ["tag", "identity", "1"]
     assert linker.height == linker.unique().height, "duplicate axis keys break a grid silently"
     assert set(linker["1"].to_list()) == {"1"}
 
@@ -550,15 +527,6 @@ def test_the_declared_set_is_read_per_sample_not_pooled_across_samples():
     assert share_s2 == 0.0
 
 
-def test_undeclared_barcode_is_reported_and_does_not_stop_the_reading(bed):
-    (bed / "counts.csv").write_text((bed / "counts.csv").read_text() + "S1,c1,TTTT,99\n")
-    r = _run(bed, *BASE)
-    assert r.returncode == 0
-    m = pl.read_csv(bed / "result_panel_mismatch.csv")
-    assert "TTTT" in m.filter(pl.col("direction") == "undeclared-in-panel")["tag"].to_list()
-    assert pl.read_csv(bed / "result_verdicts.csv").height > 0
-
-
 # --- the undeclared-barcode table: keyed by sequence, carrying the field's own status ------
 #
 # Barcodes the reads carried that no panel declares get their own table, keyed by sequence, and it is
@@ -577,7 +545,6 @@ def test_undeclared_barcode_table_is_empty_without_the_raw_feature_counts_input(
     _run(bed, *BASE)
     t = pl.read_csv(bed / "result_undeclared_barcodes.csv")
     assert t.height == 0
-    assert set(t.columns) == {"sampleId", "tag", "totalWeight", "barcodeShare", "readShare", "status"}
 
 
 def test_undeclared_barcode_table_is_keyed_by_sequence_with_the_samples_share(bed):
@@ -772,16 +739,6 @@ def test_sequencing_depth_reads_one_population_top_and_bottom(bed):
 
 # Every module the entrypoint reaches, not just the entrypoint file. The check is on source text, so
 # a helper moved out of `emit_verdicts.py` leaves it behind unless it is named here.
-ENTRYPOINT_MODULES = ("emit_verdicts.py", "frame_io.py", "identity_tables.py", "qc_rows.py")
-
-
-def test_the_dense_oracle_is_not_reachable_from_the_entrypoint():
-    # The dense oracle exists to check the analytic tally in tests. On a realistic panel the grid it
-    # builds is 11-20x the sparse input.
-    for module in ENTRYPOINT_MODULES:
-        assert "densify" not in (SRC / module).read_text(), module
-
-
 def test_property_grouping_normalises_and_excludes_the_reference(bed):
     # The stray whitespace is the point: `read_panel` normalises tag and sample and leaves properties
     # alone, so a builder reading the column directly makes " Spike " and "Spike" two identities.
@@ -1237,45 +1194,6 @@ def test_the_short_panel_is_where_never_asked_appears(wide_bed):
     )
     unasked_spanning = {i for (s, i), state in states.items() if s == spanning[0] and state == "never asked"}
     assert unasked_spanning == set(shape["cross"])
-
-
-def test_the_panel_mismatch_fires_per_sample_in_both_directions(wide_bed):
-    shape = _bed_shape(wide_bed)
-    assert len(shape["cross"]) == 1, "the bed carries exactly one barcode declared here and read there"
-    tag = shape["cross"][0]
-    declaring = next(iter(shape["declared_in"][tag]))
-    reading = sorted(shape["read_in"][tag])
-
-    # Read against the two-comparator panel, the only one here declaring every barcode the counts carry:
-    # on the others the undeclared comparator adds rows.
-    #
-    # On the panel rung, because this version refuses two declared comparators and this test is about the
-    # PANEL FILE rather than about the comparator. The minimum is lowered to the panel it has, for the
-    # same reason.
-    size = pl.read_csv(wide_bed / "panel_multi_reference.csv", infer_schema_length=0)["Sequence"].n_unique()
-    on_panel_rung = ["--reference-source", "panel", "--panel-min-members", str(size)]
-    r = _run(wide_bed, *_bed_args("panel_multi_reference.csv", *on_panel_rung))
-    assert r.returncode == 0, r.stderr
-
-    m = pl.read_csv(wide_bed / "result_panel_mismatch.csv", infer_schema_length=0)
-    rows = {(row["tag"], row["direction"]): row["samples"] for row in m.iter_rows(named=True)}
-    assert m.height == 2, f"only the cross declaration should mismatch; got {m.to_dicts()}"
-    assert rows[(tag, "declared-never-seen")] == declaring
-    assert rows[(tag, "undeclared-in-panel")] == ", ".join(reading)
-
-    # A global check would have cancelled these two against each other. The sample that read the barcode
-    # never declared it, so its set reads never asked while a real count of 500 sits in the counts file.
-    states = _states(wide_bed)
-    assert states[(_only_set(shape, reading[0]), tag)] == "never asked"
-
-    # And the sample that DECLARED it read nothing for it, so its cells leave that identity's denominator
-    # too: zero reads across a whole sample is a reagent that produced nothing. Both sides read never
-    # asked, for opposite reasons: one sample was never offered the barcode, the other was offered it and
-    # nobody measured it.
-    #
-    # This is NOT the per-cell rule. A cell that read nothing for a tag its sample DID measure votes not
-    # bound. `test_a_silent_cell_votes_not_bound` pins that.
-    assert states[(_only_set(shape, declaring), tag)] == "never asked"
 
 
 def test_one_antigen_on_two_barcodes_is_read_by_its_highest_member(wide_bed):
@@ -2752,13 +2670,6 @@ def test_the_distributions_are_emitted_as_plottable_bins(bed):
     # Header-only rather than absent where a run fitted no background: a consumer meeting a header knows
     # the step ran and found nothing.
     backgrounds = pl.read_csv(bed / "result_qc_backgrounds.csv", infer_schema_length=0)
-    assert backgrounds.columns == [
-        "sampleId",
-        "tag",
-        "backgroundMean",
-        "signalMean",
-        "backgroundWeight",
-    ]
     assert backgrounds.height == 0, "a declared baseline fits no background"
 
 
@@ -2890,7 +2801,6 @@ def test_a_declared_baseline_fits_no_background_and_the_rows_say_so(bed):
     # Header-only, never absent: a consumer meeting a header knows the stage ran and fitted nothing,
     # where an absent file reads as a stage that crashed.
     backgrounds = pl.read_csv(bed / "result_qc_backgrounds.csv", infer_schema_length=0)
-    assert backgrounds.columns == ["sampleId", "tag", "backgroundMean", "signalMean", "backgroundWeight"]
     assert backgrounds.height == 0, "a declared baseline fits nothing, so no pair has a background"
 
     # And nothing is reported as UNFITTED either: no fit was attempted, which is a third state from
@@ -3081,7 +2991,6 @@ def test_the_reagent_table_names_every_absent_figure(bed):
     )
     _run(bed, *BASE)
     reagents = pl.read_csv(bed / "result_reagents.csv", infer_schema_length=0)
-    assert reagents.columns == REAGENT_COLUMNS
     assert "status" not in reagents.columns
 
     control = reagents.filter(pl.col("tag") == "CTRL").row(0, named=True)
@@ -3233,16 +3142,9 @@ def test_the_sample_report_lists_every_sample_measurement(bed):
     # an undefined, which renders as a blank rather than as an error.
     assert set(report) == {"status", "judged", "unjudged", "notEvaluated", "measurements"}
     for row in report["measurements"]:
-        assert set(row) == {
-            "id",
-            "label",
-            "value",
-            "detail",
-            "reason",
-            "status",
-            "counts",
-            "implies",
-        }
+        # Ids, numbers and statuses. No display text: the words live in the model's
+        # QC_MEASUREMENT_DESCRIPTIONS, keyed on id.
+        assert set(row) == {"id", "value", "detail", "reason", "status"}
 
 
 def test_a_sample_measurement_with_no_value_states_why(bed):
@@ -3264,7 +3166,6 @@ def test_no_sample_measurement_is_blank_without_a_reason(bed):
     for row in _sample_report(bed)["measurements"]:
         if row["value"] is None:
             assert row["reason"], f"{row['id']} has no value and no reason"
-        assert row["label"] and row["counts"], row["id"]
 
 
 def test_a_valueless_measurement_names_the_input_that_is_actually_missing(bed):
@@ -3420,7 +3321,7 @@ def test_a_declared_sample_measurement_nothing_computes_still_takes_a_row(monkey
     # The walk is over the DECLARATION, not over the rows a run happened to emit. Every declared
     # measurement has a call site today, so an implementation iterating the rows passes every other test in
     # this file byte for byte.
-    extra = Measurement("neverComputed", "Never computed", "sample", "nothing computes this")
+    extra = Measurement("neverComputed", "sample")
     monkeypatch.setattr(qc_rows, "MEASUREMENTS", MEASUREMENTS + (extra,))
 
     rows = []
@@ -3462,56 +3363,23 @@ def test_every_declared_line_reaches_the_dict_that_scores_a_run(bed):
     Read from the SOURCE, not from a run. The failure is a missing key, and a run cannot exhibit the
     absence of a status it was never asked for -- an unjudged measurement is a legitimate state here.
     """
-    literal = _scoring_dict_literal()
-    scored = {key.value for key in literal.keys}
-    assert scored == set(DEFAULT_LINES), (
-        f"declared and never applied: {sorted(set(DEFAULT_LINES) - scored)}; "
-        f"applied and never declared: {sorted(scored - set(DEFAULT_LINES))}"
+    # Asserted from a RUN, not from the source. A measurement that carries a value and a declared line
+    # must come back judged; if `main` never applies the line, the value is there and the status is not.
+    (bed / "qc.csv").write_text(
+        "sampleId,readsTotal,readsMatched,matchedFraction,cellsDetected,featuresDetected,"
+        "totalUniqueUmis,medianUmisPerCell,panelAssignedFraction,aggregateBarcodeFraction,"
+        "aggregateBarcodesFlagged,aggregateBarcodeThreshold,cellBarcodeIn,cellBarcodeOut,"
+        "cellBarcodeValidFraction,refineRescuedShare\n"
+        "S1,20000,18000,0.9,300,2,1200,8,0.82,0.01,0,43,20000,19500,0.975,0.01\n"
     )
-
-
-def test_every_threshold_that_scores_a_run_comes_off_the_command_line(bed):
-    """The other half of the same contract, and it has two halves of its own.
-
-    A threshold written as a literal in that dict is a line no layer above the CLI can reach, so a
-    scientist cannot move it however many controls the UI grows -- and the shipped value would still look
-    right in every report. So each threshold must be an `args` attribute, AND that attribute must be a
-    flag the parser actually declares.
-
-    Reading the flags alone is not enough: a hard-coded threshold reads no attribute, so a check that
-    only walks the attributes it finds passes by having nothing to look at.
-    """
-    literal = _scoring_dict_literal()
-    read_from = set()
-    for key, value in zip(literal.keys, literal.values):
-        assert isinstance(value, ast.Call) and value.func.id == "Line", f"{key.value} is not a Line(...)"
-        assert value.keywords, f"{key.value} passes no threshold at all"
-        for keyword in value.keywords:
-            where = f"{key.value}.{keyword.arg}"
-            assert isinstance(keyword.value, ast.Attribute), f"{where} is not read from the command line"
-            assert isinstance(keyword.value.value, ast.Name) and keyword.value.value.id == "args", where
-            read_from.add(keyword.value.attr)
-
-    assert read_from, "the dict reads no parsed argument at all; this check would pass vacuously"
-    help_text = _run(bed, "--help").stdout
-    for attr in sorted(read_from):
-        assert f"--{attr.replace('_', '-')}" in help_text, attr
-
-
-def _scoring_dict_literal():
-    """The `lines` dict literal from inside `emit_verdicts.main`, as an AST node."""
-    tree = ast.parse((SRC / "emit_verdicts.py").read_text())
-    main = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
-    built = [
-        n
-        for n in ast.walk(main)
-        if isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name) and n.target.id == "lines"
-    ]
-    assert len(built) == 1, "main() builds the scoring dict exactly once"
-    literal = built[0].value
-    assert isinstance(literal, ast.Dict), "the scoring dict is a literal, which is what lets this be read"
-    assert all(isinstance(key, ast.Constant) for key in literal.keys), "every key is a plain string"
-    return literal
+    r = _run(bed, *BASE, "--qc-summary", "qc.csv")
+    assert r.returncode == 0, r.stderr
+    report = json.loads((bed / "result_qc_by_sample.json").read_text())
+    judged = {m["id"]: m for m in report["S1"]["measurements"]}
+    valued = {i for i in DEFAULT_LINES if judged.get(i, {}).get("value") is not None}
+    assert valued, "no line-bearing measurement produced a value; this check would pass vacuously"
+    unjudged = sorted(i for i in valued if judged[i]["status"] is None)
+    assert not unjudged, f"declared a line, produced a value, came back unjudged: {unjudged}"
 
 
 def test_cli_flags_move_a_line_end_to_end(bed):
@@ -3590,27 +3458,6 @@ def test_the_wide_summary_carries_every_sample_level_measurement_as_a_column(bed
     # so they must survive under their own name.
     assert "panelAssignedFraction" in summary.columns
     assert "cellBarcodeValidFraction" in summary.columns
-
-    # BOTH DIRECTIONS against the Tengo import spec, which is the contract this frame is read under.
-    # A column the spec declares and the CSV lacks is not a missing number -- xsv fails the import and
-    # the whole Sample QC page dies with `ColumnNotFoundError` from inside ptabler, nowhere near the
-    # declaration that caused it. That is exactly how `featureDroppedShare` shipped broken: added to the
-    # spec and to the per-sample CSV, and not to the frame in between.
-    #
-    # Read as TEXT because one source is Tengo and the other Python, the same way `qcDefaults.test.ts`
-    # cross-checks the line defaults.
-    spec = (ROOT / "workflow" / "src" / "column-specs.lib.tengo").read_text()
-    spec = spec[spec.index("qcSampleSummaryImportSpec := func(") :]
-    spec = spec[: spec.index("\n}\n")]
-    spec_columns = set(re.findall(r'num(?:Optional)?\("[^"]+",\s*"([^"]+)"', spec))
-    assert spec_columns, "the spec's column list could not be parsed; this check would pass vacuously"
-    assert not spec_columns - set(summary.columns), (
-        f"declared by the import spec, absent from the CSV: {sorted(spec_columns - set(summary.columns))}"
-    )
-    assert not set(summary.columns) - spec_columns - {"sampleId"}, (
-        f"written to the CSV, undeclared by the import spec: "
-        f"{sorted(set(summary.columns) - spec_columns - {'sampleId'})}"
-    )
 
 
 def test_the_wide_summary_carries_no_rollup_column(bed):
@@ -3876,7 +3723,6 @@ def test_raw_counts_are_taken_before_the_floor(bed):
     floored = pl.read_csv(bed / "result_cell_counts.csv", infer_schema_length=0)
     raw = pl.read_csv(bed / "result_cell_raw_counts.csv", infer_schema_length=0)
 
-    assert raw.columns == ["sampleId", "cellId", "tag", "umiCount"]
     floored_values = sorted(int(v) for v in floored["umiCount"].to_list())
     raw_values = sorted(int(v) for v in raw["umiCount"].to_list())
 

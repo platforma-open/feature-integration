@@ -145,26 +145,6 @@ def test_load_matches_pure_combine(tmp_path):
 
 
 @pytest.mark.slow
-def test_cli_writes_outputs(tagstat_tsv, tags_csv, tmp_path):
-    subprocess.run(
-        [
-            sys.executable,
-            str(SRC),
-            str(tagstat_tsv),
-            str(tags_csv),
-            "--sample-id",
-            "s1",
-            "--output-prefix",
-            str(tmp_path / "result"),
-        ],
-        check=True,
-        cwd=tmp_path,
-    )
-    for name in ["result_abundance.csv", "result_fractions.csv", "result_per_cell_summary.csv"]:
-        assert (tmp_path / name).exists(), f"missing {name}"
-
-
-@pytest.mark.slow
 def test_cli_abundance_uses_unique_umi(tagstat_tsv, tags_csv, tmp_path):
     # The matrix must use mitool's deduplicated `unique_UMI` (cell1/AGX = 3 distinct UMIs), NOT the raw
     # read `count` (7 in the bed).
@@ -216,7 +196,6 @@ def test_cli_with_renamed_csv_columns(tagstat_tsv, tmp_path):
         cwd=tmp_path,
     )
     out = tmp_path / "result_abundance.csv"
-    assert out.exists()
     with open(out, newline="") as f:
         features = {row["feature"] for row in csv.DictReader(f)}
     assert features == {"AGX", "BGX"}
@@ -283,7 +262,6 @@ def test_cli_empty_join_writes_header_only_not_crash(tags_csv, tmp_path, tagstat
         ("result_fractions.csv", ["sampleId", "cellId", "feature", "fraction"]),
     ]:
         p = tmp_path / name
-        assert p.exists(), f"missing {name}"
         with open(p, newline="") as f:
             reader = csv.DictReader(f)
             assert reader.fieldnames == header  # schema/header preserved

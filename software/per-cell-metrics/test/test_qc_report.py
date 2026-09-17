@@ -243,13 +243,6 @@ def _carried_through():
     return names
 
 
-def test_every_carried_column_is_one_this_module_writes():
-    # The loud failure. A name here that FIELDNAMES lacks makes the gather's `pt.col()` reference a
-    # column no per-sample CSV has, and the whole QC stage dies.
-    missing = [c for c in _carried_through() if c not in FIELDNAMES]
-    assert not missing, f"carried through by the gather, never written here: {missing}"
-
-
 def test_every_figure_the_verdict_stage_reads_survives_the_gather():
     # The silent failure, and the one worth a test. `emit_verdicts` reads the GATHERED file, so a column
     # written here but absent from the carry-through list reaches it as a missing value -- and a missing

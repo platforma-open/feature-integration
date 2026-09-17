@@ -80,7 +80,6 @@ from panel import (
     default_grouping,
     identity_universe,
     offered_identities,
-    panel_read_mismatch,
     property_columns,
     read_panel,
 )
@@ -981,35 +980,6 @@ def main() -> None:
         schema={"sampleId": pl.String, "panelLabel": pl.String},
     )
     _write_sorted(sample_panel, f"{prefix}_sample_panel.csv", ["sampleId"])
-
-    # POTENTIALLY DEAD CODE, left for a separate pass. No p-column import reads
-    # result_panel_mismatch.csv any more and no view renders it: the check's one reachable direction --
-    # a declared barcode no read carried -- is the reagent table's `Seen in 0/N`. Deleting this,
-    # `panel_read_mismatch` in panel.py and their tests is a Python-only cleanup.
-    #
-    # Both directions of the panel-versus-reads check, re-keyed onto the panel: a per-tag failure is a
-    # property of the declared tag set rather than of any one sample carrying it. The samples reporting
-    # it travel in the row.
-    #
-    # `seen` is drawn from the counts, whose feature barcodes were already snapped onto the panel by
-    # refine-tags. So only the declared-never-seen direction can produce a row. Reporting an undeclared
-    # barcode needs a pre-correction source.
-    seen = counts.select("sampleId", "tag").unique()
-    unknown_panel = _panel_id(frozenset())
-    mismatch_rows: dict[tuple[str, str, str], set[str]] = {}
-    for row in panel_read_mismatch(panel, seen).iter_rows(named=True):
-        # In the unkeyed case every row comes back under "*", which is not a sample id: the declaration
-        # really is global, so it reports against every sample in the run.
-        affected = samples if row["sample"] == ANY_SAMPLE else [row["sample"]]
-        for sample in affected:
-            key = (panel_of_sample.get(sample, unknown_panel), row["tag"], row["direction"])
-            mismatch_rows.setdefault(key, set()).add(sample)
-    mismatch = pl.DataFrame(
-        [(panel_id, tag, direction, ", ".join(sorted(s))) for (panel_id, tag, direction), s in mismatch_rows.items()],
-        orient="row",
-        schema={"panelId": pl.String, "tag": pl.String, "direction": pl.String, "samples": pl.String},
-    )
-    _write_sorted(mismatch, f"{prefix}_panel_mismatch.csv", ["panelId", "direction", "tag"])
 
     # ---- the quality measurements -------------------------------------------------
 

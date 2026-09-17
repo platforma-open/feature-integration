@@ -3,6 +3,7 @@ import random
 
 import polars as pl
 import pytest
+from dense_oracle import densify
 from scipy.stats import beta
 from verdict import (
     BOUND_CUTOFF,
@@ -16,7 +17,6 @@ from verdict import (
     apply_floor,
     cells_reading_nothing,
     combine_tags_to_identities,
-    densify,
     gate_cells,
     read_states,
     reference_by_cell,
@@ -377,21 +377,6 @@ def test_state_has_exactly_four_members():
     assert {s.value for s in State} == {"bound", "not bound", "never asked", "unreliable"}
 
 
-def test_densify_gives_a_silent_cell_a_real_zero():
-    counts = _ident([("S1", "c1", "A", 7)])
-    cells = _cells([("S1", "c1")])
-    out = densify(counts, cells, offered_by_sample={"S1": {"A", "B"}}).sort("identity")
-    assert out["identity"].to_list() == ["A", "B"]
-    assert out["umiCount"].to_list() == [7, 0]  # B was asked and silent
-
-
-def test_densify_does_not_invent_unoffered_identities():
-    counts = _ident([("S1", "c1", "A", 7)])
-    cells = _cells([("S1", "c1")])
-    out = densify(counts, cells, offered_by_sample={"S1": {"A"}})
-    assert out["identity"].to_list() == ["A"]
-
-
 def test_identity_reading_is_the_highest_not_the_sum():
     df = _counts([("S1", "c1", "AAAA", 10), ("S1", "c1", "CCCC", 7)])
     out = combine_tags_to_identities(df, {("AAAA", "S1"): "A", ("CCCC", "S1"): "A"})
@@ -482,15 +467,6 @@ def test_a_gated_cell_reports_the_gate_even_when_its_reference_is_very_low():
     assert out["state"].to_list() == [State.UNRELIABLE.value]
     reason = out["unreliableReason"].to_list()[0]
     assert reason == UnreliableReason.GATED
-
-
-def test_densify_handles_a_sample_stained_with_nothing():
-    # A non-empty offered map whose every value is empty contributes no block. Guarding on the map rather
-    # than the assembled blocks raised here.
-    out = densify(_ident([]), _cells([("S1", "c1")]), offered_by_sample={"S1": set()})
-    assert out.height == 0
-    assert out.schema["identity"] == pl.String
-    assert out.schema["umiCount"] == pl.Int64
 
 
 def test_never_asked_is_not_produced_here():

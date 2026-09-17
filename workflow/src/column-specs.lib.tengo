@@ -1119,8 +1119,7 @@ offeredImportSpec := func(sampleAxisSpec, identityAxisSpec) {
 // Deliberately NOT keyed by sample. Neither side carries a sample: verdicts are (set, identity) over
 // clonotypes spanning whatever samples their cells came from, and the tag-keyed figures are run-level. A
 // sample axis here is an axis no participating table has, which makes the join malformed, and SDK label
-// discovery then refuses to build a spec frame over it. Where a sample-level distinction is wanted,
-// panelMismatch keys by PANEL, a declared tag set.
+// discovery then refuses to build a spec frame over it.
 //
 // Several rows per tag are expected. The SAME pair must not appear twice: duplicate axis keys break a grid
 // silently, so the emitter writes distinct pairs.
@@ -1279,50 +1278,6 @@ samplePanelImportSpec := func(sampleAxisSpec) {
 				})
 			}
 		}],
-		storageFormat: "Parquet",
-		partitionKeyLength: 0
-	}
-}
-
-// --- Panel versus reads: result_panel_mismatch.csv ------------------------------------------
-//
-// POTENTIALLY DEAD. Nothing imports this frame any more: the check's one reachable direction -- a declared
-// barcode no read carried -- is the reagent table's `Seen in 0/N`. The spec is left in place and exported
-// so re-importing it is a one-line change.
-//
-// Keyed (panelId, tag), because a per-tag failure is a property of the declared tag set rather than of any
-// one sample carrying it. The samples that reported it travel in the row.
-panelMismatchImportSpec := func(panelAxisSpec, tagAxisSpec) {
-	return {
-		axes: [
-			{ column: "panelId", spec: panelAxisSpec },
-			{ column: "tag", spec: tagAxisSpec }
-		],
-		columns: [
-			{
-				column: "direction",
-				id: "mismatchDirection",
-				spec: {
-					name: "pl7.app/antigen/panelMismatchDirection",
-					valueType: "String",
-					annotations: a(74000, true, {
-						"pl7.app/label": "Mismatch",
-						"pl7.app/isDiscreteFilter": "true",
-						"pl7.app/discreteValues": MISMATCH_DIRECTIONS,
-						"pl7.app/description": "'declared-never-seen': the panel declares this tag and no read carried it. 'undeclared-in-panel': reads carried a tag the panel never declared. Both are checked because either alone hides half the mismatch."
-					})
-				}
-			},
-			{
-				column: "samples",
-				id: "mismatchSamples",
-				spec: {
-					name: "pl7.app/antigen/panelMismatchSamples",
-					valueType: "String",
-					annotations: a(73000, true, { "pl7.app/label": "Samples affected" })
-				}
-			}
-		],
 		storageFormat: "Parquet",
 		partitionKeyLength: 0
 	}
@@ -1649,7 +1604,6 @@ export {
 	identityPropertyImportSpec: identityPropertyImportSpec,
 	panelLabelsImportSpec: panelLabelsImportSpec,
 	samplePanelImportSpec: samplePanelImportSpec,
-	panelMismatchImportSpec: panelMismatchImportSpec,
 	undeclaredBarcodeImportSpec: undeclaredBarcodeImportSpec,
 	qcBackgroundImportSpec: qcBackgroundImportSpec,
 	qcReagentImportSpec: qcReagentImportSpec,

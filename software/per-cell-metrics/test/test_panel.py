@@ -5,7 +5,6 @@ from panel import (
     default_grouping,
     identity_universe,
     offered_identities,
-    panel_read_mismatch,
     property_columns,
     read_panel,
 )
@@ -295,94 +294,9 @@ def test_a_tag_outside_the_grouping_is_skipped_not_an_error():
 
 def _counts(rows):
     # House shape for a reads/counts table: one row per (sample, cell, tag) with the UMI count.
-    # panel_read_mismatch only needs sampleId and tag, but the table it is handed always carries all four.
     return pl.DataFrame(
         rows, orient="row", schema={"sampleId": pl.String, "cellId": pl.String, "tag": pl.String, "umiCount": pl.Int64}
     )
-
-
-def test_declared_tag_never_seen_is_reported_per_sample():
-    panel = pl.DataFrame({"tag": ["AAAA", "GGGG"], "sample": ["S1", "S1"], "Name": ["a", "g"]})
-    seen = _counts([("S1", "c1", "AAAA", 1)])
-    out = panel_read_mismatch(panel, seen)
-    row = out.filter(pl.col("direction") == "declared-never-seen").row(0, named=True)
-    assert row["tag"] == "GGGG" and row["sample"] == "S1"
-
-
-def test_undeclared_barcode_is_reported_per_sample():
-    panel = pl.DataFrame({"tag": ["AAAA"], "sample": ["S1"], "Name": ["a"]})
-    seen = _counts([("S1", "c1", "AAAA", 1), ("S1", "c1", "TTTT", 1)])
-    out = panel_read_mismatch(panel, seen)
-    row = out.filter(pl.col("direction") == "undeclared-in-panel").row(0, named=True)
-    assert row["tag"] == "TTTT" and row["sample"] == "S1"
-
-
-def test_a_barcode_declared_in_another_sample_does_not_pass_silently():
-    # The failure this whole check exists to prevent: AAAA is declared for S3 only. It is read in S1,
-    # where nothing declares it. A global check would let S3's declaration excuse it there too.
-    panel = pl.DataFrame({"tag": ["CCCC", "AAAA"], "sample": ["S1", "S3"], "Name": ["c", "a"]})
-    seen = _counts([("S1", "c1", "CCCC", 1), ("S1", "c1", "AAAA", 1)])
-    out = panel_read_mismatch(panel, seen)
-    undeclared = out.filter(pl.col("direction") == "undeclared-in-panel")
-    assert ("S1", "AAAA") in list(zip(undeclared["sample"], undeclared["tag"], strict=True))
-
-
-def test_a_star_panel_is_satisfied_by_reads_in_any_sample():
-    panel = pl.DataFrame({"tag": ["AAAA"], "sample": ["*"], "Name": ["a"]})
-    seen = _counts([("S1", "c1", "AAAA", 1), ("S2", "c1", "AAAA", 1)])
-    assert panel_read_mismatch(panel, seen).height == 0
-
-
-def test_mismatch_never_raises():
-    panel = pl.DataFrame({"tag": ["AAAA"], "sample": ["S1"], "Name": ["a"]})
-    seen = _counts([("S9", "c1", "ZZZZ", 1)])
-    rows = {(r["sample"], r["tag"], r["direction"]) for r in panel_read_mismatch(panel, seen).to_dicts()}
-    assert rows == {
-        ("S1", "AAAA", "declared-never-seen"),
-        ("S9", "ZZZZ", "undeclared-in-panel"),
-    }
-
-
-def test_a_sample_with_reads_but_no_panel_rows_reports_every_barcode():
-    # The panel does not cover this sample at all. Every barcode it read is undeclared -- a large claim,
-    # so it must be stated rather than inferred from an empty result.
-    panel = pl.DataFrame({"tag": ["AAAA"], "sample": ["S1"], "Name": ["a"]})
-    seen = _counts([("S9", "c1", "CCCC", 5)])
-    out = panel_read_mismatch(panel, seen)
-    rows = {(r["sample"], r["tag"], r["direction"]) for r in out.to_dicts()}
-    assert ("S9", "CCCC", "undeclared-in-panel") in rows
-
-
-def test_a_sample_in_the_panel_with_no_reads_reports_every_tag():
-    panel = pl.DataFrame({"tag": ["AAAA"], "sample": ["S1"], "Name": ["a"]})
-    seen = _counts([("S2", "c1", "AAAA", 5)])
-    out = panel_read_mismatch(panel, seen)
-    rows = {(r["sample"], r["tag"], r["direction"]) for r in out.to_dicts()}
-    assert ("S1", "AAAA", "declared-never-seen") in rows
-
-
-def test_full_agreement_reports_nothing():
-    # The empty result must mean agreement, not a check that failed to run.
-    panel = pl.DataFrame({"tag": ["AAAA", "CCCC"], "sample": ["S1", "S1"], "Name": ["a", "c"]})
-    seen = _counts([("S1", "c1", "AAAA", 5), ("S1", "c1", "CCCC", 3)])
-    assert panel_read_mismatch(panel, seen).height == 0
-
-
-def test_empty_inputs_do_not_raise():
-    panel = pl.DataFrame(
-        {"tag": [], "sample": [], "Name": []}, schema={"tag": pl.String, "sample": pl.String, "Name": pl.String}
-    )
-    assert panel_read_mismatch(panel, _counts([])).height == 0
-
-
-def test_both_directions_can_fire_for_one_sample_at_once():
-    # A sample can simultaneously declare a tag it never read and read a barcode it never declared.
-    # Neither direction may mask the other.
-    panel = pl.DataFrame({"tag": ["AAAA"], "sample": ["S1"], "Name": ["a"]})
-    seen = _counts([("S1", "c1", "CCCC", 5)])
-    rows = {(r["sample"], r["tag"], r["direction"]) for r in panel_read_mismatch(panel, seen).to_dicts()}
-    assert ("S1", "AAAA", "declared-never-seen") in rows
-    assert ("S1", "CCCC", "undeclared-in-panel") in rows
 
 
 def test_a_literal_star_in_a_sample_column_is_fatal(tmp_path):
@@ -392,34 +306,6 @@ def test_a_literal_star_in_a_sample_column_is_fatal(tmp_path):
     with pytest.raises(SystemExit) as e:
         read_panel(path, ROLES)
     assert "*" in str(e.value)
-
-
-def test_a_mixed_star_and_named_panel_does_not_go_global():
-    # Second line of defence: the reader refuses this frame, but a caller building one directly must not
-    # get an empty table for a real disagreement. The output is asserted in full: a mixed frame reports
-    # every row as noise, including the star row compared as a literal sample name.
-    panel = pl.DataFrame({"tag": ["AAAA", "CCCC"], "sample": ["*", "S1"], "Name": ["a", "c"]})
-    seen = _counts([("S1", "c1", "AAAA", 5)])
-    rows = {(r["sample"], r["tag"], r["direction"]) for r in panel_read_mismatch(panel, seen).to_dicts()}
-    assert rows == {
-        ("*", "AAAA", "declared-never-seen"),
-        ("S1", "AAAA", "undeclared-in-panel"),
-        ("S1", "CCCC", "declared-never-seen"),
-    }
-
-
-def test_null_keys_on_either_side_do_not_raise():
-    # A null tag or a null sample cannot be placed on either side of the comparison, on either input.
-    # The panel side gets the same guard as the reads side.
-    panel = pl.DataFrame(
-        {"tag": ["AAAA", "CCCC", None], "sample": ["S1", None, "S1"], "Name": ["a", "c", "z"]},
-        schema={"tag": pl.String, "sample": pl.String, "Name": pl.String},
-    )
-    seen = _counts([("S1", "c1", "AAAA", 5), (None, "c2", "CCCC", 3), ("S1", "c3", None, 1)])
-    out = panel_read_mismatch(panel, seen)
-    assert out.height == 0
-    assert None not in out["sample"].to_list()
-    assert None not in out["tag"].to_list()
 
 
 # --- per-sample grouping (panel-file-authority@3.0) ----------------------------------------
