@@ -16,8 +16,10 @@ import {
   isPColumnSpec,
   parseResourceMap,
 } from "@platforma-sdk/model";
+import { kind } from "@platforma-open/milaboratories.feature-integration.kind";
 import { assemblePattern, CELL_TAG, FEATURE_TAG, UMI_TAG, validatePattern } from "./pattern";
 import { getPreset } from "./presets";
+import type { BlockParams } from "@platforma-open/milaboratories.feature-integration.kind";
 import type { BlockArgs, BlockData, CsvMeta, GroupingRule, ReferenceSource } from "./types";
 
 export { assemblePattern, parsePattern, validatePattern } from "./pattern";
@@ -587,7 +589,7 @@ type BlockDataV1 = Omit<BlockDataV2, "presetId" | "pattern"> & {
   featureLen: number;
 };
 
-const dataModel = new DataModelBuilder()
+const dataModel = new DataModelBuilder({ kind })
   .from<BlockDataV1>("v1")
   .migrate<BlockDataV2>("v2", ({ cellLen, umiLen, featureLen, ...rest }) => {
     // The shipped default (16/10/15) maps to the fixed BEAM preset. Offset 0 is the only layout the v1 UI could
@@ -674,14 +676,20 @@ const dataModel = new DataModelBuilder()
   // has a purpose-built surface, so the frame behind that grid is no longer emitted. Never reuse the
   // stripped key -- a saved column set and filter means something only against the frame it was saved on.
   .migrate<BlockData>("v12", ({ runQualityTableState: _q, ...rest }) => ({ ...rest }))
-  .init(() => ({
+  // `params` is the kind's init-params contract, and it is optional: a block created by hand receives
+  // none, and a template may seed any subset of one. Every field therefore keeps its shipped default as
+  // the fallback, and the set of fields read here is exactly the set `.templateParams` projects back --
+  // the two are inverses, and a field accepted here but dropped there would be configuration that
+  // survives creation and vanishes on export.
+  .init(({ params }) => ({
     runMode: "full" as const, // full run by default. "dry" = read-limited Preview
     // The geometry the block shipped with, 10x 5' v2 BEAM (16 / 10 / 15).
-    presetId: "tenx-beam",
-    cellWhitelist: "", // de-novo CELL correction by default
+    presetId: params?.presetId ?? "tenx-beam",
+    cellWhitelist: params?.cellWhitelist ?? "", // de-novo CELL correction by default
     defaultBlockLabel: "",
     // minAgreement and gateThreshold are absent by design. Off means absent rather than zero.
     ...VERDICT_DEFAULTS,
+    ...seededFromParams(params),
     tableState: createPlDataTableStateV2(),
     qcSummaryTableState: createPlDataTableStateV2(),
     punchcardTableState: createPlDataTableStateV2(),
@@ -690,7 +698,8 @@ const dataModel = new DataModelBuilder()
     undeclaredBarcodesTableState: createPlDataTableStateV2(),
   }));
 
-export const platforma = BlockModelV3.create(dataModel)
+export const platforma = BlockModelV3.create({ dataModel, kind })
+  .templateParams(templateParams)
   .args((data): BlockArgs => {
     if (!data.fbFastqRef) throw new Error("Select the feature-barcode FASTQ");
     if (!data.tagFeatureCsvHandle) throw new Error("Upload the tag→feature CSV");
@@ -1862,3 +1871,65 @@ export const platforma = BlockModelV3.create(dataModel)
   .done();
 
 export type BlockOutputs = InferOutputsType<typeof platforma>;
+
+// Internals
+
+/**
+ * The fields the kind's init-params contract carries, minus the two `init` spells out by hand
+ * (`presetId`, `cellWhitelist`). Named once, and read by both halves of the contract below, so the
+ * seeding and the projection cannot name different sets.
+ */
+const TEMPLATE_PARAM_KEYS = [
+  "fbFastqRef",
+  "datasetRef",
+  "tagFeatureCsvHandle",
+  "barcodeSeqColumn",
+  "featureNameColumn",
+  "pattern",
+  "referenceSource",
+  "roleColumn",
+  "referenceValues",
+  "panelReferenceMinMembers",
+  "distributionMinCells",
+  "countFloor",
+  "boundCutoff",
+  "boundProbability",
+  "expectedBinderFraction",
+  "minVotingCells",
+  "minAgreement",
+  "gateThreshold",
+  "grouping",
+] as const satisfies readonly (keyof BlockParams & keyof BlockData)[];
+
+/**
+ * The seeded half: the params a template supplied, with absent fields left out entirely rather than set
+ * to undefined. `init` spreads this over the shipped defaults, and a key present with an undefined value
+ * would erase the default it is meant to fall back to.
+ */
+function seededFromParams(params: BlockParams | undefined): Partial<BlockData> {
+  if (!params) return {};
+  const seeded: Record<string, unknown> = {};
+  for (const key of TEMPLATE_PARAM_KEYS) {
+    const value = params[key];
+    if (value !== undefined) seeded[key] = value;
+  }
+  return seeded as Partial<BlockData>;
+}
+
+/**
+ * The projection half, and `init`'s inverse: the block's live state reduced back to the init-params
+ * contract, which is what a project template serializes for this block.
+ *
+ * State is handed back untouched. A half-picked panel is ordinary state, not invalid params, and a
+ * projection that refused it would make the block export a file its own kind rejects.
+ */
+function templateParams(data: BlockData): BlockParams {
+  const params: Record<string, unknown> = {
+    presetId: data.presetId,
+    cellWhitelist: data.cellWhitelist,
+  };
+  for (const key of TEMPLATE_PARAM_KEYS) {
+    params[key] = data[key];
+  }
+  return params as BlockParams;
+}
