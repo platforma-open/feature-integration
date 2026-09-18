@@ -698,6 +698,27 @@ const dataModel = new DataModelBuilder({ kind })
     undeclaredBarcodesTableState: createPlDataTableStateV2(),
   }));
 
+/**
+ * The projection half of the kind's init-params contract, and `init`'s inverse: the block's live state
+ * reduced back to the params a project template serializes for this block.
+ *
+ * State is handed back untouched. A half-picked panel is ordinary state, not invalid params, and a
+ * projection that refused it would make the block export a file its own kind rejects.
+ *
+ * Exported so `test/src/kindParams.test.ts` can run the round trip -- project, parse, and compare --
+ * which is the only thing that holds this and the kind's parser to the same contract.
+ */
+export function templateParams(data: BlockData): BlockParams {
+  const params: Record<string, unknown> = {
+    presetId: data.presetId,
+    cellWhitelist: data.cellWhitelist,
+  };
+  for (const key of TEMPLATE_PARAM_KEYS) {
+    params[key] = data[key];
+  }
+  return params as BlockParams;
+}
+
 export const platforma = BlockModelV3.create({ dataModel, kind })
   .templateParams(templateParams)
   .args((data): BlockArgs => {
@@ -1885,6 +1906,7 @@ const TEMPLATE_PARAM_KEYS = [
   "tagFeatureCsvHandle",
   "barcodeSeqColumn",
   "featureNameColumn",
+  "sampleColumn",
   "pattern",
   "referenceSource",
   "roleColumn",
@@ -1914,22 +1936,4 @@ function seededFromParams(params: BlockParams | undefined): Partial<BlockData> {
     if (value !== undefined) seeded[key] = value;
   }
   return seeded as Partial<BlockData>;
-}
-
-/**
- * The projection half, and `init`'s inverse: the block's live state reduced back to the init-params
- * contract, which is what a project template serializes for this block.
- *
- * State is handed back untouched. A half-picked panel is ordinary state, not invalid params, and a
- * projection that refused it would make the block export a file its own kind rejects.
- */
-function templateParams(data: BlockData): BlockParams {
-  const params: Record<string, unknown> = {
-    presetId: data.presetId,
-    cellWhitelist: data.cellWhitelist,
-  };
-  for (const key of TEMPLATE_PARAM_KEYS) {
-    params[key] = data[key];
-  }
-  return params as BlockParams;
 }

@@ -64,6 +64,13 @@ export type BlockParams = {
   tagFeatureCsvHandle?: ImportFileHandle;
   barcodeSeqColumn?: string;
   featureNameColumn?: string;
+  /**
+   * The panel column holding the sample name, for a sample-aware tag->feature mapping. Seeded alone: the
+   * `sampleLabelSnapshot` / `sampleColumnValues` that sit beside it in `BlockData` are project-scoped --
+   * one is this project's sampleId->name map, the other this CSV's own values -- so they cannot travel in
+   * a template. The UI takes them again against the applied project's dataset and CSV.
+   */
+  sampleColumn?: string;
   // --- read geometry ---
   presetId?: string;
   pattern?: string;
@@ -168,6 +175,7 @@ const REF_KEYS = ["fbFastqRef", "datasetRef"] as const;
 const STRING_KEYS = [
   "barcodeSeqColumn",
   "featureNameColumn",
+  "sampleColumn",
   "presetId",
   "pattern",
   "cellWhitelist",
