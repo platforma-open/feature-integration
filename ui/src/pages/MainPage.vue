@@ -573,6 +573,32 @@ watch(
   { immediate: true },
 );
 
+// A template seeds `sampleColumn` on its own. The two snapshots that belong beside it are project-scoped --
+// a sampleId->name map for THIS project's dataset, and the values of THIS project's CSV column -- so they
+// cannot travel in the block's init params and have to be taken here, against the project the template was
+// applied to. Without them `args()` refuses the run with "Re-select the sample column", and the suggestion
+// watcher above cannot repair it, because that one only fires while no column is set.
+//
+// Guarded on the snapshot being absent rather than on a "just initialized" flag: that is the only state
+// this reaches, since every path that clears the column clears the snapshots with it. One write settles it
+// and the guard then holds, so it converges; two clients race to write the same value, derived from the
+// same outputs.
+watch(
+  [
+    () => app.model.data.sampleColumn,
+    () => app.model.outputs.sampleLabels,
+    () => app.model.outputs.csvValuesByColumn,
+  ],
+  ([col, sampleLabels, valuesByColumn]) => {
+    if (!col || app.model.data.sampleLabelSnapshot) return;
+    // Both outputs have to have arrived, or the snapshot would be taken empty and args() would refuse the
+    // run for a different reason.
+    if (!sampleLabels || !valuesByColumn) return;
+    setSampleColumn(col);
+  },
+  { immediate: true },
+);
+
 // --- Running-state progress grid (in-memory AgGridVue, same pattern as blocks/peptide-extraction) ---
 ModuleRegistry.registerModules([ClientSideRowModelModule]);
 

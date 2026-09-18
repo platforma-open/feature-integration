@@ -3,12 +3,10 @@ import type {
   platforma,
 } from "@platforma-open/milaboratories.feature-integration.model";
 import { awaitStableState, blockTest } from "@platforma-sdk/test";
-import { blockSpec as samplesAndDataBlockSpec } from "@platforma-open/milaboratories.samples-and-data";
-import type { BlockArgs as SamplesAndDataBlockArgs } from "@platforma-open/milaboratories.samples-and-data.model";
-import { uniquePlId } from "@platforma-open/milaboratories.samples-and-data.model";
+import { SamplesAndDataBlockPointer as samplesAndDataBlockSpec } from "@platforma-open/milaboratories.samples-and-data";
 import { FeatureIntegrationBlockPointer as myBlockSpec } from "this-block";
 import type { InferBlockState, PTableHandle } from "@platforma-sdk/model";
-import { createPlDataTableStateV2, wrapOutputs } from "@platforma-sdk/model";
+import { createPlDataTableStateV2, uniquePlId, wrapOutputs } from "@platforma-sdk/model";
 
 // Block tests for the Feature Barcode Profiling block.
 //
@@ -92,30 +90,41 @@ blockTest.skip(
     const r1Handle = await helpers.getLocalFileHandle("./assets/fb_small_R1.fastq.gz");
     const r2Handle = await helpers.getLocalFileHandle("./assets/fb_small_R2.fastq.gz");
 
-    // Upstream: a single-sample paired-FASTQ dataset.
-    await project.setBlockArgs(sndBlockId, {
-      metadata: [],
-      sampleIds: [sample1Id],
-      sampleLabelColumnLabel: "Sample Name",
-      sampleLabels: { [sample1Id]: "Sample 1" },
-      datasets: [
-        {
-          id: dataset1Id,
-          label: "Dataset 1",
-          content: {
-            type: "Fastq",
-            readIndices: ["R1", "R2"],
-            gzipped: true,
-            data: {
-              [sample1Id]: {
-                R1: r1Handle,
-                R2: r2Handle,
+    // Upstream: a single-sample paired-FASTQ dataset. `mutateBlockStorage` rather than `setBlockArgs`:
+    // samples-and-data is a V3 block (modelAPIVersion 2) and `setBlockArgs` hardcodes version 1, which it
+    // rejects. The value is typed `unknown` across the facade boundary, so it is written as a literal --
+    // the branded `PlId` does not unify through the facade's own zod brand.
+    await project.mutateBlockStorage(sndBlockId, {
+      operation: "update-block-data",
+      value: {
+        // `update-block-data` replaces the whole of SND's data, so every field its V3 shape requires is
+        // written here -- the three below are not exercised by this test but must be present.
+        h5adFilesToPreprocess: [],
+        seuratFilesToPreprocess: [],
+        suggestedImport: false,
+        metadata: [],
+        sampleIds: [sample1Id],
+        sampleLabelColumnLabel: "Sample Name",
+        sampleLabels: { [sample1Id]: "Sample 1" },
+        datasets: [
+          {
+            id: dataset1Id,
+            label: "Dataset 1",
+            content: {
+              type: "Fastq",
+              readIndices: ["R1", "R2"],
+              gzipped: true,
+              data: {
+                [sample1Id]: {
+                  R1: r1Handle,
+                  R2: r2Handle,
+                },
               },
             },
           },
-        },
-      ],
-    } satisfies SamplesAndDataBlockArgs);
+        ],
+      },
+    });
     await project.runBlock(sndBlockId);
     await helpers.awaitBlockDone(sndBlockId, 30000);
 
