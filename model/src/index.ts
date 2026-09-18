@@ -681,7 +681,21 @@ const dataModel = new DataModelBuilder({ kind })
   // the fallback, and the set of fields read here is exactly the set `.templateParams` projects back --
   // the two are inverses, and a field accepted here but dropped there would be configuration that
   // survives creation and vanishes on export.
-  .init(({ params }) => ({
+  .init(({ params }) => initialData(params));
+
+/**
+ * The seeding half of the kind's init-params contract: a brand-new block's state, given the params a
+ * creator or a project template supplied.
+ *
+ * `params` is optional -- a block created by hand receives none -- and every field it may carry is
+ * optional too, so each one falls back to the value the block ships with. The fields read here are
+ * exactly the fields `templateParams` projects back; the two are inverses.
+ *
+ * Exported rather than written inline in `.init(...)` so `test/src/kindParams.test.ts` can run the leg
+ * the round trip needs: project, parse, and seed again.
+ */
+export function initialData(params?: BlockParams): BlockData {
+  return {
     runMode: "full" as const, // full run by default. "dry" = read-limited Preview
     // The geometry the block shipped with, 10x 5' v2 BEAM (16 / 10 / 15).
     presetId: params?.presetId ?? "tenx-beam",
@@ -689,6 +703,8 @@ const dataModel = new DataModelBuilder({ kind })
     defaultBlockLabel: "",
     // minAgreement and gateThreshold are absent by design. Off means absent rather than zero.
     ...VERDICT_DEFAULTS,
+    // Last of the value-bearing spreads, so a supplied param wins over the default it replaces. A field
+    // the params omit is left out entirely rather than set to undefined, which would erase that default.
     ...seededFromParams(params),
     tableState: createPlDataTableStateV2(),
     qcSummaryTableState: createPlDataTableStateV2(),
@@ -696,7 +712,8 @@ const dataModel = new DataModelBuilder({ kind })
     ...INITIAL_GRAPH_STATES,
     reagentTableState: createPlDataTableStateV2(),
     undeclaredBarcodesTableState: createPlDataTableStateV2(),
-  }));
+  };
+}
 
 /**
  * The projection half of the kind's init-params contract, and `init`'s inverse: the block's live state

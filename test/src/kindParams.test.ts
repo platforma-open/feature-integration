@@ -2,6 +2,7 @@ import { kind } from "@platforma-open/milaboratories.feature-integration.kind";
 import type { BlockData } from "@platforma-open/milaboratories.feature-integration.model";
 import {
   createPlDataTableStateV2,
+  initialData,
   templateParams,
   VERDICT_DEFAULTS,
 } from "@platforma-open/milaboratories.feature-integration.model";
@@ -106,6 +107,64 @@ describe("the grouping rule", () => {
   });
 });
 
+describe("seeding a new block", () => {
+  test("no params at all -- a block created by hand", () => {
+    const data = initialData();
+    expect(data.presetId).toBe("tenx-beam");
+    expect(data.cellWhitelist).toBe("");
+    expect(data.runMode).toBe("full");
+    expect(data.fbFastqRef).toBeUndefined();
+    expect(data.sampleColumn).toBeUndefined();
+  });
+
+  test("an omitted field keeps the value the block ships with", () => {
+    // The whole point of leaving absent params OUT of the seed rather than setting them undefined: a key
+    // present with an undefined value would erase the default it is supposed to fall back to.
+    const data = initialData({ countFloor: 9 });
+    expect(data.countFloor).toBe(9);
+    expect(data.boundCutoff).toBe(VERDICT_DEFAULTS.boundCutoff);
+    expect(data.distributionMinCells).toBe(VERDICT_DEFAULTS.distributionMinCells);
+    expect(data.presetId).toBe("tenx-beam");
+  });
+
+  test("a supplied param wins over the default it replaces", () => {
+    const data = initialData({
+      presetId: "generic-fb-umi",
+      cellWhitelist: "737K-august-2016",
+      boundCutoff: 40,
+      referenceSource: "distribution",
+      sampleColumn: "Sample",
+      grouping: { by: "property", columns: ["Antigen"] },
+    });
+    expect(data).toMatchObject({
+      presetId: "generic-fb-umi",
+      cellWhitelist: "737K-august-2016",
+      boundCutoff: 40,
+      referenceSource: "distribution",
+      sampleColumn: "Sample",
+      grouping: { by: "property", columns: ["Antigen"] },
+    });
+  });
+
+  test("a seeded block still gets its own view state", () => {
+    // View state is outside the contract, so a template can never carry it -- but a seeded block must
+    // still come up with a usable grid rather than an undefined one.
+    const data = initialData({ countFloor: 9 });
+    expect(data.tableState).toBeDefined();
+    expect(data.punchcardTableState).toBeDefined();
+    expect(data.scoreDistributionGraphState).toBeDefined();
+  });
+
+  // The two snapshots that belong beside `sampleColumn` are project-scoped, so they cannot travel. The UI
+  // takes them again on apply; until it does, `args()` refuses the run.
+  test("a seeded sample column arrives without its project-scoped snapshots", () => {
+    const data = initialData({ sampleColumn: "Sample" });
+    expect(data.sampleColumn).toBe("Sample");
+    expect(data.sampleLabelSnapshot).toBeUndefined();
+    expect(data.sampleColumnValues).toBeUndefined();
+  });
+});
+
 describe("the round trip", () => {
   test("what the projection emits, the parser accepts", () => {
     const projected = templateParams(configuredData());
@@ -134,9 +193,59 @@ describe("the round trip", () => {
     const projected = templateParams(blankData());
     expect(() => parse(projected)).not.toThrow();
   });
+
+  // The whole contract, end to end: export a configured block, read the file back, create from it. Every
+  // field the contract names must come out the far side with the value it went in with.
+  test("project -> parse -> init restores every field the contract carries", () => {
+    const before = configuredData();
+    const after = initialData(parse(templateParams(before)));
+
+    for (const key of CONTRACT_FIELDS) {
+      expect(after[key]).toStrictEqual(before[key]);
+    }
+  });
+
+  test("project -> parse -> init on a blank block reproduces a blank block", () => {
+    const before = blankData();
+    const after = initialData(parse(templateParams(before)));
+
+    for (const key of CONTRACT_FIELDS) {
+      expect(after[key]).toStrictEqual(before[key]);
+    }
+  });
 });
 
 // Internals
+
+/**
+ * Every field the init-params contract names, spelled out by hand rather than read from the model's own
+ * key list. A round trip checked against the list it is built from would pass no matter which fields that
+ * list forgot -- this is the second opinion, and a field dropped from the contract fails here.
+ */
+const CONTRACT_FIELDS = [
+  "fbFastqRef",
+  "datasetRef",
+  "tagFeatureCsvHandle",
+  "barcodeSeqColumn",
+  "featureNameColumn",
+  "sampleColumn",
+  "presetId",
+  "pattern",
+  "cellWhitelist",
+  "referenceSource",
+  "roleColumn",
+  "referenceValues",
+  "panelReferenceMinMembers",
+  "distributionMinCells",
+  "countFloor",
+  "boundCutoff",
+  "boundProbability",
+  "expectedBinderFraction",
+  "minVotingCells",
+  "minAgreement",
+  "gateThreshold",
+  "grouping",
+] as const satisfies readonly (keyof BlockData)[];
 
 /** The grid and plot state every `BlockData` carries. None of it belongs to the params contract. */
 function viewState() {
