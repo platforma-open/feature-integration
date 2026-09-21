@@ -1,13 +1,13 @@
 {
-  "name": "@platforma-open/milaboratories.feature-integration.per-cell-metrics",
-  "version": "3.7.0",
+  "name": "@platforma-open/milaboratories.feature-integration.mitool-support",
+  "version": "1.0.0",
   "files": [
     "./dist/**/*"
   ],
   "type": "module",
   "scripts": {
     "build": "block-tools software build",
-    "software:reqs": "uv --directory .. pip compile --group per-cell-metrics --no-deps --no-annotate --custom-compile-command \"pnpm software:reqs\" -o per-cell-metrics/src/requirements.txt",
+    "software:reqs": "uv --directory .. pip compile --group mitool-support --no-deps --no-annotate --custom-compile-command \"pnpm software:reqs\" -o mitool-support/src/requirements.txt",
     "changeset": "changeset",
     "version-packages": "changeset version",
     "do-pack": "shx rm -f *.tgz && block-tools software build && pnpm pack && shx mv platforma-open*.tgz package.tgz"
@@ -18,7 +18,7 @@
   },
   "block-software": {
     "entrypoints": {
-      "main": {
+      "parse-gate": {
         "binary": {
           "artifact": {
             "type": "python",
@@ -32,7 +32,25 @@
           },
           "cmd": [
             "python",
-            "{pkg}/per_cell_metrics.py"
+            "{pkg}/parse_gate.py"
+          ]
+        }
+      },
+      "emit-panel": {
+        "binary": {
+          "artifact": {
+            "type": "python",
+            "registry": "platforma-open",
+            "environment": "@platforma-open/milaboratories.runenv-python-3:3.12.10",
+            "dependencies": {
+              "toolset": "pip",
+              "requirements": "requirements.txt"
+            },
+            "root": "./src"
+          },
+          "cmd": [
+            "python",
+            "{pkg}/emit_panel.py"
           ]
         }
       }

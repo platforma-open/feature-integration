@@ -17,7 +17,7 @@ assets := import("@platforma-sdk/workflow-tengo:assets")
 self.defineOutputs("refinedMic", "refineReport", "refineLogStream")
 
 mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
-emitPanelSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:emit-panel")
+emitPanelSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.mitool-support:emit-panel")
 
 // mitool progress-line marker (see fb-parse.tpl.tengo). Drives the model's per-step live log and progress.
 progressPrefix := "[==PROGRESS==]"

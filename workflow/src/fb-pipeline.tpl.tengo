@@ -25,7 +25,7 @@ pt := import("@platforma-sdk/workflow-tengo:pt")
 
 json := import("json")
 
-parseGateSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:parse-gate")
+parseGateSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.mitool-support:parse-gate")
 
 fbParseTpl := assets.importTemplate(":fb-parse")
 fbRefineTagstatTpl := assets.importTemplate(":fb-refine-tagstat")

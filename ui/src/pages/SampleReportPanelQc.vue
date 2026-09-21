@@ -15,7 +15,7 @@ const props = defineProps<{
 
 const report = computed(() => props.sampleData?.qcReport);
 
-// Measurements whose place is the across-samples table and not this list. 
+// Measurements whose place is the across-samples table and not this list.
 const SUMMARY_ONLY = new Set(["medianAntigenReading", "cutoffCountNeeded", "boundReadingShare"]);
 
 // DECLARATION ORDER, exactly as the software emits it. That order is deliberate -- the reads first, then

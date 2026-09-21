@@ -20,6 +20,8 @@ file := import("@platforma-sdk/workflow-tengo:file")
 columnSpecs := import(":column-specs")
 fanout := import(":fanout-inputs")
 
+times := import("times")
+
 fbPipelineTpl := assets.importTemplate(":fb-pipeline")
 prerunTpl := assets.importTemplate(":prerun")
 qcSummaryTpl := assets.importTemplate(":qc-summary")
@@ -29,7 +31,7 @@ gatherRawFeatureCountsTpl := assets.importTemplate(":gather-raw-feature-counts")
 verdictRunTpl := assets.importTemplate(":verdict-run")
 verdictImportTpl := assets.importTemplate(":verdict-import")
 
-featurePropsSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:feature-properties")
+featurePropsSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.feature-properties:main")
 
 // Per-sample mitool resource defaults. The fb-parse and fb-refine formulas add size("reads")*4 on top of
 // this base and cap at 256 GiB, so the base only sets the floor for small inputs. Keep it low: mitool's
@@ -262,6 +264,7 @@ wf.body(func(args) {
 			],
 			passAggregationAxesNames: true,
 			passKey: true, // give the body its [sampleId] iteration key (for sample-aware CSV filtering)
+			stepCache: 30 * times.minute,
 			extra: extraInputs,
 			metaExtra: metaExtra
 		}

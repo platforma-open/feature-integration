@@ -1585,7 +1585,7 @@ def validate(run_dir, panel_csv=None, columns=None, sample_check=None, regime=No
 # The block's own reading rule, re-implemented over the truth tables so a run can be checked BEFORE it
 # reaches a backend. It fails when the planted magnitudes do not land where the tier names claim.
 #
-# The rule, from software/per-cell-metrics/src/verdict.py:
+# The rule, from software/verdicts/src/verdict.py:
 #   1. counts below the floor read as zero, except a comparator's;
 #   2. the cell's comparator reading is the MAX over its reference tags;
 #   3. score = (1 - I_0.925(count + 1, reference + 3)) * 100;

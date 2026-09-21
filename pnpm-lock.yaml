@@ -161,7 +161,34 @@ importers:
         specifier: 'catalog:'
         version: 2.15.1(@types/node@25.3.2)
 
+  software/feature-properties:
+    devDependencies:
+      '@platforma-open/milaboratories.runenv-python-3':
+        specifier: 'catalog:'
+        version: 1.11.6
+      '@platforma-sdk/block-tools':
+        specifier: 'catalog:'
+        version: 2.15.1(@types/node@25.3.2)
+
+  software/mitool-support:
+    devDependencies:
+      '@platforma-open/milaboratories.runenv-python-3':
+        specifier: 'catalog:'
+        version: 1.11.6
+      '@platforma-sdk/block-tools':
+        specifier: 'catalog:'
+        version: 2.15.1(@types/node@25.3.2)
+
   software/per-cell-metrics:
+    devDependencies:
+      '@platforma-open/milaboratories.runenv-python-3':
+        specifier: 'catalog:'
+        version: 1.11.6
+      '@platforma-sdk/block-tools':
+        specifier: 'catalog:'
+        version: 2.15.1(@types/node@25.3.2)
+
+  software/verdicts:
     devDependencies:
       '@platforma-open/milaboratories.runenv-python-3':
         specifier: 'catalog:'
@@ -246,9 +273,18 @@ importers:
 
   workflow:
     dependencies:
+      '@platforma-open/milaboratories.feature-integration.feature-properties':
+        specifier: workspace:*
+        version: link:../software/feature-properties
+      '@platforma-open/milaboratories.feature-integration.mitool-support':
+        specifier: workspace:*
+        version: link:../software/mitool-support
       '@platforma-open/milaboratories.feature-integration.per-cell-metrics':
         specifier: workspace:*
         version: link:../software/per-cell-metrics
+      '@platforma-open/milaboratories.feature-integration.verdicts':
+        specifier: workspace:*
+        version: link:../software/verdicts
       '@platforma-open/milaboratories.software-mitool':
         specifier: 'catalog:'
         version: 2.3.1-131-main

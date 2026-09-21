@@ -11,7 +11,10 @@
     "test": "pl-tengo test"
   },
   "dependencies": {
+    "@platforma-open/milaboratories.feature-integration.feature-properties": "workspace:*",
+    "@platforma-open/milaboratories.feature-integration.mitool-support": "workspace:*",
     "@platforma-open/milaboratories.feature-integration.per-cell-metrics": "workspace:*",
+    "@platforma-open/milaboratories.feature-integration.verdicts": "workspace:*",
     "@platforma-open/milaboratories.software-mitool": "catalog:",
     "@platforma-sdk/workflow-tengo": "catalog:"
   },

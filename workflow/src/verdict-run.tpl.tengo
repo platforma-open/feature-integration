@@ -18,7 +18,7 @@ ll := import("@platforma-sdk/workflow-tengo:ll")
 va := import(":verdict-args")
 verdictLinker := import(":verdict-linker")
 
-verdictsSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:emit-verdicts")
+verdictsSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.verdicts:emit-verdicts")
 
 // Every table emit_verdicts.py writes, paired with the output field it is returned on. One list, used as
 // the saveFile set and as the returned keys, so a table cannot be saved and then quietly dropped, or named

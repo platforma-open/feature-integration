@@ -16,7 +16,7 @@ assets := import("@platforma-sdk/workflow-tengo:assets")
 self.defineOutputs("abundance", "fractions", "perCellSummary", "qc", "qcJson", "metricsLogStream")
 
 metricsSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:main")
-qcReportSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.per-cell-metrics:qc-report")
+qcReportSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.verdicts:qc-report")
 
 self.body(func(inputs) {
 	tagstatTsv := inputs.tagstatTsv

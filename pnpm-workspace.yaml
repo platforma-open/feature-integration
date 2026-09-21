@@ -1,7 +1,10 @@
 packages:
   - block
   - model
+  - software/feature-properties
+  - software/mitool-support
   - software/per-cell-metrics
+  - software/verdicts
   - test
   - ui
   - workflow
