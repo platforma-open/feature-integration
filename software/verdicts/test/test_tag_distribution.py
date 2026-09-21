@@ -446,8 +446,8 @@ def test_a_tag_read_twice_in_one_cell_is_refused():
 
 
 def test_a_fit_returns_the_background_it_fitted():
-    # The parameters used to die inside the function that made them, so the one number a reader needs in
-    # order to judge a fit never left it. Two clear populations: a low background and a high signal,
+    # The parameters must leave the function that makes them -- they are the one number a reader needs in
+    # order to judge a fit. Two clear populations: a low background and a high signal,
     # overdispersed so the negative binomial is the right model.
     rng = np.random.default_rng(11)
     background = rng.negative_binomial(2, 2 / (2 + 3), size=900)

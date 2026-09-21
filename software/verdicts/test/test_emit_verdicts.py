@@ -1222,8 +1222,8 @@ def test_one_antigen_on_two_barcodes_is_read_by_its_highest_member(wide_bed):
 def test_two_declared_comparators_serve_together(wide_bed):
     # A panel declaring two undifferentiated comparators runs. They are replicates of
     # one group, since nothing declared separates them, and replicates combine by taking the highest.
-    # It used to be refused, which sent the scientist back to edit a panel file over a case the corpus
-    # had already decided.
+    # NOT refused: the corpus has already decided this case, so refusing sends the scientist back to edit
+    # a panel file for nothing.
     r = _run(wide_bed, *_bed_args("panel_multi_reference.csv"))
     assert r.returncode == 0, r.stderr
 
@@ -2477,10 +2477,10 @@ def _distribution_bed_with_a_short_sample(root, n_cells=400, short_cells=250, se
 
 def test_cell_punch_marks_a_position_with_no_fitted_background_unreliable(tmp_path):
     # A cell whose sample the rung could not fit has no comparator for any identity, so its silent
-    # positions are unreliable. They used to render *not bound*: the punchcard corrected a silent
-    # position only through a per-(sample, identity) comparator, which nothing in production sets, and
-    # never through the fitted rung's per-cell probabilities -- so every such position fell through to
-    # the not-bound default and contradicted the set verdict above it.
+    # positions are unreliable, NOT *not bound*. Correcting a silent position only through a
+    # per-(sample, identity) comparator -- which nothing in production sets -- and never through the
+    # fitted rung's per-cell probabilities drops every such position onto the not-bound default, where it
+    # contradicts the set verdict above it.
     _distribution_bed_with_a_short_sample(tmp_path)
     r = _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
     assert r.returncode == 0, r.stderr
@@ -2497,9 +2497,9 @@ def test_cell_punch_marks_a_position_with_no_fitted_background_unreliable(tmp_pa
 
 def test_a_declared_gate_acts_under_the_tag_distribution_rung(tmp_path):
     # The gate reads a declared baseline tag; the comparator is whatever rung was selected. They are
-    # separate roles, so which rung serves must not reach the gate. It used to: the fitted rung handed
-    # `gate_cells` an empty reading map, so a stored threshold set nothing aside and reported nothing,
-    # silently, from the moment a scientist switched the baseline source.
+    # separate roles, so which rung serves must not reach the gate. Handing `gate_cells` an empty reading
+    # map on the fitted rung makes a stored threshold set nothing aside and report nothing, silently,
+    # from the moment a scientist switches the baseline source.
     sticky = _distribution_bed_with_a_baseline_tag(tmp_path)
     r = _run(
         tmp_path,
@@ -2632,7 +2632,7 @@ def test_the_sticky_measurement_is_a_spread_when_no_gate_is_declared(bed):
 
 def test_the_sticky_measurement_counts_the_cells_the_gate_set_aside(bed):
     # With a gate declared the two jobs are one number: the cells counted high are the cells set aside, by
-    # construction. A second line used to let those two sets differ.
+    # construction. A second line would let those two sets differ.
     _run(bed, *BASE, "--gate-threshold", "1")
     row = _sample_measure(bed, "cellsSetAside")
 
@@ -2656,8 +2656,7 @@ def test_no_observation_line_parameter_survives(bed):
 def test_the_distributions_are_emitted_as_plottable_bins(bed):
     # Three distributions go last in the readout, and a scientist settles the cutoff and the gate by
     # looking at them. They travel BINNED, not as eleven decile points: points suggest a shape and cannot
-    # show where it separates, which is the one thing these plots are read for. Two p-columns of decile
-    # points used to ride alongside and nothing plotted either.
+    # show where it separates, which is the one thing these plots are read for.
     _run(bed, *BASE)
 
     bins = json.loads((bed / "result_qc_tag_bins.json").read_text())
@@ -2815,9 +2814,9 @@ def test_a_population_baseline_has_no_score_to_spread(tmp_path):
 
 
 def test_the_fitted_background_reaches_its_own_frame(tmp_path):
-    # The fit's parameters used to die inside the function that made them, so a scientist could not see
-    # whether a tag's counts separated -- which has to be read BEFORE the baseline is settled. SEPS
-    # separates and FLAT does not. Both rows exist: absence and non-separation are different facts.
+    # The fit's parameters must leave the function that makes them: whether a tag's counts separated has
+    # to be read BEFORE the baseline is settled. SEPS separates and FLAT does not. Both rows exist:
+    # absence and non-separation are different facts.
     _distribution_bed(tmp_path)
     _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
 
@@ -3388,8 +3387,8 @@ def test_a_declared_sample_measurement_nothing_computes_still_takes_a_row(monkey
 
 def test_add_scores_against_the_lines_it_was_given_not_the_shipped_default():
     # `_add` scores against whatever `lines` the caller passes, so an operator override reaches the
-    # status a reader sees. The thresholds themselves are no longer carried beside it: they were columns
-    # of the long measurement frame, and the surfaces that replaced it publish the status alone.
+    # status a reader sees. The thresholds themselves are not carried beside it -- every surface that
+    # publishes a measurement publishes the status alone.
     overridden = dict(DEFAULT_LINES)
     overridden["usableReadFraction"] = Line(warn=0.9, error=0.0)
 
@@ -3641,9 +3640,9 @@ def test_rescued_share_is_the_undeclared_reads_correction_recovered():
     # 30% of MATCHED reads sat on an undeclared sequence; the antigen-barcode step could not place 20%
     # of matched reads on the panel. The 10% between them corrected onto a panel entry.
     #
-    # Both arguments are shares of the same denominator, which is what makes this a subtraction. The
-    # second used to be `1 - panelAssignedFraction`, a share of that step's OWN input -- the reads that
-    # survived cell-barcode correction -- so the difference came out systematically low.
+    # Both arguments MUST be shares of the same denominator, which is what makes this a subtraction.
+    # `1 - panelAssignedFraction` is a share of that step's own input -- the reads that survived
+    # cell-barcode correction -- and using it here makes the difference come out systematically low.
     assert qc_rows.rescued_share(0.30, 0.20) == pytest.approx(0.10)
 
 

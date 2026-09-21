@@ -102,9 +102,8 @@ def test_qc_survives_missing_refine_report(tmp_path):
         (100, 100, 90, 0.9),
         (100, 100, 100, 1.0),
         # The regression case. Cell-barcode correction drops 20 of the 100 matched reads, so the antigen
-        # step sees 80 and places 40. Over MATCHED reads that is 0.4. Over the step's own input -- what
-        # this figure used to divide by -- it would read 0.5, and every read share in the set would then
-        # sit on a denominator no other one shared.
+        # step sees 80 and places 40. Over MATCHED reads that is 0.4. Over the step's own input it would
+        # read 0.5, and every read share in the set would then sit on a denominator no other one shared.
         (100, 80, 40, 0.4),
     ],
     ids=["90pct-on-panel", "all-on-panel", "cell-loss-does-not-inflate-the-panel-share"],
@@ -228,9 +227,7 @@ def test_panel_assigned_fraction_blank_without_feature_step(tmp_path):
 #                                reports "nothing computed this". SILENT.
 #   in QC_SUMMARY_COLUMNS only -> `pt.col()` finds no such column and the gather dies at run time. LOUD.
 #
-# Both have happened. `featureDroppedShare` shipped as the loud one (through the import spec rather than
-# the gather, same shape of mistake); `cellBarcodeIn`/`cellBarcodeOut` were written as the silent one and
-# caught here before running. Read as TEXT, because one side is Tengo.
+# Read as TEXT, because one side is Tengo.
 
 
 def _carried_through():
@@ -265,8 +262,8 @@ def test_the_cell_step_counts_travel_with_the_share_they_make():
 
 
 def test_the_cell_step_share_is_derived_from_the_counts_it_reports(tmp_path):
-    # One read of the refine report, one division. The share used to be read by a second helper that
-    # divided the same two numbers itself, which is a way for a row to disagree with its own detail line.
+    # One read of the refine report, one division. A second helper dividing the same two numbers itself
+    # is a way for a row to disagree with its own detail line.
     tagstat = tmp_path / "ts.tsv"
     tagstat.write_text("CELL\tFEATURE\tcount\ttotalWeight\tunique_UMI\nAAA\tAgA\t5\t5\t3\n")
     parse = tmp_path / "parse.json"

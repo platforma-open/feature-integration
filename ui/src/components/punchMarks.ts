@@ -16,9 +16,9 @@ export type PunchGlyph = "bound" | "not-bound" | "unreliable" | "unknown";
 /**
  * One diameter for every mark on the card.
  *
- * The card used to size bound and not-bound by how many of a clonotype's cells answered. The scientist is
- * handed the two counts twice already -- in the per-cell tooltip, and as columns in the clonotype expansion
- * -- so the card is free to be a field of flat colour, which is what it is read as at panel density.
+ * Marks are NOT sized by how many of a clonotype's cells answered. The scientist is handed the two counts
+ * twice already -- in the per-cell tooltip, and as columns in the clonotype expansion -- so the card is
+ * free to be a field of flat colour, which is what it is read as at panel density.
  */
 export const PUNCH_DIAMETER_PX = 22;
 

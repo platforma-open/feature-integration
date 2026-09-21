@@ -210,16 +210,14 @@ self.body(func(inputs) {
 	// --- block-local: the run's own report ----------------------------------------------------------
 	//
 	// The across-samples table: one row per sample, one column per sample-level measurement, plus the
-	// sample's own rolled-up status. The long (level, entity, measurement) frame that used to sit beside it
-	// is gone: every measurement it held has a purpose-built surface, and the sample level's are this table
-	// and `result_qc_by_sample.json`.
+	// sample's own rolled-up status. Every measurement has a purpose-built surface; the sample level's are
+	// this table and `result_qc_by_sample.json`.
 	qcSummaryFb := pframes.pFrameBuilder()
 	addTo(qcSummaryFb, "qcSummary", inputs.qcSummary, columnSpecs.qcSampleSummaryImportSpec(sampleAxis))
 
-	// The fitted backgrounds, one row per (sample, tag) the fit scored -- the fit's own grain. Two decile
-	// frames used to sit beside this one, eleven quantile points each; nothing plotted either, because
-	// every distribution on the run-quality page is drawn from the BINNED counts in
-	// `result_qc_tag_bins.json`. They are gone, and this frame is what is left.
+	// The fitted backgrounds, one row per (sample, tag) the fit scored -- the fit's own grain. The only
+	// quality frame emitted: every distribution on the run-quality page is drawn from the BINNED counts in
+	// `result_qc_tag_bins.json` instead.
 	//
 	// Its p-columns have no grid today: the fitted-background page reads the same numbers out of that
 	// JSON, because a grid of small multiples is what a reader judges a fit from. This is held open for

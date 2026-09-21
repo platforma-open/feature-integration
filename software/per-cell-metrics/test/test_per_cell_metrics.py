@@ -136,7 +136,7 @@ def test_load_matches_pure_combine(tmp_path):
         for feat, umi in combine_barcode_counts(bc, _B2F, _FB, modes).items():
             expected[(cell, feat)] = int(umi)
     assert got == expected  # vectorized _load == pure rule
-    # ...and spell out the AND effect so the oracle isn't vacuous.
+    # The AND effect itself: one barcode alone yields no feature, both together yield the count.
     assert ("cellOne", "BG505") not in got
     assert got[("cellBoth", "BG505")] == 7
 

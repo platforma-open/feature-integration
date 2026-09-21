@@ -288,12 +288,9 @@ def main() -> None:
     p.add_argument("--output-prefix", default="result")
     args = p.parse_args()
 
-    # Every line an operator may move, none invented: a measurement absent from this dict carries no
-    # status, whatever DEFAULT_LINES says elsewhere.
-    # EVERY key of `DEFAULT_LINES` must appear here. This dict is what scores a run -- `status_for`
-    # answers None for a measurement it does not find -- so a line declared in `DEFAULT_LINES` and
-    # missing here is a line that silently does nothing, while every unit test that reads
-    # `DEFAULT_LINES` straight still passes. `panelAssignedFraction` shipped that way once.
+    # Every line an operator may move, none invented, and EVERY key of `DEFAULT_LINES`. `status_for`
+    # answers None for a measurement absent from this dict, so a line declared there and missing here
+    # carries no status, whatever DEFAULT_LINES says elsewhere.
     lines: dict[str, Line] = {
         "panelAssignedFraction": Line(warn=args.panel_assigned_warn, error=args.panel_assigned_error),
         "matchedFraction": Line(warn=args.match_rate_warn, error=args.match_rate_error),
@@ -1227,9 +1224,8 @@ def main() -> None:
             )
         # ONE POPULATION, top and bottom: the reads inside the listed cells, over those same cells. The
         # numerator is `usable_reads` -- the identical set the `usableReadFraction` row is a share of, so
-        # the two rows cannot describe different reads. It used to be every matched read in the library,
-        # which made the figure track the V(D)J match rate instead of this library's depth; see
-        # `reads_per_cell`.
+        # the two rows cannot describe different reads. A numerator over every matched read instead would
+        # track the V(D)J match rate rather than this library's depth; see `reads_per_cell`.
         #
         # Both inputs are the counts table and the cell list, NOT the read-QC row -- so a run with no
         # `--qc-summary` still reports depth, where before it could not.
@@ -1339,7 +1335,7 @@ def main() -> None:
             add(rows, "sample", sample, "cellsSetAside", *_cells_set_aside(here, args.gate_threshold, no_control))
             add(rows, "sample", sample, "medianControlReading", *_median_control_reading(here, no_control))
 
-        # What the cutoff asked of this sample and what it returned. 
+        # What the cutoff asked of this sample and what it returned.
         # A sample that produced no score leaves them blank.
         stats = score_by_sample.get(sample, {})
         for measurement in ("medianAntigenReading", "cutoffCountNeeded", "boundReadingShare"):
@@ -1510,10 +1506,9 @@ def main() -> None:
     # gate, each acts on cells, and a spread taken over observed barcodes is a different population from
     # the one beside it on the page.
     #
-    # BINNED, and nothing else. Eleven decile points used to go out beside these as their own p-columns;
-    # nothing plotted them, because points suggest a shape and cannot show WHERE a distribution
-    # separates, which is the one thing both plots are read for. Binning is how the plot shows every
-    # cell without shipping one row per cell.
+    # BINNED, and nothing else. Quantile points cannot show WHERE a distribution separates, which is the
+    # one thing both plots are read for. Binning is how the plot shows every cell without shipping one
+    # row per cell.
     spread_bins: dict[str, dict[str, object]] = {}
     # ONE spread for the whole run, pooled across samples.
     # Absent on every rung but the declared one: no score, nothing to spread.

@@ -445,11 +445,11 @@ servedDomain := func(served) {
 // change of comparator does -- the comparator, the cell list and the grouping are in the DOMAIN for
 // exactly that reason.
 //
-// Every one of them is recorded where its verdicts appear, so that a run
-// that lowered a number does not look like a run that did not. Two of the seven change WHICH verdicts
-// exist -- the gate and the agreement floor -- and two runs differing on them used to emit columns of
-// identical identity and identical annotations, with the record only in a block-local output that
-// labelling and lead selection never see.
+// Every one of them is recorded where its verdicts appear, so that a run that lowered a number does not
+// look like a run that did not. Two of the seven change WHICH verdicts exist -- the gate and the
+// agreement floor -- so without these, two runs differing on them emit columns of identical identity and
+// identical annotations, with the record only in a block-local output that labelling and lead selection
+// never see.
 servedNotes := func(served) {
 	notes := {
 		"pl7.app/antigen/countFloor": string(served.floor),
@@ -1377,10 +1377,9 @@ undeclaredBarcodeImportSpec := func(sampleAxisSpec, tagAxisSpec) {
 // A row that belongs to no panel -- every sample-level and capture-level row -- leaves `panelId` empty.
 // --- The fitted backgrounds -------------------------------------------------------------------
 //
-// The one frame left of what used to be three. The other two carried eleven decile points each -- the
-// score spread and the reference-reading spread, pooled over the run -- and nothing plotted either: the
-// plots a scientist settles the cutoff and the gate from are drawn from the BINNED counts in
-// `result_qc_tag_bins.json`, because points suggest a shape and cannot show where it separates.
+// The only quality frame emitted. The plots a scientist settles the cutoff and the gate from are drawn
+// from the BINNED counts in `result_qc_tag_bins.json` instead, because quantile points cannot show where
+// a distribution separates.
 //
 // This frame survives at the fit's own (sample, tag) grain, for the comparison that JSON cannot serve:
 // one background sorted across every sample and tag at once, rather than judged panel by panel.

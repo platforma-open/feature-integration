@@ -93,10 +93,9 @@ const noDataset = computed(() => app.model.data.datasetRef === undefined);
 // While the run is in flight the plot shows the processing placeholder, never a sentence saying the
 // distributions have not arrived: that sentence reads as a finished run that reported nothing.
 //
-// Readiness is read from `isRunning` and from the JSON itself, below. It used to be read from a separate
-// decile p-frame's status wrapper -- a frame none of these plots ever touched, which is now gone with
-// the decile columns. The tab strip above already gates on `isRunning`, so this is one signal rather
-// than two that could disagree.
+// Readiness is read from `isRunning` and from the JSON itself, below -- never from another output's
+// status wrapper. The tab strip above already gates on `isRunning`, so this is one signal rather than
+// two that could disagree.
 
 // The rung that actually SERVED, not the one requested. Undefined until the run reports its own meta, and
 // that case is NOT "some other rung served" -- reading it that way told a reader both that there were no

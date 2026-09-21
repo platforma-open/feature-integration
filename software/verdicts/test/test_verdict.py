@@ -262,7 +262,7 @@ def test_the_gate_boundary_excludes_the_line_itself():
 def test_one_threshold_does_both_jobs():
     # One line here, not two: how many are high needs a high, and only a declared gate supplies one. So
     # the cells set aside and the cells counted high are the SAME cells, by construction. A second
-    # observation line used to make the count independent of the gate.
+    # observation line would make the count independent of the gate.
     ref = {("S1", "a"): 500, ("S1", "b"): 50, ("S1", "c"): 2000}
 
     aside_hi, high_hi = gate_cells(ref, threshold=1000)

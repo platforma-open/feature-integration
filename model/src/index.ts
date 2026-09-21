@@ -300,7 +300,7 @@ export type TagCountBins = {
 };
 
 // The rungs the dropdown offers. Nothing below the model derives one: `--reference-source` is required
-// and verdict.py deliberately carries no function that could pick a rung, which a test pins.
+// and verdict.py deliberately carries no function that could pick a rung.
 export type ReferenceSourceChoices = {
   /** EVERY rung, always, in ladder order, and every rung selectable. */
   options: {
@@ -1732,9 +1732,8 @@ export const platforma = BlockModelV3.create(dataModel)
     },
     { retentive: true, withStatus: true },
   )
-  // The fitted backgrounds at the fit's own (sample, tag) grain. Two decile frames used to ride here
-  // too, eleven quantile points each, and nothing plotted either -- every distribution on the
-  // run-quality page is drawn from the binned counts in `tagCountBins`.
+  // The fitted backgrounds at the fit's own (sample, tag) grain. Every distribution on the run-quality
+  // page is drawn from the binned counts in `tagCountBins` instead.
   //
   // No grid reads this today: the fitted-background page reads the same numbers out of that JSON,
   // because a grid of small multiples is what a reader judges a fit from. Held open for the comparison

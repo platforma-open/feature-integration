@@ -156,9 +156,9 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # `qc_report._refine_step_counts` reads the FEATURE step's (inputCount, outputCount) -- the share of
     # matched reads whose barcode corrects onto a panel entry. Its complement is the share landing
     # in barcodes the panel never declared, which is a property of a barcode and not of a sample. The
-    # line that used to sit here now backs the undeclared-barcode table's own row
-    # (`undeclaredBarcodeShare` below), keyed by sequence and computed on the pre-refine counts. This
-    # row keeps the number and carries no status.
+    # line for it therefore sits on the undeclared-barcode table's own row (`undeclaredBarcodeShare`
+    # below), keyed by sequence and computed on the pre-refine counts. This row keeps the number and
+    # carries no status.
     #
     # The usable row is a different quantity: Cell Ranger `main`, defines
     # `frac_feature_reads_usable` as conf-mapped, barcoded reads restricted to the called-cell
@@ -230,13 +230,9 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     ),
     # --- What reached the analysis? Every figure below is over the V(D)J-MATCHED cells alone.
     #
-    # The same sum over every OBSERVED cell barcode was declared here too, as the other half of a pair:
-    # one population either side of this seam, and the gap between them was how much signal sat in
-    # droplets that held no recovered receptor. The observed half is gone. It could not be judged -- its
-    # floor is 1, since the population is barcodes holding at least one counted reading, so there was no
-    # bad value for a line to name -- and a row a reader cannot act on, whose only use was a comparison
-    # they had to make in their head, was answering no question. The gap it measured is no longer
-    # reported anywhere.
+    # The same sum over every OBSERVED cell barcode is deliberately NOT declared. Its floor is 1 -- the
+    # population is barcodes holding at least one counted reading -- so no line can name a bad value, and
+    # its only use was a comparison the reader had to make in their head.
     Measurement(
         "uniqueCountsPerCell",
         "sample",
@@ -378,7 +374,7 @@ _CATEGORICAL: frozenset[str] = frozenset(m.id for m in MEASUREMENTS if m.line ==
 # `undeclaredBarcodeShare` backs the undeclared-barcode table's own row rather than a declared
 # `Measurement`: that status is the barcode's, never a sample's, so it is computed and carried where
 # the barcode rows are, in emit_verdicts.py, and reaches `status_for` under this id. It is the one
-# exception to "every line backs a declared measurement", and a test names it.
+# exception to "every line backs a declared measurement".
 #
 # It reads the ROW's own share, `barcodeShare`, not the sample-level `readShare` the id is named for.
 # The sample-level share keeps its column and carries no status.
@@ -901,8 +897,8 @@ def aggregate_barcode_fraction(
     return flagged_reads / reads_total, detail
 
 
-# How many buckets the count distributions used to be drawn in, back when their edges were integers.
-# Kept only because `linear_bin_edges` uses it as its default; the count distributions do not.
+# The default bucket count for `linear_bin_edges`, its only consumer. The count distributions do not
+# read it.
 COUNT_BIN_COUNT = 24
 
 
