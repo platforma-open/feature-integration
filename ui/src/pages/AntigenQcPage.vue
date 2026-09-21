@@ -151,6 +151,8 @@ watch(VIEW_TABS, (tabs) => {
 // The run's two spreads, each binned over every cell rather than reduced to eleven decile points. Eleven
 // points suggest a shape; they cannot show WHERE a distribution separates. A key is absent where the served
 // rung produces no such quantity.
+// ONE spread for the run: every cell is scored against its own baseline, so the cutoff asks the identical
+// question of every cell and the scores are one currency. What differs between samples is depth.
 const scoreSpread = computed(() => tagBins.value?.spreads?.score);
 const referenceSpread = computed(() => tagBins.value?.spreads?.referenceReading);
 

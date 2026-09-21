@@ -84,7 +84,7 @@ class Coverage:
 class Measurement:
     """What the run computes about a figure -- never how it is described.
 
-    The words a reader sees live in the model, as `QC_MEASUREMENT_DESCRIPTIONS`, keyed on `id`. 
+    The words a reader sees live in the model, as `QC_MEASUREMENT_DESCRIPTIONS`, keyed on `id`.
     The id is the join, and it is stable: it is also a value on the `measurement`
     axis and a p-column name.
     """
@@ -300,6 +300,22 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # size means.
     Measurement(
         "cellsSetAside",
+        "sample",
+    ),
+    # --- What the cutoff asked of each sample, and what it returned. The score itself is one currency
+    # across a run -- every cell is scored against its OWN baseline, so the cutoff asks the identical
+    # question everywhere and its spread is one pooled plot. What differs between samples is DEPTH, and
+    # depth decides how many cells can reach the line at all.
+    Measurement(
+        "medianAntigenReading",
+        "sample",
+    ),
+    Measurement(
+        "cutoffCountNeeded",
+        "sample",
+    ),
+    Measurement(
+        "boundReadingShare",
         "sample",
     ),
     # The per-TAG figures are deliberately NOT declared here. Each has a purpose-built surface that

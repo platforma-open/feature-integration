@@ -1562,7 +1562,13 @@ qcSampleSummaryImportSpec := func(sampleAxisSpec) {
 			num("cellsSetAside", "cellsSetAside", "Cells set aside as sticky", 80000, undefined,
 				"Cells whose control-tag count is above the admissibility gate. Blank where no gate is declared."),
 			num("medianControlReading", "medianControlReading", "Median control-tag reading per cell", 79500, ".1f",
-				"The middle control-tag count across this sample's V(D)J-matched cells. The control tag is declared to bind nothing, so this is the run's own noise floor.")
+				"The middle control-tag count across this sample's V(D)J-matched cells. The control tag is declared to bind nothing, so this is the run's own noise floor."),
+			num("medianAntigenReading", "medianAntigenReading", "Median antigen count per scored reading", 79000, ".1f",
+				"The middle antigen count across this sample's scored readings. Per reading, not per cell: a cell asked about four antigens carries four of them, and a reading is what the cutoff acts on."),
+			num("cutoffCountNeeded", "cutoffCountNeeded", "Antigen UMI needed to clear the cutoff", 78500, undefined,
+				"What the bound score cutoff asks of a typical cell in this sample, in the units the counts are in. The score is a certainty, so it never says how deep a sample is. Taken at this sample's median baseline reading; each cell is judged against its own, so a quieter baseline clears on fewer counts."),
+			num("boundReadingShare", "boundReadingShare", "Share of scored readings called bound", 78000, ".2p",
+				"The share of this sample's scored readings the cutoff called bound. Read beside the UMI figure: a low share with a high bar is a sample too shallow to answer, and a low share with a low bar is one that answered and found little.")
 		],
 		storageFormat: "Parquet",
 		partitionKeyLength: 0

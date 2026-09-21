@@ -412,6 +412,45 @@ def specificity_score(antigen_count, reference_count):
     return (1.0 - beta.cdf(BETA_X, a, b)) * 100.0
 
 
+# A count no run reaches, so a search that passes it is answering "never" rather than running long.
+_REACH_SEARCH_CEILING = 1 << 30
+
+
+def count_to_reach(cutoff: float, reference_count: float) -> int | None:
+    """The smallest antigen count that reaches `cutoff` against `reference_count`.
+
+    The cutoff is a certainty, and the certainty rises with the count, so what a cutoff asks for
+    in the units a scientist reads -- UMIs -- is a boundary rather than a search over a shape.
+
+    It is a LARGE number against the counts these runs carry, and that is the point of reporting
+    it: against a reference of 0 the shipped cutoff of 75 asks for 49, against 5 it asks for 120.
+    A run whose cells hold single-digit counts cannot reach the line whatever the scientist does
+    to it, and the plot alone does not say so.
+
+    None where no count reaches the cutoff: the score approaches 100 without arriving, so a cutoff
+    of 100 or above is unreachable by construction rather than by depth.
+    """
+    if cutoff >= 100.0:
+        return None
+    if specificity_score(0, reference_count) >= cutoff:
+        return 0
+    # Double until the cutoff is cleared, then bisect. The score is monotone in the count, so the
+    # first bracket that clears it contains the boundary.
+    high = 1
+    while specificity_score(high, reference_count) < cutoff:
+        high *= 2
+        if high > _REACH_SEARCH_CEILING:
+            return None
+    low = high // 2
+    while low + 1 < high:
+        mid = (low + high) // 2
+        if specificity_score(mid, reference_count) >= cutoff:
+            high = mid
+        else:
+            low = mid
+    return int(high)
+
+
 class Admissibility(NamedTuple):
     """The pair `read_states` and `silent_tally` must share to agree on what "cannot be
     compared" means for a cell.

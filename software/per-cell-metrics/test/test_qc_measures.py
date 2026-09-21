@@ -45,6 +45,11 @@ EXPECTED_LEVEL_BY_ID = {
     "uniqueCountsPerCell": "sample",
     "cellsSetAside": "sample",
     "medianControlReading": "sample",
+    # What the cutoff asked of each sample and what it returned. Three rows read together: the score is
+    # one currency across the run, so its spread is one pooled plot; what differs per sample is depth.
+    "medianAntigenReading": "sample",
+    "cutoffCountNeeded": "sample",
+    "boundReadingShare": "sample",
 }
 
 

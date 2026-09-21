@@ -17,6 +17,7 @@ from verdict import (
     apply_floor,
     cells_reading_nothing,
     combine_tags_to_identities,
+    count_to_reach,
     gate_cells,
     read_states,
     reference_by_cell,
@@ -395,6 +396,36 @@ def test_specificity_score_matches_the_published_formula():
 
 def test_cutoff_is_seventy_five():
     assert BOUND_CUTOFF == 75.0
+
+
+def test_count_to_reach_returns_the_boundary_not_a_count_past_it():
+    # The answer must be the FIRST count that clears the cutoff: one below it has to fail, or the
+    # figure overstates what the run needs and reads as a harsher line than the one applied.
+    for reference in (0, 1, 5, 20, 100):
+        needed = count_to_reach(BOUND_CUTOFF, reference)
+        assert needed is not None
+        assert specificity_score(needed, reference) >= BOUND_CUTOFF
+        assert specificity_score(needed - 1, reference) < BOUND_CUTOFF
+
+
+def test_the_shipped_cutoff_asks_for_forty_nine_umi_against_a_silent_reference():
+    # The number the run reports, pinned. It is the whole point of reporting it: against a reference
+    # that read nothing, the shipped cutoff still asks for 49 UMI, and these runs carry single digits.
+    # Matches the figure the manual bed's own calibration note records.
+    assert count_to_reach(BOUND_CUTOFF, 0) == 49
+    assert count_to_reach(BOUND_CUTOFF, 5) == 120
+
+
+def test_a_cutoff_no_count_reaches_is_none_rather_than_a_number():
+    # The score approaches 100 without arriving, so 100 is unreachable by construction. None says so;
+    # any integer would read as a boundary a deep enough cell could cross.
+    assert count_to_reach(100.0, 0) is None
+
+
+def test_a_cutoff_under_the_silent_floor_is_reached_by_every_count():
+    # A cell holding nothing already scores ~0.0422, so a cutoff below that is cleared at zero. The CLI
+    # refuses such a cutoff; this pins what the helper says if one ever arrives.
+    assert count_to_reach(0.01, 0) == 0
 
 
 def test_high_count_against_a_quiet_reference_is_bound():

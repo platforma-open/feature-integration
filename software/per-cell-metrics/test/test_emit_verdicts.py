@@ -2726,11 +2726,11 @@ def test_a_population_baseline_emits_no_score_spread(tmp_path):
 
 
 def test_the_run_carries_its_score_spread(bed):
-    # At the run grain because the cutoff is one number for the run, and carried so a scientist can move
-    # that cutoff to where their own scores separate. A cutoff set with no sight of the scores is blind.
+    # ONE spread for the run, binned over every scored position. Every cell is scored against its OWN
+    # baseline, so the cutoff asks the identical question of every cell and the scores are one currency
+    # across samples -- what differs between them is depth, reported as per-sample measurements instead.
+    # Eleven decile points suggest a shape; they cannot show WHERE the scores separate.
     _run(bed, *BASE)
-    # ONE spread for the run, binned over every scored position. Eleven decile points suggest a shape;
-    # they cannot show WHERE the scores separate, which is the one thing this plot is read for.
     bins = json.loads((bed / "result_qc_tag_bins.json").read_text())
     spread = bins["spreads"]["score"]
     edges, weights = spread["edges"], spread["weights"]
@@ -2739,9 +2739,56 @@ def test_the_run_carries_its_score_spread(bed):
     # A score is 0 to 100, and the bins span the scores the run actually produced.
     assert 0.0 <= edges[0] and edges[-1] <= 100.0
     assert sum(weights) > 0
-    # No line stands behind it: the spread is carried so a scientist places the cutoff, and a line here
-    # would be the block placing it instead. The reagent and sample surfaces publish no status for it.
-    assert "scoreDistribution" not in {m["id"] for m in _sample_report(bed)["measurements"]}
+
+
+def test_each_sample_reports_its_own_depth_and_its_own_yield(bed):
+    # The score is ONE currency -- every cell is judged against its own baseline, so the cutoff asks the
+    # identical question everywhere and the spread is pooled. What differs between samples is DEPTH, and
+    # these rows are how a reader sees it. Two samples, same antigen counts, DIFFERENT baselines: S2's
+    # comparator reads 40 where S1's reads 0, so the same count is far less specific there and the cutoff
+    # costs S2 many more UMI. Computing one sample's figure from another's readings shows up here as
+    # equal numbers, so the inequality is the assertion.
+    (bed / "panel.csv").write_text(
+        "Samples,Name,Sequence,Type\n"
+        "S1,AgA,AAAA,Target\nS1,Ctrl,CTRL,Control\n"
+        "S2,AgA,AAAA,Target\nS2,Ctrl,CTRL,Control\n"
+    )
+    rows = ["sampleId,cellId,tag,umiCount"]
+    for cell in ("c1", "c2"):
+        rows += [f"S1,{cell},AAAA,500", f"S1,{cell},CTRL,0"]
+    for cell in ("d1", "d2", "d3"):
+        rows += [f"S2,{cell},AAAA,500", f"S2,{cell},CTRL,40"]
+    (bed / "counts.csv").write_text("\n".join(rows) + "\n")
+    (bed / "linker.csv").write_text("sampleId,cellId,setId\nS1,c1,K1\nS1,c2,K1\nS2,d1,K2\nS2,d2,K2\nS2,d3,K2\n")
+    _run(bed, *BASE)
+
+    # Each sample's own readings, not the run's.
+    assert _sample_measure(bed, "medianAntigenReading", "S1")["value"] == 500.0
+    assert _sample_measure(bed, "medianAntigenReading", "S2")["value"] == 500.0
+    assert _sample_measure(bed, "boundReadingShare", "S1")["value"] == 1.0
+    # S2 binds NOTHING despite carrying the same 500 UMI, because its baseline is loud enough that 500 no
+    # longer clears the cutoff. That is the pair of rows working: identical depth, opposite yield, and the
+    # reason is visible only because the UMI bar sits beside the share.
+    assert _sample_measure(bed, "boundReadingShare", "S2")["value"] == 0.0
+
+    # The boundary is taken at each sample's OWN median baseline, so a noisier one costs more UMI.
+    s1 = _sample_measure(bed, "cutoffCountNeeded", "S1")["value"]
+    s2 = _sample_measure(bed, "cutoffCountNeeded", "S2")["value"]
+    assert s1 < s2, f"a higher baseline must cost more UMI to clear the same cutoff: {s1} vs {s2}"
+    # And S2's bar is above what its cells actually carry, which is what "too shallow to answer" looks
+    # like -- here reached by a loud baseline rather than by thin sequencing.
+    assert s2 > _sample_measure(bed, "medianAntigenReading", "S2")["value"]
+    assert s1 < _sample_measure(bed, "medianAntigenReading", "S1")["value"]
+
+
+def test_the_three_cutoff_rows_are_blank_where_no_score_was_produced(tmp_path):
+    # A declared measurement always carries a row, so a rung that produces no score leaves these three
+    # valueless rather than absent. They reach a reader only through the across-samples table, where a
+    # blank cell beside its neighbours' numbers is the statement -- so they carry no reason of their own.
+    _distribution_bed(tmp_path)
+    _run(tmp_path, *DISTRIBUTION_ARGS, "--cells", "cells.csv")
+    for mid in ("medianAntigenReading", "cutoffCountNeeded", "boundReadingShare"):
+        assert _sample_measure(tmp_path, mid, "S1")["value"] is None, mid
 
 
 def test_the_run_score_spread_stays_out_of_every_sample_rollup(bed):

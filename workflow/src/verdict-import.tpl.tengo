@@ -246,14 +246,12 @@ self.body(func(inputs) {
 	addTo(reagentFb, "reagentPanelLabels", inputs.panelLabels,
 		columnSpecs.panelLabelsImportSpec(panelAxis))
 
-	// The panel-versus-reads check is no longer imported. Its one reachable direction -- a declared barcode no
-	// read carried -- is the reagent table's `Seen in 0/N`. emit_verdicts.py still writes
-	// result_panel_mismatch.csv and panel.py still computes it: potentially dead, left for a separate pass.
+	// Barcodes the reads carried that no panel declares get their own frame: it keys on (sampleId, tag)
+	// rather than any axis the tables above use.
 	//
-	// Barcodes the reads carried that no panel declares get their own frame, because it keys on
-	// (sampleId, tag) rather than any axis the tables above use, and because the retired check's
-	// "undeclared-in-panel" direction was structurally unreachable there -- refine-tags has already snapped
-	// every barcode onto the panel before that check's counts are built.
+	// A declared barcode no read carried is reported instead by the reagent table's `Seen in 0/N`. The
+	// reverse direction cannot arise here at all -- refine-tags snaps every barcode onto the panel before
+	// these counts are built, so a count never carries an undeclared sequence.
 	// Per-cell per-tag CAPTURE, exported for a downstream per-cell composition plot. Its own frame: the
 	// grain is (sample, cell, tag) and nothing else here shares it -- `cellRefFb` above is per cell, and the
 	// reagent table is per (tag, identity, panel). The tag label travels WITH it

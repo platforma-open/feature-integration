@@ -15,6 +15,9 @@ const props = defineProps<{
 
 const report = computed(() => props.sampleData?.qcReport);
 
+// Measurements whose place is the across-samples table and not this list. 
+const SUMMARY_ONLY = new Set(["medianAntigenReading", "cutoffCountNeeded", "boundReadingShare"]);
+
 // DECLARATION ORDER, exactly as the software emits it. That order is deliberate -- the reads first, then
 // every observed barcode, then the V(D)J-matched cells, then what the reading rules removed -- and rows
 // that belong together are declared together.
@@ -22,7 +25,9 @@ const report = computed(() => props.sampleData?.qcReport);
 // This used to float the judgeable rows to the top, which scrambled all of that: a reader saw the five
 // rows carrying a threshold, then the other eight, and neither half was the pipeline's order. Scanning
 // for trouble is what the status tags are for.
-const orderedMeasurements = computed(() => report.value?.measurements ?? []);
+const orderedMeasurements = computed(() =>
+  (report.value?.measurements ?? []).filter((m) => !SUMMARY_ONLY.has(m.id)),
+);
 </script>
 
 <template>
