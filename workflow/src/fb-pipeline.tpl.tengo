@@ -240,9 +240,8 @@ self.body(func(inputs) {
 		parseReport: parseReport,
 		refineReport: refineReport,
 		tagstatTsv: tagstatTsv,
-		// rawFeatureCounts' own exec calls neither saveStdoutStream() nor printErrStreamToStdout(), so the
-		// CIDConflictError mechanism above does not apply to it, and it is not in main.tpl.tengo's content-hash
-		// persist loop. Currently unpersisted and unconsumed.
+		// Pre-refine FEATURE counts, read by the verdict stage for the undeclared-barcode table. Its exec
+		// captures no stream, so the CIDConflictError mechanism above does not apply to it.
 		rawFeatureCounts: rawFeatureCounts
 	}
 })

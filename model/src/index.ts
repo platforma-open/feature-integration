@@ -27,7 +27,7 @@ export type { Preset } from "./presets";
 export {
   QC_MEASUREMENT_DESCRIPTIONS,
   qcMeasurementDescription,
-  type QcMeasurementDescription,
+  type QcMeasurementDescription
 } from "./qcDescriptions";
 export type { BlockArgs, BlockData, CsvMeta, GroupingRule, ReferenceSource } from "./types";
 
@@ -1389,46 +1389,40 @@ export const platforma = BlockModelV3.create(dataModel)
   // anchor and maxHops config, and the array-columns form runs discoverLabelColumnVariants over the ENTIRE
   // result pool and hangs forever on the upstream Samples & Data FASTQ File-dataset
   // (no_data:<sndBlock>:pf.dataset.*). blocks/peptide-extraction uses the same pattern for the same setup.
-  .output(
-    "perCellTable",
-    (ctx) => {
-      const pCols = ctx.outputs?.resolve("perCellTable")?.getPColumns();
-      if (pCols === undefined || pCols.length === 0) return undefined;
+  .outputWithStatus("perCellTable", (ctx) => {
+    const pCols = ctx.outputs?.resolve("perCellTable")?.getPColumns();
+    if (pCols === undefined || pCols.length === 0) return undefined;
 
-      // Narrowed to the cells the V(D)J data matched.
-      const runMeta = ctx.outputs
-        ?.resolve({ field: "antigenRunMeta", allowPermanentAbsence: true })
-        ?.getDataAsJsonOrUndefined<VerdictRunMeta>();
-      const listed =
-        runMeta === undefined || runMeta.cellListSource === "none"
-          ? []
-          : (
-              ctx.outputs
-                ?.resolve({ field: "antigenCellReference", allowPermanentAbsence: true })
-                ?.getPColumns() ?? []
-            ).filter((c) => c.spec.name === CELL_IN_LIST_COLUMN);
+    // Narrowed to the cells the V(D)J data matched.
+    const runMeta = ctx.outputs
+      ?.resolve({ field: "antigenRunMeta", allowPermanentAbsence: true })
+      ?.getDataAsJsonOrUndefined<VerdictRunMeta>();
+    if (runMeta === undefined) return undefined;
+    const listed =
+      runMeta.cellListSource === "none"
+        ? []
+        : (
+            ctx.outputs
+              ?.resolve({ field: "antigenCellReference", allowPermanentAbsence: true })
+              ?.getPColumns() ?? []
+          ).filter((c) => c.spec.name === CELL_IN_LIST_COLUMN);
+    if (runMeta.cellListSource !== "none" && listed.length === 0) return undefined;
 
-      return createPlDataTableV2(
-        ctx,
-        [...pCols, ...listed],
-        ctx.data.tableState,
-        listed.length > 0 ? { coreJoinType: "inner" } : undefined,
-      );
-    },
-    { retentive: true, withStatus: true },
-  )
+    return createPlDataTableV2(
+      ctx,
+      [...pCols, ...listed],
+      ctx.data.tableState,
+      listed.length > 0 ? { coreJoinType: "inner" } : undefined,
+    );
+  })
   // createPlDataTableV2 like perCellTable, because V2 runs getAllLabelColumns over the result pool and
   // auto-joins the matching sampleId label. A V3 selector of { mode: "enrichment", maxHops: 0 } never
   // traverses to the upstream pl7.app/label column, and the sampleId axis then renders the raw sample hash.
-  .output(
-    "qcSummaryTable",
-    (ctx) => {
-      const pCols = ctx.outputs?.resolve("qcSummaryTable")?.getPColumns();
-      if (pCols === undefined || pCols.length === 0) return undefined;
-      return createPlDataTableV2(ctx, pCols, ctx.data.qcSummaryTableState);
-    },
-    { retentive: true, withStatus: true },
-  )
+  .outputWithStatus("qcSummaryTable", (ctx) => {
+    const pCols = ctx.outputs?.resolve("qcSummaryTable")?.getPColumns();
+    if (pCols === undefined || pCols.length === 0) return undefined;
+    return createPlDataTableV2(ctx, pCols, ctx.data.qcSummaryTableState);
+  })
   // Two parts of the card read this, and neither narrows anything: the punch hover, and the card's empty
   // state, which tells "the pivot emitted no identity columns" apart from "this run has no rows".
   //
@@ -1462,102 +1456,97 @@ export const platforma = BlockModelV3.create(dataModel)
   // as given and runs NO data-column discovery, so it also cannot hang on the upstream Samples & Data FASTQ
   // dataset -- the hazard that keeps the other tables here on V2. Each of those needs its own check against
   // that hazard before it follows.
-  .output(
-    "punchcardTable",
-    (ctx) => {
-      const pCols = ctx.outputs
-        ?.resolve({ field: "antigenPunchcardTable", allowPermanentAbsence: true })
-        ?.getPColumns();
-      if (pCols === undefined) return undefined;
-      const identityOf = (c: (typeof pCols)[number]) => c.spec.domain?.[PUNCH_IDENTITY_DOMAIN];
-      // Every identity the pivot produced, always. Narrowing is the grid's job.
-      const cols = pCols.filter((c) => identityOf(c) !== undefined);
-      if (cols.length === 0) return undefined;
-      // The clonotype's cell count. It carries no identity domain, so the filter above drops it. `primaryColumns`
-      // runs no discovery, so a column absent from this list never reaches the grid. Keyed on the same single axis
-      // as the punch columns, which is what makes it safe to add.
-      const cellCount = pCols.filter((c) => c.spec.name === PUNCH_CELL_COUNT_COLUMN);
-      // Alphabetical by the name a READER sees. The workflow emits these columns sorted by identity, which under
-      // the per-tag grouping is the barcode, and a panel's names never sort as its sequences do. Numeric
-      // collation, so `antigen_9` precedes `antigen_10`. `columns: null` adds the clonotype column separately.
-      const labelOf = (c: (typeof cols)[number]) =>
-        c.spec.annotations?.["pl7.app/label"] ?? (identityOf(c) as string);
-      const ordered = [...cols].sort((a, b) =>
-        labelOf(a).localeCompare(labelOf(b), undefined, { sensitivity: "base", numeric: true }),
-      );
-      // Headers carry the identity's full name, and never a truncation.
-      //
-      // Column ORDER comes from the `pl7.app/table/orderPriority` annotation on each spec, and from nothing else.
-      // A `displayOptions.ordering` rule and this array's own order are BOTH inert here. The cell count carries
-      // 96000, between the clonotype label's 100000 and the punches' 92000. To fix a column that "renders last",
-      // measure with `aria-colindex`: `querySelectorAll('[role="columnheader"]')` returns AG Grid's recycled
-      // header nodes in an order unrelated to column position.
+  .outputWithStatus("punchcardTable", (ctx) => {
+    const pCols = ctx.outputs
+      ?.resolve({ field: "antigenPunchcardTable", allowPermanentAbsence: true })
+      ?.getPColumns();
+    if (pCols === undefined) return undefined;
+    const identityOf = (c: (typeof pCols)[number]) => c.spec.domain?.[PUNCH_IDENTITY_DOMAIN];
+    // Every identity the pivot produced, always. Narrowing is the grid's job.
+    const cols = pCols.filter((c) => identityOf(c) !== undefined);
+    if (cols.length === 0) return undefined;
+    // The clonotype's cell count. It carries no identity domain, so the filter above drops it. `primaryColumns`
+    // runs no discovery, so a column absent from this list never reaches the grid. Keyed on the same single axis
+    // as the punch columns, which is what makes it safe to add.
+    const cellCount = pCols.filter((c) => c.spec.name === PUNCH_CELL_COUNT_COLUMN);
+    // Alphabetical by the name a READER sees. The workflow emits these columns sorted by identity, which under
+    // the per-tag grouping is the barcode, and a panel's names never sort as its sequences do. Numeric
+    // collation, so `antigen_9` precedes `antigen_10`. `columns: null` adds the clonotype column separately.
+    const labelOf = (c: (typeof cols)[number]) =>
+      c.spec.annotations?.["pl7.app/label"] ?? (identityOf(c) as string);
+    const ordered = [...cols].sort((a, b) =>
+      labelOf(a).localeCompare(labelOf(b), undefined, { sensitivity: "base", numeric: true }),
+    );
+    // Headers carry the identity's full name, and never a truncation.
+    //
+    // Column ORDER comes from the `pl7.app/table/orderPriority` annotation on each spec, and from nothing else.
+    // A `displayOptions.ordering` rule and this array's own order are BOTH inert here. The cell count carries
+    // 96000, between the clonotype label's 100000 and the punches' 92000. To fix a column that "renders last",
+    // measure with `aria-colindex`: `querySelectorAll('[role="columnheader"]')` returns AG Grid's recycled
+    // header nodes in an order unrelated to column position.
 
-      // The clonotype's own V(D)J properties, joined onto the same axis the punches use.
-      const punchAxisKey = axisKeyOf(cols[0].spec.axesSpec[0]);
-      const vdjColumns = ctx.resultPool
-        .getOptions((spec) => {
-          if (!isPColumnSpec(spec)) return false;
-          if (spec.name !== VDJ_SEQUENCE_COLUMN && spec.name !== VDJ_GENE_HIT_COLUMN) return false;
-          if (spec.domain?.[CHAIN_INDEX_DOMAIN] !== "primary") return false;
-          // Keyed on the clonotype and on NOTHING else. A per-sample column would drag a sample axis in and
-          // re-key the whole card.
-          if (spec.axesSpec.length !== 1) return false;
-          return axisKeyOf(spec.axesSpec[0]) === punchAxisKey;
-        })
-        .map((o) => ctx.resultPool.getPColumnByRef(o.ref))
-        .filter((c): c is NonNullable<typeof c> => c !== undefined);
+    // The clonotype's own V(D)J properties, joined onto the same axis the punches use.
+    const punchAxisKey = axisKeyOf(cols[0].spec.axesSpec[0]);
+    const vdjColumns = ctx.resultPool
+      .getOptions((spec) => {
+        if (!isPColumnSpec(spec)) return false;
+        if (spec.name !== VDJ_SEQUENCE_COLUMN && spec.name !== VDJ_GENE_HIT_COLUMN) return false;
+        if (spec.domain?.[CHAIN_INDEX_DOMAIN] !== "primary") return false;
+        // Keyed on the clonotype and on NOTHING else. A per-sample column would drag a sample axis in and
+        // re-key the whole card.
+        if (spec.axesSpec.length !== 1) return false;
+        return axisKeyOf(spec.axesSpec[0]) === punchAxisKey;
+      })
+      .map((o) => ctx.resultPool.getPColumnByRef(o.ref))
+      .filter((c): c is NonNullable<typeof c> => c !== undefined);
 
-      // Which sequence a reader sees by default.
-      const aaSequences = vdjColumns.filter(
-        (c) =>
-          c.spec.name === VDJ_SEQUENCE_COLUMN &&
-          c.spec.domain?.["pl7.app/alphabet"] === "aminoacid",
-      );
-      type SequenceMatch = {
-        name: string;
-        domain: Record<string, string | { type: "regex"; value: string }>;
-        annotations?: Record<string, string>;
-      };
-      const shownSequenceMatch: SequenceMatch | undefined = aaSequences.some(
-        (c) => c.spec.annotations?.[VDJ_ASSEMBLING_FEATURE_ANNOTATION] === "true",
-      )
+    // Which sequence a reader sees by default.
+    const aaSequences = vdjColumns.filter(
+      (c) =>
+        c.spec.name === VDJ_SEQUENCE_COLUMN && c.spec.domain?.["pl7.app/alphabet"] === "aminoacid",
+    );
+    type SequenceMatch = {
+      name: string;
+      domain: Record<string, string | { type: "regex"; value: string }>;
+      annotations?: Record<string, string>;
+    };
+    const shownSequenceMatch: SequenceMatch | undefined = aaSequences.some(
+      (c) => c.spec.annotations?.[VDJ_ASSEMBLING_FEATURE_ANNOTATION] === "true",
+    )
+      ? {
+          name: VDJ_SEQUENCE_COLUMN,
+          domain: { "pl7.app/alphabet": "aminoacid" },
+          annotations: { [VDJ_ASSEMBLING_FEATURE_ANNOTATION]: "true" },
+        }
+      : aaSequences.some((c) => /cdr3/i.test(c.spec.domain?.["pl7.app/vdj/feature"] ?? ""))
         ? {
             name: VDJ_SEQUENCE_COLUMN,
-            domain: { "pl7.app/alphabet": "aminoacid" },
-            annotations: { [VDJ_ASSEMBLING_FEATURE_ANNOTATION]: "true" },
+            // The matcher offers only exact and regex, so "contains" is spelled as one.
+            domain: {
+              "pl7.app/alphabet": "aminoacid",
+              "pl7.app/vdj/feature": { type: "regex" as const, value: ".*[Cc][Dd][Rr]3.*" },
+            },
           }
-        : aaSequences.some((c) => /cdr3/i.test(c.spec.domain?.["pl7.app/vdj/feature"] ?? ""))
-          ? {
-              name: VDJ_SEQUENCE_COLUMN,
-              // The matcher offers only exact and regex, so "contains" is spelled as one.
-              domain: {
-                "pl7.app/alphabet": "aminoacid",
-                "pl7.app/vdj/feature": { type: "regex" as const, value: ".*[Cc][Dd][Rr]3.*" },
-              },
-            }
-          : undefined;
+        : undefined;
 
-      return createPlDataTableV3(ctx, {
-        primaryColumns: [...cellCount, ...ordered].map((c) => DataColumn.fromColumn(c)),
-        columns: vdjColumns.map((c) => DataColumn.fromColumn(c)),
-        tableState: ctx.data.punchcardTableState,
-        // Read in order, first match wins; anything UNMATCHED keeps its own default, which is what leaves the
-        // punches and the cell count showing. Both fallthrough rules are scoped by column name so they can
-        // never reach them.
-        displayOptions: {
-          visibility: [
-            ...(shownSequenceMatch === undefined
-              ? []
-              : [{ match: shownSequenceMatch, visibility: "default" as const }]),
-            { match: { name: VDJ_SEQUENCE_COLUMN }, visibility: "optional" as const },
-            { match: { name: VDJ_GENE_HIT_COLUMN }, visibility: "optional" as const },
-          ],
-        },
-      });
-    },
-    { retentive: true, withStatus: true },
-  )
+    return createPlDataTableV3(ctx, {
+      primaryColumns: [...cellCount, ...ordered].map((c) => DataColumn.fromColumn(c)),
+      columns: vdjColumns.map((c) => DataColumn.fromColumn(c)),
+      tableState: ctx.data.punchcardTableState,
+      // Read in order, first match wins; anything UNMATCHED keeps its own default, which is what leaves the
+      // punches and the cell count showing. Both fallthrough rules are scoped by column name so they can
+      // never reach them.
+      displayOptions: {
+        visibility: [
+          ...(shownSequenceMatch === undefined
+            ? []
+            : [{ match: shownSequenceMatch, visibility: "default" as const }]),
+          { match: { name: VDJ_SEQUENCE_COLUMN }, visibility: "optional" as const },
+          { match: { name: VDJ_GENE_HIT_COLUMN }, visibility: "optional" as const },
+        ],
+      },
+    });
+  })
   // DERIVED from an emitted column and never written by hand. `isJsonEqual` matches `showCellButtonForAxisId`
   // on exact JSON equality, domain and all, so a hand-written `{type, name}` matches nothing and renders no
   // button and no error.
@@ -1579,159 +1568,151 @@ export const platforma = BlockModelV3.create(dataModel)
   // The filter is pushed down, and not applied afterwards. `createPTableDefV3` wraps the join in a
   // `{type:"filter", predicate}` node, which the engine lowers into the data query (pframes-rs
   // `visit_filter`), so one clonotype's rows cross the boundary whatever the run's size.
-  .output(
-    "expansionTable",
-    (ctx) => {
-      // A table built with no filter is EVERY clonotype's identities at once.
-      const chosen = ctx.data.expandedSet;
-      if (chosen === undefined || chosen.length === 0) return undefined;
-      const frame = ctx.outputs
-        ?.resolve({ field: "antigenVerdictsTable", allowPermanentAbsence: true })
-        ?.getPColumns();
-      if (frame === undefined || frame.length === 0) return undefined;
-      // NAMED explicitly, which is the whole correctness of this call. `antigenVerdictsTable` surfaces the entire
-      // export frame, whose families are keyed on five different axes: tag, panel, sample, set, and
-      // (set, identity). One table over all of them is a malformed join, and the SDK answers `discoverColumns
-      // failed` out of `discoverLabelColumns`. Only the (set, identity) family belongs here.
+  .outputWithStatus("expansionTable", (ctx) => {
+    // A table built with no filter is EVERY clonotype's identities at once.
+    const chosen = ctx.data.expandedSet;
+    if (chosen === undefined || chosen.length === 0) return undefined;
+    const frame = ctx.outputs
+      ?.resolve({ field: "antigenVerdictsTable", allowPermanentAbsence: true })
+      ?.getPColumns();
+    if (frame === undefined || frame.length === 0) return undefined;
+    // NAMED explicitly, which is the whole correctness of this call. `antigenVerdictsTable` surfaces the entire
+    // export frame, whose families are keyed on five different axes: tag, panel, sample, set, and
+    // (set, identity). One table over all of them is a malformed join, and the SDK answers `discoverColumns
+    // failed` out of `discoverLabelColumns`. Only the (set, identity) family belongs here.
+    //
+    // The identity's readable name is NOT named here. It is emitted twice under one spec -- `identityLabels`
+    // into `exportFb`, and `reagentIdentityLabels` into `reagentFb` -- and `reagentFb` reaches this block as
+    // the `antigenReagentTable` output, so `columns: null` discovers it. Supplying the `exportFb` copy as well
+    // rendered two identical "Antigen" columns. The two specs carry no domain, so no visibility rule separates
+    // them; dropping one supplier is the only route. `reagentFb` is built unconditionally beside the verdicts.
+    //
+    // Could-answer is CONDITIONAL. Under one panel it is the clonotype's own cell count at every identity, which
+    // the grid already carries beside its name.
+    //
+    // Read from the run RECORD, and not from current args. What panels a run carried is a fact about that run.
+    const runMeta = ctx.outputs
+      ?.resolve({ field: "antigenRunMeta", allowPermanentAbsence: true })
+      ?.getDataAsJsonOrUndefined<VerdictRunMeta>();
+    // Absent reads as one panel.
+    const panelsDiffer = (runMeta?.samplePanelCount ?? 1) > 1;
+    // Not-bound is absent by design. A cell's vote is exactly one of bound or not-bound, so a third column is
+    // `answered - bound` printed out. It is not in the export either.
+    const WANTED = [
+      "pl7.app/antigen/verdict",
+      ...(panelsDiffer ? ["pl7.app/antigen/cellsAsked"] : []),
+      "pl7.app/antigen/cellsAnswered",
+      "pl7.app/antigen/cellsBound",
+    ];
+    const pCols = WANTED.flatMap((name) => frame.filter((c) => c.spec.name === name));
+    // Named, never positional. The filter above preserves WANTED's order, and a conditional member shifts it.
+    const verdictCol = pCols.find((c) => c.spec.name === "pl7.app/antigen/verdict");
+    // Checked directly, and before `setAxis` is derived from it. The filter below reads `verdictCol.id`.
+    if (verdictCol === undefined) return undefined;
+    const setAxis = verdictCol.spec.axesSpec[0];
+    if (setAxis === undefined) return undefined;
+    return createPlDataTableV3(ctx, {
+      primaryColumns: pCols.map((c) => DataColumn.fromColumn(c)),
+      columns: null,
+      tableState: ctx.data.expansionTableState,
+      // `PlAgDataTableV2` drops any axis that has a label column, and renders the label column in that axis's
+      // place. The identity's label arrives by discovery, not as a primary column.
       //
-      // The identity's readable name is NOT named here. It is emitted twice under one spec -- `identityLabels`
-      // into `exportFb`, and `reagentIdentityLabels` into `reagentFb` -- and `reagentFb` reaches this block as
-      // the `antigenReagentTable` output, so `columns: null` discovers it. Supplying the `exportFb` copy as well
-      // rendered two identical "Antigen" columns. The two specs carry no domain, so no visibility rule separates
-      // them; dropping one supplier is the only route. `reagentFb` is built unconditionally beside the verdicts.
-      //
-      // Could-answer is CONDITIONAL. Under one panel it is the clonotype's own cell count at every identity, which
-      // the grid already carries beside its name.
-      //
-      // Read from the run RECORD, and not from current args. What panels a run carried is a fact about that run.
-      const runMeta = ctx.outputs
-        ?.resolve({ field: "antigenRunMeta", allowPermanentAbsence: true })
-        ?.getDataAsJsonOrUndefined<VerdictRunMeta>();
-      // Absent reads as one panel.
-      const panelsDiffer = (runMeta?.samplePanelCount ?? 1) > 1;
-      // Not-bound is absent by design. A cell's vote is exactly one of bound or not-bound, so a third column is
-      // `answered - bound` printed out. It is not in the export either.
-      const WANTED = [
-        "pl7.app/antigen/verdict",
-        ...(panelsDiffer ? ["pl7.app/antigen/cellsAsked"] : []),
-        "pl7.app/antigen/cellsAnswered",
-        "pl7.app/antigen/cellsBound",
-      ];
-      const pCols = WANTED.flatMap((name) => frame.filter((c) => c.spec.name === name));
-      // Named, never positional. The filter above preserves WANTED's order, and a conditional member shifts it.
-      const verdictCol = pCols.find((c) => c.spec.name === "pl7.app/antigen/verdict");
-      // Checked directly, and before `setAxis` is derived from it. The filter below reads `verdictCol.id`.
-      if (verdictCol === undefined) return undefined;
-      const setAxis = verdictCol.spec.axesSpec[0];
-      if (setAxis === undefined) return undefined;
-      return createPlDataTableV3(ctx, {
-        primaryColumns: pCols.map((c) => DataColumn.fromColumn(c)),
-        columns: null,
-        tableState: ctx.data.expansionTableState,
-        // `PlAgDataTableV2` drops any axis that has a label column, and renders the label column in that axis's
-        // place. The identity's label arrives by discovery, not as a primary column.
+      // Both columns the table would show as a name are called `pl7.app/label`, and the axis each one labels tells
+      // them apart. The FIRST match wins, so the order of these two rules matters.
+      displayOptions: {
+        visibility: [
+          // The identity's name, the row's subject. Required although the spec already annotates "default": the
+          // catch-all rule below matches this column too, and the first match wins.
+          {
+            match: {
+              name: "^pl7\\.app/label$",
+              axes: [{ name: "^pl7\\.app/antigen/identityId$" }],
+              partialAxesMatch: false,
+            },
+            visibility: "default",
+          },
+          // Any other label column here labels the CLONOTYPE axis. Optional rather than hidden, so the Columns picker
+          // can restore it.
+          { match: { name: "^pl7\\.app/label$" }, visibility: "optional" },
+        ],
+        // Cells-that-answered sits LAST, behind the count it contains. Its annotation puts it at 98000, ahead of
+        // cells-that-read-bound at 97500, and in this panel the two swap. Overridden here and not in the workflow
+        // spec, whose columns are EXPORTS with downstream readers and whose priorities are global.
         //
-        // Both columns the table would show as a name are called `pl7.app/label`, and the axis each one labels tells
-        // them apart. The FIRST match wins, so the order of these two rules matters.
-        displayOptions: {
-          visibility: [
-            // The identity's name, the row's subject. Required although the spec already annotates "default": the
-            // catch-all rule below matches this column too, and the first match wins.
-            {
-              match: {
-                name: "^pl7\\.app/label$",
-                axes: [{ name: "^pl7\\.app/antigen/identityId$" }],
-                partialAxesMatch: false,
-              },
-              visibility: "default",
+        // This rule only reaches a clonotype the grid has not drawn before. `expansionTableState.stateCache` keeps
+        // one grid state PER `sourceId`, which here is the expanded clonotype, and a stored
+        // `columnOrder.orderedColIds` beats anything the model asks for. A reorder that must reach already-opened
+        // clonotypes needs the cache invalidated, which is not done here.
+        ordering: [{ match: { name: "^pl7\\.app/antigen/cellsAnswered$" }, priority: 90000 }],
+      },
+      filters: {
+        type: "and",
+        filters: [
+          {
+            type: "patternEquals",
+            // The FULL axis id, domain included. A dropped domain leaves an id that `remapFilterColumnIds` cannot
+            // resolve, and the SDK's unresolved-leaf path then calls `console`, which the model's QuickJS sandbox lacks.
+            // The symptom is `ReferenceError: 'console' is not defined` from deep inside the SDK.
+            column: {
+              type: "axis",
+              id:
+                setAxis.domain === undefined
+                  ? { name: setAxis.name, type: setAxis.type }
+                  : { name: setAxis.name, type: setAxis.type, domain: setAxis.domain },
             },
-            // Any other label column here labels the CLONOTYPE axis. Optional rather than hidden, so the Columns picker
-            // can restore it.
-            { match: { name: "^pl7\\.app/label$" }, visibility: "optional" },
-          ],
-          // Cells-that-answered sits LAST, behind the count it contains. Its annotation puts it at 98000, ahead of
-          // cells-that-read-bound at 97500, and in this panel the two swap. Overridden here and not in the workflow
-          // spec, whose columns are EXPORTS with downstream readers and whose priorities are global.
-          //
-          // This rule only reaches a clonotype the grid has not drawn before. `expansionTableState.stateCache` keeps
-          // one grid state PER `sourceId`, which here is the expanded clonotype, and a stored
-          // `columnOrder.orderedColIds` beats anything the model asks for. A reorder that must reach already-opened
-          // clonotypes needs the cache invalidated, which is not done here.
-          ordering: [{ match: { name: "^pl7\\.app/antigen/cellsAnswered$" }, priority: 90000 }],
-        },
-        filters: {
-          type: "and",
-          filters: [
-            {
-              type: "patternEquals",
-              // The FULL axis id, domain included. A dropped domain leaves an id that `remapFilterColumnIds` cannot
-              // resolve, and the SDK's unresolved-leaf path then calls `console`, which the model's QuickJS sandbox lacks.
-              // The symptom is `ReferenceError: 'console' is not defined` from deep inside the SDK.
-              column: {
-                type: "axis",
-                id:
-                  setAxis.domain === undefined
-                    ? { name: setAxis.name, type: setAxis.type }
-                    : { name: setAxis.name, type: setAxis.type, domain: setAxis.domain },
-              },
-              value: String(chosen[0]),
-            },
-            {
-              type: "patternNotEquals",
-              // A never-asked position is not a reading. Filtered by the verdict's own value, and not by a count: a bound
-              // count of 0 is a real reading and must stay.
-              column: { type: "column", id: verdictCol.id },
-              value: "never asked",
-            },
-          ],
-        },
-      });
-    },
-    { retentive: true, withStatus: true },
-  )
+            value: String(chosen[0]),
+          },
+          {
+            type: "patternNotEquals",
+            // A never-asked position is not a reading. Filtered by the verdict's own value, and not by a count: a bound
+            // count of 0 is a real reading and must stay.
+            column: { type: "column", id: verdictCol.id },
+            value: "never asked",
+          },
+        ],
+      },
+    });
+  })
   // ONE row per cell of the chosen clonotype, one column per identity, each position carrying the cell's own
   // reading rather than its set's verdict. An `unreliable` on the card is cells that disagree, and nothing but
   // this face shows the disagreement.
   //
   // Filtered on `setId`, which is a COLUMN here and not an axis: the frame is keyed (sampleId, cellId), so the
   // clonotype is a property of the row. The filter leaf takes `PColumn.id`, and never a hand-built id.
-  .output(
-    "cellExpansionTable",
-    (ctx) => {
-      const chosen = ctx.data.expandedSet;
-      if (chosen === undefined || chosen.length === 0) return undefined;
-      const frame = ctx.outputs
-        ?.resolve({ field: "antigenCellReference", allowPermanentAbsence: true })
-        ?.getPColumns();
-      if (frame === undefined || frame.length === 0) return undefined;
-      // Without the set column there is no filter, and an unfiltered table here is every cell in the run against
-      // every identity. Absent means the software gated the pivot away, which is a legitimate state and not an
-      // error, so the page states the reason from the run record.
-      const setCol = frame.find((c) => c.spec.name === "pl7.app/antigen/cellSetId");
-      if (setCol === undefined) return undefined;
-      const punchCols = frame.filter((c) => c.spec.name === "pl7.app/antigen/cellPunch");
-      if (punchCols.length === 0) return undefined;
-      const boundCount = frame.filter((c) => c.spec.name === "pl7.app/antigen/boundIdentities");
-      // No ordering rule, by design. The bound count's own annotation priority (95000) outranks every identity
-      // column at 94000 and below.
-      return createPlDataTableV3(ctx, {
-        primaryColumns: [setCol, ...boundCount, ...punchCols].map((c) => DataColumn.fromColumn(c)),
-        columns: null,
-        tableState: ctx.data.cellExpansionTableState,
-        filters: {
-          type: "and",
-          filters: [
-            {
-              type: "patternEquals",
-              column: { type: "column", id: setCol.id },
-              value: String(chosen[0]),
-            },
-          ],
-        },
-      });
-    },
-    { retentive: true, withStatus: true },
-  )
+  .outputWithStatus("cellExpansionTable", (ctx) => {
+    const chosen = ctx.data.expandedSet;
+    if (chosen === undefined || chosen.length === 0) return undefined;
+    const frame = ctx.outputs
+      ?.resolve({ field: "antigenCellReference", allowPermanentAbsence: true })
+      ?.getPColumns();
+    if (frame === undefined || frame.length === 0) return undefined;
+    // Without the set column there is no filter, and an unfiltered table here is every cell in the run against
+    // every identity. Absent means the software gated the pivot away, which is a legitimate state and not an
+    // error, so the page states the reason from the run record.
+    const setCol = frame.find((c) => c.spec.name === "pl7.app/antigen/cellSetId");
+    if (setCol === undefined) return undefined;
+    const punchCols = frame.filter((c) => c.spec.name === "pl7.app/antigen/cellPunch");
+    if (punchCols.length === 0) return undefined;
+    const boundCount = frame.filter((c) => c.spec.name === "pl7.app/antigen/boundIdentities");
+    // No ordering rule, by design. The bound count's own annotation priority (95000) outranks every identity
+    // column at 94000 and below.
+    return createPlDataTableV3(ctx, {
+      primaryColumns: [setCol, ...boundCount, ...punchCols].map((c) => DataColumn.fromColumn(c)),
+      columns: null,
+      tableState: ctx.data.cellExpansionTableState,
+      filters: {
+        type: "and",
+        filters: [
+          {
+            type: "patternEquals",
+            column: { type: "column", id: setCol.id },
+            value: String(chosen[0]),
+          },
+        ],
+      },
+    });
+  })
   // The fitted backgrounds at the fit's own (sample, tag) grain. Every distribution on the run-quality
   // page is drawn from the binned counts in `tagCountBins` instead.
   //
@@ -1750,31 +1731,23 @@ export const platforma = BlockModelV3.create(dataModel)
     { retentive: true, withStatus: true },
   )
   // One row per (panel, tag, identity). A tag that carries two identities takes a row under each.
-  .output(
-    "reagentTable",
-    (ctx) => {
-      const pCols = ctx.outputs
-        ?.resolve({ field: "antigenReagentTable", allowPermanentAbsence: true })
-        ?.getPColumns();
-      if (pCols === undefined) return undefined;
-      return createPlDataTableV2(ctx, pCols, ctx.data.reagentTableState);
-    },
-    { retentive: true, withStatus: true },
-  )
+  .outputWithStatus("reagentTable", (ctx) => {
+    const pCols = ctx.outputs
+      ?.resolve({ field: "antigenReagentTable", allowPermanentAbsence: true })
+      ?.getPColumns();
+    if (pCols === undefined) return undefined;
+    return createPlDataTableV2(ctx, pCols, ctx.data.reagentTableState);
+  })
   // Carries two shares: each sequence's own, and the sample's whole undeclared share, which is what the status
   // reads. That status is the barcode's, and never rolled into any sample's own. Rows are the pre-refine pass,
   // so they include sequences correction later snapped onto the panel. Usually empty, which is the wanted outcome.
-  .output(
-    "undeclaredBarcodesTable",
-    (ctx) => {
-      const pCols = ctx.outputs
-        ?.resolve({ field: "antigenUndeclaredBarcodesTable", allowPermanentAbsence: true })
-        ?.getPColumns();
-      if (pCols === undefined) return undefined;
-      return createPlDataTableV2(ctx, pCols, ctx.data.undeclaredBarcodesTableState);
-    },
-    { retentive: true, withStatus: true },
-  )
+  .outputWithStatus("undeclaredBarcodesTable", (ctx) => {
+    const pCols = ctx.outputs
+      ?.resolve({ field: "antigenUndeclaredBarcodesTable", allowPermanentAbsence: true })
+      ?.getPColumns();
+    if (pCols === undefined) return undefined;
+    return createPlDataTableV2(ctx, pCols, ctx.data.undeclaredBarcodesTableState);
+  })
   // The comparator that SERVED, and not the one that was requested. The software degrades a request it cannot
   // honour.
   .output("verdictRunMeta", (ctx): VerdictRunMeta | undefined =>

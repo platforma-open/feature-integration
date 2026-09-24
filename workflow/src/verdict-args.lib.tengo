@@ -5,7 +5,7 @@
 // Building the whole argument list here, staged input filenames included, is what makes the threading
 // assertable without a backend.
 //
-// The staged filenames are exported beside the flags that name them. verdict-run.tpl.tengo stages each file
+// The staged filenames are exported beside the flags that name them. verdict-compute.tpl.tengo stages each file
 // under the same constant it is referenced by, so a rename cannot leave a flag pointing at a file the exec
 // never received.
 

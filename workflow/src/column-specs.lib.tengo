@@ -9,6 +9,9 @@
 
 ll := import("@platforma-sdk/workflow-tengo:ll")
 maps := import("@platforma-sdk/workflow-tengo:maps")
+objects := import("@platforma-sdk/workflow-tengo:objects")
+slices := import("@platforma-sdk/workflow-tengo:slices")
+pUtil := import("@platforma-sdk/workflow-tengo:pframes.util")
 strings := import("@platforma-sdk/workflow-tengo:strings")
 
 json := import("json")
@@ -292,6 +295,30 @@ QC_SUMMARY_COLUMNS := [
 	"aggregateBarcodesFlagged",
 	"aggregateBarcodeThreshold"
 ]
+
+// featurePropertiesImportCfg: the import cfg for both per-feature CSVs (properties and the negative-control
+// marker), keyed on the `feature` column. The caller passes the axis spec: type-only for the data import,
+// the full featureAxis for the specs.
+featurePropertiesImportCfg := func(featureAxisSpec, columns) {
+	return {
+		axes: [{ column: "feature", spec: featureAxisSpec }],
+		columns: columns,
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}
+}
+
+// importedColumns: `{ id, spec }` for every column of an import cfg, with the spec xsv.importFile would
+// build (xsv-import-pt getColumnSpec). For templates that import data only and attach the specs themselves.
+importedColumns := func(cfg) {
+	axesSpec := slices.map(cfg.axes, func(ax) { return ax.spec })
+	return slices.map(cfg.columns, func(col) {
+		return {
+			id: pUtil.xsvColumnId(col),
+			spec: objects.deleteUndefined(maps.deepMerge(col.spec, { kind: "PColumn", axesSpec: axesSpec }))
+		}
+	})
+}
 
 // negativeControlColumn: the xsv.importFile `columns` entry for the negative-control marker CSV
 // (emit_feature_properties.py `<prefix>_negative_control.csv`, holding "true" for the control). Hidden and
@@ -1582,6 +1609,8 @@ export {
 	qcFileMapOutput: qcFileMapOutput,
 	QC_SUMMARY_COLUMNS: QC_SUMMARY_COLUMNS,
 	featurePropertyImportColumns: featurePropertyImportColumns,
+	featurePropertiesImportCfg: featurePropertiesImportCfg,
+	importedColumns: importedColumns,
 	negativeControlColumn: negativeControlColumn,
 
 	tagAxis: tagAxis,

@@ -1,6 +1,6 @@
 // The verdict import: every table emit_verdicts.py wrote, turned into p-columns.
 //
-// Separate from the exec (verdict-run.tpl.tengo) because the run record has to be read as a VALUE before
+// Separate from the exec (verdict-compute.tpl.tengo) because the run record has to be read as a VALUE before
 // any of these specs can be built. The software resolves `referenceChoice` and `cellListSource`, and both
 // sit in the emitted columns' DOMAIN: as an annotation the choice would be excluded from column identity,
 // and two incomparable runs would emit columns of identical identity and be unioned in a pool holding
@@ -16,14 +16,27 @@ pframes := import("@platforma-sdk/workflow-tengo:pframes")
 pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
 maps := import("@platforma-sdk/workflow-tengo:maps")
 ll := import("@platforma-sdk/workflow-tengo:ll")
+render := import("@platforma-sdk/workflow-tengo:render")
+smart := import("@platforma-sdk/workflow-tengo:smart")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+pUtil := import("@platforma-sdk/workflow-tengo:pframes.util")
 columnSpecs := import(":column-specs")
 verdictLinker := import(":verdict-linker")
 
 json := import("json")
 
+outputDataTpl := assets.importTemplate(":verdict-output-data")
+
 // defineOutputs is deliberately absent: an ephemeral template takes its output names from what the body
 // returns and never checks a declared list, so declaring one would be inert.
-self.awaitState("columns", "PColumnBundle")
+// PColumnBundleWithPartitions, not PColumnBundle: the plain state awaits only each entry's `ref` and
+// `spec` (tpl/base.lib.tengo:91-94), while the bquery unmarshaller reads `data` as soon as the field
+// EXISTS -- `if resource.hasInputField("data") { datas = resource.get("data") }`
+// (workflow/bquery.lib.tengo:226-228). A created-but-unset `data` field then trips
+// `smart.field.getValue: field "data" is not set`, intermittently, whenever the linker's data has not
+// landed by the time this body runs. WithPartitions adds `data -> InputsLocked`, which is the guarantee
+// the unmarshaller actually needs.
+self.awaitState("columns", "PColumnBundleWithPartitions")
 self.awaitState("runMeta", "ResourceReady")
 
 self.body(func(inputs) {
@@ -70,13 +83,38 @@ self.body(func(inputs) {
 	addTo := func(fb, name, file, spec) {
 		// An input the caller forgot to pass arrives here as undefined and fails eleven frames down in
 		// xsv.importFile as "frameInput must be provided", naming neither the frame nor this block. Adding an
-		// output in verdict-run without also passing it in main is the mistake that produces it.
-		ll.assert(!is_undefined(file), "verdict-import: no file was passed for %v; check that main.tpl.tengo forwards it from verdict-run", name)
+		// output in verdict-compute without also passing it in main is the mistake that produces it.
+		ll.assert(!is_undefined(file), "verdict-import: no file was passed for %v; check that main.tpl.tengo forwards it from verdict-compute", name)
 		columnSpecs.guardNoLegacyFeatureAxis(spec.axes)
 		imported := xsv.importFile(file, "csv", spec, { splitDataAndSpec: true })
 		maps.forEach(imported, func(key, column) {
 			fb.add(name + "/" + key, trace.inject(column.spec), column.data)
 		})
+	}
+
+	// Like addTo, for a table that is only a block OUTPUT (shown in the UI). Its import and export run in
+	// verdict-output-data.tpl.tengo, so the frame gets already-exported data and main surfaces it without
+	// pframes.exportFrame. The columns are added by attachOutputTables below.
+	outputTables := {}
+	addOutputTo := func(fb, name, file, spec) {
+		ll.assert(!is_undefined(file), "verdict-import: no file was passed for %v; check that main.tpl.tengo forwards it from verdict-compute", name)
+		columnSpecs.guardNoLegacyFeatureAxis(spec.axes)
+		outputTables[name] = { fb: fb, file: file, spec: spec }
+	}
+	// Renders verdict-output-data once per collected table and adds each column with the spec a full import
+	// would have built. One render per table, so a table with sample ids (different in every project) does not
+	// make the others re-import. Returns the renders' data maps, keyed by table, for main to keep.
+	attachOutputTables := func() {
+		dataByTable := {}
+		maps.forEach(outputTables, func(name, table) {
+			// Type-only cfg (purifySpec), so no blockId or served choice reaches the template.
+			outputData := render.create(outputDataTpl, { file: table.file, cfg: pUtil.purifySpec(table.spec) })
+			for column in columnSpecs.importedColumns(table.spec) {
+				table.fb.add(name + "/" + column.id, trace.inject(column.spec), outputData.resolveOutput(["data", column.id]))
+			}
+			dataByTable[name] = outputData.output("data")
+		})
+		return smart.createMapResource(dataByTable)
 	}
 
 	// --- exported: everything a downstream block joins to -------------------------------------------
@@ -123,14 +161,14 @@ self.body(func(inputs) {
 	// count as the summary above, so either both pivots are present or neither is.
 	punchFb := pframes.pFrameBuilder()
 	if len(summaryIdentities) > 0 {
-		addTo(punchFb, "identityPunch", inputs.identityPunch,
+		addOutputTo(punchFb, "identityPunch", inputs.identityPunch,
 			columnSpecs.identityPunchImportSpec(setAxis, summaryIdentities, served.groupingId, served))
 	}
 
 	// The clonotype's own cell count, beside its name. Imported into THIS frame and not only into the export,
 	// because a block's own exports are not in its own result pool. Ungated by the identity count: a card with
 	// no identity columns still says how many cells each clonotype has.
-	addTo(punchFb, "setCellCount", inputs.setCounts,
+	addOutputTo(punchFb, "setCellCount", inputs.setCounts,
 		columnSpecs.setCellCountImportSpec(setAxis, served))
 
 	// The per-cell material stays INSIDE the block: an output, never an export. Labelling and lead selection
@@ -144,16 +182,15 @@ self.body(func(inputs) {
 	// the largest table the run produces -- a cell x tag grain, 11-20x the rows of the sparse reads they came
 	// from -- and nothing reads them at either side of the boundary.
 	//
-	// emit_verdicts writes result_cell_counts.csv and verdict-run.tpl.tengo collects it, so the states are
-	// computed and exist within the run. What stops here is turning them into p-columns.
+	// emit_verdicts writes result_cell_counts.csv, but the workflow does not save it (verdict-tables.lib.tengo).
 	// cellTagCountsImportSpec stays in column-specs.lib.tengo as the spec to reuse if a consumer at that grain
 	// appears, because rebuilding it would risk a lookalike tag axis that joins to nothing.
 	cellRefFb := pframes.pFrameBuilder()
-	addTo(cellRefFb, "cellScalars", inputs.cellScalars,
+	addOutputTo(cellRefFb, "cellScalars", inputs.cellScalars,
 		columnSpecs.cellScalarsImportSpec(sampleAxis, cellAxis, served))
 	// The cell list as a frame of its own. Same grain as cellScalars beside it, opposite shape: rows only
 	// where the cell matched. The model inner-joins it to narrow the per-cell table.
-	addTo(cellRefFb, "cellInList", inputs.cellInList,
+	addOutputTo(cellRefFb, "cellInList", inputs.cellInList,
 		columnSpecs.cellInListImportSpec(sampleAxis, cellAxis))
 
 	// The per-cell punchcard, into the SAME frame: one row per cell, one column per identity, that cell's own
@@ -171,7 +208,7 @@ self.body(func(inputs) {
 		cellPunchIdentities = served.identities
 	}
 	if len(cellPunchIdentities) > 0 {
-		addTo(cellRefFb, "cellPunch", inputs.cellPunch,
+		addOutputTo(cellRefFb, "cellPunch", inputs.cellPunch,
 			columnSpecs.cellPunchImportSpec(sampleAxis, cellAxis, cellPunchIdentities, served.groupingId, served))
 	}
 
@@ -213,7 +250,7 @@ self.body(func(inputs) {
 	// sample's own rolled-up status. Every measurement has a purpose-built surface; the sample level's are
 	// this table and `result_qc_by_sample.json`.
 	qcSummaryFb := pframes.pFrameBuilder()
-	addTo(qcSummaryFb, "qcSummary", inputs.qcSummary, columnSpecs.qcSampleSummaryImportSpec(sampleAxis))
+	addOutputTo(qcSummaryFb, "qcSummary", inputs.qcSummary, columnSpecs.qcSampleSummaryImportSpec(sampleAxis))
 
 	// The fitted backgrounds, one row per (sample, tag) the fit scored -- the fit's own grain. The only
 	// quality frame emitted: every distribution on the run-quality page is drawn from the BINNED counts in
@@ -223,13 +260,13 @@ self.body(func(inputs) {
 	// JSON, because a grid of small multiples is what a reader judges a fit from. This is held open for
 	// the comparison the JSON cannot serve -- one background sorted against 44 samples x 64 tags.
 	backgroundsFb := pframes.pFrameBuilder()
-	addTo(backgroundsFb, "qcBackgrounds", inputs.qcBackgrounds,
+	addOutputTo(backgroundsFb, "qcBackgrounds", inputs.qcBackgrounds,
 		columnSpecs.qcBackgroundImportSpec(sampleAxis, tagAxis))
 
 	// One row per (panel, tag, identity). Its own frame, at its own grain: the measurement table is keyed
 	// (level, entity, measurement) and cannot hold a row per reagent.
 	reagentFb := pframes.pFrameBuilder()
-	addTo(reagentFb, "reagents", inputs.reagents,
+	addOutputTo(reagentFb, "reagents", inputs.reagents,
 		columnSpecs.qcReagentImportSpec(panelAxis, tagAxis, identityAxis))
 	// One label column per axis. A label column REPLACES its axis in the grid -- `table-source-v2.js` drops
 	// an axis that has one -- and every label column sorts leftmost. Without all three, an axis renders its
@@ -237,11 +274,11 @@ self.body(func(inputs) {
 	//
 	// Added to THIS frame: a block's own exports are not in its own result pool, so the copies travelling
 	// with the verdicts are unreadable here. Added in reading order, which is the order they render in.
-	addTo(reagentFb, "tagLabels", inputs.tagLabels,
+	addOutputTo(reagentFb, "tagLabels", inputs.tagLabels,
 		columnSpecs.tagLabelsImportSpec(tagAxis))
-	addTo(reagentFb, "reagentIdentityLabels", inputs.identityLabels,
+	addOutputTo(reagentFb, "reagentIdentityLabels", inputs.identityLabels,
 		columnSpecs.identityLabelsImportSpec(identityAxis))
-	addTo(reagentFb, "reagentPanelLabels", inputs.panelLabels,
+	addOutputTo(reagentFb, "reagentPanelLabels", inputs.panelLabels,
 		columnSpecs.panelLabelsImportSpec(panelAxis))
 
 	// Barcodes the reads carried that no panel declares get their own frame: it keys on (sampleId, tag)
@@ -269,12 +306,18 @@ self.body(func(inputs) {
 	}
 
 	undeclaredFb := pframes.pFrameBuilder()
-	addTo(undeclaredFb, "undeclaredBarcodes", inputs.undeclaredBarcodes,
+	addOutputTo(undeclaredFb, "undeclaredBarcodes", inputs.undeclaredBarcodes,
 		columnSpecs.undeclaredBarcodeImportSpec(sampleAxis, columnSpecs.undeclaredTagAxis(blockId)))
+
+	outputTablesData := attachOutputTables()
 
 	return {
 		antigenVerdicts: exportFb.build(),
+		// punchcard, cellReference, qcSummaryTable, backgroundsFrame, reagentTable and undeclaredBarcodesTable
+		// are built with addOutputTo, so their data is already exported.
 		punchcard: punchFb.build(),
+		// verdict-output-data's result, for main to keep.
+		outputTablesData: outputTablesData,
 		cellReference: cellRefFb.build(),
 		qcSummaryTable: qcSummaryFb.build(),
 		backgroundsFrame: backgroundsFb.build(),

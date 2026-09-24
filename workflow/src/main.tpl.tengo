@@ -14,24 +14,27 @@ assets := import("@platforma-sdk/workflow-tengo:assets")
 render := import("@platforma-sdk/workflow-tengo:render")
 pframes := import("@platforma-sdk/workflow-tengo:pframes")
 pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
-exec := import("@platforma-sdk/workflow-tengo:exec")
 ll := import("@platforma-sdk/workflow-tengo:ll")
 file := import("@platforma-sdk/workflow-tengo:file")
+anonymize := import("@platforma-sdk/workflow-tengo:anonymize")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+slices := import("@platforma-sdk/workflow-tengo:slices")
+smart := import("@platforma-sdk/workflow-tengo:smart")
 columnSpecs := import(":column-specs")
 fanout := import(":fanout-inputs")
+verdictTables := import(":verdict-tables")
 
 times := import("times")
 
 fbPipelineTpl := assets.importTemplate(":fb-pipeline")
 prerunTpl := assets.importTemplate(":prerun")
-qcSummaryTpl := assets.importTemplate(":qc-summary")
-featurePropsTpl := assets.importTemplate(":fb-feature-properties")
-gatherCountsTpl := assets.importTemplate(":gather-counts")
-gatherRawFeatureCountsTpl := assets.importTemplate(":gather-raw-feature-counts")
-verdictRunTpl := assets.importTemplate(":verdict-run")
+featurePropsComputeTpl := assets.importTemplate(":fb-feature-properties-compute")
+featurePropsFrameTpl := assets.importTemplate(":fb-feature-properties-frame")
+exportColumnDataTpl := assets.importTemplate(":export-column-data")
+verdictLinkerExportTpl := assets.importTemplate(":verdict-linker-export")
+verdictComputeTpl := assets.importTemplate(":verdict-compute")
+verdictDeanonymizeTpl := assets.importTemplate(":verdict-deanonymize")
 verdictImportTpl := assets.importTemplate(":verdict-import")
-
-featurePropsSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.feature-properties:main")
 
 // Per-sample mitool resource defaults. The fb-parse and fb-refine formulas add size("reads")*4 on top of
 // this base and cap at 256 GiB, so the base only sets the floor for small inputs. Keep it low: mitool's
@@ -91,13 +94,14 @@ wf.body(func(args) {
 	// A closed list, enforced below. Everything in it describes how one sample's reads are parsed and counted,
 	// and nothing in it describes how the counts are read. That is what lets a change to the reading recover
 	// every per-sample mitool body from cache.
+	// Sample-aware mapping, optional; "" means one mapping for every sample. When set, each per-sample body
+	// keeps its own sample's CSV rows, found through the key (passKey) and sampleLabels.
+	sampleColumn := is_undefined(args.sampleColumn) ? "" : args.sampleColumn
+	sampleAware := sampleColumn != ""
 	extraInputs := {
 		pattern: pattern,
 		tags: args.tags, // mitool tag names (CELL/UMI/FEATURE). The one source is the model (pattern.ts).
-		// Sample-aware mapping, optional. "" = off, meaning one global mapping. When set, the per-sample body
-		// filters the CSV to its own sample's rows using sampleLabels[sampleId], keyed off passKey.
-		sampleColumn: is_undefined(args.sampleColumn) ? "" : args.sampleColumn,
-		sampleLabels: is_undefined(args.sampleLabels) ? {} : args.sampleLabels,
+		sampleColumn: sampleColumn,
 		tagsCsv: csvFile,
 		fileExtension: fileExtension,
 		barcodeSeqColumn: args.barcodeSeqColumn,
@@ -113,6 +117,11 @@ wf.body(func(args) {
 	// --limit.
 	if !is_undefined(args.limitInput) {
 		extraInputs.limitInput = args.limitInput
+	}
+	// Only in sample-aware mode, the one case that reads it: in any other it would put the sample id into every
+	// body's identity, and another project over the same reads could not reuse the results.
+	if sampleAware {
+		extraInputs.sampleLabels = is_undefined(args.sampleLabels) ? {} : args.sampleLabels
 	}
 	// The aggregate-barcode detection knobs (qc_measures.py AGGREGATE_BARCODE_*). Same rule as limitInput
 	// above. qc_report.py's own argparse default applies where absent.
@@ -263,8 +272,10 @@ wf.body(func(args) {
 				{ name: "pl7.app/sequencing/readIndex", optional: true }
 			],
 			passAggregationAxesNames: true,
-			passKey: true, // give the body its [sampleId] iteration key (for sample-aware CSV filtering)
-			stepCache: 30 * times.minute,
+			passKey: sampleAware, // the [sampleId] iteration key, for sample-aware CSV filtering only
+			// Parked while measuring deduplication: a step cache returns a step regardless of identity, so it hides
+			// whether the fan-out was reused on its own.
+			// stepCache: 30 * times.minute,
 			extra: extraInputs,
 			metaExtra: metaExtra
 		}
@@ -297,54 +308,41 @@ wf.body(func(args) {
 
 	// Main results table, table-only: one row per [sampleId, cellId]. Collapses the matrix above for display,
 	// leaving the export contract unaffected.
+	// Its data is exported in a pure template (export-column-data.tpl.tengo), so a later run reuses the export
+	// and main surfaces the frame without pframes.exportFrame.
+	perCellSummaryColumns := perSampleResults.listXsvColumns("perCellSummary")
+	perCellExportInputs := {}
+	for col in perCellSummaryColumns {
+		perCellExportInputs["column." + col] = perSampleResults.outputData("perCellSummary", col)
+	}
+	perCellExport := render.create(exportColumnDataTpl, perCellExportInputs)
 	tableFb := pframes.pFrameBuilder()
-	addXsvTo(tableFb, "perCellSummary")
+	for col in perCellSummaryColumns {
+		tableFb.add(
+			"perCellSummary/" + col,
+			trace.inject(perSampleResults.outputSpec("perCellSummary", col)),
+			perCellExport.resolveOutput(["data", col])
+		)
+	}
 	tablePf := tableFb.build()
 
-	// Per-sample QC summary: concatenate the per-sample one-row QC CSVs collected above as a [sampleId]
-	// file map into one file, which the verdict stage reads through --qc-summary. Done in a child template
-	// (qc-summary.tpl.tengo) because the file map must be awaited before its per-sample keys can be
-	// iterated. It imports no p-frame of its own -- the across-samples TABLE is built by verdict-import
-	// from result_qc_summary.csv, which carries the measurement set and the rolled-up status.
-	qcSummaryResult := render.create(qcSummaryTpl, {
-		qcData: perSampleResults.outputData("qc")
-	})
-
 	// --- per-feature properties ---
-	// Import every EXTRA tag-CSV column, beyond the mapped barcode-sequence and feature-name roles, as a
-	// per-feature property on the shared feature axis. Panel-global, one value per feature for every sample,
-	// so this runs ONCE on the shared CSV blob OUTSIDE the per-sample processColumn fan-out.
-	// emit_feature_properties.py writes the wide per-feature CSV plus a meta JSON of property names and
-	// distinct values, and fb-feature-properties.tpl reads that meta to build one p-column per property. The
-	// sample column, where set, is a role rather than a property, and is excluded.
-	featurePropsSampleColumn := is_undefined(args.sampleColumn) ? "" : args.sampleColumn
-	featurePropsBuilder := exec.builder().
-		software(featurePropsSw).
-		cpu(1).mem("1GiB").
-		addFile("tags.csv", csvFile).
-		arg("tags.csv").
-		arg("--csv-barcode-col").arg(args.barcodeSeqColumn).
-		arg("--csv-feature-col").arg(args.featureNameColumn).
-		arg("--sample-col").arg(featurePropsSampleColumn)
-	// Negative-control marker for control-aware metrics: pass each chosen control so the step emits a
-	// dedicated per-feature marker CSV. No flag at all where none is designated, leaving it header-only.
-	// REPEATED rather than comma-joined, because a feature name may contain a comma.
-	for c in controls {
-		if c != "" {
-			featurePropsBuilder = featurePropsBuilder.arg("--control-feature").arg(c)
-		}
-	}
-	featurePropsRun := featurePropsBuilder.
-		arg("--output-prefix").arg("result").
-		saveFile("result_feature_properties.csv").
-		saveFileContent("result_feature_property_meta.json").
-		saveFile("result_negative_control.csv").
-		run()
-	featurePropsResult := render.create(featurePropsTpl, {
-		propertiesFile: featurePropsRun.getFile("result_feature_properties.csv"),
-		propertyMeta: featurePropsRun.getFileContent("result_feature_property_meta.json"),
-		negativeControlFile: featurePropsRun.getFile("result_negative_control.csv"),
-		hasControl: len(controls) > 0,
+	// The exec and its import run in a pure template (fb-feature-properties-compute.tpl.tengo). The ephemeral
+	// frame stage then attaches the specs, which carry blockId.
+	hasControl := len(controls) > 0
+	featurePropsData := render.create(featurePropsComputeTpl, {
+		tagsCsv: csvFile,
+		barcodeSeqColumn: args.barcodeSeqColumn,
+		featureNameColumn: args.featureNameColumn,
+		// Excluded from the properties: it is a role, not a property.
+		sampleColumn: sampleColumn,
+		controls: controls
+	})
+	featurePropsResult := render.createEphemeral(featurePropsFrameTpl, {
+		propertyData: featurePropsData.output("propertyData"),
+		controlData: featurePropsData.output("controlData"),
+		propertyMeta: featurePropsData.output("propertyMeta"),
+		hasControl: hasControl,
 		blockId: blockId,
 		traceSeedSpec: inputSpec
 	})
@@ -359,23 +357,19 @@ wf.body(func(args) {
 	// is for and a settings-knowable refusal belongs there. Kept as a guard rather than deleted, so a
 	// hand-driven render emits the per-cell contract columns, the per-sample QC and the per-feature
 	// properties instead of failing on an absent input. `types.ts` records the same.
-	verdictRun := undefined
+	verdictCompute := undefined
+	verdictDeanonymized := undefined
 	verdictImport := undefined
 	if !is_undefined(args.datasetRef) {
-		// The reading is answered across the whole run, not per sample. So the per-sample counts are gathered into
-		// one table first, in a child template, because the file map must be awaited before its keys can be
-		// iterated.
-		countsGather := render.create(gatherCountsTpl, {
-			tagstatData: perSampleResults.outputData("tagstatTsv"),
-			tags: args.tags
-		})
-
-		// Pre-refine FEATURE counts, gathered the same way, for the undeclared-barcode table: refine-tags snaps
-		// every barcode onto the panel before the distinct-UMI counts above are even computed, so a sequence the
-		// panel never declared has to be read from this earlier pass or it cannot be seen at all.
-		rawFeatureCountsGather := render.create(gatherRawFeatureCountsTpl, {
-			rawFeatureData: perSampleResults.outputData("rawFeatureCounts")
-		})
+		// The three per-sample maps the verdict stage reads, with their sample keys anonymized in one call, so a
+		// sample gets the same key in all three. The key is derived from the sample's content, so another project
+		// over the same reads gets the same keys and reuses the compute below.
+		anonymized := anonymize.anonymizePKeys({
+			tagstat: perSampleResults.outputData("tagstatTsv"),
+			rawFeatureCounts: perSampleResults.outputData("rawFeatureCounts"),
+			qc: perSampleResults.outputData("qc")
+		}, [0])
+		sampleMapping := anonymized.mapping
 
 		// Built HERE, in the body, and not in prepare -- see the note on wf.prepare above. The bundle is passed to
 		// both child templates unresolved. A resolved bundle is a map with methods, which cannot be serialized as
@@ -389,11 +383,21 @@ wf.body(func(args) {
 		bundleBuilder.addMulti({ name: "pl7.app/sc/cellLinker" }, "linker")
 		verdictBundle := bundleBuilder.build()
 
-		// Only the reading's own parameters, and nothing that touched the fan-out.
+		// The linker as a CSV, and the sample-label map, keyed by anonymized sample ids.
+		linkerExport := render.createEphemeral(verdictLinkerExportTpl, {
+			columns: verdictBundle,
+			datasetRef: args.datasetRef,
+			sampleAxisSpec: sampleAxis,
+			mapping: sampleMapping,
+			sampleLabels: is_undefined(args.sampleLabels) ? {} : args.sampleLabels
+		})
+
+		// Only the reading's own parameters, and nothing that touched the fan-out. The sample-label map comes
+		// from the linker export instead.
 		verdictParams := {
 			barcodeSeqColumn: args.barcodeSeqColumn,
 			featureNameColumn: args.featureNameColumn,
-			sampleColumn: is_undefined(args.sampleColumn) ? "" : args.sampleColumn
+			sampleColumn: sampleColumn
 		}
 		// Optional parameters are ADDED, never defaulted to undefined. verdict-args tells an absent value -- leave
 		// the CLI's own default, or leave the line off -- apart from a supplied one, and a key whose value crosses
@@ -402,11 +406,6 @@ wf.body(func(args) {
 			if !is_undefined(value) {
 				verdictParams[key] = value
 			}
-		}
-		// Only meaningful alongside a sample column. With no per-sample keying the panel declares one panel for
-		// every sample, and there is nothing to translate.
-		if !is_undefined(args.sampleColumn) && args.sampleColumn != "" {
-			setParam("sampleLabels", args.sampleLabels)
 		}
 		setParam("roleColumn", args.roleColumn)
 		setParam("referenceValues", args.referenceValues)
@@ -441,62 +440,68 @@ wf.body(func(args) {
 		setParam("vdjAntigenCountWarn", args.vdjAntigenCountWarn)
 		setParam("vdjAntigenCountError", args.vdjAntigenCountError)
 
-		verdictRun = render.createEphemeral(verdictRunTpl, {
-			columns: verdictBundle,
-			datasetRef: args.datasetRef,
-			sampleAxisSpec: sampleAxis,
-			countsFile: countsGather.output("countsFile"),
+		// The gathers and the verdict exec. Its outputs are kept in resultsToCache so a later run can reuse them.
+		verdictCompute = render.create(verdictComputeTpl, {
+			tagstatData: anonymized.result.tagstat,
+			rawFeatureData: anonymized.result.rawFeatureCounts,
+			qcData: anonymized.result.qc,
+			tags: args.tags,
 			panelFile: csvFile,
-			// The combined per-sample read QC, from the same child template that imports it as a table. Without it
-			// readsTotal, panelAssignedFraction and readsPerCell have no source and carry no status, silently, since
-			// a non-evaluation is a legitimate state rather than an error.
-			qcSummaryFile: qcSummaryResult.output("qcSummaryCsv"),
-			rawFeatureCountsFile: rawFeatureCountsGather.output("rawCountsFile"),
+			linkerFile: linkerExport.output("linkerFile"),
+			sampleLabels: linkerExport.output("sampleLabels"),
 			params: verdictParams
 		})
+
+		// Translates every result that carries sample ids back to this project's ids, with the linker export's
+		// mapping (the anonymization's plus any V(D)J-only samples).
+		deanonymizeInputs := { mapping: linkerExport.output("mapping") }
+		for name in verdictTables.SAMPLE_ID_TABLES {
+			deanonymizeInputs[name] = verdictCompute.output(name)
+		}
+		for name in maps.getKeys(verdictTables.SAMPLE_ID_LIST_COLUMNS) {
+			deanonymizeInputs[name] = verdictCompute.output(name)
+		}
+		for content in verdictTables.CONTENT_OUTPUTS {
+			deanonymizeInputs[content.out] = verdictCompute.output(content.out)
+		}
+		verdictDeanonymized = render.createEphemeral(verdictDeanonymizeTpl, deanonymizeInputs)
+
+		// A verdict result, translated when it carries sample ids.
+		verdictResult := func(name) {
+			if slices.hasElement(verdictTables.SAMPLE_ID_TABLES, name) ||
+				!is_undefined(verdictTables.SAMPLE_ID_LIST_COLUMNS[name]) {
+				return verdictDeanonymized.output(name)
+			}
+			return verdictCompute.output(name)
+		}
 
 		// The import takes the run record as an INPUT so the specs it builds carry the comparator that actually
 		// SERVED. The software degrades a request it cannot honour, and that choice sits in the emitted columns'
 		// domain. Specs built inside the exec's own template would record the request instead.
-		verdictImport = render.createEphemeral(verdictImportTpl, {
+		// Every saved verdict table. result_cell_counts.csv, the post-floor per-cell per-tag counts, is not among
+		// them (verdict-tables.lib.tengo).
+		verdictImportInputs := {
 			columns: verdictBundle,
 			datasetRef: args.datasetRef,
 			blockId: blockId,
 			sampleAxisSpec: sampleAxis,
 			traceSeedSpec: inputSpec,
-			runMeta: verdictRun.output("runMeta"),
-			verdicts: verdictRun.output("verdicts"),
-			setCounts: verdictRun.output("setCounts"),
-			setTagMedian: verdictRun.output("setTagMedian"),
-			identitySummary: verdictRun.output("identitySummary"),
-			identityPunch: verdictRun.output("identityPunch"),
-			cellPunch: verdictRun.output("cellPunch"),
-			// cellCounts, the POST-floor per-cell per-tag counts, is still deliberately NOT passed.
-			// cellRawCounts, the same grain BEFORE the floor, IS passed.
-			cellRawCounts: verdictRun.output("cellRawCounts"),
-			// The same pre-floor counts pivoted onto the cell, one column per barcode.
-			cellTagPivot: verdictRun.output("cellTagPivot"),
-			cellScalars: verdictRun.output("cellScalars"),
-			cellInList: verdictRun.output("cellInList"),
-			offered: verdictRun.output("offered"),
-			tagIdentity: verdictRun.output("tagIdentity"),
-			identityLabels: verdictRun.output("identityLabels"),
-			tagLabels: verdictRun.output("tagLabels"),
-			identityProperties: verdictRun.output("identityProperties"),
-			panelLabels: verdictRun.output("panelLabels"),
-			samplePanel: verdictRun.output("samplePanel"),
-			undeclaredBarcodes: verdictRun.output("undeclaredBarcodes"),
-			qcSummary: verdictRun.output("qcSummary"),
-			qcBackgrounds: verdictRun.output("qcBackgrounds"),
-			reagents: verdictRun.output("reagents")
-		})
+			runMeta: verdictDeanonymized.output("runMeta")
+		}
+		for table in verdictTables.RESULT_TABLES {
+			verdictImportInputs[table.out] = verdictResult(table.out)
+		}
+		verdictImport = render.createEphemeral(verdictImportTpl, verdictImportInputs)
 	}
 
 	blockOutputs := {
 		// Collapsed per-cell results table (one row per [sampleId, cellId]).
-		perCellTable: pframes.exportFrame(tablePf),
+		perCellTable: tablePf,
 		// Per-sample QC metrics as JSON (fb-pipeline qcJson). The model builds the live "Analysis logs" from it.
 		qcJson: perSampleResults.outputData("qcJson"),
+		// Per-sample QC CSV map (fb-pipeline `qc`). Kept so the per-sample body can be reused: that needs every
+		// one of its outputs to still exist. No model consumer.
+		qc: perSampleResults.outputData("qc"),
 		// Per-sample x per-step report-file map. The model derives each sample's current step from which reports
 		// are present.
 		stepReports: perSampleResults.outputData("stepReports"),
@@ -524,6 +529,20 @@ wf.body(func(args) {
 		tagFeatureCsvImportHandle: csvImport.handle
 	}
 
+	// Template outputs kept only so a later run can reuse those templates: a pure template is reused when
+	// every one of its outputs still exists, and nothing else holds these. Most only point at data the frames
+	// and exports already hold; verdictCompute holds its own files. No model consumer.
+	resultsToCache := {
+		// export-column-data's result for perCellTable.
+		perCellTable: perCellExport.output("data"),
+		// Every fb-feature-properties-compute output.
+		featureProperties: smart.createMapResource({
+			propertyData: featurePropsData.output("propertyData"),
+			controlData: featurePropsData.output("controlData"),
+			propertyMeta: featurePropsData.output("propertyMeta")
+		})
+	}
+
 	blockExports := {
 		perCellFeatures: finalPf,
 		// Per-feature properties, keyed on the shared feature axis (pl7.app/feature/featureId). A separate frame
@@ -549,30 +568,34 @@ wf.body(func(args) {
 		// The same frame as an OUTPUT, because a block's own exports are not in its own result pool. Without
 		// this the block that produced the verdicts would be the one place that cannot read them.
 		//
-		// NOTHING READS IT TODAY. The punchcard reads the pivoted frame below instead, because a table cannot
-		// turn a (set, identity) frame into one column per identity. This output is a capability held open:
-		// the first page that wants the verdicts unpivoted reads it without a workflow change.
+		// Read by the model's expansion table (one clonotype's identities, down the page), which needs the
+		// verdicts unpivoted. The punchcard reads the pivoted frame below instead, because a table cannot turn a
+		// (set, identity) frame into one column per identity.
 		blockOutputs.antigenVerdictsTable = pframes.exportFrame(verdictImport.output("antigenVerdicts"))
 		// The punchcard's source: the same verdicts pivoted onto the clonotype set, one column per identity for
 		// the state and one for the support behind it. A table cannot pivot a (set, identity) frame into
 		// columns, so the shape the punchcard needs is built here rather than in the model.
-		blockOutputs.antigenPunchcardTable = pframes.exportFrame(verdictImport.output("punchcard"))
+		// Built from already-exported data (verdict-output-data.tpl.tengo), like the verdict output frames below,
+		// so it is surfaced without pframes.exportFrame.
+		blockOutputs.antigenPunchcardTable = verdictImport.output("punchcard")
+		// verdict-output-data's result per output table.
+		resultsToCache.verdictOutputTables = verdictImport.output("outputTablesData")
 		// The run's own report. Outputs rather than exports: these are read by this block's model and UI.
 		//
 		// One row per sample, one column per sample-level measurement, carrying that sample's rolled-up status.
 		// Gated behind a chosen V(D)J dataset, unlike the earlier mitool-only qcSummaryTable it replaces: the
 		// rolled-up status comes from the verdict stage, and that stage has no clonotype set to run against
 		// until a dataset is picked.
-		blockOutputs.qcSummaryTable = pframes.exportFrame(verdictImport.output("qcSummaryTable"))
+		blockOutputs.qcSummaryTable = verdictImport.output("qcSummaryTable")
 		// Barcodes the reads carried that no panel declares, keyed by sequence, carrying the one status this
 		// run's quality surface publishes outside the measurement list -- the share of a sample's reads landing
 		// in undeclared barcodes. Usually empty.
-		blockOutputs.antigenUndeclaredBarcodesTable = pframes.exportFrame(verdictImport.output("undeclaredBarcodesTable"))
+		blockOutputs.antigenUndeclaredBarcodesTable = verdictImport.output("undeclaredBarcodesTable")
 		// The fitted backgrounds, at the fit's own (sample, tag) grain. Named for what it holds: it carried
 		// two decile frames as well until nothing turned out to plot either. Outputs rather than exports,
 		// like the report above -- nothing downstream reads it.
-		blockOutputs.antigenBackgrounds = pframes.exportFrame(verdictImport.output("backgroundsFrame"))
-		blockOutputs.antigenReagentTable = pframes.exportFrame(verdictImport.output("reagentTable"))
+		blockOutputs.antigenBackgrounds = verdictImport.output("backgroundsFrame")
+		blockOutputs.antigenReagentTable = verdictImport.output("reagentTable")
 		// The per-cell reference readings, kept inside the block. One row per cell: the reading itself, and
 		// whether a declared gate set the cell aside. A reader checks here why a cell could or could not be
 		// compared, and here the block reports the cells carrying a high reference reading whether or not a gate
@@ -581,19 +604,30 @@ wf.body(func(args) {
 		// Named for what it holds rather than for its grain: it is not a table of cells. The per-cell per-tag
 		// counts are not built at all, because no reader exists for them on either side of the boundary and they
 		// are the run's largest table.
-		blockOutputs.antigenCellReference = pframes.exportFrame(verdictImport.output("cellReference"))
+		blockOutputs.antigenCellReference = verdictImport.output("cellReference")
 		// What the run was answered under, including the comparator and cell list that actually served and every
 		// parameter the reading used. Read as content by the model.
-		blockOutputs.antigenRunMeta = verdictRun.output("runMeta")
+		blockOutputs.antigenRunMeta = verdictDeanonymized.output("runMeta")
 		// Every sample-level quality measurement, keyed by sample, with that sample's rolled-up status and
 		// coverage. Read as content. The only source for both the Main grid's Quality tag and the sample detail
 		// view's Quality Checks tab.
-		blockOutputs.antigenSampleQc = verdictRun.output("qcBySample")
+		blockOutputs.antigenSampleQc = verdictDeanonymized.output("qcBySample")
 		// Binned count distributions per (sample, tag), taken from the raw counts, with the one edge list they
 		// share. Content rather than a p-frame: the chart takes its bins as values in the UI, so a frame handle
 		// would only have to be read back out again.
-		blockOutputs.antigenTagBins = verdictRun.output("qcTagBins")
+		blockOutputs.antigenTagBins = verdictDeanonymized.output("qcTagBins")
+		// Every verdict-compute output, as computed. Real files, which only this holds.
+		verdictComputeOutputs := {}
+		for table in verdictTables.RESULT_TABLES {
+			verdictComputeOutputs[table.out] = verdictCompute.output(table.out)
+		}
+		for content in verdictTables.CONTENT_OUTPUTS {
+			verdictComputeOutputs[content.out] = verdictCompute.output(content.out)
+		}
+		resultsToCache.verdictCompute = smart.createMapResource(verdictComputeOutputs)
 	}
+
+	blockOutputs.resultsToCache = smart.createMapResource(resultsToCache)
 
 	return {
 		outputs: blockOutputs,
