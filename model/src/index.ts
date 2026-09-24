@@ -19,6 +19,7 @@ import {
   isPColumnSpec,
   parseResourceMap,
 } from "@platforma-sdk/model";
+import { kind } from "@platforma-open/milaboratories.feature-integration.kind";
 import { assemblePattern, CELL_TAG, FEATURE_TAG, UMI_TAG, validatePattern } from "./pattern";
 import { getPreset } from "./presets";
 import type { BlockArgs, BlockData, CsvMeta, GroupingRule, ReferenceSource } from "./types";
@@ -650,7 +651,7 @@ type BlockDataV1 = Omit<BlockDataV2, "presetId" | "pattern"> & {
   featureLen: number;
 };
 
-const dataModel = new DataModelBuilder()
+const dataModel = new DataModelBuilder({ kind })
   .from<BlockDataV1>("v1")
   .migrate<BlockDataV2>("v2", ({ cellLen, umiLen, featureLen, ...rest }) => {
     // The shipped default (16/10/15) maps to the fixed BEAM preset. Offset 0 is the only layout the v1 UI could
@@ -742,14 +743,23 @@ const dataModel = new DataModelBuilder()
     ...rest,
     grouping: grouping?.by === "property" ? grouping : undefined,
   }))
-  .init(() => ({
-    runMode: "full" as const, // full run by default. "dry" = read-limited Preview
+  // `params` is absent when a block is created by hand rather than from a template, so every field the
+  // contract carries keeps its own default.
+  .init(({ params }) => ({
+    ...params,
+    runMode: params?.runMode ?? "full", // full run by default. "dry" = read-limited Preview
     // The geometry the block shipped with, 10x 5' v2 BEAM (16 / 10 / 15).
-    presetId: "tenx-beam",
-    cellWhitelist: "", // de-novo CELL correction by default
+    presetId: params?.presetId ?? "tenx-beam",
+    cellWhitelist: params?.cellWhitelist ?? "", // de-novo CELL correction by default
     defaultBlockLabel: "",
     // minAgreement and gateThreshold are absent by design. Off means absent rather than zero.
-    ...VERDICT_DEFAULTS,
+    panelReferenceMinMembers:
+      params?.panelReferenceMinMembers ?? VERDICT_DEFAULTS.panelReferenceMinMembers,
+    distributionMinCells: params?.distributionMinCells ?? VERDICT_DEFAULTS.distributionMinCells,
+    countFloor: params?.countFloor ?? VERDICT_DEFAULTS.countFloor,
+    boundCutoff: params?.boundCutoff ?? VERDICT_DEFAULTS.boundCutoff,
+    boundProbability: params?.boundProbability ?? VERDICT_DEFAULTS.boundProbability,
+    minVotingCells: params?.minVotingCells ?? VERDICT_DEFAULTS.minVotingCells,
     tableState: createPlDataTableStateV2(),
     qcSummaryTableState: createPlDataTableStateV2(),
     punchcardTableState: createPlDataTableStateV2(),
@@ -758,7 +768,56 @@ const dataModel = new DataModelBuilder()
     undeclaredBarcodesTableState: createPlDataTableStateV2(),
   }));
 
-export const platforma = BlockModelV3.create(dataModel)
+export const platforma = BlockModelV3.create({ dataModel, kind })
+  // Inverse of `init`: the contract's fields, projected back out for template export. The kind's type
+  // (kind/src/types.ts) says what is left out and why.
+  .templateParams((data) => ({
+    fbFastqRef: data.fbFastqRef,
+    datasetRef: data.datasetRef,
+
+    presetId: data.presetId,
+    pattern: data.pattern,
+    cellWhitelist: data.cellWhitelist,
+
+    runMode: data.runMode,
+    limitInput: data.limitInput,
+    perProcessCPUs: data.perProcessCPUs,
+    perProcessMemGB: data.perProcessMemGB,
+
+    aggregateBarcodeIqrMultiplier: data.aggregateBarcodeIqrMultiplier,
+    aggregateBarcodeMinUmiThreshold: data.aggregateBarcodeMinUmiThreshold,
+    aggregateBarcodeTopN: data.aggregateBarcodeTopN,
+
+    // The retired "panel" source is not part of the contract.
+    referenceSource: data.referenceSource === "panel" ? undefined : data.referenceSource,
+    panelReferenceMinMembers: data.panelReferenceMinMembers,
+    distributionMinCells: data.distributionMinCells,
+    countFloor: data.countFloor,
+    boundCutoff: data.boundCutoff,
+    boundProbability: data.boundProbability,
+    expectedBinderFraction: data.expectedBinderFraction,
+    minVotingCells: data.minVotingCells,
+    minAgreement: data.minAgreement,
+    gateThreshold: data.gateThreshold,
+
+    panelAssignedWarn: data.panelAssignedWarn,
+    panelAssignedError: data.panelAssignedError,
+    matchRateWarn: data.matchRateWarn,
+    matchRateError: data.matchRateError,
+    cellBarcodeQualityWarn: data.cellBarcodeQualityWarn,
+    cellBarcodeQualityError: data.cellBarcodeQualityError,
+    readsPerCellWarn: data.readsPerCellWarn,
+    aggregateBarcodeWarn: data.aggregateBarcodeWarn,
+    aggregateBarcodeError: data.aggregateBarcodeError,
+    undeclaredBarcodeWarn: data.undeclaredBarcodeWarn,
+    undeclaredBarcodeError: data.undeclaredBarcodeError,
+    usableReadWarn: data.usableReadWarn,
+    usableReadError: data.usableReadError,
+    rescuedShareWarn: data.rescuedShareWarn,
+    rescuedShareError: data.rescuedShareError,
+    vdjAntigenCountWarn: data.vdjAntigenCountWarn,
+    vdjAntigenCountError: data.vdjAntigenCountError,
+  }))
   .args((data): BlockArgs => {
     if (!data.fbFastqRef) throw new Error("Select the feature-barcode FASTQ");
     if (!data.tagFeatureCsvHandle) throw new Error("Upload the tag→feature CSV");
