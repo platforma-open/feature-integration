@@ -19,7 +19,7 @@ FILE_QC_SUMMARY := "qc_summary.csv"
 FILE_RAW_FEATURE_COUNTS := "raw_feature_counts.csv"
 OUTPUT_PREFIX := "result"
 
-// The block arguments this module reads. Exported so fanout-inputs.test.tengo can assert that none of them
+// The block arguments this module reads. Exported so test/fanout-inputs.test.tengo can assert that none of them
 // has leaked into the per-sample mitool fan-out. Extend this list whenever a parameter is added below.
 PARAMETER_NAMES := [
 	"aggregateBarcodeError",

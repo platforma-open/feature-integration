@@ -16,7 +16,7 @@ import { createPlDataTableStateV2, wrapOutputs } from "@platforma-sdk/model";
 // to end by the second test below, when a backend can run it. The ANTIGEN VERDICT half is not covered here
 // at all: it needs a single-cell V(D)J dataset upstream to supply the clonotype sets, and the
 // samples-and-data chain this file uses cannot produce one. That logic is covered by the Python suite
-// (software/*/test/) and by the Tengo suite for the p-column specs (workflow/src/*.test.tengo),
+// (software/*/test/) and by the Tengo suite for the p-column specs (workflow/src/test/*.test.tengo),
 // and the block is verified by hand against software/test-data/fixtures/verdicts/ before release.
 //
 // The upstream chain follows the samples-and-data FASTQ pattern. The tag->feature CSV is a direct upload,

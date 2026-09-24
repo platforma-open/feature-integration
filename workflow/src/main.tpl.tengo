@@ -265,7 +265,7 @@ wf.body(func(args) {
 
 	// Both fan-out maps are closed lists, checked here rather than reviewed later. Each key is part of every
 	// per-sample body's identity, so one added key costs every user a full parse, refine-tags and tag-stat
-	// re-run, and neither the render nor the logs says why. fanout-inputs.test.tengo asserts the lists exclude
+	// re-run, and neither the render nor the logs says why. test/fanout-inputs.test.tengo asserts the lists exclude
 	// a verdict-stage parameter and the resolved clonotype linker.
 	ll.assert(len(fanout.unlisted(extraInputs, fanout.EXTRA_INPUT_KEYS)) == 0,
 		"per-sample body inputs outside the allowlist: %v. Anything the verdict stage needs belongs in the verdict stage, not in the mitool fan-out.",
