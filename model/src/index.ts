@@ -1,6 +1,8 @@
 import type {
   AxisId,
   BlockRenderCtx,
+  ImportFileHandle,
+  ImportFileHandleIndex,
   InferOutputsType,
   PlDataTableStateV2,
   PObjectSpec,
@@ -16,6 +18,7 @@ import {
   DataModelBuilder,
   getAxisId,
   getUniquePartitionKeys,
+  isImportFileHandleIndex,
   isPColumnSpec,
   parseResourceMap,
 } from "@platforma-sdk/model";
@@ -368,6 +371,11 @@ function median(xs: number[]): number | undefined {
 }
 
 // From the upstream pl7.app/label column whose axis matches the input FASTQ's sample axis.
+/** Keeps a file handle only if it survives leaving this machine. */
+function portableHandle(handle: ImportFileHandle | undefined): ImportFileHandleIndex | undefined {
+  return handle !== undefined && isImportFileHandleIndex(handle) ? handle : undefined;
+}
+
 // The file-valued sequencing columns the FASTQ dropdown offers.
 function isFastqDataSpec(spec: PObjectSpec): boolean {
   if (!isPColumnSpec(spec)) return false;
@@ -771,53 +779,64 @@ const dataModel = new DataModelBuilder({ kind })
 export const platforma = BlockModelV3.create({ dataModel, kind })
   // Inverse of `init`: the contract's fields, projected back out for template export. The kind's type
   // (kind/src/types.ts) says what is left out and why.
-  .templateParams((data) => ({
-    fbFastqRef: data.fbFastqRef,
-    datasetRef: data.datasetRef,
+  .templateParams((data) => {
+    const csv = portableHandle(data.tagFeatureCsvHandle);
+    const columns = groupingColumns(data.grouping);
+    return {
+      fbFastqRef: data.fbFastqRef,
+      datasetRef: data.datasetRef,
+      tagFeatureCsvHandle: csv,
+      // Column names of the CSV above, so written only with it.
+      ...(csv && {
+        barcodeSeqColumn: data.barcodeSeqColumn,
+        featureNameColumn: data.featureNameColumn,
+        roleColumn: data.roleColumn,
+        referenceValues: data.referenceValues,
+        grouping: columns.length > 0 ? { by: "property" as const, columns } : undefined,
+      }),
 
-    presetId: data.presetId,
-    pattern: data.pattern,
-    cellWhitelist: data.cellWhitelist,
+      presetId: data.presetId,
+      pattern: data.pattern,
+      cellWhitelist: data.cellWhitelist,
 
-    runMode: data.runMode,
-    limitInput: data.limitInput,
-    perProcessCPUs: data.perProcessCPUs,
-    perProcessMemGB: data.perProcessMemGB,
+      runMode: data.runMode,
+      limitInput: data.limitInput,
 
-    aggregateBarcodeIqrMultiplier: data.aggregateBarcodeIqrMultiplier,
-    aggregateBarcodeMinUmiThreshold: data.aggregateBarcodeMinUmiThreshold,
-    aggregateBarcodeTopN: data.aggregateBarcodeTopN,
+      aggregateBarcodeIqrMultiplier: data.aggregateBarcodeIqrMultiplier,
+      aggregateBarcodeMinUmiThreshold: data.aggregateBarcodeMinUmiThreshold,
+      aggregateBarcodeTopN: data.aggregateBarcodeTopN,
 
-    // The retired "panel" source is not part of the contract.
-    referenceSource: data.referenceSource === "panel" ? undefined : data.referenceSource,
-    panelReferenceMinMembers: data.panelReferenceMinMembers,
-    distributionMinCells: data.distributionMinCells,
-    countFloor: data.countFloor,
-    boundCutoff: data.boundCutoff,
-    boundProbability: data.boundProbability,
-    expectedBinderFraction: data.expectedBinderFraction,
-    minVotingCells: data.minVotingCells,
-    minAgreement: data.minAgreement,
-    gateThreshold: data.gateThreshold,
+      // The retired "panel" source is not part of the contract.
+      referenceSource: data.referenceSource === "panel" ? undefined : data.referenceSource,
+      panelReferenceMinMembers: data.panelReferenceMinMembers,
+      distributionMinCells: data.distributionMinCells,
+      countFloor: data.countFloor,
+      boundCutoff: data.boundCutoff,
+      boundProbability: data.boundProbability,
+      expectedBinderFraction: data.expectedBinderFraction,
+      minVotingCells: data.minVotingCells,
+      minAgreement: data.minAgreement,
+      gateThreshold: data.gateThreshold,
 
-    panelAssignedWarn: data.panelAssignedWarn,
-    panelAssignedError: data.panelAssignedError,
-    matchRateWarn: data.matchRateWarn,
-    matchRateError: data.matchRateError,
-    cellBarcodeQualityWarn: data.cellBarcodeQualityWarn,
-    cellBarcodeQualityError: data.cellBarcodeQualityError,
-    readsPerCellWarn: data.readsPerCellWarn,
-    aggregateBarcodeWarn: data.aggregateBarcodeWarn,
-    aggregateBarcodeError: data.aggregateBarcodeError,
-    undeclaredBarcodeWarn: data.undeclaredBarcodeWarn,
-    undeclaredBarcodeError: data.undeclaredBarcodeError,
-    usableReadWarn: data.usableReadWarn,
-    usableReadError: data.usableReadError,
-    rescuedShareWarn: data.rescuedShareWarn,
-    rescuedShareError: data.rescuedShareError,
-    vdjAntigenCountWarn: data.vdjAntigenCountWarn,
-    vdjAntigenCountError: data.vdjAntigenCountError,
-  }))
+      panelAssignedWarn: data.panelAssignedWarn,
+      panelAssignedError: data.panelAssignedError,
+      matchRateWarn: data.matchRateWarn,
+      matchRateError: data.matchRateError,
+      cellBarcodeQualityWarn: data.cellBarcodeQualityWarn,
+      cellBarcodeQualityError: data.cellBarcodeQualityError,
+      readsPerCellWarn: data.readsPerCellWarn,
+      aggregateBarcodeWarn: data.aggregateBarcodeWarn,
+      aggregateBarcodeError: data.aggregateBarcodeError,
+      undeclaredBarcodeWarn: data.undeclaredBarcodeWarn,
+      undeclaredBarcodeError: data.undeclaredBarcodeError,
+      usableReadWarn: data.usableReadWarn,
+      usableReadError: data.usableReadError,
+      rescuedShareWarn: data.rescuedShareWarn,
+      rescuedShareError: data.rescuedShareError,
+      vdjAntigenCountWarn: data.vdjAntigenCountWarn,
+      vdjAntigenCountError: data.vdjAntigenCountError,
+    };
+  })
   .args((data): BlockArgs => {
     if (!data.fbFastqRef) throw new Error("Select the feature-barcode FASTQ");
     if (!data.tagFeatureCsvHandle) throw new Error("Upload the tag→feature CSV");

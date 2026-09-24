@@ -1,8 +1,13 @@
 import { assertParamsObject } from "@platforma-sdk/block-kind";
-import { isPlRef } from "@platforma-sdk/model";
-import { isString } from "es-toolkit";
-import { isNumber } from "es-toolkit/compat";
-import type { BlockParams, ReferenceSource, RunMode } from "./types";
+import {
+  isImportFileHandleIndex,
+  isPlRef,
+  type ImportFileHandle,
+  type ImportFileHandleIndex,
+} from "@platforma-sdk/model";
+import { isPlainObject, isString } from "es-toolkit";
+import { isArray, isNumber } from "es-toolkit/compat";
+import type { BlockParams, GroupingRule, ReferenceSource, RunMode } from "./types";
 
 /**
  * The contract at runtime, for params that arrive from a template file rather than from typed code.
@@ -39,7 +44,21 @@ function oneOf<T extends string>(...allowed: readonly T[]): Check<T> {
   return check((v): v is T => allowed.includes(v as T), `one of: ${allowed.join(", ")}`);
 }
 
+/**
+ * `isImportFileHandleIndex` is a prefix test, so handing it a checked string is safe; the cast only gets
+ * the string past a signature that expects the union.
+ */
+const isIndexFileHandle: Guard<ImportFileHandleIndex> = (v): v is ImportFileHandleIndex =>
+  isString(v) && isImportFileHandleIndex(v as ImportFileHandle);
+
+const isStringArray: Guard<string[]> = (v): v is string[] => isArray(v) && v.every(isString);
+
+const isGroupingRule: Guard<GroupingRule> = (v): v is GroupingRule =>
+  isPlainObject(v) && v.by === "property" && isStringArray(v.columns);
+
 const REF = "a reference to another block's output";
+const INDEX_HANDLE =
+  "an 'index://' file handle — an 'upload://' handle names a local import and does not resolve on another machine";
 const NUMBER = check(isNumber, "a number");
 const STRING = check(isString, "a string");
 
@@ -55,6 +74,13 @@ const STRING = check(isString, "a string");
 const CONTRACT = {
   fbFastqRef: check(isPlRef, REF),
   datasetRef: check(isPlRef, REF),
+  tagFeatureCsvHandle: check(isIndexFileHandle, INDEX_HANDLE),
+
+  barcodeSeqColumn: STRING,
+  featureNameColumn: STRING,
+  roleColumn: STRING,
+  referenceValues: check(isStringArray, "an array of strings"),
+  grouping: check(isGroupingRule, "a grouping rule: { by: 'property', columns: [...] }"),
 
   presetId: STRING,
   pattern: STRING,
@@ -62,8 +88,6 @@ const CONTRACT = {
 
   runMode: oneOf<RunMode>("dry", "full"),
   limitInput: NUMBER,
-  perProcessCPUs: NUMBER,
-  perProcessMemGB: NUMBER,
 
   aggregateBarcodeIqrMultiplier: NUMBER,
   aggregateBarcodeMinUmiThreshold: NUMBER,
