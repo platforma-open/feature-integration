@@ -1,0 +1,62 @@
+// The tables emit_verdicts.py writes, and which of them carry sample ids. The one list verdict-compute,
+// verdict-deanonymize and main read, so they cannot disagree.
+
+// Every table that something reads, with the output field it is returned on. result_cell_counts.csv is
+// written too but not saved: nothing reads it, and it is the largest table.
+RESULT_TABLES := [
+	{ out: "verdicts", file: "result_verdicts.csv" },
+	{ out: "setCounts", file: "result_set_counts.csv" },
+	{ out: "setTagMedian", file: "result_set_tag_median.csv" },
+	{ out: "identitySummary", file: "result_identity_summary.csv" },
+	{ out: "identityPunch", file: "result_identity_punch.csv" },
+	{ out: "cellPunch", file: "result_cell_punch.csv" },
+	{ out: "cellRawCounts", file: "result_cell_raw_counts.csv" },
+	{ out: "cellTagPivot", file: "result_cell_tag_pivot.csv" },
+	{ out: "cellScalars", file: "result_cell_scalars.csv" },
+	{ out: "cellInList", file: "result_cell_in_list.csv" },
+	{ out: "offered", file: "result_offered.csv" },
+	{ out: "tagIdentity", file: "result_tag_identity.csv" },
+	{ out: "identityLabels", file: "result_identity_labels.csv" },
+	{ out: "tagLabels", file: "result_tag_labels.csv" },
+	{ out: "identityProperties", file: "result_identity_properties.csv" },
+	{ out: "panelLabels", file: "result_panel_labels.csv" },
+	{ out: "samplePanel", file: "result_sample_panel.csv" },
+	{ out: "undeclaredBarcodes", file: "result_undeclared_barcodes.csv" },
+	{ out: "qcSummary", file: "result_qc_summary.csv" },
+	{ out: "qcBackgrounds", file: "result_qc_backgrounds.csv" },
+	{ out: "reagents", file: "result_reagents.csv" }
+]
+
+// The content outputs, read by the model as values rather than imported.
+CONTENT_OUTPUTS := [
+	{ out: "runMeta", file: "result_run_meta.json" },
+	{ out: "qcBySample", file: "result_qc_by_sample.json" },
+	{ out: "qcTagBins", file: "result_qc_tag_bins.json" }
+]
+
+// Tables with a `sampleId` column.
+SAMPLE_ID_TABLES := [
+	"cellInList",
+	"cellPunch",
+	"cellRawCounts",
+	"cellScalars",
+	"cellTagPivot",
+	"offered",
+	"qcBackgrounds",
+	"qcSummary",
+	"samplePanel",
+	"undeclaredBarcodes"
+]
+
+// Columns holding several sample ids joined into one string (labels instead, when a sample-label map is
+// given).
+SAMPLE_ID_LIST_COLUMNS := {
+	reagents: ["samplesSeenInNames", "samplesInPanelNames"]
+}
+
+export {
+	RESULT_TABLES: RESULT_TABLES,
+	CONTENT_OUTPUTS: CONTENT_OUTPUTS,
+	SAMPLE_ID_TABLES: SAMPLE_ID_TABLES,
+	SAMPLE_ID_LIST_COLUMNS: SAMPLE_ID_LIST_COLUMNS
+}

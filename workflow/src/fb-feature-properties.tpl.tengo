@@ -1,31 +1,24 @@
-// Per-feature property import (render.create boundary).
+// Imports the per-feature property CSV and the negative-control CSV as column data, without specs.
 //
-// Imports every EXTRA column of the tag->feature CSV -- every column beyond the user-mapped
-// barcode-sequence and feature-name roles -- as a p-column keyed on the shared feature axis
-// (pl7.app/feature/featureId). The properties then ride that axis into VDJ Multiomic Integration's
-// per-feature outputs and lead selection, with no re-import.
+// Both come from emit_feature_properties.py (fb-feature-properties-compute.tpl.tengo). The property column
+// names are user data, so they are read from the meta JSON to build one import column per property.
 //
-// emit_feature_properties.py, run in main.tpl.tengo, produced two inputs: the wide per-feature CSV
-// (`feature` plus one column per property) and a meta JSON listing the property column names and each
-// property's distinct values. The property NAMES are user data, unknown at graph-build time, so this
-// template reads the meta content through .getData() to build one xsv import column per property.
+// Takes no blockId, so the same panel imports once for every block. fb-feature-properties-frame.tpl.tengo
+// attaches the specs.
 //
-// Returns a BUILT pFrame, which main.tpl publishes as the `featureProperties` export. Where the CSV carries
-// no extra columns the frame is empty.
+// Returns two {columnId: data} maps, empty where there is nothing to import.
 
 self := import("@platforma-sdk/workflow-tengo:tpl")
 xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
-pframes := import("@platforma-sdk/workflow-tengo:pframes")
-pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
+pUtil := import("@platforma-sdk/workflow-tengo:pframes.util")
+smart := import("@platforma-sdk/workflow-tengo:smart")
 columnSpecs := import(":column-specs")
 
 json := import("json")
 
-self.defineOutputs("featureProperties")
+self.defineOutputs("propertyData", "controlData")
 
 self.body(func(inputs) {
-	blockId := inputs.blockId
-
 	// Property column names + distinct values, read as a value (content resource received as input).
 	meta := json.decode(string(inputs.propertyMeta.getData()))
 	propertyColumns := is_undefined(meta.columns) ? [] : meta.columns
@@ -34,51 +27,26 @@ self.body(func(inputs) {
 	// feature, emitted only where a control is designated. main.tpl gates this.
 	hasControl := !is_undefined(inputs.hasControl) && inputs.hasControl
 
-	fb := pframes.pFrameBuilder()
+	// Type-only cfg (purifySpec): the specs are attached later, by the frame stage.
+	importData := func(file, columns) {
+		cfg := columnSpecs.featurePropertiesImportCfg({ type: "String" }, columns)
+		return xsv.importFile(file, "csv", pUtil.purifySpec(cfg), { dataOnly: true })
+	}
 
-	// Publish an empty frame where there is nothing to emit, because an empty xsv `columns` list fails the
-	// import spec validation.
-	if len(propertyColumns) > 0 || hasControl {
-		// Same trace step as the per-cell contract columns, deterministic and seeded from the input FASTQ spec
-		// plus blockId.
-		trace := pSpec.makeTrace(inputs.traceSeedSpec, {
-			type: "milaboratories.feature-integration",
-			id: blockId,
-			importance: 30,
-			label: "Feature Barcode Profiling"
-		})
+	// No import where there are no columns: an empty `columns` list fails the import's validation.
+	propertyData := smart.mapBuilder().lockAndBuild()
+	if len(propertyColumns) > 0 {
+		propertyData = importData(inputs.propertiesFile,
+			columnSpecs.featurePropertyImportColumns(propertyColumns, valuesByColumn))
+	}
 
-		featureAxis := columnSpecs.featureAxis(blockId)
-
-		if len(propertyColumns) > 0 {
-			importColumns := columnSpecs.featurePropertyImportColumns(propertyColumns, valuesByColumn)
-			rawPf := xsv.importFile(inputs.propertiesFile, "csv", {
-				axes: [{ column: "feature", spec: featureAxis }],
-				columns: importColumns,
-				storageFormat: "Parquet",
-				partitionKeyLength: 0
-			}, { splitDataAndSpec: true })
-			for k, v in rawPf {
-				fb.add(k, trace.inject(v.spec), v.data)
-			}
-		}
-
-		// The negative-control marker column: hidden, and not a filter. It rides pl7.app/feature/featureId into
-		// VDJ Multiomic Integration, which removes the control from its antigen metrics.
-		if hasControl {
-			ctrlPf := xsv.importFile(inputs.negativeControlFile, "csv", {
-				axes: [{ column: "feature", spec: featureAxis }],
-				columns: [columnSpecs.negativeControlColumn()],
-				storageFormat: "Parquet",
-				partitionKeyLength: 0
-			}, { splitDataAndSpec: true })
-			for k, v in ctrlPf {
-				fb.add(k, trace.inject(v.spec), v.data)
-			}
-		}
+	controlData := smart.mapBuilder().lockAndBuild()
+	if hasControl {
+		controlData = importData(inputs.negativeControlFile, [columnSpecs.negativeControlColumn()])
 	}
 
 	return {
-		featureProperties: fb.build()
+		propertyData: propertyData,
+		controlData: controlData
 	}
 })

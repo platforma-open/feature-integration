@@ -82,16 +82,22 @@ class Coverage:
 
 @dataclass(frozen=True)
 class Measurement:
+    """What the run computes about a figure -- never how it is described.
+
+    The words a reader sees live in the model, as `QC_MEASUREMENT_DESCRIPTIONS`, keyed on `id`.
+    The id is the join, and it is stable: it is also a value on the `measurement`
+    axis and a p-column name.
+    """
+
     id: str
-    label: str
     # Which surface owns the figure. Every declaration is "sample" today: the tag-level figures moved to
     # the reagent and undeclared-barcode tables, which declare their own columns, and the run's score
     # spread moved to its plot. The field stays because it is what says a figure belongs to the sample's
     # own report rather than to one of those, and `sample_report_rows` reads it.
     level: str
-    counts: str  # what went into it
-    implies: str | None = None  # what a bad value means, where a line exists
-    line: str | None = None  # which defence route backs `implies`, if any
+    # Which defence route backs the measurement. Read here, not display: `_CATEGORICAL` is derived from
+    # it, and the model's copy uses it for nothing.
+    line: str | None = None
 
 
 MEASUREMENTS: tuple[Measurement, ...] = (
@@ -120,16 +126,7 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # This is the only check that catches a wrong read-geometry preset. Nothing else in the set does.
     Measurement(
         "matchedFraction",
-        "Fraction of reads matching the read pattern",
         "sample",
-        "Reads whose layout matched the read pattern, so the cell barcode, the UMI and the antigen "
-        "barcode could be cut out of them, over every read in this sample's files.",
-        "A low share means most reads do not fit the read geometry this run was configured with. The "
-        "pattern is all fixed-length positions, so there is nothing in it to mutate: a read either "
-        "covers the geometry or it does not, which makes a low share a fact about the read-geometry "
-        "preset or the read length rather than about the library. A 15-base antigen barcode at a "
-        "10-base offset takes 25 bases of Read 2. Both thresholds are this block's own estimate rather "
-        "than a published number.",
         "operator-set",
     ),
     # The id is kept even though the label no longer says "valid". The id is a p-column name and a value
@@ -153,24 +150,15 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # level, mitool sets inputCount and outputCount from one counter, so the ratio is hard-wired to 1.0.
     Measurement(
         "cellBarcodeValidFraction",
-        "Fraction of reads whose cell barcode passed quality correction",
         "sample",
-        "Reads whose cell barcode survived correction, out of the reads that entered it. Correction "
-        "clusters the cell barcodes the reads actually carry and merges rare ones onto close, frequent "
-        "neighbours; a read whose barcode is too poor in quality to place is dropped.",
-        "A low share means the cell barcodes were read at poor quality, so reads are being lost before "
-        "anything can be counted per cell. Both thresholds are this block's own estimate rather than a "
-        "published number, and a shallow library can dip under the warn line without anything being "
-        "wrong -- correction rescues a poor barcode by clustering it onto a frequent neighbour, and a "
-        "shallow run has fewer neighbours to rescue onto.",
         "operator-set",
     ),
     # `qc_report._refine_step_counts` reads the FEATURE step's (inputCount, outputCount) -- the share of
     # matched reads whose barcode corrects onto a panel entry. Its complement is the share landing
     # in barcodes the panel never declared, which is a property of a barcode and not of a sample. The
-    # line that used to sit here now backs the undeclared-barcode table's own row
-    # (`undeclaredBarcodeShare` below), keyed by sequence and computed on the pre-refine counts. This
-    # row keeps the number and carries no status.
+    # line for it therefore sits on the undeclared-barcode table's own row (`undeclaredBarcodeShare`
+    # below), keyed by sequence and computed on the pre-refine counts. This row keeps the number and
+    # carries no status.
     #
     # The usable row is a different quantity: Cell Ranger `main`, defines
     # `frac_feature_reads_usable` as conf-mapped, barcoded reads restricted to the called-cell
@@ -181,15 +169,11 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # Renaming it breaks both.
     Measurement(
         "panelAssignedFraction",
-        "Fraction of reads matching a panel barcode",
         "sample",
         # Over MATCHED READS, which every read share in this set shares. It was over the FEATURE step's
         # own input -- the reads that survived cell-barcode correction before it -- a denominator no
         # other figure here had, and subtracting two such shares is what produced the unit error in
         # `rescued_share`. One denominator for every read share removes that class of error.
-        "Reads whose antigen barcode matches the panel, out of the reads matching the read pattern.",
-        "A low share means most reads carry an antigen barcode the panel does not declare, which points "
-        "at the wrong panel file or a reagent that is not in it.",
         "inherited",
     ),
     # No line. The four inherited numbers do not include this one, and nothing published says what a
@@ -209,17 +193,7 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # can never be a correction target. Nothing is rescued ONTO a barcode no read carried.
     Measurement(
         "refineRescuedShare",
-        "Fraction of reads rescued by barcode correction",
         "sample",
-        "Reads carrying an antigen barcode the panel does not list, close enough to a listed one that "
-        "correction moved it there. Up to two substituted bases and two indels are allowed, three "
-        "errors in total, and a barcode seen in few reads or at low quality gets a tighter limit than "
-        "that. Without the correction these reads would have been thrown away.",
-        "A high share means a large part of the library reached the panel by inference rather than by "
-        "matching a declared barcode outright. Both numbers are this block's own estimate, and the "
-        "reading is two-sided by nature: a high share can mean correction is doing real work or that "
-        "base quality is poor, and a low one can mean a clean run or a panel whose barcodes sit too far "
-        "apart for anything to need rescuing.",
         "operator-set",
     ),
     # --- What did the run see? Every figure below is over EVERY OBSERVED cell barcode, ambient
@@ -235,10 +209,7 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # published.
     Measurement(
         "cellsDetected",
-        "Cell barcodes detected",
         "sample",
-        "Distinct cell barcodes seen, before cell calling. Most are empty droplets.",
-        "Zero cells means nothing downstream can be computed for this sample.",
         "categorical",
     ),
     # Ports Cell Ranger's `detect_outlier_umis_bcs`, which it calls for the ANTIGEN library
@@ -254,30 +225,17 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # Divided by `readsTotal` (whole-library, pre-match), not `readsMatched`, matching the source.
     Measurement(
         "aggregateBarcodeFraction",
-        "Fraction of reads in aggregate barcodes",
         "sample",
-        "Reads in cell barcodes carrying far more signal than the rest, which points at clumped "
-        "droplets. The threshold is automatic.",
-        "A high share means much of the run's antigen signal comes from a small number of "
-        "clumped droplets rather than single cells.",
         "inherited",
     ),
     # --- What reached the analysis? Every figure below is over the V(D)J-MATCHED cells alone.
     #
-    # The same sum over every OBSERVED cell barcode was declared here too, as the other half of a pair:
-    # one population either side of this seam, and the gap between them was how much signal sat in
-    # droplets that held no recovered receptor. The observed half is gone. It could not be judged -- its
-    # floor is 1, since the population is barcodes holding at least one counted reading, so there was no
-    # bad value for a line to name -- and a row a reader cannot act on, whose only use was a comparison
-    # they had to make in their head, was answering no question. The gap it measured is no longer
-    # reported anywhere.
+    # The same sum over every OBSERVED cell barcode is deliberately NOT declared. Its floor is 1 -- the
+    # population is barcodes holding at least one counted reading -- so no line can name a bad value, and
+    # its only use was a comparison the reader had to make in their head.
     Measurement(
         "uniqueCountsPerCell",
-        "Median antigen count per V(D)J-matched cell barcode",
         "sample",
-        "How much antigen a V(D)J-matched cell barcode holds. Counts from all antigens are added up per "
-        "barcode to then compute this median. Barcodes with no V(D)J match are left out.",
-        "A low median means the typical analysed cell carries little antigen signal for a call to rest on.",
         "operator-set",
     ),
     # Ported from Cell Ranger's own read-recovery metric,
@@ -288,14 +246,10 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # panel-recognised FEATURE value, so restricting to the cell list is the only condition left.
     Measurement(
         "usableReadFraction",
-        "Fraction of reads usable for antigen calls",
         "sample",
         # BOTH ends, because the label names neither and the numerator's condition invites the wrong
         # denominator: a reader who meets "usable for antigen calls" beside a V(D)J condition reads it as
         # a share of V(D)J-matched CELLS. It is a share of READS -- every read parsed.
-        "Reads that both match the panel and come from a cell the V(D)J data matched, over every read parsed.",
-        "A low share means most of the library's reads are lost before reaching a called cell "
-        "with a panel-recognised barcode.",
         "inherited",
     ),
     # Saturation is deliberately NOT measured. The vendor's own report carries it, and a scientist
@@ -308,14 +262,11 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # which is why the division happens in the entrypoint.
     Measurement(
         "readsPerCell",
-        "Mean reads per V(D)J-matched cell",
         "sample",
         # Two sentences and nothing else. What the 5,000 is and where it comes from lives on the control
         # that moves it, under More options -> Quality lines, which is where a reader who wants to argue
         # with a number goes. Restating it here made the longest text on the page out of the row with the
         # simplest meaning.
-        "The average antigen read depth of one analysed cell.",
-        "A low value means the analysed cells are thinly sequenced for antigen, so each call rests on few reads.",
         "recommended-and-observed",
     ),
     # --- What the reading rules then removed, and the numbers behind them. The minimum count acts on
@@ -323,23 +274,16 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # a gate is chosen from.
     Measurement(
         "floorRemoved",
-        "Cell-antigen readings zeroed by the minimum",
         "sample",
         # Counted in READINGS -- one cell with five antigens under the floor contributes five. The cell
         # count beside it is a different unit, which is why it is a line of its own rather than a second
         # number on this one.
-        "Each cell-and-antigen reading below the minimum count is set to zero rather than dropped: too "
-        "small to be evidence of binding, but still a reading that happened, so it votes not bound. The "
-        "baseline tag is exempt.",
     ),
     Measurement(
         "medianControlReading",
         # "V(D)J-matched" hyphenated as the compound adjective it is, and singular after "per", matching
         # the two median rows above. The label carries the population, so the text does not repeat it.
-        "Median control-tag reading per V(D)J-matched cell",
         "sample",
-        "The control tag is declared to bind nothing, so this is the run's own noise floor -- and the "
-        "number to read when choosing where to put the admissibility gate.",
     ),
     # TWO rows, not one with an "or" in its label. These were one measurement whose value was a count of
     # cells where a gate was declared and a median UMI count where none was, so its units changed with a
@@ -352,10 +296,23 @@ MEASUREMENTS: tuple[Measurement, ...] = (
     # size means.
     Measurement(
         "cellsSetAside",
-        "Cells set aside as sticky",
         "sample",
-        "Cells whose control-tag count is above the admissibility gate. A cell set aside answers nothing "
-        "at any antigen, so it leaves every verdict rather than voting in one.",
+    ),
+    # --- What the cutoff asked of each sample, and what it returned. The score itself is one currency
+    # across a run -- every cell is scored against its OWN baseline, so the cutoff asks the identical
+    # question everywhere and its spread is one pooled plot. What differs between samples is DEPTH, and
+    # depth decides how many cells can reach the line at all.
+    Measurement(
+        "medianAntigenReading",
+        "sample",
+    ),
+    Measurement(
+        "cutoffCountNeeded",
+        "sample",
+    ),
+    Measurement(
+        "boundReadingShare",
+        "sample",
     ),
     # The per-TAG figures are deliberately NOT declared here. Each has a purpose-built surface that
     # declares its own columns: cells-with-a-count, the median count, cells called bound and the two
@@ -417,7 +374,7 @@ _CATEGORICAL: frozenset[str] = frozenset(m.id for m in MEASUREMENTS if m.line ==
 # `undeclaredBarcodeShare` backs the undeclared-barcode table's own row rather than a declared
 # `Measurement`: that status is the barcode's, never a sample's, so it is computed and carried where
 # the barcode rows are, in emit_verdicts.py, and reaches `status_for` under this id. It is the one
-# exception to "every line backs a declared measurement", and a test names it.
+# exception to "every line backs a declared measurement".
 #
 # It reads the ROW's own share, `barcodeShare`, not the sample-level `readShare` the id is named for.
 # The sample-level share keeps its column and carries no status.
@@ -940,8 +897,8 @@ def aggregate_barcode_fraction(
     return flagged_reads / reads_total, detail
 
 
-# How many buckets the count distributions used to be drawn in, back when their edges were integers.
-# Kept only because `linear_bin_edges` uses it as its default; the count distributions do not.
+# The default bucket count for `linear_bin_edges`, its only consumer. The count distributions do not
+# read it.
 COUNT_BIN_COUNT = 24
 
 

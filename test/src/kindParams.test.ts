@@ -19,6 +19,8 @@ import { describe, expect, test } from "vitest";
 const parse = (value: unknown) => kind.parseInitializationParams(value);
 
 const A_REF: PlRef = { __isRef: true, blockId: "block-1", name: "out" } as PlRef;
+const INDEX_CSV = "index://index/panel.csv" as const;
+const UPLOAD_CSV = "upload://upload/panel.csv" as const;
 
 describe("the params envelope", () => {
   test("an empty object is valid params -- every field is optional", () => {
@@ -81,11 +83,24 @@ describe("field checks", () => {
   });
 });
 
-describe("the grouping rule", () => {
-  test("by tag", () => {
-    expect(parse({ grouping: { by: "tag" } })).toStrictEqual({ grouping: { by: "tag" } });
+describe("the panel CSV", () => {
+  test("an index:// handle is accepted", () => {
+    expect(parse({ tagFeatureCsvHandle: INDEX_CSV })).toStrictEqual({
+      tagFeatureCsvHandle: INDEX_CSV,
+    });
   });
 
+  test("an upload:// handle is refused -- it resolves only on the machine that uploaded it", () => {
+    expect(() => parse({ tagFeatureCsvHandle: UPLOAD_CSV })).toThrow(/tagFeatureCsvHandle/);
+  });
+
+  test("runMode takes only 'dry' or 'full'", () => {
+    expect(parse({ runMode: "dry" })).toStrictEqual({ runMode: "dry" });
+    expect(() => parse({ runMode: "preview" })).toThrow(/runMode/);
+  });
+});
+
+describe("the grouping rule", () => {
   test("by property, naming several columns", () => {
     const grouping = { by: "property" as const, columns: ["antigen", "lot"] };
     expect(parse({ grouping })).toStrictEqual({ grouping });
@@ -98,6 +113,7 @@ describe("the grouping rule", () => {
   });
 
   test.each([
+    ["the removed per-tag rule", { by: "tag" }],
     ["an unknown 'by'", { by: "sample" }],
     ["a property rule naming nothing", { by: "property" }],
     ["columns that are not strings", { by: "property", columns: [1] }],
@@ -189,6 +205,16 @@ describe("the round trip", () => {
     expect(parse(projected)).toMatchObject({ sampleColumn: "Sample" });
   });
 
+  test("an upload:// CSV is dropped from the projection, with the panel columns that name its columns", () => {
+    const projected = templateParams({ ...configuredData(), tagFeatureCsvHandle: UPLOAD_CSV });
+    expect(projected.tagFeatureCsvHandle).toBeUndefined();
+    for (const key of PANEL_COLUMN_FIELDS) expect(projected[key]).toBeUndefined();
+    // The rest of the configuration still travels.
+    expect(projected.fbFastqRef).toStrictEqual(A_REF);
+    expect(projected.countFloor).toBe(4);
+    expect(() => parse(projected)).not.toThrow();
+  });
+
   test("a blank block projects params the parser still accepts", () => {
     const projected = templateParams(blankData());
     expect(() => parse(projected)).not.toThrow();
@@ -245,7 +271,39 @@ const CONTRACT_FIELDS = [
   "minAgreement",
   "gateThreshold",
   "grouping",
+  "runMode",
+  "limitInput",
+  "aggregateBarcodeIqrMultiplier",
+  "aggregateBarcodeMinUmiThreshold",
+  "aggregateBarcodeTopN",
+  "panelAssignedWarn",
+  "panelAssignedError",
+  "matchRateWarn",
+  "matchRateError",
+  "cellBarcodeQualityWarn",
+  "cellBarcodeQualityError",
+  "readsPerCellWarn",
+  "aggregateBarcodeWarn",
+  "aggregateBarcodeError",
+  "undeclaredBarcodeWarn",
+  "undeclaredBarcodeError",
+  "usableReadWarn",
+  "usableReadError",
+  "rescuedShareWarn",
+  "rescuedShareError",
+  "vdjAntigenCountWarn",
+  "vdjAntigenCountError",
 ] as const satisfies readonly (keyof BlockData)[];
+
+/** The contract fields that name columns of the panel CSV, projected only with an index:// CSV. */
+const PANEL_COLUMN_FIELDS = [
+  "barcodeSeqColumn",
+  "featureNameColumn",
+  "sampleColumn",
+  "roleColumn",
+  "referenceValues",
+  "grouping",
+] as const satisfies readonly (typeof CONTRACT_FIELDS)[number][];
 
 /** The grid and plot state every `BlockData` carries. None of it belongs to the params contract. */
 function viewState() {
@@ -266,12 +324,13 @@ function configuredData(): BlockData {
   return {
     ...VERDICT_DEFAULTS,
     ...viewState(),
-    runMode: "full",
+    runMode: "dry",
     presetId: "tenx-beam",
     cellWhitelist: "737K-august-2016",
     defaultBlockLabel: "",
     fbFastqRef: A_REF,
     datasetRef: A_REF,
+    tagFeatureCsvHandle: INDEX_CSV,
     barcodeSeqColumn: "Barcode",
     featureNameColumn: "Antigen",
     sampleColumn: "Sample",
@@ -284,6 +343,10 @@ function configuredData(): BlockData {
     grouping: { by: "property", columns: ["Antigen"] },
     countFloor: 4,
     boundCutoff: 75,
+    limitInput: 500000,
+    aggregateBarcodeTopN: 50,
+    matchRateWarn: 0.8,
+    vdjAntigenCountError: 2,
   };
 }
 

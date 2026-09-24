@@ -9,6 +9,9 @@
 
 ll := import("@platforma-sdk/workflow-tengo:ll")
 maps := import("@platforma-sdk/workflow-tengo:maps")
+objects := import("@platforma-sdk/workflow-tengo:objects")
+slices := import("@platforma-sdk/workflow-tengo:slices")
+pUtil := import("@platforma-sdk/workflow-tengo:pframes.util")
 strings := import("@platforma-sdk/workflow-tengo:strings")
 
 json := import("json")
@@ -293,6 +296,30 @@ QC_SUMMARY_COLUMNS := [
 	"aggregateBarcodeThreshold"
 ]
 
+// featurePropertiesImportCfg: the import cfg for both per-feature CSVs (properties and the negative-control
+// marker), keyed on the `feature` column. The caller passes the axis spec: type-only for the data import,
+// the full featureAxis for the specs.
+featurePropertiesImportCfg := func(featureAxisSpec, columns) {
+	return {
+		axes: [{ column: "feature", spec: featureAxisSpec }],
+		columns: columns,
+		storageFormat: "Parquet",
+		partitionKeyLength: 0
+	}
+}
+
+// importedColumns: `{ id, spec }` for every column of an import cfg, with the spec xsv.importFile would
+// build (xsv-import-pt getColumnSpec). For templates that import data only and attach the specs themselves.
+importedColumns := func(cfg) {
+	axesSpec := slices.map(cfg.axes, func(ax) { return ax.spec })
+	return slices.map(cfg.columns, func(col) {
+		return {
+			id: pUtil.xsvColumnId(col),
+			spec: objects.deleteUndefined(maps.deepMerge(col.spec, { kind: "PColumn", axesSpec: axesSpec }))
+		}
+	})
+}
+
 // negativeControlColumn: the xsv.importFile `columns` entry for the negative-control marker CSV
 // (emit_feature_properties.py `<prefix>_negative_control.csv`, holding "true" for the control). Hidden and
 // NOT a discrete filter: it is not a user-facing property. It exists so the control rides
@@ -445,11 +472,11 @@ servedDomain := func(served) {
 // change of comparator does -- the comparator, the cell list and the grouping are in the DOMAIN for
 // exactly that reason.
 //
-// Every one of them is recorded where its verdicts appear, so that a run
-// that lowered a number does not look like a run that did not. Two of the seven change WHICH verdicts
-// exist -- the gate and the agreement floor -- and two runs differing on them used to emit columns of
-// identical identity and identical annotations, with the record only in a block-local output that
-// labelling and lead selection never see.
+// Every one of them is recorded where its verdicts appear, so that a run that lowered a number does not
+// look like a run that did not. Two of the seven change WHICH verdicts exist -- the gate and the
+// agreement floor -- so without these, two runs differing on them emit columns of identical identity and
+// identical annotations, with the record only in a block-local output that labelling and lead selection
+// never see.
 servedNotes := func(served) {
 	notes := {
 		"pl7.app/antigen/countFloor": string(served.floor),
@@ -1119,8 +1146,7 @@ offeredImportSpec := func(sampleAxisSpec, identityAxisSpec) {
 // Deliberately NOT keyed by sample. Neither side carries a sample: verdicts are (set, identity) over
 // clonotypes spanning whatever samples their cells came from, and the tag-keyed figures are run-level. A
 // sample axis here is an axis no participating table has, which makes the join malformed, and SDK label
-// discovery then refuses to build a spec frame over it. Where a sample-level distinction is wanted,
-// panelMismatch keys by PANEL, a declared tag set.
+// discovery then refuses to build a spec frame over it.
 //
 // Several rows per tag are expected. The SAME pair must not appear twice: duplicate axis keys break a grid
 // silently, so the emitter writes distinct pairs.
@@ -1284,50 +1310,6 @@ samplePanelImportSpec := func(sampleAxisSpec) {
 	}
 }
 
-// --- Panel versus reads: result_panel_mismatch.csv ------------------------------------------
-//
-// POTENTIALLY DEAD. Nothing imports this frame any more: the check's one reachable direction -- a declared
-// barcode no read carried -- is the reagent table's `Seen in 0/N`. The spec is left in place and exported
-// so re-importing it is a one-line change.
-//
-// Keyed (panelId, tag), because a per-tag failure is a property of the declared tag set rather than of any
-// one sample carrying it. The samples that reported it travel in the row.
-panelMismatchImportSpec := func(panelAxisSpec, tagAxisSpec) {
-	return {
-		axes: [
-			{ column: "panelId", spec: panelAxisSpec },
-			{ column: "tag", spec: tagAxisSpec }
-		],
-		columns: [
-			{
-				column: "direction",
-				id: "mismatchDirection",
-				spec: {
-					name: "pl7.app/antigen/panelMismatchDirection",
-					valueType: "String",
-					annotations: a(74000, true, {
-						"pl7.app/label": "Mismatch",
-						"pl7.app/isDiscreteFilter": "true",
-						"pl7.app/discreteValues": MISMATCH_DIRECTIONS,
-						"pl7.app/description": "'declared-never-seen': the panel declares this tag and no read carried it. 'undeclared-in-panel': reads carried a tag the panel never declared. Both are checked because either alone hides half the mismatch."
-					})
-				}
-			},
-			{
-				column: "samples",
-				id: "mismatchSamples",
-				spec: {
-					name: "pl7.app/antigen/panelMismatchSamples",
-					valueType: "String",
-					annotations: a(73000, true, { "pl7.app/label": "Samples affected" })
-				}
-			}
-		],
-		storageFormat: "Parquet",
-		partitionKeyLength: 0
-	}
-}
-
 // --- Undeclared barcodes: result_undeclared_barcodes.csv, keyed (sampleId, tag) ------------
 //
 // Barcodes the reads carried that no panel declares get their own table, keyed by sequence, because they
@@ -1422,10 +1404,9 @@ undeclaredBarcodeImportSpec := func(sampleAxisSpec, tagAxisSpec) {
 // A row that belongs to no panel -- every sample-level and capture-level row -- leaves `panelId` empty.
 // --- The fitted backgrounds -------------------------------------------------------------------
 //
-// The one frame left of what used to be three. The other two carried eleven decile points each -- the
-// score spread and the reference-reading spread, pooled over the run -- and nothing plotted either: the
-// plots a scientist settles the cutoff and the gate from are drawn from the BINNED counts in
-// `result_qc_tag_bins.json`, because points suggest a shape and cannot show where it separates.
+// The only quality frame emitted. The plots a scientist settles the cutoff and the gate from are drawn
+// from the BINNED counts in `result_qc_tag_bins.json` instead, because quantile points cannot show where
+// a distribution separates.
 //
 // This frame survives at the fit's own (sample, tag) grain, for the comparison that JSON cannot serve:
 // one background sorted across every sample and tag at once, rather than judged panel by panel.
@@ -1607,7 +1588,13 @@ qcSampleSummaryImportSpec := func(sampleAxisSpec) {
 			num("cellsSetAside", "cellsSetAside", "Cells set aside as sticky", 80000, undefined,
 				"Cells whose control-tag count is above the admissibility gate. Blank where no gate is declared."),
 			num("medianControlReading", "medianControlReading", "Median control-tag reading per cell", 79500, ".1f",
-				"The middle control-tag count across this sample's V(D)J-matched cells. The control tag is declared to bind nothing, so this is the run's own noise floor.")
+				"The middle control-tag count across this sample's V(D)J-matched cells. The control tag is declared to bind nothing, so this is the run's own noise floor."),
+			num("medianAntigenReading", "medianAntigenReading", "Median antigen count per scored reading", 79000, ".1f",
+				"The middle antigen count across this sample's scored readings. Per reading, not per cell: a cell asked about four antigens carries four of them, and a reading is what the cutoff acts on."),
+			num("cutoffCountNeeded", "cutoffCountNeeded", "Antigen UMI needed to clear the cutoff", 78500, undefined,
+				"What the bound score cutoff asks of a typical cell in this sample, in the units the counts are in. The score is a certainty, so it never says how deep a sample is. Taken at this sample's median baseline reading; each cell is judged against its own, so a quieter baseline clears on fewer counts."),
+			num("boundReadingShare", "boundReadingShare", "Share of scored readings called bound", 78000, ".2p",
+				"The share of this sample's scored readings the cutoff called bound. Read beside the UMI figure: a low share with a high bar is a sample too shallow to answer, and a low share with a low bar is one that answered and found little.")
 		],
 		storageFormat: "Parquet",
 		partitionKeyLength: 0
@@ -1622,6 +1609,8 @@ export {
 	qcFileMapOutput: qcFileMapOutput,
 	QC_SUMMARY_COLUMNS: QC_SUMMARY_COLUMNS,
 	featurePropertyImportColumns: featurePropertyImportColumns,
+	featurePropertiesImportCfg: featurePropertiesImportCfg,
+	importedColumns: importedColumns,
 	negativeControlColumn: negativeControlColumn,
 
 	tagAxis: tagAxis,
@@ -1649,7 +1638,6 @@ export {
 	identityPropertyImportSpec: identityPropertyImportSpec,
 	panelLabelsImportSpec: panelLabelsImportSpec,
 	samplePanelImportSpec: samplePanelImportSpec,
-	panelMismatchImportSpec: panelMismatchImportSpec,
 	undeclaredBarcodeImportSpec: undeclaredBarcodeImportSpec,
 	qcBackgroundImportSpec: qcBackgroundImportSpec,
 	qcReagentImportSpec: qcReagentImportSpec,

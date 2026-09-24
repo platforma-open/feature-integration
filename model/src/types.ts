@@ -145,6 +145,13 @@ export type BlockData = {
   // Distinct values of the chosen sample column at pick time, snapshotted alongside the label map so args()
   // can gate Run purely from data.
   sampleColumnValues?: string[];
+  // Sample ids of the FASTQ dataset and of the V(D)J dataset, snapshotted when each is picked, so args() can
+  // refuse two datasets with no sample in common. Absent where the ids were not known at the pick.
+  fastqSampleIds?: string[];
+  vdjSampleIds?: string[];
+  // The last suggested sample column the UI auto-filled, kept so a suggestion the user cleared is not
+  // applied again. Cleared with the sample-aware state when the CSV or the dataset changes.
+  handledSampleSuggestion?: string;
   // Preview (dry-run) mode. "full", the default, processes every read. "dry" caps mitool parse to
   // `limitInput` reads per sample.
   runMode?: "dry" | "full";

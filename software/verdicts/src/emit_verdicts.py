@@ -11,8 +11,8 @@ Reversing any pair changes the answer.
 *not bound* unless the cell itself cannot be compared. `silent_tally` counts those positions
 analytically, because on a realistic panel the grid is 11-20x the sparse input and a pMHC
 panel does not fit at all. Two consequences are enforced here: a `--cutoff` at or below that
-~0.0422 bound is refused, and verdict.py's row-per-position reference implementation is never
-called from production, which the test suite asserts by checking this file does not name it.
+~0.0422 bound is refused, and the row-per-position reference implementation is never called from
+production -- it lives in the test package (test/dense_oracle.py), so this file cannot reach it.
 
 `offered` is keyed by SAMPLE throughout and is never regrouped by set. Staining is done per
 sample, so a set spanning two samples was offered whatever either panel offered, and
@@ -80,7 +80,6 @@ from panel import (
     default_grouping,
     identity_universe,
     offered_identities,
-    panel_read_mismatch,
     property_columns,
     read_panel,
 )
@@ -127,10 +126,12 @@ from verdict import (
     Admissibility,
     Reference,
     ReferenceChoice,
+    State,
     apply_floor,
     cell_admissibility_reason,
     cells_reading_nothing,
     combine_tags_to_identities,
+    count_to_reach,
     gate_cells,
     read_states,
     reference_by_cell,
@@ -287,12 +288,9 @@ def main() -> None:
     p.add_argument("--output-prefix", default="result")
     args = p.parse_args()
 
-    # Every line an operator may move, none invented: a measurement absent from this dict carries no
-    # status, whatever DEFAULT_LINES says elsewhere.
-    # EVERY key of `DEFAULT_LINES` must appear here. This dict is what scores a run -- `status_for`
-    # answers None for a measurement it does not find -- so a line declared in `DEFAULT_LINES` and
-    # missing here is a line that silently does nothing, while every unit test that reads
-    # `DEFAULT_LINES` straight still passes. `panelAssignedFraction` shipped that way once.
+    # Every line an operator may move, none invented, and EVERY key of `DEFAULT_LINES`. `status_for`
+    # answers None for a measurement absent from this dict, so a line declared there and missing here
+    # carries no status, whatever DEFAULT_LINES says elsewhere.
     lines: dict[str, Line] = {
         "panelAssignedFraction": Line(warn=args.panel_assigned_warn, error=args.panel_assigned_error),
         "matchedFraction": Line(warn=args.match_rate_warn, error=args.match_rate_error),
@@ -778,6 +776,33 @@ def main() -> None:
         """
         return frame if cell_list is None else frame.join(in_list, on=["sampleId", "cellId"], how="inner")
 
+    # The scored readings, narrowed once.
+    scored = (
+        _listed(states.filter(pl.col("unreliableReason").is_null()))
+        if reference.served is ReferenceChoice.DECLARED
+        else states.head(0)
+    )
+    # Per sample, the three figures a reader needs to tell a shallow sample from a quiet one: how much
+    # antigen its typical reading carries, what the cutoff asks of a typical cell there IN UMI, and what
+    # share of its readings the cutoff actually called bound.
+    score_by_sample: dict[str, dict[str, object]] = {}
+    if scored.height > 0:
+        for (sample_id,), frame in scored.group_by(["sampleId"]):
+            antigen = frame["umiCount"].to_numpy()
+            median_baseline = float(
+                np.median(np.nan_to_num(frame["referenceCount"].cast(pl.Float64).to_numpy(), nan=0.0))
+            )
+            bound = int((frame["state"] == State.BOUND.value).sum())
+            score_by_sample[str(sample_id)] = {
+                # Per READING, not per cell: a cell asked about four antigens carries four of them, and a
+                # reading is what the cutoff acts on.
+                "medianAntigenReading": float(np.median(antigen)),
+                # A cell's own baseline sets its own boundary; this is the boundary of the MIDDLE cell,
+                # not one any single cell was held to. None where no count reaches the cutoff.
+                "cutoffCountNeeded": count_to_reach(args.cutoff, median_baseline),
+                "boundReadingShare": bound / frame.height if frame.height else None,
+            }
+
     def _admissibility(key: CellKey) -> str:
         reason = cell_admissibility_reason(key, admissibility)
         return "admissible" if reason is None else reason.value
@@ -981,35 +1006,6 @@ def main() -> None:
         schema={"sampleId": pl.String, "panelLabel": pl.String},
     )
     _write_sorted(sample_panel, f"{prefix}_sample_panel.csv", ["sampleId"])
-
-    # POTENTIALLY DEAD CODE, left for a separate pass. No p-column import reads
-    # result_panel_mismatch.csv any more and no view renders it: the check's one reachable direction --
-    # a declared barcode no read carried -- is the reagent table's `Seen in 0/N`. Deleting this,
-    # `panel_read_mismatch` in panel.py and their tests is a Python-only cleanup.
-    #
-    # Both directions of the panel-versus-reads check, re-keyed onto the panel: a per-tag failure is a
-    # property of the declared tag set rather than of any one sample carrying it. The samples reporting
-    # it travel in the row.
-    #
-    # `seen` is drawn from the counts, whose feature barcodes were already snapped onto the panel by
-    # refine-tags. So only the declared-never-seen direction can produce a row. Reporting an undeclared
-    # barcode needs a pre-correction source.
-    seen = counts.select("sampleId", "tag").unique()
-    unknown_panel = _panel_id(frozenset())
-    mismatch_rows: dict[tuple[str, str, str], set[str]] = {}
-    for row in panel_read_mismatch(panel, seen).iter_rows(named=True):
-        # In the unkeyed case every row comes back under "*", which is not a sample id: the declaration
-        # really is global, so it reports against every sample in the run.
-        affected = samples if row["sample"] == ANY_SAMPLE else [row["sample"]]
-        for sample in affected:
-            key = (panel_of_sample.get(sample, unknown_panel), row["tag"], row["direction"])
-            mismatch_rows.setdefault(key, set()).add(sample)
-    mismatch = pl.DataFrame(
-        [(panel_id, tag, direction, ", ".join(sorted(s))) for (panel_id, tag, direction), s in mismatch_rows.items()],
-        orient="row",
-        schema={"panelId": pl.String, "tag": pl.String, "direction": pl.String, "samples": pl.String},
-    )
-    _write_sorted(mismatch, f"{prefix}_panel_mismatch.csv", ["panelId", "direction", "tag"])
 
     # ---- the quality measurements -------------------------------------------------
 
@@ -1228,9 +1224,8 @@ def main() -> None:
             )
         # ONE POPULATION, top and bottom: the reads inside the listed cells, over those same cells. The
         # numerator is `usable_reads` -- the identical set the `usableReadFraction` row is a share of, so
-        # the two rows cannot describe different reads. It used to be every matched read in the library,
-        # which made the figure track the V(D)J match rate instead of this library's depth; see
-        # `reads_per_cell`.
+        # the two rows cannot describe different reads. A numerator over every matched read instead would
+        # track the V(D)J match rate rather than this library's depth; see `reads_per_cell`.
         #
         # Both inputs are the counts table and the cell list, NOT the read-QC row -- so a run with no
         # `--qc-summary` still reports depth, where before it could not.
@@ -1339,6 +1334,12 @@ def main() -> None:
         if not control_rows:
             add(rows, "sample", sample, "cellsSetAside", *_cells_set_aside(here, args.gate_threshold, no_control))
             add(rows, "sample", sample, "medianControlReading", *_median_control_reading(here, no_control))
+
+        # What the cutoff asked of this sample and what it returned.
+        # A sample that produced no score leaves them blank.
+        stats = score_by_sample.get(sample, {})
+        for measurement in ("medianAntigenReading", "cutoffCountNeeded", "boundReadingShare"):
+            add(rows, "sample", sample, measurement, stats.get(measurement))
 
         # Every measurement here is the SAMPLE's, so every one of them rolls up. A reagent's condition
         # never reaches a sample's status: one bad reagent marking twenty samples is how a sample status
@@ -1505,28 +1506,29 @@ def main() -> None:
     # gate, each acts on cells, and a spread taken over observed barcodes is a different population from
     # the one beside it on the page.
     #
-    # BINNED, and nothing else. Eleven decile points used to go out beside these as their own p-columns;
-    # nothing plotted them, because points suggest a shape and cannot show WHERE a distribution
-    # separates, which is the one thing both plots are read for. Binning is how the plot shows every
-    # cell without shipping one row per cell.
+    # BINNED, and nothing else. Quantile points cannot show WHERE a distribution separates, which is the
+    # one thing both plots are read for. Binning is how the plot shows every cell without shipping one
+    # row per cell.
     spread_bins: dict[str, dict[str, object]] = {}
-    if reference.served is ReferenceChoice.DECLARED:
-        scored = _listed(states.filter(pl.col("unreliableReason").is_null()))
-        if scored.height > 0:
-            values = specificity_score(
+    # ONE spread for the whole run, pooled across samples.
+    # Absent on every rung but the declared one: no score, nothing to spread.
+    if scored.height > 0:
+        scores = np.asarray(
+            specificity_score(
                 scored["umiCount"].to_numpy(),
                 np.nan_to_num(scored["referenceCount"].cast(pl.Float64).to_numpy(), nan=0.0),
-            )
-            scores = np.asarray(values, dtype=float)
-            score_edges = linear_bin_edges(scores)
-            spread_bins["score"] = {"edges": score_edges, "weights": bin_values(scores, score_edges)}
+            ),
+            dtype=float,
+        )
+        score_edges = linear_bin_edges(scores)
+        spread_bins["score"] = {"edges": score_edges, "weights": bin_values(scores, score_edges)}
     # Narrowed by key rather than through `_listed`: the comparator is a dict keyed by cell, not a frame.
     # An empty result is possible where a list arrived and no listed cell carries a comparator, and it
     # writes no rows rather than an all-zero spread.
     listed_readings = [value for key, value in reference.by_cell.items() if cell_list is None or key in cell_list]
     if listed_readings:
         readings = np.asarray(listed_readings, dtype=float)
-        reading_edges = linear_bin_edges(readings)
+        reading_edges = log1p_bin_edges(int(readings.max())) or log1p_edges_for(1)
         spread_bins["referenceReading"] = {
             "edges": reading_edges,
             "weights": bin_values(readings, reading_edges),

@@ -4,6 +4,7 @@ dist/
 block-pack/
 **/.venv/
 **/__pycache__/
+**/.pycache/
 **/.pytest_cache/
 **/.ruff_cache/
 **/.hypothesis/

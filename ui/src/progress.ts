@@ -174,9 +174,8 @@ export function deriveProgress(
     }
   }
 
-  // Nothing streaming yet: hold at the report floor with the step name. The metrics step used to land here
-  // unconditionally and sat at 75% through the whole slow Python run; it now streams like the others, so only
-  // the gap before a step's first line reaches this.
+  // Nothing streaming yet: hold at the report floor with the step name. Every step streams, so only the
+  // gap before a step's first line reaches this.
   if (liveWf === undefined || liveLine === undefined) {
     return {
       status: "running",

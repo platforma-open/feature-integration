@@ -1,6 +1,6 @@
 import { assertParamsObject, defineBlockKind } from "@platforma-sdk/block-kind";
-import type { ImportFileHandle, PlRef } from "@platforma-sdk/model";
-import { isPlRef } from "@platforma-sdk/model";
+import type { ImportFileHandle, ImportFileHandleIndex, PlRef } from "@platforma-sdk/model";
+import { isImportFileHandleIndex, isPlRef } from "@platforma-sdk/model";
 import { name, version } from "../package.json" with { type: "json" };
 
 /**
@@ -24,7 +24,8 @@ export type ReferenceSource = "declared" | "panel" | "distribution";
 /**
  * How tags become identities. A RULE over declared properties, never a tag->identity map: a map is keyed
  * by tags, which are known only after the block runs, so any editor for it writes an output back into
- * data. Property column names are knowable at prerun. Absent means one identity per tag.
+ * data. Property column names are knowable at prerun. Absent means one identity per tag; there is no
+ * explicit per-tag rule.
  *
  * Several columns may be named, and the identity is the distinct combination of their values.
  *
@@ -35,23 +36,31 @@ export type ReferenceSource = "declared" | "panel" | "distribution";
  * Lives in the kind for the same reason as `ReferenceSource` above.
  */
 export type GroupingRule =
-  | { by: "tag" }
   | { by: "property"; columns: string[]; column?: never }
   | { by: "property"; column: string; columns?: never };
 
+/** "full" processes every read; "dry" (Preview) caps each sample at `limitInput` reads. */
+export type RunMode = "dry" | "full";
+
 /**
  * This block's init-params contract — what a creator or a project template supplies to seed a new
- * instance. A subset of the model's `BlockData`: the two inputs, the panel mapping, the read geometry
- * and the binding-reading knobs.
+ * instance. A subset of the model's `BlockData`: the two inputs, the panel mapping, the read geometry,
+ * the run scope, the aggregate-barcode knobs, the binding-reading knobs and the QC warn/error lines.
  *
  * Every field is optional. A template may seed any subset of a configuration, and the model's `init`
  * supplies the shipped default wherever a field is absent. That is also what keeps export and apply
  * inverses: the projection hands back live state, including a half-picked panel, and the parser must
  * accept every state the UI can reach.
  *
+ * The panel CSV is narrowed to an `index://` handle. An `upload://` handle names an import local to one
+ * machine, so it cannot survive being written to a template and applied elsewhere; the projection drops
+ * those, and the panel columns with them, since they name columns of that file.
+ *
  * Deliberately NOT here:
  * - grid, plot and expansion state — view state, meaningless to a fresh block;
- * - the QC warn/error lines — quality thresholds, tuned against a run rather than declared before one;
+ * - CPU and memory per process — resource allocation belongs to the machine that runs the block, not to
+ *   portable configuration;
+ * - the combine-mode column and its UMI floor — not offered in the UI;
  * - `contendingGroups` — written only on a user gesture over identities that exist after a run;
  * - the CSV/panel snapshots (`csvMetaSnapshot`, `panelColumnSnapshot`, `sampleColumnValues`, …) —
  *   derived from the picked file by the UI, never authored.
@@ -61,7 +70,7 @@ export type BlockParams = {
   fbFastqRef?: PlRef;
   datasetRef?: PlRef;
   // --- panel mapping ---
-  tagFeatureCsvHandle?: ImportFileHandle;
+  tagFeatureCsvHandle?: ImportFileHandleIndex;
   barcodeSeqColumn?: string;
   featureNameColumn?: string;
   /**
@@ -75,6 +84,13 @@ export type BlockParams = {
   presetId?: string;
   pattern?: string;
   cellWhitelist?: string;
+  // --- run scope ---
+  runMode?: RunMode;
+  limitInput?: number;
+  // --- aggregate-barcode detection ---
+  aggregateBarcodeIqrMultiplier?: number;
+  aggregateBarcodeMinUmiThreshold?: number;
+  aggregateBarcodeTopN?: number;
   // --- the binding reading ---
   referenceSource?: ReferenceSource;
   roleColumn?: string;
@@ -89,6 +105,24 @@ export type BlockParams = {
   minAgreement?: number;
   gateThreshold?: number;
   grouping?: GroupingRule;
+  // --- QC warn / error lines ---
+  panelAssignedWarn?: number;
+  panelAssignedError?: number;
+  matchRateWarn?: number;
+  matchRateError?: number;
+  cellBarcodeQualityWarn?: number;
+  cellBarcodeQualityError?: number;
+  readsPerCellWarn?: number;
+  aggregateBarcodeWarn?: number;
+  aggregateBarcodeError?: number;
+  undeclaredBarcodeWarn?: number;
+  undeclaredBarcodeError?: number;
+  usableReadWarn?: number;
+  usableReadError?: number;
+  rescuedShareWarn?: number;
+  rescuedShareError?: number;
+  vdjAntigenCountWarn?: number;
+  vdjAntigenCountError?: number;
 };
 
 /**
@@ -131,13 +165,23 @@ function parseInitializationParams(value: unknown): BlockParams {
     params[key] = v;
   }
 
-  // The file handle is an opaque SDK string, so the envelope is all there is to check here: whether the
-  // handle still resolves is settled when the workflow imports it.
+  // Only an `index://` handle resolves on another machine. `isImportFileHandleIndex` is a prefix test, so
+  // handing it a checked string is safe; the cast only gets the string past a signature that expects the
+  // union. Whether the handle still resolves is settled when the workflow imports it.
   if (value.tagFeatureCsvHandle !== undefined) {
-    if (typeof value.tagFeatureCsvHandle !== "string") {
-      throw new Error("'tagFeatureCsvHandle' must be an import file handle.");
+    const v = value.tagFeatureCsvHandle;
+    if (typeof v !== "string" || !isImportFileHandleIndex(v as ImportFileHandle)) {
+      throw new Error(
+        "'tagFeatureCsvHandle' must be an 'index://' file handle — an 'upload://' handle names a local import and does not resolve on another machine.",
+      );
     }
-    params.tagFeatureCsvHandle = value.tagFeatureCsvHandle as ImportFileHandle;
+    params.tagFeatureCsvHandle = v as ImportFileHandleIndex;
+  }
+
+  if (value.runMode !== undefined) {
+    const v = value.runMode;
+    if (v !== "dry" && v !== "full") throw new Error("'runMode' must be one of 'dry', 'full'.");
+    params.runMode = v;
   }
 
   if (value.referenceSource !== undefined) {
@@ -192,6 +236,27 @@ const NUMBER_KEYS = [
   "minVotingCells",
   "minAgreement",
   "gateThreshold",
+  "limitInput",
+  "aggregateBarcodeIqrMultiplier",
+  "aggregateBarcodeMinUmiThreshold",
+  "aggregateBarcodeTopN",
+  "panelAssignedWarn",
+  "panelAssignedError",
+  "matchRateWarn",
+  "matchRateError",
+  "cellBarcodeQualityWarn",
+  "cellBarcodeQualityError",
+  "readsPerCellWarn",
+  "aggregateBarcodeWarn",
+  "aggregateBarcodeError",
+  "undeclaredBarcodeWarn",
+  "undeclaredBarcodeError",
+  "usableReadWarn",
+  "usableReadError",
+  "rescuedShareWarn",
+  "rescuedShareError",
+  "vdjAntigenCountWarn",
+  "vdjAntigenCountError",
 ] as const;
 
 function parseStringArray(value: unknown, field: string): string[] {
@@ -202,17 +267,15 @@ function parseStringArray(value: unknown, field: string): string[] {
 }
 
 /**
- * `{ by: "tag" }`, or a property rule naming one or more panel columns. The single-column `column` form
+ * A property rule naming one or more panel columns. The single-column `column` form
  * is the shape the rule had before it took a list; it stays accepted so a template written against an
  * older project keeps applying.
  */
 function parseGroupingRule(value: unknown): GroupingRule {
   assertParamsObject(value);
 
-  if (value.by === "tag") return { by: "tag" };
-
   if (value.by !== "property") {
-    throw new Error("'grouping.by' must be 'tag' or 'property'.");
+    throw new Error("'grouping.by' must be 'property'.");
   }
 
   if (value.columns !== undefined) {

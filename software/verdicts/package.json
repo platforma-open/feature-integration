@@ -1,0 +1,59 @@
+{
+  "name": "@platforma-open/milaboratories.feature-integration.verdicts",
+  "version": "1.0.0",
+  "files": [
+    "./dist/**/*"
+  ],
+  "type": "module",
+  "scripts": {
+    "build": "block-tools software build",
+    "software:reqs": "uv --directory .. pip compile --group verdicts --no-deps --no-annotate --custom-compile-command \"pnpm software:reqs\" -o verdicts/src/requirements.txt",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "do-pack": "shx rm -f *.tgz && block-tools software build && pnpm pack && shx mv platforma-open*.tgz package.tgz"
+  },
+  "devDependencies": {
+    "@platforma-open/milaboratories.runenv-python-3": "catalog:",
+    "@platforma-sdk/block-tools": "catalog:"
+  },
+  "block-software": {
+    "entrypoints": {
+      "emit-verdicts": {
+        "binary": {
+          "artifact": {
+            "type": "python",
+            "registry": "platforma-open",
+            "environment": "@platforma-open/milaboratories.runenv-python-3:3.12.10",
+            "dependencies": {
+              "toolset": "pip",
+              "requirements": "requirements.txt"
+            },
+            "root": "./src"
+          },
+          "cmd": [
+            "python",
+            "{pkg}/emit_verdicts.py"
+          ]
+        }
+      },
+      "qc-report": {
+        "binary": {
+          "artifact": {
+            "type": "python",
+            "registry": "platforma-open",
+            "environment": "@platforma-open/milaboratories.runenv-python-3:3.12.10",
+            "dependencies": {
+              "toolset": "pip",
+              "requirements": "requirements.txt"
+            },
+            "root": "./src"
+          },
+          "cmd": [
+            "python",
+            "{pkg}/qc_report.py"
+          ]
+        }
+      }
+    }
+  }
+}

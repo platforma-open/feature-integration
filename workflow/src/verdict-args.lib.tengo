@@ -5,7 +5,7 @@
 // Building the whole argument list here, staged input filenames included, is what makes the threading
 // assertable without a backend.
 //
-// The staged filenames are exported beside the flags that name them. verdict-run.tpl.tengo stages each file
+// The staged filenames are exported beside the flags that name them. verdict-compute.tpl.tengo stages each file
 // under the same constant it is referenced by, so a rename cannot leave a flag pointing at a file the exec
 // never received.
 
@@ -19,7 +19,7 @@ FILE_QC_SUMMARY := "qc_summary.csv"
 FILE_RAW_FEATURE_COUNTS := "raw_feature_counts.csv"
 OUTPUT_PREFIX := "result"
 
-// The block arguments this module reads. Exported so fanout-inputs.test.tengo can assert that none of them
+// The block arguments this module reads. Exported so test/fanout-inputs.test.tengo can assert that none of them
 // has leaked into the per-sample mitool fan-out. Extend this list whenever a parameter is added below.
 PARAMETER_NAMES := [
 	"aggregateBarcodeError",

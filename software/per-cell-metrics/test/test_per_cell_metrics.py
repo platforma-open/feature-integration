@@ -136,32 +136,12 @@ def test_load_matches_pure_combine(tmp_path):
         for feat, umi in combine_barcode_counts(bc, _B2F, _FB, modes).items():
             expected[(cell, feat)] = int(umi)
     assert got == expected  # vectorized _load == pure rule
-    # ...and spell out the AND effect so the oracle isn't vacuous.
+    # The AND effect itself: one barcode alone yields no feature, both together yield the count.
     assert ("cellOne", "BG505") not in got
     assert got[("cellBoth", "BG505")] == 7
 
 
 # --- end-to-end CLI over the committed bed (slow lane) ---
-
-
-@pytest.mark.slow
-def test_cli_writes_outputs(tagstat_tsv, tags_csv, tmp_path):
-    subprocess.run(
-        [
-            sys.executable,
-            str(SRC),
-            str(tagstat_tsv),
-            str(tags_csv),
-            "--sample-id",
-            "s1",
-            "--output-prefix",
-            str(tmp_path / "result"),
-        ],
-        check=True,
-        cwd=tmp_path,
-    )
-    for name in ["result_abundance.csv", "result_fractions.csv", "result_per_cell_summary.csv"]:
-        assert (tmp_path / name).exists(), f"missing {name}"
 
 
 @pytest.mark.slow
@@ -216,7 +196,6 @@ def test_cli_with_renamed_csv_columns(tagstat_tsv, tmp_path):
         cwd=tmp_path,
     )
     out = tmp_path / "result_abundance.csv"
-    assert out.exists()
     with open(out, newline="") as f:
         features = {row["feature"] for row in csv.DictReader(f)}
     assert features == {"AGX", "BGX"}
@@ -283,7 +262,6 @@ def test_cli_empty_join_writes_header_only_not_crash(tags_csv, tmp_path, tagstat
         ("result_fractions.csv", ["sampleId", "cellId", "feature", "fraction"]),
     ]:
         p = tmp_path / name
-        assert p.exists(), f"missing {name}"
         with open(p, newline="") as f:
             reader = csv.DictReader(f)
             assert reader.fieldnames == header  # schema/header preserved

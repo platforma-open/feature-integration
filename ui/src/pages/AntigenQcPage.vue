@@ -93,10 +93,9 @@ const noDataset = computed(() => app.model.data.datasetRef === undefined);
 // While the run is in flight the plot shows the processing placeholder, never a sentence saying the
 // distributions have not arrived: that sentence reads as a finished run that reported nothing.
 //
-// Readiness is read from `isRunning` and from the JSON itself, below. It used to be read from a separate
-// decile p-frame's status wrapper -- a frame none of these plots ever touched, which is now gone with
-// the decile columns. The tab strip above already gates on `isRunning`, so this is one signal rather
-// than two that could disagree.
+// Readiness is read from `isRunning` and from the JSON itself, below -- never from another output's
+// status wrapper. The tab strip above already gates on `isRunning`, so this is one signal rather than
+// two that could disagree.
 
 // The rung that actually SERVED, not the one requested. Undefined until the run reports its own meta, and
 // that case is NOT "some other rung served" -- reading it that way told a reader both that there were no
@@ -151,6 +150,8 @@ watch(VIEW_TABS, (tabs) => {
 // The run's two spreads, each binned over every cell rather than reduced to eleven decile points. Eleven
 // points suggest a shape; they cannot show WHERE a distribution separates. A key is absent where the served
 // rung produces no such quantity.
+// ONE spread for the run: every cell is scored against its own baseline, so the cutoff asks the identical
+// question of every cell and the scores are one currency. What differs between samples is depth.
 const scoreSpread = computed(() => tagBins.value?.spreads?.score);
 const referenceSpread = computed(() => tagBins.value?.spreads?.referenceReading);
 
@@ -275,7 +276,6 @@ watch(
           v-else
           :edges="referenceSpread.edges"
           :weights="referenceSpread.weights"
-          scale="linear"
           :threshold="app.model.data.gateThreshold"
           x-axis-label="Reference reading (counts)"
         />

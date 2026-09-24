@@ -1,0 +1,94 @@
+// The clonotype linker as a flat CSV, keyed by ANONYMIZED sample ids, for verdict-compute.
+//
+// Ephemeral because it resolves a PColumnBundle, which a pure template may not hold. The bundle is waited
+// for here rather than in main's prepare, which would hold the whole per-sample fan-out until the
+// clonotyping chain finished.
+//
+// Sample ids are replaced by the anonymized ids the per-sample maps carry, in the linker and in the
+// sample-label map, so verdict-compute sees no project-specific value.
+//
+// The linker is partitioned by sample, so the ids are renamed in its partition keys before the CSV export.
+// The data files under the keys are the same in every project, so the renamed column, and the export, are
+// too. A linker not partitioned by sample gets its CSV's sampleId column rewritten instead.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+pframes := import("@platforma-sdk/workflow-tengo:pframes")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+smart := import("@platforma-sdk/workflow-tengo:smart")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+anonymize := import("@platforma-sdk/workflow-tengo:anonymize")
+verdictLinker := import(":verdict-linker")
+anon := import(":sample-anonymization")
+
+// PColumnBundleWithPartitions, not PColumnBundle: the plain state waits only for `ref` and `spec`, but the
+// bundle unmarshaller reads `data` as soon as the field exists (workflow/bquery.lib.tengo:226-228), and fails
+// intermittently with `field "data" is not set`. WithPartitions also waits for `data`.
+self.awaitState("columns", "PColumnBundleWithPartitions")
+// The mapping is read as content.
+self.awaitState("mapping", "ResourceReady")
+
+self.body(func(inputs) {
+	columns := inputs.columns
+	// {sampleId: anonymizedId}
+	toAnonymized := anon.invert(inputs.mapping)
+
+	// The anchor is the single-cell V(D)J dataset, [sampleId, scClonotypeKey]; its clonotype axis picks the
+	// linker of the chosen receptor.
+	anchorSpec := columns.getSpec(inputs.datasetRef)
+	ll.assert(len(anchorSpec.axesSpec) == 2,
+		"Antigen binding: the selected dataset is keyed on %d axes, not the expected [sampleId, scClonotypeKey].",
+		len(anchorSpec.axesSpec))
+
+	linkerCol := verdictLinker.pick(columns.getColumns("linker"), anchorSpec.axesSpec[1])
+	linkerAxes := linkerCol.spec.axesSpec
+
+	mismatch := verdictLinker.sampleAxisMismatch(linkerCol.spec, inputs.sampleAxisSpec)
+	if mismatch != "" {
+		ll.panic("%v", mismatch)
+	}
+
+	linkerData := smart.isResource(linkerCol.data) ? linkerCol.data : linkerCol.data.getValue()
+	partitions := anon.samplePartitions(linkerData)
+
+	// A sample with V(D)J cells but no feature-barcode reads is not in the mapping. Its cells never vote, but
+	// they count in each clonotype's cell total, so it needs an id too: one of the same form, from its own
+	// linker partitions, so the same data gets the same id in every project.
+	if !is_undefined(partitions) {
+		toAnonymized = maps.merge(toAnonymized, anon.idsFromPartitions(partitions, toAnonymized))
+	}
+
+	// Renames keys only; the fields still point at the same files.
+	exportedData := partitions == undefined ? linkerData : anonymize.deanonymizePKeys(linkerData, 0, [0], toAnonymized)
+
+	// The linker as flat rows (sampleId, cellId, setId). Headers are bound to axes by name, so axis order does
+	// not matter. The software ignores the value column.
+	linkerCsv := pframes.csvFileBuilder()
+	linkerCsv.add({ spec: verdictLinker.plainSpec(linkerCol.spec), data: exportedData }, { header: "linker" })
+	linkerCsv.setAxisHeader(linkerAxes[0].name, "sampleId")
+	linkerCsv.setAxisHeader(linkerAxes[1].name, "cellId")
+	linkerCsv.setAxisHeader(linkerAxes[2].name, "setId")
+	linkerCsv.cpu(1)
+	// Scales with the run's total cell count. The csv builder takes a fixed amount, not a sizing formula, so
+	// this is the verdict exec's 16 GiB floor. Not seen failing; the first suspect if it ever runs out.
+	linkerCsv.mem("16GiB")
+	linkerFile := linkerCsv.build()
+
+	// Not partitioned by sample: rewrite the CSV's sampleId column. Samples missing from the mapping keep their
+	// id.
+	if is_undefined(partitions) {
+		anonWf := pt.workflow().cpu(1).mem("16GiB")
+		anonWf.frame(linkerFile, { xsvType: "csv", inferSchema: false }).
+			withColumns(anon.replaceValues(pt.col("sampleId"), toAnonymized).alias("sampleId")).
+			save("linker.csv", { xsvType: "csv" })
+		linkerFile = anonWf.run().getFile("linker.csv")
+	}
+
+	return {
+		linkerFile: linkerFile,
+		// {anonymizedId: label}
+		sampleLabels: smart.createJsonResource(anon.rekey(inputs.sampleLabels, toAnonymized)),
+		// {anonymizedId: sampleId}, including the ids given above, for the deanonymize step.
+		mapping: smart.createJsonResource(anon.invert(toAnonymized))
+	}
+})
