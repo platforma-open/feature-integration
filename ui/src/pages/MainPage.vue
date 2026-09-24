@@ -299,39 +299,13 @@ const panelPropertyOptions = computed(() =>
 // named columns' values, so naming antigen and concentration together makes the same antigen at two
 // concentrations two identities.
 //
-// The barcode column sits in the same list as the property columns, because naming it IS a grouping -- the
-// finest one available -- rather than a mode beside grouping. It cannot be offered as a property column,
-// since the panel reader consumes it as the `tag` key, so a sentinel maps it to the `tag` rule. The
-// sentinel is prefixed with a space so no real column name can collide.
-const TAG_GROUPING_VALUE = " tag";
-
-const groupingSelection = computed<string[]>(() => {
-  const rule = app.model.data.grouping;
-  if (rule === undefined) return [];
-  if (rule.by === "tag") return [TAG_GROUPING_VALUE];
-  return groupingColumns(rule);
-});
-
-const groupingOptions = computed(() => [
-  {
-    value: TAG_GROUPING_VALUE,
-    // Labelled so it cannot be mistaken for one of the panel's own columns, which is what naming it
-    // after the barcode column did.
-    label: "One identity per barcode",
-  },
-  ...panelPropertyOptions.value,
-]);
+// Picking nothing leaves the rule absent: one identity per barcode.
+const groupingSelection = computed<string[]>(() => groupingColumns(app.model.data.grouping));
 
 function setGrouping(selected: string[] | undefined) {
   const picked = (selected ?? []).filter((c) => c !== "");
-  // The barcode column is the finest grouping there is, so a combination including it is already one
-  // identity per barcode. Picking it wins alone, and picking nothing leaves the rule absent, which reads
-  // the same way.
-  const rule: GroupingRule | undefined = picked.includes(TAG_GROUPING_VALUE)
-    ? { by: "tag" }
-    : picked.length > 0
-      ? { by: "property", columns: picked }
-      : undefined;
+  const rule: GroupingRule | undefined =
+    picked.length > 0 ? { by: "property", columns: picked } : undefined;
   app.model.data.grouping = rule;
   // The identities ARE the values of the grouping columns, so groups declared under the previous rule name
   // things that no longer exist.
@@ -424,9 +398,30 @@ function clearSampleAwareState() {
   app.model.data.handledSampleSuggestion = undefined;
 }
 
+// Both datasets' sample ids, copied out of outputs on either pick so args() can refuse two datasets with no
+// sample in common. Both on each pick, so a project where only one dataset was re-picked is still checked.
+type DatasetSampleIds = { ref: { blockId: string; name: string }; ids?: string[] }[] | undefined;
+function sampleIdsOf(entries: DatasetSampleIds, picked: unknown): string[] | undefined {
+  const ref = picked as { blockId?: string; name?: string } | undefined;
+  if (!ref) return undefined;
+  const ids = entries?.find((e) => e.ref.blockId === ref.blockId && e.ref.name === ref.name)?.ids;
+  return ids ? [...ids] : undefined;
+}
+
+function snapshotDatasetSampleIds(fastqRef: unknown, vdjRef: unknown) {
+  const byDataset = app.model.outputs.datasetSampleIds;
+  app.model.data.fastqSampleIds = sampleIdsOf(byDataset?.fastq, fastqRef);
+  app.model.data.vdjSampleIds = sampleIdsOf(byDataset?.vdj, vdjRef);
+}
+
 function onFastqRefChanged(next: unknown) {
+  snapshotDatasetSampleIds(next, app.model.data.datasetRef);
   if (!changed(seenFastqRef, next)) return;
   clearSampleAwareState();
+}
+
+function onDatasetRefChanged(next: unknown) {
+  snapshotDatasetSampleIds(app.model.data.fbFastqRef, next);
 }
 
 // Picking the barcode column is what makes a duplicate mapping knowable, so it is where the two numbers
@@ -726,11 +721,15 @@ const gridOptions = {
         :options="app.model.outputs.datasetOptions"
         label="Single-cell V(D)J dataset"
         required
+        @update:model-value="onDatasetRefChanged"
       >
         <template #tooltip>
           Select the dataset that supplies the clonotypes. Every verdict is about one clonotype.
         </template>
       </PlDropdownRef>
+      <PlAlert v-if="app.model.outputs.noSharedSampleWarning" type="warn">
+        {{ app.model.outputs.noSharedSampleWarning }}
+      </PlAlert>
       <!-- Read layout: preset dropdown plus pattern builder/string (mitool tag pattern). -->
       <PatternEditor />
       <!-- Above Panel Settings: it scopes the whole run rather than reading the panel, and it is the choice a
@@ -811,16 +810,15 @@ const gridOptions = {
            columns that supply it rather than among the reading thresholds below. -->
       <PlDropdownMulti
         :model-value="groupingSelection"
-        :options="groupingOptions"
+        :options="panelPropertyOptions"
         label="Target Identity"
         :disabled="panelUnread"
-        :required="true"
         @update:model-value="setGrouping"
       >
         <template #tooltip>
           Select the panel columns that define an identity. Tags that share a value in all of them
           become one identity. A verdict is about an identity, not a barcode.<br /><br />
-          Select the barcode column to get one identity per barcode.<br /><br />
+          Leave it empty to get one identity per barcode.<br /><br />
           An identity's reading in a cell is the highest of its tags, never their sum.
         </template>
       </PlDropdownMulti>

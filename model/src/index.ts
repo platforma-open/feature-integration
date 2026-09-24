@@ -3,6 +3,8 @@ import type {
   BlockRenderCtx,
   InferOutputsType,
   PlDataTableStateV2,
+  PObjectSpec,
+  TreeNodeAccessor,
 } from "@platforma-sdk/model";
 import {
   BlockModelV3,
@@ -13,6 +15,7 @@ import {
   DataColumn,
   DataModelBuilder,
   getAxisId,
+  getUniquePartitionKeys,
   isPColumnSpec,
   parseResourceMap,
 } from "@platforma-sdk/model";
@@ -363,8 +366,57 @@ function median(xs: number[]): number | undefined {
   return s.length % 2 === 1 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
-// From the upstream pl7.app/label column whose axis matches the input FASTQ's sample axis. A module helper,
-// because each block output is an independent pure function of ctx and cannot read another output.
+// From the upstream pl7.app/label column whose axis matches the input FASTQ's sample axis.
+// The file-valued sequencing columns the FASTQ dropdown offers.
+function isFastqDataSpec(spec: PObjectSpec): boolean {
+  if (!isPColumnSpec(spec)) return false;
+  const ext = spec.domain?.["pl7.app/fileExtension"];
+  return (
+    spec.name === "pl7.app/sequencing/data" &&
+    (spec.valueType as string) === "File" &&
+    (ext === "fastq" || ext === "fastq.gz")
+  );
+}
+
+// Columns on [sampleId, scClonotypeKey] flagged as anchors: the V(D)J dropdown's options.
+const VDJ_DATASET_QUERY = [
+  {
+    axes: [{ name: "pl7.app/sampleId" }, { name: "pl7.app/vdj/scClonotypeKey" }],
+    annotations: { "pl7.app/isAnchor": "true" },
+  },
+];
+
+// The FASTQ dataset's sample ids, from its axisKeys annotation: its data has no partitions to read.
+function fastqSampleIdsOf(spec: PObjectSpec | undefined): string[] | undefined {
+  const axisKeys0 =
+    spec && isPColumnSpec(spec) ? spec.annotations?.["pl7.app/axisKeys/0"] : undefined;
+  if (axisKeys0 === undefined) return undefined;
+  try {
+    return (JSON.parse(axisKeys0) as unknown[]).map(String);
+  } catch {
+    return undefined;
+  }
+}
+
+// Shown in the UI and thrown by args(), so the warning and the disabled Run say the same thing.
+const NO_SHARED_SAMPLE_MESSAGE =
+  "The tag-barcode FASTQ dataset and the single-cell V(D)J dataset have no sample in common, so the antigen reads can't be matched to any cell's clonotype. Please choose two datasets from the same samples.";
+
+// The V(D)J dataset's sample ids, from its data's partition keys: its spec carries no axisKeys annotation.
+// Undefined until the upstream block has written the data and locked its fields, so a partial list is
+// never read.
+function vdjSampleIdsOf(data: TreeNodeAccessor | undefined): string[] | undefined {
+  if (!data || !data.getInputsLocked()) return undefined;
+  return getUniquePartitionKeys(data)?.[0]?.map(String);
+}
+
+/** Whether two sample-id lists are both known and non-empty, and share no id. */
+export function shareNoSample(a: string[] | undefined, b: string[] | undefined): boolean {
+  if (!a || !b || a.length === 0 || b.length === 0) return false;
+  const inA = new Set(a);
+  return !b.some((id) => inA.has(id));
+}
+
 function resolveSampleLabels(
   ctx: BlockRenderCtx<BlockArgs, BlockData>,
 ): Record<string, string> | undefined {
@@ -531,9 +583,13 @@ const INITIAL_GRAPH_STATES = {
   "scoreDistributionGraphState" | "referenceReadingGraphState" | "fittedBackgroundGraphState"
 >;
 
-// v11 data shape: the current shape with the long measurement grid's state, which v12 strips. Every shape
-// below carries it too, since they all predate v12.
-type BlockDataV11 = BlockData & { runQualityTableState: PlDataTableStateV2 };
+// v12 data shape: the grouping rule could also be { by: "tag" }, one identity per barcode, which v13 maps to
+// the absent rule that means the same.
+type BlockDataV12 = Omit<BlockData, "grouping"> & { grouping?: GroupingRule | { by: "tag" } };
+
+// v11 data shape: v12 with the long measurement grid's state, which v12 strips. Every shape below carries it
+// too, since they all predate v12.
+type BlockDataV11 = BlockDataV12 & { runQualityTableState: PlDataTableStateV2 };
 
 // v8 data shape: v11 with the panel-versus-reads grid's state, which v9 strips.
 type BlockDataV8 = BlockDataV11 & { runQualityMismatchTableState: PlDataTableStateV2 };
@@ -680,7 +736,12 @@ const dataModel = new DataModelBuilder()
   // v11 -> v12. The long measurement grid is gone and its state goes with it: every measurement it held
   // has a purpose-built surface, so the frame behind that grid is no longer emitted. Never reuse the
   // stripped key -- a saved column set and filter means something only against the frame it was saved on.
-  .migrate<BlockData>("v12", ({ runQualityTableState: _q, ...rest }) => ({ ...rest }))
+  .migrate<BlockDataV12>("v12", ({ runQualityTableState: _q, ...rest }) => ({ ...rest }))
+  // v12 -> v13. The per-barcode rule is gone from the choices; its absence reads the same way.
+  .migrate<BlockData>("v13", ({ grouping, ...rest }) => ({
+    ...rest,
+    grouping: grouping?.by === "property" ? grouping : undefined,
+  }))
   .init(() => ({
     runMode: "full" as const, // full run by default. "dry" = read-limited Preview
     // The geometry the block shipped with, 10x 5' v2 BEAM (16 / 10 / 15).
@@ -717,6 +778,8 @@ export const platforma = BlockModelV3.create(dataModel)
         "Select the single-cell V(D)J dataset the verdicts are about. Every verdict is about one " +
           "clonotype, so the block cannot produce any without it.",
       );
+    if (shareNoSample(data.fastqSampleIds, data.vdjSampleIds))
+      throw new Error(NO_SHARED_SAMPLE_MESSAGE);
     // The Python guards this too, but only after the full mitool chain runs.
     if (data.barcodeSeqColumn === data.featureNameColumn)
       throw new Error("Barcode-sequence and feature-name columns must be different");
@@ -964,10 +1027,9 @@ export const platforma = BlockModelV3.create(dataModel)
           : undefined,
       // A rule over declared panel properties, and never a tag->identity map. Absent means one identity per tag.
       // Normalised to a list here, so the software receives one shape, though it still reads the older `column`.
-      grouping:
-        data.grouping?.by === "property"
-          ? { by: "property" as const, columns: groupingColumns(data.grouping) }
-          : data.grouping,
+      grouping: data.grouping
+        ? { by: "property" as const, columns: groupingColumns(data.grouping) }
+        : undefined,
       contendingGroups: contendingGroups.length > 0 ? contendingGroups : undefined,
       // Each undefined projects as undefined, and emit_verdicts.py's own shipped default stands. Passed through
       // raw rather than gated on positivity: 0.0 is a real published threshold (usableReadError).
@@ -1025,28 +1087,11 @@ export const platforma = BlockModelV3.create(dataModel)
   // Integration discovers these columns under its VDJ anchor through the pl7.app/sc/cellLinker.
 
   // feature-barcode FASTQ options (file-valued sequencing columns, fastq / fastq.gz)
-  .output("fastqOptions", (ctx) =>
-    ctx.resultPool.getOptions((spec) => {
-      if (!isPColumnSpec(spec)) return false;
-      const ext = spec.domain?.["pl7.app/fileExtension"];
-      return (
-        spec.name === "pl7.app/sequencing/data" &&
-        (spec.valueType as string) === "File" &&
-        (ext === "fastq" || ext === "fastq.gz")
-      );
-    }),
-  )
+  .output("fastqOptions", (ctx) => ctx.resultPool.getOptions(isFastqDataSpec))
   // Columns on [sampleId, scClonotypeKey] flagged as anchors. VDJ Multiomic Integration uses the same query,
   // so the two blocks offer the user the same list. No linkerOptions beside it, by design: the cell linker
   // carries pl7.app/isLinkerColumn and tables hide it, so the workflow resolves it from this anchor by name.
-  .output("datasetOptions", (ctx) =>
-    ctx.resultPool.getOptions([
-      {
-        axes: [{ name: "pl7.app/sampleId" }, { name: "pl7.app/vdj/scClonotypeKey" }],
-        annotations: { "pl7.app/isAnchor": "true" },
-      },
-    ]),
-  )
+  .output("datasetOptions", (ctx) => ctx.resultPool.getOptions(VDJ_DATASET_QUERY))
   // An identity is whatever the grouping rule groups tags by, so the options are the distinct values of the
   // barcode column or of the chosen property column. The panel metadata is column-wise and carries no
   // tag->name pairing. Retentive, so the editor does not blank on a rerun.
@@ -1100,6 +1145,28 @@ export const platforma = BlockModelV3.create(dataModel)
     "csvValuesByColumn",
     (ctx): Record<string, string[]> => readCsvMeta(ctx)?.valuesByColumn ?? {},
   )
+  // Sample ids of every dataset the two dropdowns offer, for the UI to snapshot into data on the pick. The
+  // V(D)J ids are its data's partition keys, so they are absent while that data is not ready. Retentive, so a
+  // pick made while the result pool settles still finds the ids.
+  .retentiveOutput("datasetSampleIds", (ctx) => ({
+    fastq: ctx.resultPool
+      .getOptions(isFastqDataSpec)
+      .map((o) => ({ ref: o.ref, ids: fastqSampleIdsOf(ctx.resultPool.getSpecByRef(o.ref)) })),
+    vdj: ctx.resultPool.getOptions(VDJ_DATASET_QUERY).map((o) => ({
+      ref: o.ref,
+      ids: vdjSampleIdsOf(ctx.resultPool.getPColumnByRef(o.ref)?.data),
+    })),
+  }))
+  // The live form of args()'s no-shared-sample check. With no sample in common, no cell of the V(D)J dataset
+  // has tag reads, and every clonotype comes out "never asked". Silent until both id lists resolve.
+  .output("noSharedSampleWarning", (ctx): string | undefined => {
+    const fastqRef = ctx.data.fbFastqRef;
+    const vdjRef = ctx.data.datasetRef;
+    if (!fastqRef || !vdjRef) return undefined;
+    const vdjIds = vdjSampleIdsOf(ctx.resultPool.getPColumnByRef(vdjRef)?.data);
+    const fastqIds = fastqSampleIdsOf(ctx.resultPool.getSpecByRef(fastqRef));
+    return shareNoSample(fastqIds, vdjIds) ? NO_SHARED_SAMPLE_MESSAGE : undefined;
+  })
   // A UI warning only. args() is the authoritative gate.
   .retentiveOutput("sampleMappingWarning", (ctx): string[] | undefined => {
     const col = ctx.data.sampleColumn;
