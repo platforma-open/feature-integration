@@ -23,6 +23,7 @@ smart := import("@platforma-sdk/workflow-tengo:smart")
 columnSpecs := import(":column-specs")
 fanout := import(":fanout-inputs")
 verdictTables := import(":verdict-tables")
+sampleAnon := import(":sample-anonymization")
 
 times := import("times")
 
@@ -30,7 +31,8 @@ fbPipelineTpl := assets.importTemplate(":fb-pipeline")
 prerunTpl := assets.importTemplate(":prerun")
 featurePropsComputeTpl := assets.importTemplate(":fb-feature-properties-compute")
 featurePropsFrameTpl := assets.importTemplate(":fb-feature-properties-frame")
-exportColumnDataTpl := assets.importTemplate(":export-column-data")
+perCellDataTpl := assets.importTemplate(":per-cell-data")
+renameSampleKeysTpl := assets.importTemplate(":rename-sample-keys")
 verdictLinkerExportTpl := assets.importTemplate(":verdict-linker-export")
 verdictComputeTpl := assets.importTemplate(":verdict-compute")
 verdictDeanonymizeTpl := assets.importTemplate(":verdict-deanonymize")
@@ -65,6 +67,14 @@ wf.body(func(args) {
 	inputSpec := args.resolvedFastq.spec
 	inputData := args.resolvedFastq.data
 	sampleAxis := inputSpec.axesSpec[0] // pl7.app/sampleId — inherited verbatim
+
+	// The fan-out runs under anonymized sample ids, each derived from that sample's own reads, so no per-sample
+	// step carries this project's sample ids and another project over the same reads reuses them. The FASTQ data
+	// is resolved in prepare, so its keys and CIDs are readable here. undefined when the data is not keyed by
+	// sample; then the fan-out runs under the real ids.
+	fastqPartitions := sampleAnon.samplePartitions(smart.isResource(inputData) ? inputData : inputData.getValue())
+	anonymizedIds := is_undefined(fastqPartitions) ? undefined : sampleAnon.idsFromPartitions(fastqPartitions, {})
+	fanoutData := is_undefined(anonymizedIds) ? inputData : anonymize.deanonymizePKeys(inputData, 0, [0], anonymizedIds)
 	fileExtension := inputSpec.domain["pl7.app/fileExtension"]
 
 	// The mapping is identical for every sample, so one imported blob is shared across every per-sample body
@@ -120,8 +130,10 @@ wf.body(func(args) {
 	}
 	// Only in sample-aware mode, the one case that reads it: in any other it would put the sample id into every
 	// body's identity, and another project over the same reads could not reuse the results.
+	// Keyed like the fan-out: the body looks its label up by its own key.
 	if sampleAware {
-		extraInputs.sampleLabels = is_undefined(args.sampleLabels) ? {} : args.sampleLabels
+		sampleLabels := is_undefined(args.sampleLabels) ? {} : args.sampleLabels
+		extraInputs.sampleLabels = is_undefined(anonymizedIds) ? sampleLabels : sampleAnon.rekey(sampleLabels, anonymizedIds)
 	}
 	// The aggregate-barcode detection knobs (qc_measures.py AGGREGATE_BARCODE_*). Same rule as limitInput
 	// above. qc_report.py's own argparse default applies where absent.
@@ -263,7 +275,7 @@ wf.body(func(args) {
 		fanout.unlisted(metaExtra, fanout.META_EXTRA_KEYS))
 
 	perSampleResults := pframes.processColumn(
-		{ spec: inputSpec, data: inputData },
+		{ spec: inputSpec, data: fanoutData },
 		fbPipelineTpl,
 		outputs,
 		{
@@ -272,7 +284,7 @@ wf.body(func(args) {
 				{ name: "pl7.app/sequencing/readIndex", optional: true }
 			],
 			passAggregationAxesNames: true,
-			passKey: sampleAware, // the [sampleId] iteration key, for sample-aware CSV filtering only
+			passKey: sampleAware, // the sample key, for sample-aware CSV filtering only
 			// Parked while measuring deduplication: a step cache returns a step regardless of identity, so it hides
 			// whether the fan-out was reused on its own.
 			// stepCache: 30 * times.minute,
@@ -280,6 +292,22 @@ wf.body(func(args) {
 			metaExtra: metaExtra
 		}
 	)
+
+	// The per-sample outputs the model reads, back under this project's sample ids. One ephemeral step that
+	// keeps live logs live (rename-sample-keys.tpl.tengo). The per-cell columns are renamed in per-cell-data
+	// below, and the results kept only for reuse stay under the anonymized ids.
+	readerTargets := {}
+	for name in ["qcJson", "stepReports", "stepLogs", "parseLogStream", "metricsLogStream"] {
+		readerTargets[name] = perSampleResults.outputData(name)
+	}
+	renamedResults := is_undefined(anonymizedIds) ? undefined : render.createEphemeral(renameSampleKeysTpl, {
+		targets: smart.createMapResource(readerTargets),
+		mapping: sampleAnon.invert(anonymizedIds)
+	})
+	// A model-read per-sample output under this project's sample ids.
+	readerData := func(key) {
+		return is_undefined(renamedResults) ? readerTargets[key] : renamedResults.output(key)
+	}
 
 	// --- assemble the per-cell p-frame, injecting a single trace ---
 	trace := pSpec.makeTrace(inputSpec, {
@@ -289,12 +317,28 @@ wf.body(func(args) {
 		label: "Feature Barcode Profiling"
 	})
 
+	// The per-cell columns under this project's sample ids, in a pure template (per-cell-data.tpl.tengo) so a
+	// later run reuses them: `raw.*` for the export, `export.*` exported for the table.
+	perCellDataInputs := {
+		mapping: is_undefined(anonymizedIds) ? {} : sampleAnon.invert(anonymizedIds)
+	}
+	for name in ["abundance", "fractions"] {
+		for col in perSampleResults.listXsvColumns(name) {
+			perCellDataInputs["raw." + name + "/" + col] = perSampleResults.outputData(name, col)
+		}
+	}
+	perCellSummaryColumns := perSampleResults.listXsvColumns("perCellSummary")
+	for col in perCellSummaryColumns {
+		perCellDataInputs["export.perCellSummary/" + col] = perSampleResults.outputData("perCellSummary", col)
+	}
+	perCellData := render.create(perCellDataTpl, perCellDataInputs)
+
 	addXsvTo := func(fb, outputName) {
 		for col in perSampleResults.listXsvColumns(outputName) {
 			fb.add(
 				outputName + "/" + col,
 				trace.inject(perSampleResults.outputSpec(outputName, col)),
-				perSampleResults.outputData(outputName, col)
+				perCellData.resolveOutput(["renamed", outputName + "/" + col])
 			)
 		}
 	}
@@ -308,20 +352,13 @@ wf.body(func(args) {
 
 	// Main results table, table-only: one row per [sampleId, cellId]. Collapses the matrix above for display,
 	// leaving the export contract unaffected.
-	// Its data is exported in a pure template (export-column-data.tpl.tengo), so a later run reuses the export
-	// and main surfaces the frame without pframes.exportFrame.
-	perCellSummaryColumns := perSampleResults.listXsvColumns("perCellSummary")
-	perCellExportInputs := {}
-	for col in perCellSummaryColumns {
-		perCellExportInputs["column." + col] = perSampleResults.outputData("perCellSummary", col)
-	}
-	perCellExport := render.create(exportColumnDataTpl, perCellExportInputs)
+	// Its data comes exported from per-cell-data, so main surfaces the frame without pframes.exportFrame.
 	tableFb := pframes.pFrameBuilder()
 	for col in perCellSummaryColumns {
 		tableFb.add(
 			"perCellSummary/" + col,
 			trace.inject(perSampleResults.outputSpec("perCellSummary", col)),
-			perCellExport.resolveOutput(["data", col])
+			perCellData.resolveOutput(["exported", "perCellSummary/" + col])
 		)
 	}
 	tablePf := tableFb.build()
@@ -361,15 +398,23 @@ wf.body(func(args) {
 	verdictDeanonymized := undefined
 	verdictImport := undefined
 	if !is_undefined(args.datasetRef) {
-		// The three per-sample maps the verdict stage reads, with their sample keys anonymized in one call, so a
-		// sample gets the same key in all three. The key is derived from the sample's content, so another project
-		// over the same reads gets the same keys and reuses the compute below.
-		anonymized := anonymize.anonymizePKeys({
+		// The three per-sample maps the verdict stage reads, under anonymized sample ids: straight from the
+		// fan-out, which already runs under them. Where it does not, they are anonymized here in one call, so a
+		// sample gets the same key in all three.
+		verdictMaps := {
 			tagstat: perSampleResults.outputData("tagstatTsv"),
 			rawFeatureCounts: perSampleResults.outputData("rawFeatureCounts"),
 			qc: perSampleResults.outputData("qc")
-		}, [0])
-		sampleMapping := anonymized.mapping
+		}
+		// {anonymizedId: sampleId}
+		sampleMapping := undefined
+		if is_undefined(anonymizedIds) {
+			anonymized := anonymize.anonymizePKeys(verdictMaps, [0])
+			verdictMaps = anonymized.result
+			sampleMapping = anonymized.mapping
+		} else {
+			sampleMapping = sampleAnon.invert(anonymizedIds)
+		}
 
 		// Built HERE, in the body, and not in prepare -- see the note on wf.prepare above. The bundle is passed to
 		// both child templates unresolved. A resolved bundle is a map with methods, which cannot be serialized as
@@ -442,9 +487,9 @@ wf.body(func(args) {
 
 		// The gathers and the verdict exec. Its outputs are kept in resultsToCache so a later run can reuse them.
 		verdictCompute = render.create(verdictComputeTpl, {
-			tagstatData: anonymized.result.tagstat,
-			rawFeatureData: anonymized.result.rawFeatureCounts,
-			qcData: anonymized.result.qc,
+			tagstatData: verdictMaps.tagstat,
+			rawFeatureData: verdictMaps.rawFeatureCounts,
+			qcData: verdictMaps.qc,
 			tags: args.tags,
 			panelFile: csvFile,
 			linkerFile: linkerExport.output("linkerFile"),
@@ -498,19 +543,19 @@ wf.body(func(args) {
 		// Collapsed per-cell results table (one row per [sampleId, cellId]).
 		perCellTable: tablePf,
 		// Per-sample QC metrics as JSON (fb-pipeline qcJson). The model builds the live "Analysis logs" from it.
-		qcJson: perSampleResults.outputData("qcJson"),
+		qcJson: readerData("qcJson"),
 		// Per-sample QC CSV map (fb-pipeline `qc`). Kept so the per-sample body can be reused: that needs every
 		// one of its outputs to still exist. No model consumer.
 		qc: perSampleResults.outputData("qc"),
 		// Per-sample x per-step report-file map. The model derives each sample's current step from which reports
 		// are present.
-		stepReports: perSampleResults.outputData("stepReports"),
+		stepReports: readerData("stepReports"),
 		// Per-sample x per-step LIVE stdout-stream map -> model per-step log handles + live progress.
-		stepLogs: perSampleResults.outputData("stepLogs"),
+		stepLogs: readerData("stepLogs"),
 		// Flat parse stdout stream -> model live parse % + early sample roster (registers first).
-		parseLogStream: perSampleResults.outputData("parseLogStream"),
+		parseLogStream: readerData("parseLogStream"),
 		// per-cell-metrics (Python) stdout -> model 4-metrics step log.
-		metricsLogStream: perSampleResults.outputData("metricsLogStream"),
+		metricsLogStream: readerData("metricsLogStream"),
 		// mitool intermediates kept reachable so they are persisted by content hash. See the output-spec note
 		// above. No model or UI consumer.
 		parsedMic: perSampleResults.outputData("parsedMic"),
@@ -533,8 +578,11 @@ wf.body(func(args) {
 	// every one of its outputs still exists, and nothing else holds these. Most only point at data the frames
 	// and exports already hold; verdictCompute holds its own files. No model consumer.
 	resultsToCache := {
-		// export-column-data's result for perCellTable.
-		perCellTable: perCellExport.output("data"),
+		// Both per-cell-data outputs.
+		perCellData: smart.createMapResource({
+			renamed: perCellData.output("renamed"),
+			exported: perCellData.output("exported")
+		}),
 		// Every fb-feature-properties-compute output.
 		featureProperties: smart.createMapResource({
 			propertyData: featurePropsData.output("propertyData"),

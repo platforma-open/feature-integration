@@ -18,15 +18,8 @@ smart := import("@platforma-sdk/workflow-tengo:smart")
 maps := import("@platforma-sdk/workflow-tengo:maps")
 ll := import("@platforma-sdk/workflow-tengo:ll")
 anonymize := import("@platforma-sdk/workflow-tengo:anonymize")
-anonymizeUtil := import("@platforma-sdk/workflow-tengo:anonymize.util")
 verdictLinker := import(":verdict-linker")
 anon := import(":sample-anonymization")
-
-json := import("json")
-
-// Anonymized ids as anonymize/impl.lib.tengo makes them: base32 of the first 20 bytes of the SHA-256 of a
-// key's concatenated field CIDs, then "-<n>".
-ANONYMIZED_ID_BYTES := 20
 
 // PColumnBundleWithPartitions, not PColumnBundle: the plain state waits only for `ref` and `spec`, but the
 // bundle unmarshaller reads `data` as soon as the field exists (workflow/bquery.lib.tengo:226-228), and fails
@@ -34,35 +27,6 @@ ANONYMIZED_ID_BYTES := 20
 self.awaitState("columns", "PColumnBundleWithPartitions")
 // The mapping is read as content.
 self.awaitState("mapping", "ResourceReady")
-
-// {sampleId: concatenated CIDs of that sample's fields}, or undefined when the data is not partitioned by
-// sample. Partitioned column-data types state their key length as superPartitionKeyLength,
-// partitionKeyLength or keyLength.
-samplePartitions := func(data) {
-	meta := json.decode(string(data.getData()))
-	if !is_map(meta) {
-		return undefined
-	}
-	keyLength := meta.superPartitionKeyLength
-	if is_undefined(keyLength) {
-		keyLength = meta.partitionKeyLength
-	}
-	if is_undefined(keyLength) {
-		keyLength = meta.keyLength
-	}
-	if is_undefined(keyLength) || keyLength < 1 {
-		return undefined
-	}
-	groups := {}
-	maps.forEach(data.inputs(), func(fieldName, field) {
-		sampleId := anonymizeUtil.decodePDataField(fieldName).key[0]
-		if is_undefined(groups[sampleId]) {
-			groups[sampleId] = bytes(0)
-		}
-		groups[sampleId] = groups[sampleId] + field.getValue().info().CanonicalID
-	})
-	return groups
-}
 
 self.body(func(inputs) {
 	columns := inputs.columns
@@ -85,22 +49,13 @@ self.body(func(inputs) {
 	}
 
 	linkerData := smart.isResource(linkerCol.data) ? linkerCol.data : linkerCol.data.getValue()
-	partitions := samplePartitions(linkerData)
+	partitions := anon.samplePartitions(linkerData)
 
 	// A sample with V(D)J cells but no feature-barcode reads is not in the mapping. Its cells never vote, but
 	// they count in each clonotype's cell total, so it needs an id too: one of the same form, from its own
 	// linker partitions, so the same data gets the same id in every project.
 	if !is_undefined(partitions) {
-		repetitions := {}
-		maps.forEach(partitions, func(sampleId, cids) {
-			if !is_undefined(toAnonymized[sampleId]) {
-				return
-			}
-			base := ll.base32Encode(ll.sha256Encode(cids)[0:ANONYMIZED_ID_BYTES])
-			repetition := is_undefined(repetitions[base]) ? 0 : repetitions[base]
-			repetitions[base] = repetition + 1
-			toAnonymized[sampleId] = base + "-" + repetition
-		})
+		toAnonymized = maps.merge(toAnonymized, anon.idsFromPartitions(partitions, toAnonymized))
 	}
 
 	// Renames keys only; the fields still point at the same files.

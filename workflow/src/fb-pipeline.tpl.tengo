@@ -70,10 +70,10 @@ self.body(func(inputs) {
 	sampleColumn := inputs.sampleColumn
 	tagsCsvForSample := tagsCsv
 	if sampleColumn != "" {
+		// The key is the sample's (anonymized) id, and sampleLabels is keyed the same way.
 		key := inputs[pConstants.KEY_FIELD_NAME]
-		sampleId := key[0]
-		sampleName := inputs.sampleLabels[sampleId]
-		ll.assert(!is_undefined(sampleName), "no sample label captured for sampleId %v (re-select the sample column)", sampleId)
+		sampleName := inputs.sampleLabels[key[0]]
+		ll.assert(!is_undefined(sampleName), "a sample has no label captured (key %v); re-select the sample column", key[0])
 
 		ptWf := pt.workflow().inLightQueue().cpu(1).mem("2GiB")
 		filtered := ptWf.frame(tagsCsv, { xsvType: "csv", inferSchema: false }).

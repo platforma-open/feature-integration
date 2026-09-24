@@ -2,8 +2,63 @@
 // `mapping` is {anonymizedId: sampleId}.
 
 maps := import("@platforma-sdk/workflow-tengo:maps")
+smart := import("@platforma-sdk/workflow-tengo:smart")
 slices := import("@platforma-sdk/workflow-tengo:slices")
 pt := import("@platforma-sdk/workflow-tengo:pt")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+anonymizeUtil := import("@platforma-sdk/workflow-tengo:anonymize.util")
+
+json := import("json")
+
+// Anonymized ids as anonymize/impl.lib.tengo makes them: base32 of the first 20 bytes of the SHA-256 of a
+// key's concatenated field CIDs, then "-<n>".
+ANONYMIZED_ID_BYTES := 20
+
+// samplePartitions: {sampleId: concatenated CIDs of that sample's fields} for column data keyed by the
+// sample first, or undefined when it is not. Partitioned column-data types state their key length as
+// superPartitionKeyLength, partitionKeyLength or keyLength.
+samplePartitions := func(data) {
+	meta := json.decode(string(data.getData()))
+	if !is_map(meta) {
+		return undefined
+	}
+	keyLength := meta.superPartitionKeyLength
+	if is_undefined(keyLength) {
+		keyLength = meta.partitionKeyLength
+	}
+	if is_undefined(keyLength) {
+		keyLength = meta.keyLength
+	}
+	if is_undefined(keyLength) || keyLength < 1 {
+		return undefined
+	}
+	groups := {}
+	maps.forEach(data.inputs(), func(fieldName, field) {
+		sampleId := anonymizeUtil.decodePDataField(fieldName).key[0]
+		if is_undefined(groups[sampleId]) {
+			groups[sampleId] = bytes(0)
+		}
+		groups[sampleId] = groups[sampleId] + field.getValue().info().CanonicalID
+	})
+	return groups
+}
+
+// idsFromPartitions: {sampleId: anonymizedId} for every sample of `partitions` not in `except`, each id
+// derived from that sample's own data, so the same data gets the same id in every project.
+idsFromPartitions := func(partitions, except) {
+	ids := {}
+	repetitions := {}
+	maps.forEach(partitions, func(sampleId, cids) {
+		if !is_undefined(except[sampleId]) {
+			return
+		}
+		base := ll.base32Encode(ll.sha256Encode(cids)[0:ANONYMIZED_ID_BYTES])
+		repetition := is_undefined(repetitions[base]) ? 0 : repetitions[base]
+		repetitions[base] = repetition + 1
+		ids[sampleId] = base + "-" + repetition
+	})
+	return ids
+}
 
 // invert: {a: b} -> {b: a}. Exact, since both sides are unique.
 invert := func(mapping) {
@@ -63,10 +118,28 @@ replaceSubstrings := func(colExpr, translation) {
 	return expr
 }
 
+// renameLeadingKey: a copy of the column data `target` with the first element of each key translated by
+// `mapping`; keys it does not mention are kept. The fields point at the same values.
+renameLeadingKey := func(target, mapping) {
+	renamed := smart.structBuilder(target.info().Type, target.getData())
+	maps.forEach(target.inputs(), func(fieldName, field) {
+		decoded := anonymizeUtil.decodePDataField(fieldName)
+		key := copy(decoded.key)
+		if !is_undefined(mapping[key[0]]) {
+			key[0] = mapping[key[0]]
+		}
+		renamed.createInputField(string(json.encode(key)) + decoded.suffix).set(field)
+	})
+	return renamed.lockAndBuild()
+}
+
 export {
+	samplePartitions: samplePartitions,
+	idsFromPartitions: idsFromPartitions,
 	invert: invert,
 	rekey: rekey,
 	translateList: translateList,
 	replaceValues: replaceValues,
-	replaceSubstrings: replaceSubstrings
+	replaceSubstrings: replaceSubstrings,
+	renameLeadingKey: renameLeadingKey
 }

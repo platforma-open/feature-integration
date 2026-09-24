@@ -27,7 +27,7 @@ export type { Preset } from "./presets";
 export {
   QC_MEASUREMENT_DESCRIPTIONS,
   qcMeasurementDescription,
-  type QcMeasurementDescription
+  type QcMeasurementDescription,
 } from "./qcDescriptions";
 export type { BlockArgs, BlockData, CsvMeta, GroupingRule, ReferenceSource } from "./types";
 
@@ -1125,7 +1125,7 @@ export const platforma = BlockModelV3.create(dataModel)
       );
     return lines.length > 0 ? lines : undefined;
   })
-  // Advisory only. The user must still pick it, which is the gesture that snapshots the sample map into data.
+  // The UI auto-fills the Sample column from it once per suggestion, through setSampleColumn.
   .retentiveOutput("suggestedSampleColumn", (ctx): string | undefined => suggestSampleColumn(ctx))
   // A UI warning only. mitool guards the same condition, but by failing refine-tags in the middle of the run.
   //

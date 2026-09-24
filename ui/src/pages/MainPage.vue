@@ -421,6 +421,7 @@ function clearSampleAwareState() {
   app.model.data.sampleColumn = undefined;
   app.model.data.sampleLabelSnapshot = undefined;
   app.model.data.sampleColumnValues = undefined;
+  app.model.data.handledSampleSuggestion = undefined;
 }
 
 function onFastqRefChanged(next: unknown) {
@@ -558,17 +559,17 @@ function clearOnCsvChange() {
 // Sample-aware mapping sanity warning from the model. Only present once a sample column is chosen.
 const sampleMappingWarning = computed(() => app.model.outputs.sampleMappingWarning);
 
-// Sample-aware mapping is auto-selected. Where the model spots a CSV column whose distinct values match the
-// dataset's sample names, pre-populate the Sample column dropdown through setSampleColumn, which snapshots
-// the sample map into data. Guarded to run only while NO column is set, so a manual clear or pick is never
-// overridden. suggestedSampleColumn derives from the CSV meta and sample labels alone, and depends on
-// neither sampleColumn nor the snapshot fields setSampleColumn writes, so applying it cannot re-trigger the
-// suggestion.
+// Auto-fills the Sample column with the model's suggestion, once per suggestion: the suggestion is recorded
+// as handled, so after the user clears or changes the column the same suggestion is not applied again. A
+// new CSV or dataset clears the record. suggestedSampleColumn reads neither sampleColumn nor
+// handledSampleSuggestion, so these writes cannot re-trigger it.
 const suggestedSampleColumn = computed(() => app.model.outputs.suggestedSampleColumn);
 watch(
   suggestedSampleColumn,
   (col) => {
-    if (col && !app.model.data.sampleColumn) setSampleColumn(col);
+    if (!col || col === app.model.data.handledSampleSuggestion) return;
+    app.model.data.handledSampleSuggestion = col;
+    if (!app.model.data.sampleColumn) setSampleColumn(col);
   },
   { immediate: true },
 );
