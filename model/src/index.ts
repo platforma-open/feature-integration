@@ -23,6 +23,7 @@ import {
   parseResourceMap,
 } from "@platforma-sdk/model";
 import { kind } from "@platforma-open/milaboratories.feature-integration.kind";
+import type { BlockParams } from "@platforma-open/milaboratories.feature-integration.kind";
 import { assemblePattern, CELL_TAG, FEATURE_TAG, UMI_TAG, validatePattern } from "./pattern";
 import { getPreset } from "./presets";
 import type { BlockArgs, BlockData, CsvMeta, GroupingRule, ReferenceSource } from "./types";
@@ -751,92 +752,74 @@ const dataModel = new DataModelBuilder({ kind })
     ...rest,
     grouping: grouping?.by === "property" ? grouping : undefined,
   }))
-  // `params` is absent when a block is created by hand rather than from a template, so every field the
-  // contract carries keeps its own default.
-  .init(({ params }) => ({
-    ...params,
-    runMode: params?.runMode ?? "full", // full run by default. "dry" = read-limited Preview
+  // `params` is the kind's init-params contract, and it is optional: a block created by hand receives
+  // none, and a template may seed any subset of one. Every field therefore keeps its shipped default as
+  // the fallback, and the set of fields read here is exactly the set `.templateParams` projects back --
+  // the two are inverses, and a field accepted here but dropped there would be configuration that
+  // survives creation and vanishes on export.
+  .init(({ params }) => initialData(params));
+
+/**
+ * The seeding half of the kind's init-params contract: a brand-new block's state, given the params a
+ * creator or a project template supplied.
+ *
+ * `params` is optional -- a block created by hand receives none -- and every field it may carry is
+ * optional too, so each one falls back to the value the block ships with. The fields read here are
+ * exactly the fields `templateParams` projects back; the two are inverses.
+ *
+ * Exported rather than written inline in `.init(...)` so `test/src/kindParams.test.ts` can run the leg
+ * the round trip needs: project, parse, and seed again.
+ */
+export function initialData(params?: BlockParams): BlockData {
+  return {
+    runMode: "full" as const, // full run by default. "dry" = read-limited Preview
     // The geometry the block shipped with, 10x 5' v2 BEAM (16 / 10 / 15).
     presetId: params?.presetId ?? "tenx-beam",
     cellWhitelist: params?.cellWhitelist ?? "", // de-novo CELL correction by default
     defaultBlockLabel: "",
     // minAgreement and gateThreshold are absent by design. Off means absent rather than zero.
-    panelReferenceMinMembers:
-      params?.panelReferenceMinMembers ?? VERDICT_DEFAULTS.panelReferenceMinMembers,
-    distributionMinCells: params?.distributionMinCells ?? VERDICT_DEFAULTS.distributionMinCells,
-    countFloor: params?.countFloor ?? VERDICT_DEFAULTS.countFloor,
-    boundCutoff: params?.boundCutoff ?? VERDICT_DEFAULTS.boundCutoff,
-    boundProbability: params?.boundProbability ?? VERDICT_DEFAULTS.boundProbability,
-    minVotingCells: params?.minVotingCells ?? VERDICT_DEFAULTS.minVotingCells,
+    ...VERDICT_DEFAULTS,
+    // Last of the value-bearing spreads, so a supplied param wins over the default it replaces. A field
+    // the params omit is left out entirely rather than set to undefined, which would erase that default.
+    ...seededFromParams(params),
     tableState: createPlDataTableStateV2(),
     qcSummaryTableState: createPlDataTableStateV2(),
     punchcardTableState: createPlDataTableStateV2(),
     ...INITIAL_GRAPH_STATES,
     reagentTableState: createPlDataTableStateV2(),
     undeclaredBarcodesTableState: createPlDataTableStateV2(),
-  }));
+  };
+}
+
+/**
+ * The projection half of the kind's init-params contract, and `init`'s inverse: the block's live state
+ * reduced back to the params a project template serializes for this block.
+ *
+ * State is handed back untouched, with one exception: the panel CSV. Only an `index://` handle resolves
+ * on another machine, so an `upload://` handle is dropped, and the panel columns with it, since they name
+ * columns of that file. A half-picked panel is ordinary state, not invalid params, and a projection that
+ * refused it would make the block export a file its own kind rejects.
+ *
+ * Exported so `test/src/kindParams.test.ts` can run the round trip -- project, parse, and compare --
+ * which is the only thing that holds this and the kind's parser to the same contract.
+ */
+export function templateParams(data: BlockData): BlockParams {
+  const params: Record<string, unknown> = {
+    presetId: data.presetId,
+    cellWhitelist: data.cellWhitelist,
+  };
+  for (const key of TEMPLATE_PARAM_KEYS) {
+    params[key] = data[key];
+  }
+  params.tagFeatureCsvHandle = portableHandle(data.tagFeatureCsvHandle);
+  if (params.tagFeatureCsvHandle === undefined) {
+    for (const key of PANEL_COLUMN_KEYS) params[key] = undefined;
+  }
+  return params as BlockParams;
+}
 
 export const platforma = BlockModelV3.create({ dataModel, kind })
-  // Inverse of `init`: the contract's fields, projected back out for template export. The kind's type
-  // (kind/src/types.ts) says what is left out and why.
-  .templateParams((data) => {
-    const csv = portableHandle(data.tagFeatureCsvHandle);
-    const columns = groupingColumns(data.grouping);
-    return {
-      fbFastqRef: data.fbFastqRef,
-      datasetRef: data.datasetRef,
-      tagFeatureCsvHandle: csv,
-      // Column names of the CSV above, so written only with it.
-      ...(csv && {
-        barcodeSeqColumn: data.barcodeSeqColumn,
-        featureNameColumn: data.featureNameColumn,
-        roleColumn: data.roleColumn,
-        referenceValues: data.referenceValues,
-        grouping: columns.length > 0 ? { by: "property" as const, columns } : undefined,
-      }),
-
-      presetId: data.presetId,
-      pattern: data.pattern,
-      cellWhitelist: data.cellWhitelist,
-
-      runMode: data.runMode,
-      limitInput: data.limitInput,
-
-      aggregateBarcodeIqrMultiplier: data.aggregateBarcodeIqrMultiplier,
-      aggregateBarcodeMinUmiThreshold: data.aggregateBarcodeMinUmiThreshold,
-      aggregateBarcodeTopN: data.aggregateBarcodeTopN,
-
-      // The retired "panel" source is not part of the contract.
-      referenceSource: data.referenceSource === "panel" ? undefined : data.referenceSource,
-      panelReferenceMinMembers: data.panelReferenceMinMembers,
-      distributionMinCells: data.distributionMinCells,
-      countFloor: data.countFloor,
-      boundCutoff: data.boundCutoff,
-      boundProbability: data.boundProbability,
-      expectedBinderFraction: data.expectedBinderFraction,
-      minVotingCells: data.minVotingCells,
-      minAgreement: data.minAgreement,
-      gateThreshold: data.gateThreshold,
-
-      panelAssignedWarn: data.panelAssignedWarn,
-      panelAssignedError: data.panelAssignedError,
-      matchRateWarn: data.matchRateWarn,
-      matchRateError: data.matchRateError,
-      cellBarcodeQualityWarn: data.cellBarcodeQualityWarn,
-      cellBarcodeQualityError: data.cellBarcodeQualityError,
-      readsPerCellWarn: data.readsPerCellWarn,
-      aggregateBarcodeWarn: data.aggregateBarcodeWarn,
-      aggregateBarcodeError: data.aggregateBarcodeError,
-      undeclaredBarcodeWarn: data.undeclaredBarcodeWarn,
-      undeclaredBarcodeError: data.undeclaredBarcodeError,
-      usableReadWarn: data.usableReadWarn,
-      usableReadError: data.usableReadError,
-      rescuedShareWarn: data.rescuedShareWarn,
-      rescuedShareError: data.rescuedShareError,
-      vdjAntigenCountWarn: data.vdjAntigenCountWarn,
-      vdjAntigenCountError: data.vdjAntigenCountError,
-    };
-  })
+  .templateParams(templateParams)
   .args((data): BlockArgs => {
     if (!data.fbFastqRef) throw new Error("Select the feature-barcode FASTQ");
     if (!data.tagFeatureCsvHandle) throw new Error("Upload the tag→feature CSV");
@@ -1986,3 +1969,80 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   .done();
 
 export type BlockOutputs = InferOutputsType<typeof platforma>;
+
+// Internals
+
+/**
+ * The fields the kind's init-params contract carries, minus the two `init` spells out by hand
+ * (`presetId`, `cellWhitelist`). Named once, and read by both halves of the contract below, so the
+ * seeding and the projection cannot name different sets.
+ */
+const TEMPLATE_PARAM_KEYS = [
+  "fbFastqRef",
+  "datasetRef",
+  "tagFeatureCsvHandle",
+  "barcodeSeqColumn",
+  "featureNameColumn",
+  "sampleColumn",
+  "pattern",
+  "referenceSource",
+  "roleColumn",
+  "referenceValues",
+  "panelReferenceMinMembers",
+  "distributionMinCells",
+  "countFloor",
+  "boundCutoff",
+  "boundProbability",
+  "expectedBinderFraction",
+  "minVotingCells",
+  "minAgreement",
+  "gateThreshold",
+  "grouping",
+  "runMode",
+  "limitInput",
+  "aggregateBarcodeIqrMultiplier",
+  "aggregateBarcodeMinUmiThreshold",
+  "aggregateBarcodeTopN",
+  "panelAssignedWarn",
+  "panelAssignedError",
+  "matchRateWarn",
+  "matchRateError",
+  "cellBarcodeQualityWarn",
+  "cellBarcodeQualityError",
+  "readsPerCellWarn",
+  "aggregateBarcodeWarn",
+  "aggregateBarcodeError",
+  "undeclaredBarcodeWarn",
+  "undeclaredBarcodeError",
+  "usableReadWarn",
+  "usableReadError",
+  "rescuedShareWarn",
+  "rescuedShareError",
+  "vdjAntigenCountWarn",
+  "vdjAntigenCountError",
+] as const satisfies readonly (keyof BlockParams & keyof BlockData)[];
+
+/** The contract's fields that name columns of the panel CSV, projected only with a portable CSV. */
+const PANEL_COLUMN_KEYS = [
+  "barcodeSeqColumn",
+  "featureNameColumn",
+  "sampleColumn",
+  "roleColumn",
+  "referenceValues",
+  "grouping",
+] as const satisfies readonly (typeof TEMPLATE_PARAM_KEYS)[number][];
+
+/**
+ * The seeded half: the params a template supplied, with absent fields left out entirely rather than set
+ * to undefined. `init` spreads this over the shipped defaults, and a key present with an undefined value
+ * would erase the default it is meant to fall back to.
+ */
+function seededFromParams(params: BlockParams | undefined): Partial<BlockData> {
+  if (!params) return {};
+  const seeded: Record<string, unknown> = {};
+  for (const key of TEMPLATE_PARAM_KEYS) {
+    const value = params[key];
+    if (value !== undefined) seeded[key] = value;
+  }
+  return seeded as Partial<BlockData>;
+}

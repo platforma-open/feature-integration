@@ -1,34 +1,15 @@
 import type { GraphMakerState } from "@milaboratories/graph-maker";
 import type { ImportFileHandle, PlDataTableStateV2, PlRef } from "@platforma-sdk/model";
 
-/**
- * Which baseline a count is read against. Selected, never inferred: two runs answered by different rules
- * produce numbers that do not compare, and a scientist who did not choose the rule cannot know that
- * happened.
- *
- * There is no "none". A baseline is required and a run without one does not happen, so an unselected
- * choice is undefined here and `args()` refuses it.
- *
- * `"panel"` is RETIRED and no longer offered. The one tool that implements it decides at the CLONOTYPE,
- * pooling a clone's cells into one vector before anything is tested, so no cell ever holds a state and
- * there is nothing to vote on. The member stays in the union so a project stored under it still parses,
- * and `args()` refuses such a run and names the replacement.
- */
-export type ReferenceSource = "declared" | "panel" | "distribution";
+// The two rule types below belong to the block's init-params contract, so the kind owns them: the model
+// depends on the kind, never the other way round. Re-exported here so every reader of this file finds
+// them where they have always been.
+import type {
+  GroupingRule,
+  ReferenceSource,
+} from "@platforma-open/milaboratories.feature-integration.kind";
 
-/**
- * How tags become identities. A RULE over declared properties, never a tag->identity map: a map is keyed
- * by tags, which are known only after the block runs, so any editor for it writes an output back into
- * data. Property column names are knowable at prerun. Absent means one identity per tag.
- *
- * Several columns may be named, and the identity is the distinct combination of their values.
- *
- * `column` is the shape this rule had before it took a list. It stays readable so a project stored under
- * it keeps running, and `groupingColumns()` is the one place that reads either. Never write it.
- */
-export type GroupingRule =
-  | { by: "property"; columns: string[]; column?: never }
-  | { by: "property"; column: string; columns?: never };
+export type { GroupingRule, ReferenceSource };
 
 /** Workflow inputs (projected from BlockData by the args lambda; validated there). */
 export type BlockArgs = {
