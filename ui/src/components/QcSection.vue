@@ -1,5 +1,8 @@
 <script lang="ts" setup>
-import type { SampleQcMeasurement } from "@platforma-open/milaboratories.feature-integration.model";
+import {
+  qcMeasurementDescription,
+  type SampleQcMeasurement,
+} from "@platforma-open/milaboratories.feature-integration.model";
 import { PlStatusTag } from "@platforma-sdk/ui-vue";
 import { computed, reactive } from "vue";
 import { qcStatusTag } from "../results";
@@ -17,6 +20,10 @@ const data = reactive({
 });
 
 const tag = computed(() => qcStatusTag(props.value.status));
+
+// The words for this measurement, looked up by id. The software sends ids, numbers and statuses; every
+// sentence on this row is authored in the model, so rewording one is a UI change and nothing else.
+const qcContent = computed(() => qcMeasurementDescription(props.value.id));
 
 // What went into the number, folded with the description and set in the same style. Two measurements take
 // more than one form and the value alone cannot say which: the sticky count is a count of cells above a
@@ -57,10 +64,10 @@ const reasonLine = computed(() => {
 // What a bad value MEANS, folded with the description rather than standing beside the number. Collapsed,
 // a row is its label and its value; opening it is what asks for the interpretation. Set in the
 // description's own style, since both answer "what am I looking at" rather than "what happened here".
-const impliesLine = computed(() => {
+const whenBadLine = computed(() => {
   const m = props.value;
-  return m.value !== null && m.implies && m.status !== null && m.status !== "OK"
-    ? m.implies
+  return m.value !== null && qcContent.value.whenBad && m.status !== null && m.status !== "OK"
+    ? qcContent.value.whenBad
     : undefined;
 });
 </script>
@@ -75,11 +82,11 @@ const impliesLine = computed(() => {
     </div>
     <div class="qc-section__text">
       <div class="qc-section__label" @click.stop="data.expanded = !data.expanded">
-        {{ props.value.label }}<template v-if="printedValue">: {{ printedValue }}</template>
+        {{ qcContent.label }}<template v-if="printedValue">: {{ printedValue }}</template>
       </div>
       <div v-if="reasonLine" class="qc-section__note">{{ reasonLine }}</div>
-      <div class="qc-section__description">{{ props.value.counts }}</div>
-      <div v-if="impliesLine" class="qc-section__description">{{ impliesLine }}</div>
+      <div class="qc-section__description">{{ qcContent.description }}</div>
+      <div v-if="whenBadLine" class="qc-section__description">{{ whenBadLine }}</div>
       <div v-for="(part, i) in detailParts" :key="i" class="qc-section__description">
         {{ part }}
       </div>

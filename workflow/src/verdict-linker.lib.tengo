@@ -6,8 +6,8 @@
 // clonotype axis IS the anchor's is the one the user chose. Pick by that identity rather than panicking on
 // a count, and a legitimate BCR + TCR run keeps working.
 //
-// Shared by verdict-run.tpl.tengo and verdict-import.tpl.tengo, which each resolve the bundle
-// independently. The run template holds it resolved, which cannot be serialized as a template input.
+// Shared by verdict-linker-export.tpl.tengo and verdict-import.tpl.tengo, which each resolve the bundle
+// independently. Each holds it resolved, which cannot be serialized as a template input.
 
 ll := import("@platforma-sdk/workflow-tengo:ll")
 maps := import("@platforma-sdk/workflow-tengo:maps")

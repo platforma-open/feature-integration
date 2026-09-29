@@ -5,11 +5,20 @@ name rather than via ``import conftest``. The committed test bed lives at
 software/test-data/fixtures/per-cell-metrics/: a small mitool tag-stat TSV plus a tag->feature CSV.
 """
 
+import os
 import pathlib
+import sys
 
 import pytest
 
-BED = pathlib.Path(__file__).resolve().parent / "test-data" / "fixtures" / "per-cell-metrics"
+SOFTWARE_ROOT = pathlib.Path(__file__).resolve().parent
+
+# Keep the bytecode cache out of every package's `src/`.
+_PYCACHE = SOFTWARE_ROOT / ".pycache"
+sys.pycache_prefix = str(_PYCACHE)
+os.environ["PYTHONPYCACHEPREFIX"] = str(_PYCACHE)
+
+BED = SOFTWARE_ROOT / "test-data" / "fixtures" / "per-cell-metrics"
 
 
 @pytest.fixture(scope="session")

@@ -14,7 +14,7 @@ import {
 // Read as text rather than imported: one source is Tengo and the other Python.
 const root = join(__dirname, "..", "..");
 const tengo = readFileSync(join(root, "workflow/src/verdict-args.lib.tengo"), "utf8");
-const python = readFileSync(join(root, "software/per-cell-metrics/src/qc_measures.py"), "utf8");
+const python = readFileSync(join(root, "software/verdicts/src/qc_measures.py"), "utf8");
 
 function tengoConst(name: string): number {
   const m = tengo.match(new RegExp(`^${name}\\s*:=\\s*([0-9.]+)\\s*$`, "m"));
@@ -31,7 +31,7 @@ function pythonConst(name: string): number {
 // The verdict-side numbers sit in three Python modules rather than one, and two of them are written
 // without a type annotation, so this takes the file and accepts both forms.
 function pythonConstIn(file: string, name: string): number {
-  const source = readFileSync(join(root, "software/per-cell-metrics/src", file), "utf8");
+  const source = readFileSync(join(root, "software/verdicts/src", file), "utf8");
   const m = source.match(new RegExp(`^${name}\\s*(?::\\s*\\w+\\s*)?=\\s*([0-9.]+)\\s*$`, "m"));
   if (!m) throw new Error(`${file} declares no ${name}`);
   return Number(m[1]);

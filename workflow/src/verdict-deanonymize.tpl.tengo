@@ -1,0 +1,82 @@
+// Translates verdict-compute's results from anonymized sample ids back to this project's ids.
+//
+// Ephemeral, as in clonotype-clustering's deanonimization.tpl.tengo: the mapping belongs to this project.
+//
+// Returns only the tables and content outputs that carry sample ids (verdict-tables.lib.tengo); main takes
+// the rest straight from verdict-compute.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+smart := import("@platforma-sdk/workflow-tengo:smart")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+anon := import(":sample-anonymization")
+tables := import(":verdict-tables")
+
+json := import("json")
+
+CONTENT_TYPE := { Name: "binary", Version: "1" }
+
+// The mapping and the content outputs are read as content; the tables only go to the table pass.
+self.awaitState("mapping", "ResourceReady")
+for content in tables.CONTENT_OUTPUTS {
+	self.awaitState(content.out, "ResourceReady")
+}
+
+self.body(func(inputs) {
+	// {anonymizedId: sampleId}
+	toReal := inputs.mapping
+	readJson := func(resource) {
+		return json.decode(string(resource.getData()))
+	}
+	// Same resource type as an exec's getFileContent, so readers are unaffected.
+	writeJson := func(value) {
+		return smart.createValueResource(CONTENT_TYPE, json.encode(value))
+	}
+
+	// One workflow for every table: one exec.
+	wf := pt.workflow().inLightQueue().cpu(1).mem("8GiB")
+	for name in tables.SAMPLE_ID_TABLES {
+		wf.frame(inputs[name], { xsvType: "csv", inferSchema: false }).
+			withColumns(anon.replaceValues(pt.col("sampleId"), toReal).alias("sampleId")).
+			save(name + ".csv", { xsvType: "csv" })
+	}
+	maps.forEach(tables.SAMPLE_ID_LIST_COLUMNS, func(name, columns) {
+		exprs := []
+		for column in columns {
+			exprs = append(exprs, anon.replaceSubstrings(pt.col(column), toReal).alias(column))
+		}
+		wf.frame(inputs[name], { xsvType: "csv", inferSchema: false }).
+			withColumns(exprs...).
+			save(name + ".csv", { xsvType: "csv" })
+	})
+	run := wf.run()
+
+	result := {}
+	for name in tables.SAMPLE_ID_TABLES {
+		result[name] = run.getFile(name + ".csv")
+	}
+	maps.forEach(tables.SAMPLE_ID_LIST_COLUMNS, func(name, columns) {
+		result[name] = run.getFile(name + ".csv")
+	})
+
+	// The run record names the samples as a list.
+	runMeta := readJson(inputs.runMeta)
+	if !is_undefined(runMeta.samples) {
+		runMeta.samples = anon.translateList(runMeta.samples, toReal)
+	}
+	result.runMeta = writeJson(runMeta)
+
+	// The per-sample quality report is keyed by sample.
+	result.qcBySample = writeJson(anon.rekey(readJson(inputs.qcBySample), toReal))
+
+	// Per-sample maps sit under these two keys; the rest is pooled across samples.
+	tagBins := readJson(inputs.qcTagBins)
+	for key in ["bySample", "fitsBySample"] {
+		if !is_undefined(tagBins[key]) {
+			tagBins[key] = anon.rekey(tagBins[key], toReal)
+		}
+	}
+	result.qcTagBins = writeJson(tagBins)
+
+	return result
+})

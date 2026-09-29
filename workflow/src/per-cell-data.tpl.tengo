@@ -1,0 +1,37 @@
+// The per-cell column data under this project's sample ids: the columns the export carries, and the
+// exported data of the columns the table shows (pframes.exportColumnData, what pframes.exportFrame does per
+// column).
+//
+// Pure, so a later run over the same data and ids reuses it without converting the columns again. An
+// ephemeral rename would not: its output does not exist until it runs, and it can only run once the
+// columns are converted. It takes data only; main attaches the specs, which carry blockId.
+//
+// Inputs: `mapping` = {anonymizedId: sampleId} ({} keeps every key), `raw.<key>` and `export.<key>` = column
+// data keyed by sample first. Outputs: `renamed` = {<key>: renamed data} for `raw.*`, `exported` =
+// {<key>: exported renamed data} for `export.*`.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+pframes := import("@platforma-sdk/workflow-tengo:pframes")
+smart := import("@platforma-sdk/workflow-tengo:smart")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+sampleAnon := import(":sample-anonymization")
+text := import("text")
+
+self.defineOutputs("renamed", "exported")
+
+self.body(func(inputs) {
+	mapping := inputs.mapping
+	renamed := smart.mapBuilder()
+	exported := smart.mapBuilder()
+	maps.forEach(self.rawInputs(), func(name, field) {
+		if text.has_prefix(name, "raw.") {
+			renamed.addRef(name[4:], sampleAnon.renameLeadingKey(field.getValue(), mapping))
+		} else if text.has_prefix(name, "export.") {
+			exported.addRef(name[7:], pframes.exportColumnData(sampleAnon.renameLeadingKey(field.getValue(), mapping)))
+		}
+	})
+	return {
+		renamed: renamed.lockAndBuild(),
+		exported: exported.lockAndBuild()
+	}
+})

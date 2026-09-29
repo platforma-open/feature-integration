@@ -122,23 +122,19 @@ def sample_report_rows(
         entries.append(
             {
                 "id": m.id,
-                "label": m.label,
                 "value": value,
                 "detail": (row.detail if row is not None else "") or None,
                 "reason": reason,
                 "status": None if status is None else status.value,
-                "counts": m.counts,
-                "implies": m.implies,
             }
         )
         readings.append(Reading(status, value))
     return entries, roll_up(readings)
 
 
-# No decile schemas. Two p-columns of eleven quantile points each used to sit here -- one pooled over
-# the run, one per sample -- and nothing ever plotted either: every distribution on the run-quality page
-# is drawn from the BINNED counts in `result_qc_tag_bins.json`. Eleven points suggest a shape and cannot
-# show where it separates, which is the one thing those plots are read for.
+# No decile schemas: every distribution on the run-quality page is drawn from the BINNED counts in
+# `result_qc_tag_bins.json`. Quantile points cannot show where a distribution separates, which is the one
+# thing those plots are read for.
 _BACKGROUND_SCHEMA = {
     "sampleId": pl.String,
     "tag": pl.String,
@@ -238,11 +234,9 @@ def _number(row: dict, column: str) -> float | None:
     return float(raw)
 
 
-# Float rounding on a subtraction of two shares, and nothing more. This guard used to absorb a UNIT
-# ERROR: the subtrahend was a share of one refine-tags step's own input while the minuend was a share
-# of matched reads, so the difference came out systematically low and could go negative, and this
-# returned None while the docstring blamed "the two figures come from different files". Both terms are
-# over matched reads now, so a negative here really is rounding.
+# Float rounding on a subtraction of two shares, and nothing more. Both terms must be over MATCHED
+# READS: two shares over different denominators come out systematically low, and this tolerance would
+# absorb that error silently instead of surfacing it.
 _RESCUE_TOLERANCE = -1e-9
 
 

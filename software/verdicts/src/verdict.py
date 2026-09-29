@@ -10,7 +10,7 @@ Four steps in production, and the order is load-bearing:
 tag-stat emits only observed pairs, so a cell asked about an identity and silent
 produces no row. An antigen every cell failed to bind must read *not bound*, not
 vanish as though nobody offered it. Production counts those positions analytically in
-`silent_tally`. `densify` builds the full grid and is only the test oracle.
+`silent_tally`. The dense grid is built only by the test oracle, in `test/dense_oracle.py`.
 
 The cell key is (sampleId, cellId) throughout: barcodes are bare 16-mers shared
 across samples.
@@ -398,47 +398,57 @@ def combine_tags_to_identities(counts: pl.DataFrame, grouping: Grouping) -> pl.D
     )
 
 
-def densify(identities: pl.DataFrame, cells: pl.DataFrame, offered_by_sample: dict[str, set[str]]) -> pl.DataFrame:
-    """Every cell against every identity its sample offered, zeros filled in.
-
-    Without this, an antigen every cell failed to bind produces no rows and its failure is
-    indistinguishable from a reagent nobody offered.
-
-    The reference implementation, and it must never run in the block: on a realistic run this
-    grid is 11-20x the sparse input and does not fit a large panel at all. Production uses
-    `silent_tally`, and this is the oracle it is tested against.
-    """
-    # Guard on the assembled blocks, never on offered_by_sample. A map whose every value is
-    # empty -- a sample stained with nothing -- is non-empty itself but contributes no block,
-    # and concat of an empty list raises.
-    blocks = [
-        cells.filter(pl.col("sampleId") == sample).join(pl.DataFrame({"identity": sorted(offered)}), how="cross")
-        for sample, offered in sorted(offered_by_sample.items())
-        if offered
-    ]
-    grid = (
-        pl.concat(blocks, how="vertical")
-        if blocks
-        else cells.head(0).with_columns(pl.lit(None, pl.String).alias("identity"))
-    )
-
-    return grid.join(identities, on=[*CELL_KEY, "identity"], how="left").with_columns(
-        pl.col("umiCount").fill_null(0).cast(pl.Int64)
-    )
-
-
 def specificity_score(antigen_count, reference_count):
     """How specifically the antigen count exceeds the reference: 0-100.
 
     At antigen_count = 0 this is ~0.0422 at reference_count = 0, and falls for every larger
     reference_count. `silent_tally` relies on a silent admissible cell never scoring BOUND,
     which lets its state be known with no row written. That holds only for a `cutoff`
-    strictly above 0.0422 -- at or below, `silent_tally` and the `densify` oracle part
+    strictly above 0.0422 -- at or below, `silent_tally` and the dense oracle part
     company with no error raised here. Refusing such a cutoff is the CLI's job.
     """
     a = np.asarray(antigen_count, dtype=float) + BETA_A_OFFSET
     b = np.asarray(reference_count, dtype=float) + BETA_B_OFFSET
     return (1.0 - beta.cdf(BETA_X, a, b)) * 100.0
+
+
+# A count no run reaches, so a search that passes it is answering "never" rather than running long.
+_REACH_SEARCH_CEILING = 1 << 30
+
+
+def count_to_reach(cutoff: float, reference_count: float) -> int | None:
+    """The smallest antigen count that reaches `cutoff` against `reference_count`.
+
+    The cutoff is a certainty, and the certainty rises with the count, so what a cutoff asks for
+    in the units a scientist reads -- UMIs -- is a boundary rather than a search over a shape.
+
+    It is a LARGE number against the counts these runs carry, and that is the point of reporting
+    it: against a reference of 0 the shipped cutoff of 75 asks for 49, against 5 it asks for 120.
+    A run whose cells hold single-digit counts cannot reach the line whatever the scientist does
+    to it, and the plot alone does not say so.
+
+    None where no count reaches the cutoff: the score approaches 100 without arriving, so a cutoff
+    of 100 or above is unreachable by construction rather than by depth.
+    """
+    if cutoff >= 100.0:
+        return None
+    if specificity_score(0, reference_count) >= cutoff:
+        return 0
+    # Double until the cutoff is cleared, then bisect. The score is monotone in the count, so the
+    # first bracket that clears it contains the boundary.
+    high = 1
+    while specificity_score(high, reference_count) < cutoff:
+        high *= 2
+        if high > _REACH_SEARCH_CEILING:
+            return None
+    low = high // 2
+    while low + 1 < high:
+        mid = (low + high) // 2
+        if specificity_score(mid, reference_count) >= cutoff:
+            high = mid
+        else:
+            low = mid
+    return int(high)
 
 
 class Admissibility(NamedTuple):
@@ -593,8 +603,8 @@ def silent_tally(
 ) -> pl.DataFrame:
     """Per (group, identity): how many asked cells were never observed, and how they resolve.
 
-    The sparse path -- silent positions are counted, never materialized. `densify` then
-    `read_states` is the reference this must agree with, kept only for tests.
+    The sparse path -- silent positions are counted, never materialized. The dense oracle then
+    `read_states` is the reference this must agree with; it lives in the test package.
 
     A silently admissible cell's count is 0, and specificity_score(0, r) is ~0.0422 at r = 0
     and smaller beyond. So a silent cell resolves to NOT_BOUND unless the cell itself cannot

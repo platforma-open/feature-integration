@@ -1,8 +1,12 @@
 import type {
   AxisId,
   BlockRenderCtx,
+  ImportFileHandle,
+  ImportFileHandleIndex,
   InferOutputsType,
   PlDataTableStateV2,
+  PObjectSpec,
+  TreeNodeAccessor,
 } from "@platforma-sdk/model";
 import {
   BlockModelV3,
@@ -13,19 +17,26 @@ import {
   DataColumn,
   DataModelBuilder,
   getAxisId,
+  getUniquePartitionKeys,
+  isImportFileHandleIndex,
   isPColumnSpec,
   parseResourceMap,
 } from "@platforma-sdk/model";
 import { kind } from "@platforma-open/milaboratories.feature-integration.kind";
+import type { BlockParams } from "@platforma-open/milaboratories.feature-integration.kind";
 import { assemblePattern, CELL_TAG, FEATURE_TAG, UMI_TAG, validatePattern } from "./pattern";
 import { getPreset } from "./presets";
-import type { BlockParams } from "@platforma-open/milaboratories.feature-integration.kind";
 import type { BlockArgs, BlockData, CsvMeta, GroupingRule, ReferenceSource } from "./types";
 
 export { assemblePattern, parsePattern, validatePattern } from "./pattern";
 export type { PatternParts } from "./pattern";
 export { allPresets, getPreset } from "./presets";
 export type { Preset } from "./presets";
+export {
+  QC_MEASUREMENT_DESCRIPTIONS,
+  qcMeasurementDescription,
+  type QcMeasurementDescription,
+} from "./qcDescriptions";
 export type { BlockArgs, BlockData, CsvMeta, GroupingRule, ReferenceSource } from "./types";
 
 // ui-vue does not re-export this factory, and the ui package depends on ui-vue alone.
@@ -212,9 +223,11 @@ export type QcMeasurementStatus = "OK" | "warn" | "alert";
 
 // As emit_verdicts.py writes it into result_qc_by_sample.json.
 export type SampleQcMeasurement = {
-  /** Stable: it is also a value on the `measurement` axis and a p-column name. */
+  /**
+   * Stable: it is also a value on the `measurement` axis and a p-column name. It is what the reader's
+   * words are looked up under -- see `QC_MEASUREMENT_DESCRIPTIONS`.
+   */
   id: string;
-  label: string;
   /** Null where the run could not compute one. `reason` then says why, and is never empty. */
   value: number | null;
   detail: string | null;
@@ -222,8 +235,6 @@ export type SampleQcMeasurement = {
   reason: string | null;
   /** Null where no line stands behind the measurement, or where there is no value to judge. */
   status: QcMeasurementStatus | null;
-  counts: string;
-  implies: string | null;
 };
 
 export type SampleQcReport = {
@@ -284,9 +295,11 @@ export type TagCountBins = {
     >
   >;
   /**
-   * The run's own two spreads, each on its own LINEAR edges: `score` and `referenceReading`. Linear, unlike
-   * the count bins, because a score is a 0-100 scale and a reference reading is read against a gate typed in
-   * the same units.
+   * The run's own two spreads, each on its own edges: `score` and `referenceReading`.
+   *
+   * `score` is LINEAR, because it is a 0-100 scale and the cutoff is typed in those same units, which a log
+   * axis would put where the reader cannot find it. `referenceReading` is on the SAME log1p grid as the count
+   * bins, because it is a count distribution.
    *
    * One distribution for the whole run, never per sample, because the cutoff and the gate are each one number
    * for the run. A key is absent where the served rung produces no such quantity.
@@ -295,7 +308,7 @@ export type TagCountBins = {
 };
 
 // The rungs the dropdown offers. Nothing below the model derives one: `--reference-source` is required
-// and verdict.py deliberately carries no function that could pick a rung, which a test pins.
+// and verdict.py deliberately carries no function that could pick a rung.
 export type ReferenceSourceChoices = {
   /** EVERY rung, always, in ladder order, and every rung selectable. */
   options: {
@@ -358,8 +371,62 @@ function median(xs: number[]): number | undefined {
   return s.length % 2 === 1 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
-// From the upstream pl7.app/label column whose axis matches the input FASTQ's sample axis. A module helper,
-// because each block output is an independent pure function of ctx and cannot read another output.
+// From the upstream pl7.app/label column whose axis matches the input FASTQ's sample axis.
+/** Keeps a file handle only if it survives leaving this machine. */
+function portableHandle(handle: ImportFileHandle | undefined): ImportFileHandleIndex | undefined {
+  return handle !== undefined && isImportFileHandleIndex(handle) ? handle : undefined;
+}
+
+// The file-valued sequencing columns the FASTQ dropdown offers.
+function isFastqDataSpec(spec: PObjectSpec): boolean {
+  if (!isPColumnSpec(spec)) return false;
+  const ext = spec.domain?.["pl7.app/fileExtension"];
+  return (
+    spec.name === "pl7.app/sequencing/data" &&
+    (spec.valueType as string) === "File" &&
+    (ext === "fastq" || ext === "fastq.gz")
+  );
+}
+
+// Columns on [sampleId, scClonotypeKey] flagged as anchors: the V(D)J dropdown's options.
+const VDJ_DATASET_QUERY = [
+  {
+    axes: [{ name: "pl7.app/sampleId" }, { name: "pl7.app/vdj/scClonotypeKey" }],
+    annotations: { "pl7.app/isAnchor": "true" },
+  },
+];
+
+// The FASTQ dataset's sample ids, from its axisKeys annotation: its data has no partitions to read.
+function fastqSampleIdsOf(spec: PObjectSpec | undefined): string[] | undefined {
+  const axisKeys0 =
+    spec && isPColumnSpec(spec) ? spec.annotations?.["pl7.app/axisKeys/0"] : undefined;
+  if (axisKeys0 === undefined) return undefined;
+  try {
+    return (JSON.parse(axisKeys0) as unknown[]).map(String);
+  } catch {
+    return undefined;
+  }
+}
+
+// Shown in the UI and thrown by args(), so the warning and the disabled Run say the same thing.
+const NO_SHARED_SAMPLE_MESSAGE =
+  "The tag-barcode FASTQ dataset and the single-cell V(D)J dataset have no sample in common, so the antigen reads can't be matched to any cell's clonotype. Please choose two datasets from the same samples.";
+
+// The V(D)J dataset's sample ids, from its data's partition keys: its spec carries no axisKeys annotation.
+// Undefined until the upstream block has written the data and locked its fields, so a partial list is
+// never read.
+function vdjSampleIdsOf(data: TreeNodeAccessor | undefined): string[] | undefined {
+  if (!data || !data.getInputsLocked()) return undefined;
+  return getUniquePartitionKeys(data)?.[0]?.map(String);
+}
+
+/** Whether two sample-id lists are both known and non-empty, and share no id. */
+export function shareNoSample(a: string[] | undefined, b: string[] | undefined): boolean {
+  if (!a || !b || a.length === 0 || b.length === 0) return false;
+  const inA = new Set(a);
+  return !b.some((id) => inA.has(id));
+}
+
 function resolveSampleLabels(
   ctx: BlockRenderCtx<BlockArgs, BlockData>,
 ): Record<string, string> | undefined {
@@ -526,9 +593,13 @@ const INITIAL_GRAPH_STATES = {
   "scoreDistributionGraphState" | "referenceReadingGraphState" | "fittedBackgroundGraphState"
 >;
 
-// v11 data shape: the current shape with the long measurement grid's state, which v12 strips. Every shape
-// below carries it too, since they all predate v12.
-type BlockDataV11 = BlockData & { runQualityTableState: PlDataTableStateV2 };
+// v12 data shape: the grouping rule could also be { by: "tag" }, one identity per barcode, which v13 maps to
+// the absent rule that means the same.
+type BlockDataV12 = Omit<BlockData, "grouping"> & { grouping?: GroupingRule | { by: "tag" } };
+
+// v11 data shape: v12 with the long measurement grid's state, which v12 strips. Every shape below carries it
+// too, since they all predate v12.
+type BlockDataV11 = BlockDataV12 & { runQualityTableState: PlDataTableStateV2 };
 
 // v8 data shape: v11 with the panel-versus-reads grid's state, which v9 strips.
 type BlockDataV8 = BlockDataV11 & { runQualityMismatchTableState: PlDataTableStateV2 };
@@ -675,7 +746,12 @@ const dataModel = new DataModelBuilder({ kind })
   // v11 -> v12. The long measurement grid is gone and its state goes with it: every measurement it held
   // has a purpose-built surface, so the frame behind that grid is no longer emitted. Never reuse the
   // stripped key -- a saved column set and filter means something only against the frame it was saved on.
-  .migrate<BlockData>("v12", ({ runQualityTableState: _q, ...rest }) => ({ ...rest }))
+  .migrate<BlockDataV12>("v12", ({ runQualityTableState: _q, ...rest }) => ({ ...rest }))
+  // v12 -> v13. The per-barcode rule is gone from the choices; its absence reads the same way.
+  .migrate<BlockData>("v13", ({ grouping, ...rest }) => ({
+    ...rest,
+    grouping: grouping?.by === "property" ? grouping : undefined,
+  }))
   // `params` is the kind's init-params contract, and it is optional: a block created by hand receives
   // none, and a template may seed any subset of one. Every field therefore keeps its shipped default as
   // the fallback, and the set of fields read here is exactly the set `.templateParams` projects back --
@@ -719,8 +795,10 @@ export function initialData(params?: BlockParams): BlockData {
  * The projection half of the kind's init-params contract, and `init`'s inverse: the block's live state
  * reduced back to the params a project template serializes for this block.
  *
- * State is handed back untouched. A half-picked panel is ordinary state, not invalid params, and a
- * projection that refused it would make the block export a file its own kind rejects.
+ * State is handed back untouched, with one exception: the panel CSV. Only an `index://` handle resolves
+ * on another machine, so an `upload://` handle is dropped, and the panel columns with it, since they name
+ * columns of that file. A half-picked panel is ordinary state, not invalid params, and a projection that
+ * refused it would make the block export a file its own kind rejects.
  *
  * Exported so `test/src/kindParams.test.ts` can run the round trip -- project, parse, and compare --
  * which is the only thing that holds this and the kind's parser to the same contract.
@@ -732,6 +810,10 @@ export function templateParams(data: BlockData): BlockParams {
   };
   for (const key of TEMPLATE_PARAM_KEYS) {
     params[key] = data[key];
+  }
+  params.tagFeatureCsvHandle = portableHandle(data.tagFeatureCsvHandle);
+  if (params.tagFeatureCsvHandle === undefined) {
+    for (const key of PANEL_COLUMN_KEYS) params[key] = undefined;
   }
   return params as BlockParams;
 }
@@ -757,6 +839,8 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
         "Select the single-cell V(D)J dataset the verdicts are about. Every verdict is about one " +
           "clonotype, so the block cannot produce any without it.",
       );
+    if (shareNoSample(data.fastqSampleIds, data.vdjSampleIds))
+      throw new Error(NO_SHARED_SAMPLE_MESSAGE);
     // The Python guards this too, but only after the full mitool chain runs.
     if (data.barcodeSeqColumn === data.featureNameColumn)
       throw new Error("Barcode-sequence and feature-name columns must be different");
@@ -1004,10 +1088,9 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
           : undefined,
       // A rule over declared panel properties, and never a tag->identity map. Absent means one identity per tag.
       // Normalised to a list here, so the software receives one shape, though it still reads the older `column`.
-      grouping:
-        data.grouping?.by === "property"
-          ? { by: "property" as const, columns: groupingColumns(data.grouping) }
-          : data.grouping,
+      grouping: data.grouping
+        ? { by: "property" as const, columns: groupingColumns(data.grouping) }
+        : undefined,
       contendingGroups: contendingGroups.length > 0 ? contendingGroups : undefined,
       // Each undefined projects as undefined, and emit_verdicts.py's own shipped default stands. Passed through
       // raw rather than gated on positivity: 0.0 is a real published threshold (usableReadError).
@@ -1065,28 +1148,11 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   // Integration discovers these columns under its VDJ anchor through the pl7.app/sc/cellLinker.
 
   // feature-barcode FASTQ options (file-valued sequencing columns, fastq / fastq.gz)
-  .output("fastqOptions", (ctx) =>
-    ctx.resultPool.getOptions((spec) => {
-      if (!isPColumnSpec(spec)) return false;
-      const ext = spec.domain?.["pl7.app/fileExtension"];
-      return (
-        spec.name === "pl7.app/sequencing/data" &&
-        (spec.valueType as string) === "File" &&
-        (ext === "fastq" || ext === "fastq.gz")
-      );
-    }),
-  )
+  .output("fastqOptions", (ctx) => ctx.resultPool.getOptions(isFastqDataSpec))
   // Columns on [sampleId, scClonotypeKey] flagged as anchors. VDJ Multiomic Integration uses the same query,
   // so the two blocks offer the user the same list. No linkerOptions beside it, by design: the cell linker
   // carries pl7.app/isLinkerColumn and tables hide it, so the workflow resolves it from this anchor by name.
-  .output("datasetOptions", (ctx) =>
-    ctx.resultPool.getOptions([
-      {
-        axes: [{ name: "pl7.app/sampleId" }, { name: "pl7.app/vdj/scClonotypeKey" }],
-        annotations: { "pl7.app/isAnchor": "true" },
-      },
-    ]),
-  )
+  .output("datasetOptions", (ctx) => ctx.resultPool.getOptions(VDJ_DATASET_QUERY))
   // An identity is whatever the grouping rule groups tags by, so the options are the distinct values of the
   // barcode column or of the chosen property column. The panel metadata is column-wise and carries no
   // tag->name pairing. Retentive, so the editor does not blank on a rerun.
@@ -1140,6 +1206,28 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     "csvValuesByColumn",
     (ctx): Record<string, string[]> => readCsvMeta(ctx)?.valuesByColumn ?? {},
   )
+  // Sample ids of every dataset the two dropdowns offer, for the UI to snapshot into data on the pick. The
+  // V(D)J ids are its data's partition keys, so they are absent while that data is not ready. Retentive, so a
+  // pick made while the result pool settles still finds the ids.
+  .retentiveOutput("datasetSampleIds", (ctx) => ({
+    fastq: ctx.resultPool
+      .getOptions(isFastqDataSpec)
+      .map((o) => ({ ref: o.ref, ids: fastqSampleIdsOf(ctx.resultPool.getSpecByRef(o.ref)) })),
+    vdj: ctx.resultPool.getOptions(VDJ_DATASET_QUERY).map((o) => ({
+      ref: o.ref,
+      ids: vdjSampleIdsOf(ctx.resultPool.getPColumnByRef(o.ref)?.data),
+    })),
+  }))
+  // The live form of args()'s no-shared-sample check. With no sample in common, no cell of the V(D)J dataset
+  // has tag reads, and every clonotype comes out "never asked". Silent until both id lists resolve.
+  .output("noSharedSampleWarning", (ctx): string | undefined => {
+    const fastqRef = ctx.data.fbFastqRef;
+    const vdjRef = ctx.data.datasetRef;
+    if (!fastqRef || !vdjRef) return undefined;
+    const vdjIds = vdjSampleIdsOf(ctx.resultPool.getPColumnByRef(vdjRef)?.data);
+    const fastqIds = fastqSampleIdsOf(ctx.resultPool.getSpecByRef(fastqRef));
+    return shareNoSample(fastqIds, vdjIds) ? NO_SHARED_SAMPLE_MESSAGE : undefined;
+  })
   // A UI warning only. args() is the authoritative gate.
   .retentiveOutput("sampleMappingWarning", (ctx): string[] | undefined => {
     const col = ctx.data.sampleColumn;
@@ -1165,7 +1253,7 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
       );
     return lines.length > 0 ? lines : undefined;
   })
-  // Advisory only. The user must still pick it, which is the gesture that snapshots the sample map into data.
+  // The UI auto-fills the Sample column from it once per suggestion, through setSampleColumn.
   .retentiveOutput("suggestedSampleColumn", (ctx): string | undefined => suggestSampleColumn(ctx))
   // A UI warning only. mitool guards the same condition, but by failing refine-tags in the middle of the run.
   //
@@ -1429,46 +1517,40 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   // anchor and maxHops config, and the array-columns form runs discoverLabelColumnVariants over the ENTIRE
   // result pool and hangs forever on the upstream Samples & Data FASTQ File-dataset
   // (no_data:<sndBlock>:pf.dataset.*). blocks/peptide-extraction uses the same pattern for the same setup.
-  .output(
-    "perCellTable",
-    (ctx) => {
-      const pCols = ctx.outputs?.resolve("perCellTable")?.getPColumns();
-      if (pCols === undefined || pCols.length === 0) return undefined;
+  .outputWithStatus("perCellTable", (ctx) => {
+    const pCols = ctx.outputs?.resolve("perCellTable")?.getPColumns();
+    if (pCols === undefined || pCols.length === 0) return undefined;
 
-      // Narrowed to the cells the V(D)J data matched.
-      const runMeta = ctx.outputs
-        ?.resolve({ field: "antigenRunMeta", allowPermanentAbsence: true })
-        ?.getDataAsJsonOrUndefined<VerdictRunMeta>();
-      const listed =
-        runMeta === undefined || runMeta.cellListSource === "none"
-          ? []
-          : (
-              ctx.outputs
-                ?.resolve({ field: "antigenCellReference", allowPermanentAbsence: true })
-                ?.getPColumns() ?? []
-            ).filter((c) => c.spec.name === CELL_IN_LIST_COLUMN);
+    // Narrowed to the cells the V(D)J data matched.
+    const runMeta = ctx.outputs
+      ?.resolve({ field: "antigenRunMeta", allowPermanentAbsence: true })
+      ?.getDataAsJsonOrUndefined<VerdictRunMeta>();
+    if (runMeta === undefined) return undefined;
+    const listed =
+      runMeta.cellListSource === "none"
+        ? []
+        : (
+            ctx.outputs
+              ?.resolve({ field: "antigenCellReference", allowPermanentAbsence: true })
+              ?.getPColumns() ?? []
+          ).filter((c) => c.spec.name === CELL_IN_LIST_COLUMN);
+    if (runMeta.cellListSource !== "none" && listed.length === 0) return undefined;
 
-      return createPlDataTableV2(
-        ctx,
-        [...pCols, ...listed],
-        ctx.data.tableState,
-        listed.length > 0 ? { coreJoinType: "inner" } : undefined,
-      );
-    },
-    { retentive: true, withStatus: true },
-  )
+    return createPlDataTableV2(
+      ctx,
+      [...pCols, ...listed],
+      ctx.data.tableState,
+      listed.length > 0 ? { coreJoinType: "inner" } : undefined,
+    );
+  })
   // createPlDataTableV2 like perCellTable, because V2 runs getAllLabelColumns over the result pool and
   // auto-joins the matching sampleId label. A V3 selector of { mode: "enrichment", maxHops: 0 } never
   // traverses to the upstream pl7.app/label column, and the sampleId axis then renders the raw sample hash.
-  .output(
-    "qcSummaryTable",
-    (ctx) => {
-      const pCols = ctx.outputs?.resolve("qcSummaryTable")?.getPColumns();
-      if (pCols === undefined || pCols.length === 0) return undefined;
-      return createPlDataTableV2(ctx, pCols, ctx.data.qcSummaryTableState);
-    },
-    { retentive: true, withStatus: true },
-  )
+  .outputWithStatus("qcSummaryTable", (ctx) => {
+    const pCols = ctx.outputs?.resolve("qcSummaryTable")?.getPColumns();
+    if (pCols === undefined || pCols.length === 0) return undefined;
+    return createPlDataTableV2(ctx, pCols, ctx.data.qcSummaryTableState);
+  })
   // Two parts of the card read this, and neither narrows anything: the punch hover, and the card's empty
   // state, which tells "the pivot emitted no identity columns" apart from "this run has no rows".
   //
@@ -1502,102 +1584,97 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   // as given and runs NO data-column discovery, so it also cannot hang on the upstream Samples & Data FASTQ
   // dataset -- the hazard that keeps the other tables here on V2. Each of those needs its own check against
   // that hazard before it follows.
-  .output(
-    "punchcardTable",
-    (ctx) => {
-      const pCols = ctx.outputs
-        ?.resolve({ field: "antigenPunchcardTable", allowPermanentAbsence: true })
-        ?.getPColumns();
-      if (pCols === undefined) return undefined;
-      const identityOf = (c: (typeof pCols)[number]) => c.spec.domain?.[PUNCH_IDENTITY_DOMAIN];
-      // Every identity the pivot produced, always. Narrowing is the grid's job.
-      const cols = pCols.filter((c) => identityOf(c) !== undefined);
-      if (cols.length === 0) return undefined;
-      // The clonotype's cell count. It carries no identity domain, so the filter above drops it. `primaryColumns`
-      // runs no discovery, so a column absent from this list never reaches the grid. Keyed on the same single axis
-      // as the punch columns, which is what makes it safe to add.
-      const cellCount = pCols.filter((c) => c.spec.name === PUNCH_CELL_COUNT_COLUMN);
-      // Alphabetical by the name a READER sees. The workflow emits these columns sorted by identity, which under
-      // the per-tag grouping is the barcode, and a panel's names never sort as its sequences do. Numeric
-      // collation, so `antigen_9` precedes `antigen_10`. `columns: null` adds the clonotype column separately.
-      const labelOf = (c: (typeof cols)[number]) =>
-        c.spec.annotations?.["pl7.app/label"] ?? (identityOf(c) as string);
-      const ordered = [...cols].sort((a, b) =>
-        labelOf(a).localeCompare(labelOf(b), undefined, { sensitivity: "base", numeric: true }),
-      );
-      // Headers carry the identity's full name, and never a truncation.
-      //
-      // Column ORDER comes from the `pl7.app/table/orderPriority` annotation on each spec, and from nothing else.
-      // A `displayOptions.ordering` rule and this array's own order are BOTH inert here. The cell count carries
-      // 96000, between the clonotype label's 100000 and the punches' 92000. To fix a column that "renders last",
-      // measure with `aria-colindex`: `querySelectorAll('[role="columnheader"]')` returns AG Grid's recycled
-      // header nodes in an order unrelated to column position.
+  .outputWithStatus("punchcardTable", (ctx) => {
+    const pCols = ctx.outputs
+      ?.resolve({ field: "antigenPunchcardTable", allowPermanentAbsence: true })
+      ?.getPColumns();
+    if (pCols === undefined) return undefined;
+    const identityOf = (c: (typeof pCols)[number]) => c.spec.domain?.[PUNCH_IDENTITY_DOMAIN];
+    // Every identity the pivot produced, always. Narrowing is the grid's job.
+    const cols = pCols.filter((c) => identityOf(c) !== undefined);
+    if (cols.length === 0) return undefined;
+    // The clonotype's cell count. It carries no identity domain, so the filter above drops it. `primaryColumns`
+    // runs no discovery, so a column absent from this list never reaches the grid. Keyed on the same single axis
+    // as the punch columns, which is what makes it safe to add.
+    const cellCount = pCols.filter((c) => c.spec.name === PUNCH_CELL_COUNT_COLUMN);
+    // Alphabetical by the name a READER sees. The workflow emits these columns sorted by identity, which under
+    // the per-tag grouping is the barcode, and a panel's names never sort as its sequences do. Numeric
+    // collation, so `antigen_9` precedes `antigen_10`. `columns: null` adds the clonotype column separately.
+    const labelOf = (c: (typeof cols)[number]) =>
+      c.spec.annotations?.["pl7.app/label"] ?? (identityOf(c) as string);
+    const ordered = [...cols].sort((a, b) =>
+      labelOf(a).localeCompare(labelOf(b), undefined, { sensitivity: "base", numeric: true }),
+    );
+    // Headers carry the identity's full name, and never a truncation.
+    //
+    // Column ORDER comes from the `pl7.app/table/orderPriority` annotation on each spec, and from nothing else.
+    // A `displayOptions.ordering` rule and this array's own order are BOTH inert here. The cell count carries
+    // 96000, between the clonotype label's 100000 and the punches' 92000. To fix a column that "renders last",
+    // measure with `aria-colindex`: `querySelectorAll('[role="columnheader"]')` returns AG Grid's recycled
+    // header nodes in an order unrelated to column position.
 
-      // The clonotype's own V(D)J properties, joined onto the same axis the punches use.
-      const punchAxisKey = axisKeyOf(cols[0].spec.axesSpec[0]);
-      const vdjColumns = ctx.resultPool
-        .getOptions((spec) => {
-          if (!isPColumnSpec(spec)) return false;
-          if (spec.name !== VDJ_SEQUENCE_COLUMN && spec.name !== VDJ_GENE_HIT_COLUMN) return false;
-          if (spec.domain?.[CHAIN_INDEX_DOMAIN] !== "primary") return false;
-          // Keyed on the clonotype and on NOTHING else. A per-sample column would drag a sample axis in and
-          // re-key the whole card.
-          if (spec.axesSpec.length !== 1) return false;
-          return axisKeyOf(spec.axesSpec[0]) === punchAxisKey;
-        })
-        .map((o) => ctx.resultPool.getPColumnByRef(o.ref))
-        .filter((c): c is NonNullable<typeof c> => c !== undefined);
+    // The clonotype's own V(D)J properties, joined onto the same axis the punches use.
+    const punchAxisKey = axisKeyOf(cols[0].spec.axesSpec[0]);
+    const vdjColumns = ctx.resultPool
+      .getOptions((spec) => {
+        if (!isPColumnSpec(spec)) return false;
+        if (spec.name !== VDJ_SEQUENCE_COLUMN && spec.name !== VDJ_GENE_HIT_COLUMN) return false;
+        if (spec.domain?.[CHAIN_INDEX_DOMAIN] !== "primary") return false;
+        // Keyed on the clonotype and on NOTHING else. A per-sample column would drag a sample axis in and
+        // re-key the whole card.
+        if (spec.axesSpec.length !== 1) return false;
+        return axisKeyOf(spec.axesSpec[0]) === punchAxisKey;
+      })
+      .map((o) => ctx.resultPool.getPColumnByRef(o.ref))
+      .filter((c): c is NonNullable<typeof c> => c !== undefined);
 
-      // Which sequence a reader sees by default.
-      const aaSequences = vdjColumns.filter(
-        (c) =>
-          c.spec.name === VDJ_SEQUENCE_COLUMN &&
-          c.spec.domain?.["pl7.app/alphabet"] === "aminoacid",
-      );
-      type SequenceMatch = {
-        name: string;
-        domain: Record<string, string | { type: "regex"; value: string }>;
-        annotations?: Record<string, string>;
-      };
-      const shownSequenceMatch: SequenceMatch | undefined = aaSequences.some(
-        (c) => c.spec.annotations?.[VDJ_ASSEMBLING_FEATURE_ANNOTATION] === "true",
-      )
+    // Which sequence a reader sees by default.
+    const aaSequences = vdjColumns.filter(
+      (c) =>
+        c.spec.name === VDJ_SEQUENCE_COLUMN && c.spec.domain?.["pl7.app/alphabet"] === "aminoacid",
+    );
+    type SequenceMatch = {
+      name: string;
+      domain: Record<string, string | { type: "regex"; value: string }>;
+      annotations?: Record<string, string>;
+    };
+    const shownSequenceMatch: SequenceMatch | undefined = aaSequences.some(
+      (c) => c.spec.annotations?.[VDJ_ASSEMBLING_FEATURE_ANNOTATION] === "true",
+    )
+      ? {
+          name: VDJ_SEQUENCE_COLUMN,
+          domain: { "pl7.app/alphabet": "aminoacid" },
+          annotations: { [VDJ_ASSEMBLING_FEATURE_ANNOTATION]: "true" },
+        }
+      : aaSequences.some((c) => /cdr3/i.test(c.spec.domain?.["pl7.app/vdj/feature"] ?? ""))
         ? {
             name: VDJ_SEQUENCE_COLUMN,
-            domain: { "pl7.app/alphabet": "aminoacid" },
-            annotations: { [VDJ_ASSEMBLING_FEATURE_ANNOTATION]: "true" },
+            // The matcher offers only exact and regex, so "contains" is spelled as one.
+            domain: {
+              "pl7.app/alphabet": "aminoacid",
+              "pl7.app/vdj/feature": { type: "regex" as const, value: ".*[Cc][Dd][Rr]3.*" },
+            },
           }
-        : aaSequences.some((c) => /cdr3/i.test(c.spec.domain?.["pl7.app/vdj/feature"] ?? ""))
-          ? {
-              name: VDJ_SEQUENCE_COLUMN,
-              // The matcher offers only exact and regex, so "contains" is spelled as one.
-              domain: {
-                "pl7.app/alphabet": "aminoacid",
-                "pl7.app/vdj/feature": { type: "regex" as const, value: ".*[Cc][Dd][Rr]3.*" },
-              },
-            }
-          : undefined;
+        : undefined;
 
-      return createPlDataTableV3(ctx, {
-        primaryColumns: [...cellCount, ...ordered].map((c) => DataColumn.fromColumn(c)),
-        columns: vdjColumns.map((c) => DataColumn.fromColumn(c)),
-        tableState: ctx.data.punchcardTableState,
-        // Read in order, first match wins; anything UNMATCHED keeps its own default, which is what leaves the
-        // punches and the cell count showing. Both fallthrough rules are scoped by column name so they can
-        // never reach them.
-        displayOptions: {
-          visibility: [
-            ...(shownSequenceMatch === undefined
-              ? []
-              : [{ match: shownSequenceMatch, visibility: "default" as const }]),
-            { match: { name: VDJ_SEQUENCE_COLUMN }, visibility: "optional" as const },
-            { match: { name: VDJ_GENE_HIT_COLUMN }, visibility: "optional" as const },
-          ],
-        },
-      });
-    },
-    { retentive: true, withStatus: true },
-  )
+    return createPlDataTableV3(ctx, {
+      primaryColumns: [...cellCount, ...ordered].map((c) => DataColumn.fromColumn(c)),
+      columns: vdjColumns.map((c) => DataColumn.fromColumn(c)),
+      tableState: ctx.data.punchcardTableState,
+      // Read in order, first match wins; anything UNMATCHED keeps its own default, which is what leaves the
+      // punches and the cell count showing. Both fallthrough rules are scoped by column name so they can
+      // never reach them.
+      displayOptions: {
+        visibility: [
+          ...(shownSequenceMatch === undefined
+            ? []
+            : [{ match: shownSequenceMatch, visibility: "default" as const }]),
+          { match: { name: VDJ_SEQUENCE_COLUMN }, visibility: "optional" as const },
+          { match: { name: VDJ_GENE_HIT_COLUMN }, visibility: "optional" as const },
+        ],
+      },
+    });
+  })
   // DERIVED from an emitted column and never written by hand. `isJsonEqual` matches `showCellButtonForAxisId`
   // on exact JSON equality, domain and all, so a hand-written `{type, name}` matches nothing and renders no
   // button and no error.
@@ -1619,162 +1696,153 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   // The filter is pushed down, and not applied afterwards. `createPTableDefV3` wraps the join in a
   // `{type:"filter", predicate}` node, which the engine lowers into the data query (pframes-rs
   // `visit_filter`), so one clonotype's rows cross the boundary whatever the run's size.
-  .output(
-    "expansionTable",
-    (ctx) => {
-      // A table built with no filter is EVERY clonotype's identities at once.
-      const chosen = ctx.data.expandedSet;
-      if (chosen === undefined || chosen.length === 0) return undefined;
-      const frame = ctx.outputs
-        ?.resolve({ field: "antigenVerdictsTable", allowPermanentAbsence: true })
-        ?.getPColumns();
-      if (frame === undefined || frame.length === 0) return undefined;
-      // NAMED explicitly, which is the whole correctness of this call. `antigenVerdictsTable` surfaces the entire
-      // export frame, whose families are keyed on five different axes: tag, panel, sample, set, and
-      // (set, identity). One table over all of them is a malformed join, and the SDK answers `discoverColumns
-      // failed` out of `discoverLabelColumns`. Only the (set, identity) family belongs here.
+  .outputWithStatus("expansionTable", (ctx) => {
+    // A table built with no filter is EVERY clonotype's identities at once.
+    const chosen = ctx.data.expandedSet;
+    if (chosen === undefined || chosen.length === 0) return undefined;
+    const frame = ctx.outputs
+      ?.resolve({ field: "antigenVerdictsTable", allowPermanentAbsence: true })
+      ?.getPColumns();
+    if (frame === undefined || frame.length === 0) return undefined;
+    // NAMED explicitly, which is the whole correctness of this call. `antigenVerdictsTable` surfaces the entire
+    // export frame, whose families are keyed on five different axes: tag, panel, sample, set, and
+    // (set, identity). One table over all of them is a malformed join, and the SDK answers `discoverColumns
+    // failed` out of `discoverLabelColumns`. Only the (set, identity) family belongs here.
+    //
+    // The identity's readable name is NOT named here. It is emitted twice under one spec -- `identityLabels`
+    // into `exportFb`, and `reagentIdentityLabels` into `reagentFb` -- and `reagentFb` reaches this block as
+    // the `antigenReagentTable` output, so `columns: null` discovers it. Supplying the `exportFb` copy as well
+    // rendered two identical "Antigen" columns. The two specs carry no domain, so no visibility rule separates
+    // them; dropping one supplier is the only route. `reagentFb` is built unconditionally beside the verdicts.
+    //
+    // Could-answer is CONDITIONAL. Under one panel it is the clonotype's own cell count at every identity, which
+    // the grid already carries beside its name.
+    //
+    // Read from the run RECORD, and not from current args. What panels a run carried is a fact about that run.
+    const runMeta = ctx.outputs
+      ?.resolve({ field: "antigenRunMeta", allowPermanentAbsence: true })
+      ?.getDataAsJsonOrUndefined<VerdictRunMeta>();
+    // Absent reads as one panel.
+    const panelsDiffer = (runMeta?.samplePanelCount ?? 1) > 1;
+    // Not-bound is absent by design. A cell's vote is exactly one of bound or not-bound, so a third column is
+    // `answered - bound` printed out. It is not in the export either.
+    const WANTED = [
+      "pl7.app/antigen/verdict",
+      ...(panelsDiffer ? ["pl7.app/antigen/cellsAsked"] : []),
+      "pl7.app/antigen/cellsAnswered",
+      "pl7.app/antigen/cellsBound",
+    ];
+    const pCols = WANTED.flatMap((name) => frame.filter((c) => c.spec.name === name));
+    // Named, never positional. The filter above preserves WANTED's order, and a conditional member shifts it.
+    const verdictCol = pCols.find((c) => c.spec.name === "pl7.app/antigen/verdict");
+    // Checked directly, and before `setAxis` is derived from it. The filter below reads `verdictCol.id`.
+    if (verdictCol === undefined) return undefined;
+    const setAxis = verdictCol.spec.axesSpec[0];
+    if (setAxis === undefined) return undefined;
+    return createPlDataTableV3(ctx, {
+      primaryColumns: pCols.map((c) => DataColumn.fromColumn(c)),
+      columns: null,
+      tableState: ctx.data.expansionTableState,
+      // `PlAgDataTableV2` drops any axis that has a label column, and renders the label column in that axis's
+      // place. The identity's label arrives by discovery, not as a primary column.
       //
-      // The identity's readable name is NOT named here. It is emitted twice under one spec -- `identityLabels`
-      // into `exportFb`, and `reagentIdentityLabels` into `reagentFb` -- and `reagentFb` reaches this block as
-      // the `antigenReagentTable` output, so `columns: null` discovers it. Supplying the `exportFb` copy as well
-      // rendered two identical "Antigen" columns. The two specs carry no domain, so no visibility rule separates
-      // them; dropping one supplier is the only route. `reagentFb` is built unconditionally beside the verdicts.
-      //
-      // Could-answer is CONDITIONAL. Under one panel it is the clonotype's own cell count at every identity, which
-      // the grid already carries beside its name.
-      //
-      // Read from the run RECORD, and not from current args. What panels a run carried is a fact about that run.
-      const runMeta = ctx.outputs
-        ?.resolve({ field: "antigenRunMeta", allowPermanentAbsence: true })
-        ?.getDataAsJsonOrUndefined<VerdictRunMeta>();
-      // Absent reads as one panel.
-      const panelsDiffer = (runMeta?.samplePanelCount ?? 1) > 1;
-      // Not-bound is absent by design. A cell's vote is exactly one of bound or not-bound, so a third column is
-      // `answered - bound` printed out. It is not in the export either.
-      const WANTED = [
-        "pl7.app/antigen/verdict",
-        ...(panelsDiffer ? ["pl7.app/antigen/cellsAsked"] : []),
-        "pl7.app/antigen/cellsAnswered",
-        "pl7.app/antigen/cellsBound",
-      ];
-      const pCols = WANTED.flatMap((name) => frame.filter((c) => c.spec.name === name));
-      // Named, never positional. The filter above preserves WANTED's order, and a conditional member shifts it.
-      const verdictCol = pCols.find((c) => c.spec.name === "pl7.app/antigen/verdict");
-      // Checked directly, and before `setAxis` is derived from it. The filter below reads `verdictCol.id`.
-      if (verdictCol === undefined) return undefined;
-      const setAxis = verdictCol.spec.axesSpec[0];
-      if (setAxis === undefined) return undefined;
-      return createPlDataTableV3(ctx, {
-        primaryColumns: pCols.map((c) => DataColumn.fromColumn(c)),
-        columns: null,
-        tableState: ctx.data.expansionTableState,
-        // `PlAgDataTableV2` drops any axis that has a label column, and renders the label column in that axis's
-        // place. The identity's label arrives by discovery, not as a primary column.
+      // Both columns the table would show as a name are called `pl7.app/label`, and the axis each one labels tells
+      // them apart. The FIRST match wins, so the order of these two rules matters.
+      displayOptions: {
+        visibility: [
+          // The identity's name, the row's subject. Required although the spec already annotates "default": the
+          // catch-all rule below matches this column too, and the first match wins.
+          {
+            match: {
+              name: "^pl7\\.app/label$",
+              axes: [{ name: "^pl7\\.app/antigen/identityId$" }],
+              partialAxesMatch: false,
+            },
+            visibility: "default",
+          },
+          // Any other label column here labels the CLONOTYPE axis. Optional rather than hidden, so the Columns picker
+          // can restore it.
+          { match: { name: "^pl7\\.app/label$" }, visibility: "optional" },
+        ],
+        // Cells-that-answered sits LAST, behind the count it contains. Its annotation puts it at 98000, ahead of
+        // cells-that-read-bound at 97500, and in this panel the two swap. Overridden here and not in the workflow
+        // spec, whose columns are EXPORTS with downstream readers and whose priorities are global.
         //
-        // Both columns the table would show as a name are called `pl7.app/label`, and the axis each one labels tells
-        // them apart. The FIRST match wins, so the order of these two rules matters.
-        displayOptions: {
-          visibility: [
-            // The identity's name, the row's subject. Required although the spec already annotates "default": the
-            // catch-all rule below matches this column too, and the first match wins.
-            {
-              match: {
-                name: "^pl7\\.app/label$",
-                axes: [{ name: "^pl7\\.app/antigen/identityId$" }],
-                partialAxesMatch: false,
-              },
-              visibility: "default",
+        // This rule only reaches a clonotype the grid has not drawn before. `expansionTableState.stateCache` keeps
+        // one grid state PER `sourceId`, which here is the expanded clonotype, and a stored
+        // `columnOrder.orderedColIds` beats anything the model asks for. A reorder that must reach already-opened
+        // clonotypes needs the cache invalidated, which is not done here.
+        ordering: [{ match: { name: "^pl7\\.app/antigen/cellsAnswered$" }, priority: 90000 }],
+      },
+      filters: {
+        type: "and",
+        filters: [
+          {
+            type: "patternEquals",
+            // The FULL axis id, domain included. A dropped domain leaves an id that `remapFilterColumnIds` cannot
+            // resolve, and the SDK's unresolved-leaf path then calls `console`, which the model's QuickJS sandbox lacks.
+            // The symptom is `ReferenceError: 'console' is not defined` from deep inside the SDK.
+            column: {
+              type: "axis",
+              id:
+                setAxis.domain === undefined
+                  ? { name: setAxis.name, type: setAxis.type }
+                  : { name: setAxis.name, type: setAxis.type, domain: setAxis.domain },
             },
-            // Any other label column here labels the CLONOTYPE axis. Optional rather than hidden, so the Columns picker
-            // can restore it.
-            { match: { name: "^pl7\\.app/label$" }, visibility: "optional" },
-          ],
-          // Cells-that-answered sits LAST, behind the count it contains. Its annotation puts it at 98000, ahead of
-          // cells-that-read-bound at 97500, and in this panel the two swap. Overridden here and not in the workflow
-          // spec, whose columns are EXPORTS with downstream readers and whose priorities are global.
-          //
-          // This rule only reaches a clonotype the grid has not drawn before. `expansionTableState.stateCache` keeps
-          // one grid state PER `sourceId`, which here is the expanded clonotype, and a stored
-          // `columnOrder.orderedColIds` beats anything the model asks for. A reorder that must reach already-opened
-          // clonotypes needs the cache invalidated, which is not done here.
-          ordering: [{ match: { name: "^pl7\\.app/antigen/cellsAnswered$" }, priority: 90000 }],
-        },
-        filters: {
-          type: "and",
-          filters: [
-            {
-              type: "patternEquals",
-              // The FULL axis id, domain included. A dropped domain leaves an id that `remapFilterColumnIds` cannot
-              // resolve, and the SDK's unresolved-leaf path then calls `console`, which the model's QuickJS sandbox lacks.
-              // The symptom is `ReferenceError: 'console' is not defined` from deep inside the SDK.
-              column: {
-                type: "axis",
-                id:
-                  setAxis.domain === undefined
-                    ? { name: setAxis.name, type: setAxis.type }
-                    : { name: setAxis.name, type: setAxis.type, domain: setAxis.domain },
-              },
-              value: String(chosen[0]),
-            },
-            {
-              type: "patternNotEquals",
-              // A never-asked position is not a reading. Filtered by the verdict's own value, and not by a count: a bound
-              // count of 0 is a real reading and must stay.
-              column: { type: "column", id: verdictCol.id },
-              value: "never asked",
-            },
-          ],
-        },
-      });
-    },
-    { retentive: true, withStatus: true },
-  )
+            value: String(chosen[0]),
+          },
+          {
+            type: "patternNotEquals",
+            // A never-asked position is not a reading. Filtered by the verdict's own value, and not by a count: a bound
+            // count of 0 is a real reading and must stay.
+            column: { type: "column", id: verdictCol.id },
+            value: "never asked",
+          },
+        ],
+      },
+    });
+  })
   // ONE row per cell of the chosen clonotype, one column per identity, each position carrying the cell's own
   // reading rather than its set's verdict. An `unreliable` on the card is cells that disagree, and nothing but
   // this face shows the disagreement.
   //
   // Filtered on `setId`, which is a COLUMN here and not an axis: the frame is keyed (sampleId, cellId), so the
   // clonotype is a property of the row. The filter leaf takes `PColumn.id`, and never a hand-built id.
-  .output(
-    "cellExpansionTable",
-    (ctx) => {
-      const chosen = ctx.data.expandedSet;
-      if (chosen === undefined || chosen.length === 0) return undefined;
-      const frame = ctx.outputs
-        ?.resolve({ field: "antigenCellReference", allowPermanentAbsence: true })
-        ?.getPColumns();
-      if (frame === undefined || frame.length === 0) return undefined;
-      // Without the set column there is no filter, and an unfiltered table here is every cell in the run against
-      // every identity. Absent means the software gated the pivot away, which is a legitimate state and not an
-      // error, so the page states the reason from the run record.
-      const setCol = frame.find((c) => c.spec.name === "pl7.app/antigen/cellSetId");
-      if (setCol === undefined) return undefined;
-      const punchCols = frame.filter((c) => c.spec.name === "pl7.app/antigen/cellPunch");
-      if (punchCols.length === 0) return undefined;
-      const boundCount = frame.filter((c) => c.spec.name === "pl7.app/antigen/boundIdentities");
-      // No ordering rule, by design. The bound count's own annotation priority (95000) outranks every identity
-      // column at 94000 and below.
-      return createPlDataTableV3(ctx, {
-        primaryColumns: [setCol, ...boundCount, ...punchCols].map((c) => DataColumn.fromColumn(c)),
-        columns: null,
-        tableState: ctx.data.cellExpansionTableState,
-        filters: {
-          type: "and",
-          filters: [
-            {
-              type: "patternEquals",
-              column: { type: "column", id: setCol.id },
-              value: String(chosen[0]),
-            },
-          ],
-        },
-      });
-    },
-    { retentive: true, withStatus: true },
-  )
-  // The fitted backgrounds at the fit's own (sample, tag) grain. Two decile frames used to ride here
-  // too, eleven quantile points each, and nothing plotted either -- every distribution on the
-  // run-quality page is drawn from the binned counts in `tagCountBins`.
+  .outputWithStatus("cellExpansionTable", (ctx) => {
+    const chosen = ctx.data.expandedSet;
+    if (chosen === undefined || chosen.length === 0) return undefined;
+    const frame = ctx.outputs
+      ?.resolve({ field: "antigenCellReference", allowPermanentAbsence: true })
+      ?.getPColumns();
+    if (frame === undefined || frame.length === 0) return undefined;
+    // Without the set column there is no filter, and an unfiltered table here is every cell in the run against
+    // every identity. Absent means the software gated the pivot away, which is a legitimate state and not an
+    // error, so the page states the reason from the run record.
+    const setCol = frame.find((c) => c.spec.name === "pl7.app/antigen/cellSetId");
+    if (setCol === undefined) return undefined;
+    const punchCols = frame.filter((c) => c.spec.name === "pl7.app/antigen/cellPunch");
+    if (punchCols.length === 0) return undefined;
+    const boundCount = frame.filter((c) => c.spec.name === "pl7.app/antigen/boundIdentities");
+    // No ordering rule, by design. The bound count's own annotation priority (95000) outranks every identity
+    // column at 94000 and below.
+    return createPlDataTableV3(ctx, {
+      primaryColumns: [setCol, ...boundCount, ...punchCols].map((c) => DataColumn.fromColumn(c)),
+      columns: null,
+      tableState: ctx.data.cellExpansionTableState,
+      filters: {
+        type: "and",
+        filters: [
+          {
+            type: "patternEquals",
+            column: { type: "column", id: setCol.id },
+            value: String(chosen[0]),
+          },
+        ],
+      },
+    });
+  })
+  // The fitted backgrounds at the fit's own (sample, tag) grain. Every distribution on the run-quality
+  // page is drawn from the binned counts in `tagCountBins` instead.
   //
   // No grid reads this today: the fitted-background page reads the same numbers out of that JSON,
   // because a grid of small multiples is what a reader judges a fit from. Held open for the comparison
@@ -1791,31 +1859,23 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     { retentive: true, withStatus: true },
   )
   // One row per (panel, tag, identity). A tag that carries two identities takes a row under each.
-  .output(
-    "reagentTable",
-    (ctx) => {
-      const pCols = ctx.outputs
-        ?.resolve({ field: "antigenReagentTable", allowPermanentAbsence: true })
-        ?.getPColumns();
-      if (pCols === undefined) return undefined;
-      return createPlDataTableV2(ctx, pCols, ctx.data.reagentTableState);
-    },
-    { retentive: true, withStatus: true },
-  )
+  .outputWithStatus("reagentTable", (ctx) => {
+    const pCols = ctx.outputs
+      ?.resolve({ field: "antigenReagentTable", allowPermanentAbsence: true })
+      ?.getPColumns();
+    if (pCols === undefined) return undefined;
+    return createPlDataTableV2(ctx, pCols, ctx.data.reagentTableState);
+  })
   // Carries two shares: each sequence's own, and the sample's whole undeclared share, which is what the status
   // reads. That status is the barcode's, and never rolled into any sample's own. Rows are the pre-refine pass,
   // so they include sequences correction later snapped onto the panel. Usually empty, which is the wanted outcome.
-  .output(
-    "undeclaredBarcodesTable",
-    (ctx) => {
-      const pCols = ctx.outputs
-        ?.resolve({ field: "antigenUndeclaredBarcodesTable", allowPermanentAbsence: true })
-        ?.getPColumns();
-      if (pCols === undefined) return undefined;
-      return createPlDataTableV2(ctx, pCols, ctx.data.undeclaredBarcodesTableState);
-    },
-    { retentive: true, withStatus: true },
-  )
+  .outputWithStatus("undeclaredBarcodesTable", (ctx) => {
+    const pCols = ctx.outputs
+      ?.resolve({ field: "antigenUndeclaredBarcodesTable", allowPermanentAbsence: true })
+      ?.getPColumns();
+    if (pCols === undefined) return undefined;
+    return createPlDataTableV2(ctx, pCols, ctx.data.undeclaredBarcodesTableState);
+  })
   // The comparator that SERVED, and not the one that was requested. The software degrades a request it cannot
   // honour.
   .output("verdictRunMeta", (ctx): VerdictRunMeta | undefined =>
@@ -1938,7 +1998,39 @@ const TEMPLATE_PARAM_KEYS = [
   "minAgreement",
   "gateThreshold",
   "grouping",
+  "runMode",
+  "limitInput",
+  "aggregateBarcodeIqrMultiplier",
+  "aggregateBarcodeMinUmiThreshold",
+  "aggregateBarcodeTopN",
+  "panelAssignedWarn",
+  "panelAssignedError",
+  "matchRateWarn",
+  "matchRateError",
+  "cellBarcodeQualityWarn",
+  "cellBarcodeQualityError",
+  "readsPerCellWarn",
+  "aggregateBarcodeWarn",
+  "aggregateBarcodeError",
+  "undeclaredBarcodeWarn",
+  "undeclaredBarcodeError",
+  "usableReadWarn",
+  "usableReadError",
+  "rescuedShareWarn",
+  "rescuedShareError",
+  "vdjAntigenCountWarn",
+  "vdjAntigenCountError",
 ] as const satisfies readonly (keyof BlockParams & keyof BlockData)[];
+
+/** The contract's fields that name columns of the panel CSV, projected only with a portable CSV. */
+const PANEL_COLUMN_KEYS = [
+  "barcodeSeqColumn",
+  "featureNameColumn",
+  "sampleColumn",
+  "roleColumn",
+  "referenceValues",
+  "grouping",
+] as const satisfies readonly (typeof TEMPLATE_PARAM_KEYS)[number][];
 
 /**
  * The seeded half: the params a template supplied, with absent fields left out entirely rather than set

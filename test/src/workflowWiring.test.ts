@@ -9,8 +9,6 @@ import { describe, expect, it } from "vitest";
 // per-sample body's identity and changing it re-runs parse, refine-tags and tag-stat for every sample --
 // while reaching no command line and changing no number.
 //
-// That is how the three aggregate-barcode knobs came to be settings a scientist could move for no effect.
-//
 // Read as source text, which is the weaker half of this test: a rename that both files make together is
 // caught, a restructure of how fb-pipeline builds the map is not. There is no cheaper mechanism, because
 // the map is built inside a template body that only a running workflow evaluates.

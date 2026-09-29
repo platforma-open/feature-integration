@@ -1,0 +1,23 @@
+// Renames the leading (sample) key of per-sample results the fan-out produced under anonymized sample ids,
+// for the model outputs that need this project's ids.
+//
+// Ephemeral, and it waits only for each map's keys, not its values: live values such as log streams stay
+// live, because the renamed fields point at the same values.
+//
+// Inputs: `targets` = a map of per-sample result resources, `mapping` = {fromKey: toKey}; keys the mapping
+// does not mention are kept. Output: one renamed resource per target, under the target's name.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+sampleAnon := import(":sample-anonymization")
+
+self.awaitState("targets", { wildcard: "*" }, "InputsLocked")
+self.awaitState("mapping", "ResourceReady")
+
+self.body(func(inputs) {
+	result := {}
+	maps.forEach(self.rawInputs().targets.getValue().inputs(), func(name, targetField) {
+		result[name] = sampleAnon.renameLeadingKey(targetField.getValue(), inputs.mapping)
+	})
+	return result
+})

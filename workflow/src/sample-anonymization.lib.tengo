@@ -1,0 +1,145 @@
+// Helpers to translate sample ids to and from the anonymized ids of anonymize.anonymizePKeys, whose
+// `mapping` is {anonymizedId: sampleId}.
+
+maps := import("@platforma-sdk/workflow-tengo:maps")
+smart := import("@platforma-sdk/workflow-tengo:smart")
+slices := import("@platforma-sdk/workflow-tengo:slices")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+anonymizeUtil := import("@platforma-sdk/workflow-tengo:anonymize.util")
+
+json := import("json")
+
+// Anonymized ids as anonymize/impl.lib.tengo makes them: base32 of the first 20 bytes of the SHA-256 of a
+// key's concatenated field CIDs, then "-<n>".
+ANONYMIZED_ID_BYTES := 20
+
+// samplePartitions: {sampleId: concatenated CIDs of that sample's fields} for column data keyed by the
+// sample first, or undefined when it is not. Partitioned column-data types state their key length as
+// superPartitionKeyLength, partitionKeyLength or keyLength.
+samplePartitions := func(data) {
+	meta := json.decode(string(data.getData()))
+	if !is_map(meta) {
+		return undefined
+	}
+	keyLength := meta.superPartitionKeyLength
+	if is_undefined(keyLength) {
+		keyLength = meta.partitionKeyLength
+	}
+	if is_undefined(keyLength) {
+		keyLength = meta.keyLength
+	}
+	if is_undefined(keyLength) || keyLength < 1 {
+		return undefined
+	}
+	groups := {}
+	maps.forEach(data.inputs(), func(fieldName, field) {
+		sampleId := anonymizeUtil.decodePDataField(fieldName).key[0]
+		if is_undefined(groups[sampleId]) {
+			groups[sampleId] = bytes(0)
+		}
+		groups[sampleId] = groups[sampleId] + field.getValue().info().CanonicalID
+	})
+	return groups
+}
+
+// idsFromPartitions: {sampleId: anonymizedId} for every sample of `partitions` not in `except`, each id
+// derived from that sample's own data, so the same data gets the same id in every project.
+idsFromPartitions := func(partitions, except) {
+	ids := {}
+	repetitions := {}
+	maps.forEach(partitions, func(sampleId, cids) {
+		if !is_undefined(except[sampleId]) {
+			return
+		}
+		base := ll.base32Encode(ll.sha256Encode(cids)[0:ANONYMIZED_ID_BYTES])
+		repetition := is_undefined(repetitions[base]) ? 0 : repetitions[base]
+		repetitions[base] = repetition + 1
+		ids[sampleId] = base + "-" + repetition
+	})
+	return ids
+}
+
+// invert: {a: b} -> {b: a}. Exact, since both sides are unique.
+invert := func(mapping) {
+	result := {}
+	maps.forEach(mapping, func(key, value) {
+		result[value] = key
+	})
+	return result
+}
+
+// rekey: a copy of `m` with its keys translated. Unknown keys are kept.
+rekey := func(m, translation) {
+	result := {}
+	maps.forEach(m, func(key, value) {
+		newKey := translation[key]
+		result[is_undefined(newKey) ? key : newKey] = value
+	})
+	return result
+}
+
+// translateList: a copy of `list` with its elements translated. Unknown elements are kept.
+translateList := func(list, translation) {
+	return slices.map(list, func(value) {
+		newValue := translation[value]
+		return is_undefined(newValue) ? value : newValue
+	})
+}
+
+// replaceValues: a pt expression translating each whole value of `colExpr`; unknown values are kept. Built
+// in sorted key order, so the same translation always gives the same workflow.
+replaceValues := func(colExpr, translation) {
+	whenExpr := undefined
+	maps.forEach(translation, func(from, to) {
+		condition := colExpr.eq(pt.lit(from))
+		if is_undefined(whenExpr) {
+			whenExpr = pt.when(condition).then(pt.lit(to))
+		} else {
+			whenExpr = whenExpr.when(condition).then(pt.lit(to))
+		}
+	})
+	if is_undefined(whenExpr) {
+		return colExpr
+	}
+	return whenExpr.otherwise(colExpr)
+}
+
+// replaceSubstrings: a pt expression replacing every occurrence of each key inside `colExpr`, for columns
+// that join several sample ids into one string. Longest keys first, so "X-1" cannot clip "X-10".
+replaceSubstrings := func(colExpr, translation) {
+	keys := slices.quickSortFn(maps.getKeys(translation), func(a, b) {
+		return len(a) > len(b) || (len(a) == len(b) && a < b)
+	})
+	expr := colExpr
+	for key in keys {
+		expr = expr.strReplace(key, translation[key], { literal: true, replaceAll: true })
+	}
+	return expr
+}
+
+// renameLeadingKey: a copy of the column data `target` with the first element of each key translated by
+// `mapping`; keys it does not mention are kept. The fields point at the same values.
+renameLeadingKey := func(target, mapping) {
+	renamed := smart.structBuilder(target.info().Type, target.getData())
+	maps.forEach(target.inputs(), func(fieldName, field) {
+		decoded := anonymizeUtil.decodePDataField(fieldName)
+		key := copy(decoded.key)
+		if !is_undefined(mapping[key[0]]) {
+			key[0] = mapping[key[0]]
+		}
+		renamed.createInputField(string(json.encode(key)) + decoded.suffix).set(field)
+	})
+	return renamed.lockAndBuild()
+}
+
+export {
+	samplePartitions: samplePartitions,
+	idsFromPartitions: idsFromPartitions,
+	invert: invert,
+	rekey: rekey,
+	translateList: translateList,
+	replaceValues: replaceValues,
+	replaceSubstrings: replaceSubstrings,
+	renameLeadingKey: renameLeadingKey
+}
