@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.feature-integration
 
+## 3.8.1
+
+### Patch Changes
+
+- 6ba1072: Update SDK: PlAgDataTable no longer recreates its grid in an endless loop
+
 ## 3.8.0
 
 ### Minor Changes
