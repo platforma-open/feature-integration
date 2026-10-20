@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.feature-integration.verdicts
 
+## 1.1.1
+
+### Patch Changes
+
+- 5688010: Release every package through npm trusted publishing (OIDC) so each package's trusted publisher is used before it expires.
+
 ## 1.1.0
 
 ### Minor Changes

@@ -1,5 +1,11 @@
 # @platforma-open/milaboratories.feature-integration.per-cell-metrics
 
+## 3.8.1
+
+### Patch Changes
+
+- 5688010: Release every package through npm trusted publishing (OIDC) so each package's trusted publisher is used before it expires.
+
 ## 3.8.0
 
 ### Minor Changes

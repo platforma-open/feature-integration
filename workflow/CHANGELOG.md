@@ -1,5 +1,16 @@
 # @platforma-open/milaboratories.feature-integration.workflow
 
+## 3.8.1
+
+### Patch Changes
+
+- 5688010: Release every package through npm trusted publishing (OIDC) so each package's trusted publisher is used before it expires.
+- Updated dependencies [5688010]
+  - @platforma-open/milaboratories.feature-integration.feature-properties@1.0.2
+  - @platforma-open/milaboratories.feature-integration.mitool-support@1.0.2
+  - @platforma-open/milaboratories.feature-integration.per-cell-metrics@3.8.1
+  - @platforma-open/milaboratories.feature-integration.verdicts@1.1.1
+
 ## 3.8.0
 
 ### Minor Changes

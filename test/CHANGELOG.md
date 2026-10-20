@@ -1,5 +1,13 @@
 # @platforma-open/milaboratories.feature-integration.test
 
+## 1.0.15
+
+### Patch Changes
+
+- 5688010: Release every package through npm trusted publishing (OIDC) so each package's trusted publisher is used before it expires.
+- Updated dependencies [5688010]
+  - @platforma-open/milaboratories.feature-integration.model@3.5.1
+
 ## 1.0.14
 
 ### Patch Changes
