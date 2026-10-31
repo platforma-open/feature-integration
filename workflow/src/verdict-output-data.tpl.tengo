@@ -1,0 +1,27 @@
+// Imports one verdict table that is shown in the UI and exports its columns for download.
+//
+// Pure, and it returns the exported data, which is what the block output keeps, so a later run over the
+// same file reuses both steps. It takes the file and a type-only import cfg (pframes.util purifySpec);
+// verdict-import attaches the full specs, which carry blockId.
+//
+// Inputs: `file`, `cfg`. Output: `data` = {<columnId>: exported column data}.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
+pframes := import("@platforma-sdk/workflow-tengo:pframes")
+pUtil := import("@platforma-sdk/workflow-tengo:pframes.util")
+smart := import("@platforma-sdk/workflow-tengo:smart")
+
+self.defineOutputs("data")
+
+self.body(func(inputs) {
+	result := smart.mapBuilder()
+	imported := xsv.importFile(inputs.file, "csv", inputs.cfg, { dataOnly: true })
+	for col in inputs.cfg.columns {
+		id := pUtil.xsvColumnId(col)
+		result.addRef(id, pframes.exportColumnData(imported.getFutureInputField(id)))
+	}
+	return {
+		data: result.lockAndBuild()
+	}
+})

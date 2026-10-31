@@ -1,0 +1,30 @@
+{
+  "name": "@platforma-open/milaboratories.feature-integration.test",
+  "version": "1.0.18",
+  "private": true,
+  "description": "Block tests",
+  "keywords": [],
+  "files": [],
+  "type": "module",
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "fmt": "ts-builder format",
+    "check": "ts-builder check --target block-test"
+  },
+  "dependencies": {
+    "@platforma-open/milaboratories.feature-integration.kind": "workspace:*",
+    "@platforma-open/milaboratories.feature-integration.model": "workspace:*",
+    "@platforma-open/milaboratories.samples-and-data": "catalog:",
+    "@platforma-sdk/model": "catalog:",
+    "this-block": "workspace:@platforma-open/milaboratories.feature-integration@*"
+  },
+  "devDependencies": {
+    "@milaboratories/ts-builder": "catalog:",
+    "@milaboratories/ts-configs": "catalog:",
+    "@platforma-sdk/test": "catalog:",
+    "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "typescript": "*"
+  }
+}

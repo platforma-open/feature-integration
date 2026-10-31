@@ -1,0 +1,258 @@
+import type {
+  BlockData,
+  platforma,
+} from "@platforma-open/milaboratories.feature-integration.model";
+import { awaitStableState, blockTest } from "@platforma-sdk/test";
+import { SamplesAndDataBlockPointer as samplesAndDataBlockSpec } from "@platforma-open/milaboratories.samples-and-data";
+import { FeatureIntegrationBlockPointer as myBlockSpec } from "this-block";
+import type { InferBlockState, PTableHandle } from "@platforma-sdk/model";
+import { createPlDataTableStateV2, uniquePlId, wrapOutputs } from "@platforma-sdk/model";
+
+// Block tests for the Feature Barcode Profiling block.
+//
+// The block has two halves and this file reaches one of them. The per-sample counting half is exercised end
+// to end by the second test below, when a backend can run it. The ANTIGEN VERDICT half is not covered here
+// at all: it needs a single-cell V(D)J dataset upstream to supply the clonotype sets, and the
+// samples-and-data chain this file uses cannot produce one. That logic is covered by the Python suite
+// (software/*/test/) and by the Tengo suite for the p-column specs (workflow/src/test/*.test.tengo),
+// and the block is verified by hand against software/test-data/fixtures/verdicts/ before release.
+//
+// The upstream chain follows the samples-and-data FASTQ pattern. The tag->feature CSV is a direct upload,
+// set as the block arg `tagFeatureCsvHandle` through a local file handle.
+//
+// Golden, decoded from test/assets/fb_small_R{1,2}.fastq.gz. Geometry is CELL 16 + UMI 10 on R1 and
+// feature 15 on R2, and tags.csv maps 15xG -> AGX and 15xC -> BGX:
+//   read0: cell ACGTACGTACGTACGT, UMI AAAAAAAAAA, feature AGX
+//   read1: cell ACGTACGTACGTACGT, UMI AAAAAAAAAC, feature AGX
+//   read2: cell ACGTACGTACGTACGT, UMI AAAAAAAAAG, feature BGX
+//   read3: cell TGCATGCATGCATGCA, UMI TTTTTTTTTT, feature AGX
+// distinct-UMI counts per (cell, feature):
+//   (cellA, AGX) = 2, (cellA, BGX) = 1, (cellB, AGX) = 1  -> 3 rows, umiCount column = {1, 1, 2}.
+
+type TableOutput = {
+  ok: boolean;
+  value: { fullTableHandle: string; visibleTableHandle: string } | undefined;
+};
+
+blockTest("empty inputs", { timeout: 20000 }, async ({ rawPrj: project, expect }) => {
+  const blockId = await project.addBlock("Block", myBlockSpec);
+  const stableState = (await awaitStableState(
+    project.getBlockState(blockId),
+    15000,
+  )) as InferBlockState<typeof platforma>;
+  // With no upstream FASTQ column in the pool the option lists are empty. args() throws, disabling Run,
+  // and the outputs still resolve.
+  expect(stableState.outputs).toMatchObject({
+    fastqOptions: { ok: true, value: [] },
+    datasetOptions: { ok: true, value: [] },
+  });
+
+  // Every output a page reads must RESOLVE on a freshly added block, before anything has run. An output
+  // that throws here breaks the page that reads it at the moment the block is created. Each verdict-branch
+  // output is guarded by its own undefined-until-computed path, and the guards are what this asserts. Values
+  // are deliberately not asserted, because `ok` with an undefined value is the correct empty-state answer.
+  const mustResolve = [
+    "perCellTable",
+    "qcSummaryTable",
+    "punchcardTable",
+    "punchcardIdentityOptions",
+    "verdictRunMeta",
+    "isRunning",
+    "started",
+  ] as const;
+  const unresolved = mustResolve.filter((name) => stableState.outputs?.[name]?.ok !== true);
+  expect(unresolved, "outputs that failed to resolve on an empty block").toEqual([]);
+});
+
+// Level-4 end-to-end run against the published mitool (software-mitool 2.3.1-129-main, carrying the FEATURE
+// tag type #86 and tag-stat -u #84). Exercises the full per-sample chain: SND FASTQ upload, fastqOptions,
+// args derivation, the tag->feature CSV upload driven by prerun.tpl, the mitool
+// parse -> refine-tags -> tag-stat -u exec chain, the per-cell-metrics Python, and the processColumn export.
+//
+// SKIPPED (2026-07-06): it hangs on the CI and run-platforma FS-storage backend. A raw file.importFile of a
+// local handle never finalizes there, so the prerun's `csvColumns` never resolves and awaitStableState
+// aborts with `field_not_resolved:csvColumns`. A test-backend limitation rather than a block bug.
+//
+// No block e2e-tests this direct-upload path. Every block consuming a file.importFile handle ships without
+// block tests, and the Samples & Data upstream chain, the one CI-working file-input pattern, cannot supply
+// a direct CSV upload. Re-enable if the backend gains a working local file.importFile, or if the CSV moves
+// to a pool column.
+blockTest.skip(
+  "feature integration end-to-end emits per-cell umiCount",
+  { timeout: 300000 },
+  async ({ rawPrj: project, ml, helpers, expect }) => {
+    const sndBlockId = await project.addBlock("Samples & Data", samplesAndDataBlockSpec);
+    const fiBlockId = await project.addBlock("Feature Integration", myBlockSpec);
+
+    const sample1Id = uniquePlId();
+    const dataset1Id = uniquePlId();
+
+    const r1Handle = await helpers.getLocalFileHandle("./assets/fb_small_R1.fastq.gz");
+    const r2Handle = await helpers.getLocalFileHandle("./assets/fb_small_R2.fastq.gz");
+
+    // Upstream: a single-sample paired-FASTQ dataset. `mutateBlockStorage` rather than `setBlockArgs`:
+    // samples-and-data is a V3 block (modelAPIVersion 2) and `setBlockArgs` hardcodes version 1, which it
+    // rejects. The value is typed `unknown` across the facade boundary, so it is written as a literal --
+    // the branded `PlId` does not unify through the facade's own zod brand.
+    await project.mutateBlockStorage(sndBlockId, {
+      operation: "update-block-data",
+      value: {
+        // `update-block-data` replaces the whole of SND's data, so every field its V3 shape requires is
+        // written here -- the three below are not exercised by this test but must be present.
+        h5adFilesToPreprocess: [],
+        seuratFilesToPreprocess: [],
+        suggestedImport: false,
+        metadata: [],
+        sampleIds: [sample1Id],
+        sampleLabelColumnLabel: "Sample Name",
+        sampleLabels: { [sample1Id]: "Sample 1" },
+        datasets: [
+          {
+            id: dataset1Id,
+            label: "Dataset 1",
+            content: {
+              type: "Fastq",
+              readIndices: ["R1", "R2"],
+              gzipped: true,
+              data: {
+                [sample1Id]: {
+                  R1: r1Handle,
+                  R2: r2Handle,
+                },
+              },
+            },
+          },
+        ],
+      },
+    });
+    await project.runBlock(sndBlockId);
+    await helpers.awaitBlockDone(sndBlockId, 30000);
+
+    const sndStableState = await helpers.awaitBlockDoneAndGetStableBlockState(sndBlockId, 30000);
+    expect(sndStableState.outputs).toMatchObject({
+      fileImports: {
+        ok: true,
+        value: { [r1Handle]: { done: true }, [r2Handle]: { done: true } },
+      },
+    });
+
+    // The feature-integration block sees the FASTQ column once SND is done.
+    const fiState1 = (await awaitStableState(
+      project.getBlockState(fiBlockId),
+      30000,
+    )) as InferBlockState<typeof platforma>;
+    expect(fiState1.outputs).toMatchObject({
+      fastqOptions: { ok: true, value: [{ label: "Dataset 1" }] },
+    });
+    const fiOutputs1 = wrapOutputs(fiState1.outputs);
+
+    // The tag->feature CSV is a direct upload (not a pool ref). Provision it as a local file handle.
+    const csvHandle = await helpers.getLocalFileHandle("./assets/tags.csv");
+
+    // update-block-data must carry EVERY BlockArgsValid field, or the backend reports "currentArgs not
+    // set". controlFeature is optional, and so is datasetRef: this run has no single-cell V(D)J dataset, so
+    // it exercises the counting half alone.
+    //
+    // What a datasetless run emits BESIDES the per-cell table is deliberately not asserted. Today the whole
+    // antigen stage is skipped, while the spec requires the eight read-and-panel measurements and the panel
+    // mismatch report to survive a run with no cell list. That gap is open, and asserting today's behaviour
+    // would have to be deleted to fix it.
+    await project.mutateBlockStorage(fiBlockId, {
+      operation: "update-block-data",
+      value: {
+        fbFastqRef: fiOutputs1.fastqOptions[0].ref,
+        tagFeatureCsvHandle: csvHandle,
+        presetId: "tenx-beam", // 10x 5' v2 BEAM geometry (16/10/15). The preset owns the pattern.
+        countFloor: 4,
+        boundCutoff: 75,
+        minVotingCells: 1,
+        // Stated, because the block chooses no baseline for anyone and `args()` refuses a run without one.
+        // The tag-distribution rung is the one this bed can serve: the declared rung needs a role column
+        // marking a baseline tag, which this panel does not carry.
+        referenceSource: "distribution",
+        // Still required by the data shape though the rung it gated is retired.
+        panelReferenceMinMembers: 25,
+        distributionMinCells: 300,
+        tableState: createPlDataTableStateV2(),
+        qcSummaryTableState: createPlDataTableStateV2(),
+        punchcardTableState: createPlDataTableStateV2(),
+        scoreDistributionGraphState: { title: "Scores", template: "line" },
+        referenceReadingGraphState: { title: "Reference readings", template: "line" },
+        fittedBackgroundGraphState: { title: "Backgrounds", template: "dots" },
+        panelAssignmentGraphState: { title: "Panel assignment", template: "box_jitteredDots" },
+        antigenCountsGraphState: { title: "Antigen counts per cell", template: "violin" },
+        reagentTableState: createPlDataTableStateV2(),
+        undeclaredBarcodesTableState: createPlDataTableStateV2(),
+      } satisfies BlockData,
+    });
+
+    // Let args derive before running.
+    await awaitStableState(project.getBlockState(fiBlockId), 30000);
+
+    await project.runBlock(fiBlockId);
+    const fiState3 = await helpers.awaitBlockDoneAndGetStableBlockState(fiBlockId, 250000);
+
+    const tableOutput = fiState3.outputs!["perCellTable"] as TableOutput;
+    expect(tableOutput.ok).toBe(true);
+    expect(tableOutput.value).toBeDefined();
+
+    const pFrameDriver = ml.driverKit.pFrameDriver;
+    const fullHandle = tableOutput.value!.fullTableHandle as PTableHandle;
+
+    // perCellTable is COLLAPSED to one row per cell [sampleId, cellId]. The per-(cell,feature) matrix —
+    // (cellA,AGX)=2, (cellA,BGX)=1, (cellB,AGX)=1 — becomes 2 rows. The per-feature matrix is still
+    // exported to the pool.
+    const shape = await pFrameDriver.getShape(fullHandle);
+    expect(shape.rows).toBe(2);
+
+    // Each column is picked by its p-column name rather than by value type: the table carries two Int
+    // columns (maxUmiCount, totalUmiCount) and two String value columns (topFeature, featureSummary).
+    const specs = await pFrameDriver.getSpec(fullHandle);
+    expect(specs).toHaveLength(shape.columns);
+    const data = await pFrameDriver.getData(
+      fullHandle,
+      specs.map((_, i) => i),
+    );
+    const hasColumn = (name: string) =>
+      specs.some((s) => s.type === "column" && s.spec.name === name);
+    const valuesOf = (name: string) => {
+      const i = specs.findIndex((s) => s.type === "column" && s.spec.name === name);
+      expect(i, `perCellTable carries ${name}`).toBeGreaterThanOrEqual(0);
+      return [...data[i]!.data];
+    };
+    // Order is unspecified, so numeric columns are compared sorted.
+    const sortedNumbers = (name: string) =>
+      valuesOf(name)
+        .map(Number)
+        .sort((a, b) => a - b);
+
+    // The cell's largest per-feature UMI count: cellA max(2,1)=2, cellB=1.
+    const maxUmiCounts = sortedNumbers("pl7.app/feature/maxUmiCount");
+    expect(maxUmiCounts).toEqual([1, 2]);
+    expect(maxUmiCounts.reduce((a, b) => a + b, 0)).toBe(3);
+
+    // The denominator of the shares: cellA 2+1=3, cellB 1.
+    expect(sortedNumbers("pl7.app/feature/totalUmiCount")).toEqual([1, 3]);
+
+    // The cell's largest per-feature share of its own total: cellA 2/3, cellB 1/1. It says how concentrated
+    // a cell's counts were rather than which antigen it bound, so it is not a binding level and does not
+    // fall under the no-ordering prohibition.
+    const maxFractions = sortedNumbers("pl7.app/feature/maxFraction");
+    expect(maxFractions[0]).toBeCloseTo(2 / 3, 5);
+    expect(maxFractions[1]).toBeCloseTo(1, 5);
+
+    // The antigen the Max columns report: AGX in both cells (cellA 2 of 3, cellB 1 of 1).
+    expect(valuesOf("pl7.app/feature/topFeature")).toEqual(["AGX", "AGX"]);
+
+    // No dominant-feature CALL, and it must never come back through this table. A call answers a different
+    // question from the four-state verdict -- one antigen per cell, chosen by a share threshold -- and beside
+    // a verdict it would give a reader two disagreeing answers with no rule for which wins. `topFeature`
+    // above is not one: it names the antigen the Max columns report, with no threshold behind it.
+    // `guardNoScore` in column-specs.lib.tengo refuses the score annotation at build time; this checks what
+    // reached a table.
+    expect(
+      hasColumn("pl7.app/feature/consensusFeature"),
+      "a per-cell column is calling one dominant feature — consensusFeature has returned",
+    ).toBe(false);
+  },
+);

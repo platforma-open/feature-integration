@@ -1,0 +1,147 @@
+<script setup lang="ts">
+import type { CSSProperties } from "vue";
+import { computed, ref } from "vue";
+import { PUNCH_DIAMETER_PX, PUNCH_PAINT, VERDICT_STATES, type VerdictState } from "./punchMarks";
+
+// One cell's own reading at one identity, in the same four marks the card above uses. A separate component
+// from `PunchCell` rather than a mode of it: PunchCell's explanations are all about a MAJORITY, and none of
+// that is true of a single cell.
+//
+// What is shared is what must not drift: the paint map and the diameter, both from `punchMarks.ts`. A cell
+// reading bound has to wear the same mark in both faces.
+//
+// The value is `state|reason`, two fields. A set's punch carries six because a verdict rests on counts a
+// reader needs beside it. A cell IS the evidence.
+const props = defineProps<{ params: { value: unknown; antigen?: string } }>();
+
+type Reading = { state: VerdictState; reason?: string } | { state: "unparsed" };
+
+// An EMPTY position is never-asked, and that is the difference from the set-level card. There, every
+// position carries an explicit state, "never asked" among them. Here the export writes a row only where the
+// cell's sample was stained for the identity, because writing the string instead would make the file cells
+// x identities dense on a panel that can run to hundreds.
+//
+// So null is a READING rather than a missing value, and it must not fall through to the unreadable-value
+// mark. That mark means "a value arrived and did not decode".
+const reading = computed<Reading>(() => {
+  const raw = props.params.value;
+  if (raw === null || raw === undefined || raw === "") return { state: "never asked" };
+  if (typeof raw !== "string") return { state: "unparsed" };
+  const [state, reason] = raw.split("|");
+  const known = VERDICT_STATES.find((s) => s === state);
+  if (known === undefined) return { state: "unparsed" };
+  return { state: known, reason: reason === "" || reason === undefined ? undefined : reason };
+});
+
+type Glyph = "bound" | "not-bound" | "unreliable" | "none" | "unknown";
+const GLYPH_OF: Record<VerdictState, Glyph> = {
+  bound: "bound",
+  "not bound": "not-bound",
+  unreliable: "unreliable",
+  "never asked": "none",
+};
+const glyph = computed<Glyph>(() =>
+  reading.value.state === "unparsed" ? "unknown" : GLYPH_OF[reading.value.state],
+);
+
+const punchStyle = computed<CSSProperties>(() => ({
+  display: "inline-block",
+  boxSizing: "border-box",
+  borderRadius: "50%",
+  width: `${PUNCH_DIAMETER_PX}px`,
+  height: `${PUNCH_DIAMETER_PX}px`,
+  ...(glyph.value === "none" ? {} : PUNCH_PAINT[glyph.value]),
+}));
+
+const cellStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: "100%",
+  height: "100%",
+};
+
+// Kept here, unlike the set-level card which drops it: no counts travel with a cell's reading -- the
+// value is `state|reason` and nothing else -- so without these sentences the panel would say only the
+// antigen and a word the mark already carries. The mark NAMES are gone all the same, since the legend
+// above shows them, and so is "the baseline that served", which means nothing outside this block.
+const EXPLANATION: Record<VerdictState, string> = {
+  bound: "This cell read the antigen as bound.",
+  // "could be compared" is not padding. `_pivot_cell_punch` materialises a silent cell as a real
+  // NOT_BOUND row, but only where it was admissible: a silent cell that was gated or had no comparator
+  // lands under UNRELIABLE instead, so the sentence needs the condition to stay true.
+  "not bound":
+    "This cell read the antigen as not bound. A cell that was asked, could be compared, and returned no count reads here too — a zero count is a reading.",
+  unreliable: "This cell's reading was not counted.",
+  "never asked": "No sample holding this cell declared this antigen.",
+};
+
+// Keyed by `UnreliableReason`'s VALUES, not by its enum members: the values are what travel in the data
+// ("no comparator for this cell"), and they are already readable -- so an unmapped one falls through to
+// itself under a `Why:` prefix rather than being swallowed. Only these two reach a cell.
+//
+// Prefixed rather than capitalised, for the reason PunchCell gives: a blanket transform would also
+// capitalise the antigen name, which is panel data.
+
+const WHY_UNUSABLE: Record<string, string> = {
+  "cell set aside by the sticky cell limit":
+    "This cell bound the negative control strongly, so it is taking up reagent non-specifically and its readings were set aside.",
+  "no comparator for this cell": "There was no background reading to compare this cell against.",
+};
+
+const lines = computed<string[]>(() => {
+  const r = reading.value;
+  if (r.state === "unparsed") return ["No readable reading for this cell at this identity"];
+  const out = props.params.antigen === undefined ? [] : [props.params.antigen];
+  out.push(r.state.toUpperCase(), EXPLANATION[r.state]);
+  if (r.reason !== undefined) out.push(WHY_UNUSABLE[r.reason] ?? `Why: ${r.reason}`);
+  return out;
+});
+
+// Teleported and hand-positioned for the same three reasons PunchCell's panel is: a native `title` inside a
+// virtualised grid cell does not fire at all, cannot be laid out, and waits for the OS hover delay.
+const hover = ref<{ x: number; y: number } | null>(null);
+
+const panelStyle = computed<CSSProperties>(() => {
+  const at = hover.value;
+  if (at === null) return { display: "none" };
+  const W = 320;
+  const flipX = at.x + W + 24 > window.innerWidth;
+  const flipY = at.y + 160 > window.innerHeight;
+  return {
+    position: "fixed",
+    left: `${flipX ? at.x - W - 16 : at.x + 16}px`,
+    top: `${flipY ? Math.max(8, at.y - 150) : at.y + 16}px`,
+    width: `${W}px`,
+    zIndex: "2000",
+    pointerEvents: "none",
+    background: "#1f2329",
+    color: "#f5f6f7",
+    borderRadius: "6px",
+    padding: "8px 10px",
+    fontSize: "12px",
+    lineHeight: "1.45",
+    boxShadow: "0 4px 16px rgba(0, 0, 0, 0.28)",
+  };
+});
+
+function show(e: MouseEvent) {
+  hover.value = { x: e.clientX, y: e.clientY };
+}
+function hide() {
+  hover.value = null;
+}
+</script>
+
+<template>
+  <div :style="cellStyle" @mouseenter="show" @mousemove="show" @mouseleave="hide">
+    <span v-if="glyph !== 'none'" :style="punchStyle" />
+    <Teleport to="body">
+      <div v-if="hover" :style="panelStyle">
+        <div v-for="(line, i) in lines" :key="i" :style="i === 0 ? { fontWeight: 600 } : {}">
+          {{ line }}
+        </div>
+      </div>
+    </Teleport>
+  </div>
+</template>

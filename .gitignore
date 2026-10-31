@@ -1,0 +1,45 @@
+node_modules/
+dist/
+.turbo/
+block-pack/
+**/.venv/
+**/__pycache__/
+**/.pycache/
+**/.pytest_cache/
+**/.ruff_cache/
+**/.hypothesis/
+*.tgz
+.test_auth.json
+dev/
+work/
+log/
+.turbo
+vite.config.*.timestamp-*
+software/**/*.tgz
+.DS_Store
+.vscode/sftp.json
+test-dry-run.json
+
+# Manual test-data (software/test-data/manual/): track only the reproducible recipe —
+# the generators (generate.py + lib/*.py), docs (*.md), and the one non-regenerable harvested
+# input (assets/whitelist_cells.txt). Everything the generators produce (runs/**) and the two
+# fetched assets (assets/737K-august-2016.txt, assets/homo_sapiens_gene_annotations.csv) are
+# ignored — regenerate with `python3 manual/generate.py` (see manual/README.md). Automated-test
+# fixtures under software/test-data/fixtures/ (and test/assets/) stay fully tracked.
+software/test-data/manual/**
+!software/test-data/manual/**/
+!software/test-data/manual/**/*.py
+!software/test-data/manual/**/*.md
+# ...except these dev design/calibration notes — kept on disk, not version-controlled.
+software/test-data/manual/design-and-schemas.md
+software/test-data/manual/real-data-calibration.md
+!software/test-data/manual/assets/whitelist_cells.txt
+# Generated runs are ignored WHATEVER their extension. The `*.md` exception above exists for the
+# hand-written docs beside the generators, and a generated run carries its own RUN.md report — which
+# describes the panel that drove it, and that panel may be a real one supplied from outside the repo.
+# Nothing a generator writes is recipe, so nothing under runs/ is tracked.
+software/test-data/manual/runs/**
+
+# Local working docs / scratch — not version-controlled
+docs/superpowers/
+.meta/handover/

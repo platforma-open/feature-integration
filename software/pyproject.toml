@@ -1,0 +1,91 @@
+# Single dev/test project for the block's python software. NOT shipped — pl-pkg builds each package from
+# its own <pkg>/src/requirements.txt (offline pip toolset). This file exists only for the dev/test
+# toolchain: one uv venv, one lock, one ruff/pytest/coverage config across all four packages. Runtime pins
+# live in a PEP 735 dependency-group named after the package; `pnpm software:reqs` compiles that group to
+# the package's src/requirements.txt (`uv pip compile --group <pkg> --no-deps`).
+#
+# The packages are split by where they run, because a package's version is a hash of its whole src/ root
+# and that version is part of every exec's identity: one edit re-runs every entrypoint sharing the root.
+# mitool-support (parse-gate, emit-panel) sits INSIDE the mitool parse/refine/tag-stat chain and must stay
+# stable, so it is deliberately kept apart from the verdict-stage code that changes often.
+[project]
+name = "feature-integration-software"
+version = "0"
+requires-python = ">=3.12, <3.13"
+dependencies = []
+
+[dependency-groups]
+# Per-package runtime pins (single source of truth for each src/requirements.txt). Keep aligned with the
+# wheels the runenv ships (@platforma-open/milaboratories.runenv-python-3:3.12.10). One group per
+# software package, named after it; `pnpm software:reqs` compiles each group into its own package.
+# mitool-support and feature-properties are stdlib-only, so their groups are empty by design and their
+# requirements.txt carries the header alone.
+feature-properties = []
+mitool-support = []
+per-cell-metrics = ["polars-lts-cpu==1.33.1"]
+verdicts = ["polars-lts-cpu==1.33.1", "numpy==2.2.6", "scipy==1.15.3"]
+
+# Dev-only tooling. `uv sync --all-groups` installs every group above plus this.
+# hypothesis powers the property-based tests (invariants over generated inputs).
+dev = ["pytest>=8.3", "pytest-cov>=7.0", "ruff>=0.14", "hypothesis>=6.0"]
+
+[tool.uv]
+required-version = ">=0.11.16"
+
+[tool.pytest.ini_options]
+# rootdir == software/. pythonpath puts every package's src on sys.path so tests import the modules by
+# name (`import verdict`), plus verdicts/test for test-only helpers such as `dense_oracle`. That test root
+# needs listing because importlib import mode (below) does not prepend a test file's own directory the way
+# prepend does. The generator tests are listed too. They are excluded from ruff (committed fixtures, not
+# ours to format) but they are ours to RUN: one of them is the only place the specificity score's published
+# values are pinned, and while the path went uncollected that test had never executed.
+testpaths = [
+    "feature-properties/test",
+    "mitool-support/test",
+    "per-cell-metrics/test",
+    "verdicts/test",
+    "test-data/manual/tests",
+]
+pythonpath = [
+    "feature-properties/src",
+    "mitool-support/src",
+    "per-cell-metrics/src",
+    "verdicts/src",
+    "verdicts/test",
+]
+# importlib import mode, because the two test roots each carry a `test_panel.py`. Under the default
+# prepend mode pytest derives a module name from the basename alone and the second one collides with the
+# first at collection. importlib names each module by its full path instead, so the two coexist without
+# renaming a file or adding __init__.py to a fixture tree.
+addopts = "-ra --strict-markers --import-mode=importlib"
+markers = [
+    "slow: spawns a subprocess -- an end-to-end CLI run over the committed fixture bed, or a synthetic run out of test-data/manual/generate.py; deselect with -m 'not slow'",
+]
+
+[tool.coverage.run]
+source = [
+    "feature-properties/src",
+    "mitool-support/src",
+    "per-cell-metrics/src",
+    "verdicts/src",
+]
+branch = true
+# The @slow CLI test invokes the script as a subprocess; this makes child processes record coverage too.
+patch = ["subprocess"]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "if __name__ == .__main__.:", "raise NotImplementedError"]
+
+[tool.ruff]
+exclude = [".venv", "dist", "node_modules", "build",
+    "test-data"]  # committed fixtures + generator are not ours to lint/format
+line-length = 120
+indent-width = 4
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "E501", "F", "I"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

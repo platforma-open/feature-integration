@@ -1,0 +1,49 @@
+<script setup lang="ts">
+import { computed } from "vue";
+import QcSection from "../components/QcSection.vue";
+import type { SampleResult } from "../results";
+
+// The Quality Checks tab: this sample's own report. Every sample-level measurement the software declares
+// takes a row, including the ones it could not compute.
+//
+// The rollup and the coverage triple are NOT repeated here. The Main grid's Quality column already carries
+// the rollup, and each row below states its own status, so a second copy at the top said what the column
+// and the rows had both already said. `qcReport.status` and the triple still travel, for that column.
+const props = defineProps<{
+  sampleData: SampleResult | undefined;
+}>();
+
+const report = computed(() => props.sampleData?.qcReport);
+
+// Measurements whose place is the across-samples table and not this list.
+const SUMMARY_ONLY = new Set(["medianAntigenReading", "cutoffCountNeeded", "boundReadingShare"]);
+
+// DECLARATION ORDER, exactly as the software emits it. That order is deliberate -- the reads first, then
+// every observed barcode, then the V(D)J-matched cells, then what the reading rules removed -- and rows
+// that belong together are declared together.
+//
+// Never re-sort by status: floating the judgeable rows to the top splits the list into two halves,
+// neither of which is the pipeline's order. Scanning for trouble is what the status tags are for.
+const orderedMeasurements = computed(() =>
+  (report.value?.measurements ?? []).filter((m) => !SUMMARY_ONLY.has(m.id)),
+);
+</script>
+
+<template>
+  <div v-if="report">
+    <QcSection v-for="m in orderedMeasurements" :key="m.id" :value="m" />
+  </div>
+  <div v-else class="qc-pending">
+    Quality checks appear when this sample finishes. They are computed from its read statistics and
+    its binding results. The Log tab already shows what the running pipeline is producing.
+  </div>
+</template>
+
+<style lang="css" scoped>
+.qc-pending {
+  padding: 24px 8px;
+  color: var(--color-txt-03);
+  font-size: 14px;
+  line-height: 20px;
+}
+</style>

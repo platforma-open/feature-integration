@@ -1,0 +1,247 @@
+// Per-sample feature-barcode pipeline (processColumn body).
+//
+// One invocation per sample group, since the FASTQ column is aggregated over lane and readIndex. Runs the
+// mitool chain -- parse -> refine-tags -> tag-stat -u -- for per-(cell, feature-barcode) distinct-UMI
+// counts, then hands that table plus the user's tag->feature CSV to the per-cell-metrics Python software.
+// Also runs tag-stat -t FEATURE (no -u) on the pre-refine parsedMic, surfaced as rawFeatureCounts:
+// refine-tags snaps FEATURE onto the panel whitelist, so this is the only point in the chain where an
+// undeclared barcode is still visible.
+//
+// Every exec runs inside a render.create sub-template, so this body returns only render outputs. The mitool
+// execs deliberately do NOT capture a stdout progress stream: saveStdoutStream puts the rate-dependent
+// stdout in the exec's content-hashed files map, drifts every getFile off it, and throws CIDConflictError
+// on a stale re-render. Per-step progress is derived deterministically instead, from which stage reports
+// have settled (stepReports -> the model's sampleStep).
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+render := import("@platforma-sdk/workflow-tengo:render")
+exec := import("@platforma-sdk/workflow-tengo:exec")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+ll := import("@platforma-sdk/workflow-tengo:ll")
+pConstants := import("@platforma-sdk/workflow-tengo:pframes.constants")
+pcolumn := import("@platforma-sdk/workflow-tengo:pframes.pcolumn")
+pt := import("@platforma-sdk/workflow-tengo:pt")
+
+json := import("json")
+
+parseGateSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.mitool-support:parse-gate")
+
+fbParseTpl := assets.importTemplate(":fb-parse")
+fbRefineTagstatTpl := assets.importTemplate(":fb-refine-tagstat")
+fbDownstreamTpl := assets.importTemplate(":fb-downstream")
+
+self.defineOutputs("abundance", "fractions", "perCellSummary", "qc", "qcJson", "stepReports", "stepLogs", "parseLogStream", "metricsLogStream", "parsedMic", "parseReport", "refineReport", "tagstatTsv", "rawFeatureCounts")
+
+self.body(func(inputs) {
+	inputData := inputs[pConstants.VALUE_FIELD_NAME]
+	aggregationAxesNames := inputs[pConstants.AGGREGATION_AXES_NAMES_FIELD_NAME]
+
+	pattern := inputs.pattern
+	tags := inputs.tags // { cell, umi, feature } tag names (from the model; see pattern.ts)
+	tagsCsv := inputs.tagsCsv
+	fileExtension := inputs.fileExtension
+	mitoolCPUs := inputs.mitoolCPUs
+	barcodeSeqColumn := inputs.barcodeSeqColumn
+	featureNameColumn := inputs.featureNameColumn
+	combineColumn := is_undefined(inputs.combineColumn) ? "" : inputs.combineColumn
+	minUmi := is_undefined(inputs.minUmi) ? 1 : inputs.minUmi
+	cellWhitelist := inputs.cellWhitelist // "" = de-novo CELL correction, the default. Else a 10x built-in.
+	// Undefined where the scientist left the knob alone, and passed through as undefined: fb-downstream
+	// adds a flag only where one is set, so the exec's own argparse default stands.
+	aggregateBarcodeIqrMultiplier := inputs.aggregateBarcodeIqrMultiplier
+	aggregateBarcodeMinUmiThreshold := inputs.aggregateBarcodeMinUmiThreshold
+	aggregateBarcodeTopN := inputs.aggregateBarcodeTopN
+	memBaseGB := inputs.mitoolBaseMemGB
+
+	// mitool memory override (Advanced Settings), passed to the parse and refine sub-templates. 0 = no
+	// override, so RAM is sized from the input blob on a floor. >0 = a fixed request. A sentinel keeps the
+	// render.create input a plain number, because inputs.mitoolMemOverrideGB is otherwise undefined.
+	memOverrideGB := is_undefined(inputs.mitoolMemOverrideGB) ? 0 : inputs.mitoolMemOverrideGB
+	// Preview read cap. 0 = full run, with no --limit. >0 = mitool parse processes only the first N reads.
+	limitInput := is_undefined(inputs.limitInput) ? 0 : inputs.limitInput
+
+	ll.assert(!is_undefined(pattern) && pattern != "", "tag pattern is required")
+
+	// Sample-aware tag->feature mapping (optional). Where a sample column is set, the tag CSV maps the same
+	// barcode to different features per sample, so filter it to THIS sample's rows before it feeds the panel
+	// (fb-refine) and the naming join (fb-downstream). sampleColumn == "" means one global mapping, with the
+	// CSV passed through untouched.
+	sampleColumn := inputs.sampleColumn
+	tagsCsvForSample := tagsCsv
+	if sampleColumn != "" {
+		// The key is the sample's (anonymized) id, and sampleLabels is keyed the same way.
+		key := inputs[pConstants.KEY_FIELD_NAME]
+		sampleName := inputs.sampleLabels[key[0]]
+		ll.assert(!is_undefined(sampleName), "a sample has no label captured (key %v); re-select the sample column", key[0])
+
+		ptWf := pt.workflow().inLightQueue().cpu(1).mem("2GiB")
+		filtered := ptWf.frame(tagsCsv, { xsvType: "csv", inferSchema: false }).
+			filter(pt.col(sampleColumn).eq(sampleName))
+		filtered.save("sample-tags.csv", { xsvType: "csv" })
+		tagsCsvForSample = ptWf.run().getFile("sample-tags.csv")
+	}
+
+	meta := inputData.getDataAsJson()
+	fileMap := inputData.inputs()
+
+	// Collect R1/R2 FASTQ files and build the mitool input arg from the aggregation layout: readIndex ->
+	// R1/R2, with an optional lane. Feature barcoding is paired, with cell+UMI on R1 and feature on R2.
+	R1Files := []
+	R2Files := []
+	inputArg := ""
+	if meta.keyLength == 1 {
+		ll.assert(
+			aggregationAxesNames == ["pl7.app/sequencing/readIndex"],
+			"unexpected aggregation axes names: " + json.encode(aggregationAxesNames)
+		)
+		for sKey in maps.getKeys(fileMap) {
+			key := json.decode(sKey)
+			if key[0] == "R1" {
+				R1Files = append(R1Files, { name: "input_R1." + fileExtension, file: fileMap[sKey] })
+			} else if key[0] == "R2" {
+				R2Files = append(R2Files, { name: "input_R2." + fileExtension, file: fileMap[sKey] })
+			}
+		}
+		inputArg = "input_{{R}}." + fileExtension
+	} else if meta.keyLength == 2 {
+		ll.assert(
+			aggregationAxesNames == ["pl7.app/sequencing/lane", "pl7.app/sequencing/readIndex"],
+			"unexpected aggregation axes names: " + json.encode(aggregationAxesNames)
+		)
+		for sKey in maps.getKeys(fileMap) {
+			key := json.decode(sKey)
+			lane := key[0]
+			r := key[1]
+			if r == "R1" {
+				R1Files = append(R1Files, { name: "input_L" + lane + "_R1." + fileExtension, file: fileMap[sKey] })
+			} else if r == "R2" {
+				R2Files = append(R2Files, { name: "input_L" + lane + "_R2." + fileExtension, file: fileMap[sKey] })
+			}
+		}
+		inputArg = "input_L{{n}}_{{R}}." + fileExtension
+	} else {
+		ll.panic("feature-barcode parsing requires paired (R1/R2) reads; unsupported key layout: %v", meta.keyLength)
+	}
+
+	ll.assert(len(R1Files) > 0, "no R1 FASTQ files found")
+	ll.assert(len(R2Files) > 0, "no R2 FASTQ files found (feature barcode is read from R2)")
+
+	// Step 1: mitool parse (fb-parse boundary). Extract CELL + UMI from R1 and the feature barcode from R2.
+	// The FASTQ files go in as a ResourceMap keyed by [filename], decoded back inside fb-parse.
+	inputFilesBuilder := pcolumn.resourceMapBuilder(1)
+	for f in R1Files { inputFilesBuilder.add([f.name], f.file) }
+	for f in R2Files { inputFilesBuilder.add([f.name], f.file) }
+
+	parseRun := render.create(fbParseTpl, {
+		pattern: pattern,
+		inputArg: inputArg,
+		inputFiles: inputFilesBuilder.build(),
+		mitoolCPUs: mitoolCPUs,
+		mitoolBaseMemGB: memBaseGB,
+		mitoolMemOverrideGB: memOverrideGB,
+		limitInput: limitInput
+	})
+	parsedMic := parseRun.output("parsedMic")
+	parseReport := parseRun.output("parseReport")
+	// Live parse stdout stream. Threaded into fb-refine-tagstat's stepLogs map as the 1-parse entry, and
+	// surfaced flat below to drive the model's live parse % and early sample roster.
+	parseLogStream := parseRun.output("parseLogStream")
+
+	// Step 2: parse gate. mitool parse writes NO parsed.mic where zero reads match the pattern, and fb-parse
+	// pre-wrote an empty placeholder. Read the parse report's matched count into a decision the branch below
+	// routes on, and synthesize the empty fallbacks.
+	gate := exec.builder().
+		software(parseGateSw).
+		cpu(1).mem("256MiB").
+		addFile("parse_report.json", parseReport).
+		arg("parse_report.json").arg("decision.json").
+		arg("--empty-tagstat").arg("tagstat_empty.tsv").
+		arg("--empty-refine-report").arg("refine_report_empty.json").
+		arg("--cell-tag").arg(tags.cell).
+		arg("--feature-tag").arg(tags.feature).
+		arg("--umi-tag").arg(tags.umi).
+		saveFileContent("decision.json").
+		saveFile("tagstat_empty.tsv").
+		saveFile("refine_report_empty.json").
+		run()
+
+	// Step 3: gated refine-tags -> tag-stat (fb-refine-tagstat boundary). On no-match it returns the gate's
+	// header-only tag-stat and empty refine report, skipping the mitool steps that would crash on the empty
+	// parsed.mic. Either way it yields tagstatTsv and refineReport.
+	refineTagstatRun := render.create(fbRefineTagstatTpl, {
+		decision: gate.getFileContent("decision.json"),
+		parsedMic: parsedMic,
+		parseReport: parseReport,
+		parseLogStream: parseLogStream,
+		emptyTagstat: gate.getFile("tagstat_empty.tsv"),
+		emptyRefineReport: gate.getFile("refine_report_empty.json"),
+		tags: tags,
+		tagsCsv: tagsCsvForSample,
+		barcodeSeqColumn: barcodeSeqColumn,
+		cellWhitelist: cellWhitelist,
+		mitoolCPUs: mitoolCPUs,
+		mitoolBaseMemGB: memBaseGB,
+		mitoolMemOverrideGB: memOverrideGB
+	})
+	tagstatTsv := refineTagstatRun.output("tagstatTsv")
+	refineReport := refineTagstatRun.output("refineReport")
+	stepReports := refineTagstatRun.output("stepReports")
+	stepLogs := refineTagstatRun.output("stepLogs")
+	// tag-stat -t FEATURE on the pre-refine parsedMic, before refine-tags snaps FEATURE onto the panel
+	// whitelist. Carries any sequence the panel does not declare, which a post-refine counts frame cannot.
+	rawFeatureCounts := refineTagstatRun.output("rawFeatureCounts")
+
+	// Step 4: QC report and per-cell metrics (fb-downstream boundary). These consume the drifting mitool files
+	// -- tagstat.tsv plus the parse and refine reports -- so they run inside a render boundary and return their
+	// per-sample outputs as render outputs.
+	downstreamRun := render.create(fbDownstreamTpl, {
+		tagstatTsv: tagstatTsv,
+		parseReport: parseReport,
+		refineReport: refineReport,
+		tags: tags,
+		tagsCsv: tagsCsvForSample,
+		barcodeSeqColumn: barcodeSeqColumn,
+		featureNameColumn: featureNameColumn,
+		combineColumn: combineColumn,
+		minUmi: minUmi,
+		// The aggregate-barcode knobs. fb-downstream adds each as a flag only where it is set, and
+		// qc_report.py's own argparse default applies otherwise. They reached this body through
+		// `extra` and stopped here, so every one of them was part of a per-sample body's identity --
+		// costing a full re-parse of every sample on a change -- while reaching no command line.
+		aggregateBarcodeIqrMultiplier: aggregateBarcodeIqrMultiplier,
+		aggregateBarcodeMinUmiThreshold: aggregateBarcodeMinUmiThreshold,
+		aggregateBarcodeTopN: aggregateBarcodeTopN
+	})
+
+	// The body must return exactly the defineOutputs set and no output may be undefined.
+	return {
+		abundance: downstreamRun.output("abundance"),
+		fractions: downstreamRun.output("fractions"),
+		perCellSummary: downstreamRun.output("perCellSummary"),
+		qc: downstreamRun.output("qc"),
+		qcJson: downstreamRun.output("qcJson"),
+		// per-cell-metrics (Python) stdout stream -> the 4-metrics step log, surfaced flat. The model keys it
+		// [sampleId], and the UI's per-step Logs panel reads it under the "4-metrics" step.
+		metricsLogStream: downstreamRun.output("metricsLogStream"),
+		// Per-sample step-report map of the parse, refine and tag-stat output files. The model derives the
+		// sample's current step from which are present.
+		stepReports: stepReports,
+		// Per-sample [step] map of live stdout streams (parse / refine / tag-stat). The key set is variable: a
+		// no-match sample carries parse alone.
+		stepLogs: stepLogs,
+		// Flat parse stdout stream, also the 1-parse entry of stepLogs -> live parse % and early roster.
+		parseLogStream: parseLogStream,
+		// mitool intermediates surfaced so main.tpl can persist them by content hash. Once content-hash-persisted
+		// their CIDs stop drifting across re-renders, which keeps a getFile off a streaming exec stable and
+		// prevents CIDConflictError. It also lets downstream reuse them instead of re-running the whole block on
+		// a settings change. No model or UI consumer: the persistence is the point.
+		parsedMic: parsedMic,
+		parseReport: parseReport,
+		refineReport: refineReport,
+		tagstatTsv: tagstatTsv,
+		// Pre-refine FEATURE counts, read by the verdict stage for the undeclared-barcode table. Its exec
+		// captures no stream, so the CIDConflictError mechanism above does not apply to it.
+		rawFeatureCounts: rawFeatureCounts
+	}
+})

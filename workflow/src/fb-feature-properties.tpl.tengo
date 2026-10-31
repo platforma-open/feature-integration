@@ -1,0 +1,52 @@
+// Imports the per-feature property CSV and the negative-control CSV as column data, without specs.
+//
+// Both come from emit_feature_properties.py (fb-feature-properties-compute.tpl.tengo). The property column
+// names are user data, so they are read from the meta JSON to build one import column per property.
+//
+// Takes no blockId, so the same panel imports once for every block. fb-feature-properties-frame.tpl.tengo
+// attaches the specs.
+//
+// Returns two {columnId: data} maps, empty where there is nothing to import.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+xsv := import("@platforma-sdk/workflow-tengo:pframes.xsv")
+pUtil := import("@platforma-sdk/workflow-tengo:pframes.util")
+smart := import("@platforma-sdk/workflow-tengo:smart")
+columnSpecs := import(":column-specs")
+
+json := import("json")
+
+self.defineOutputs("propertyData", "controlData")
+
+self.body(func(inputs) {
+	// Property column names + distinct values, read as a value (content resource received as input).
+	meta := json.decode(string(inputs.propertyMeta.getData()))
+	propertyColumns := is_undefined(meta.columns) ? [] : meta.columns
+	valuesByColumn := is_undefined(meta.valuesByColumn) ? {} : meta.valuesByColumn
+	// Negative-control marker for control-aware metrics: a hidden per-feature column marking the control
+	// feature, emitted only where a control is designated. main.tpl gates this.
+	hasControl := !is_undefined(inputs.hasControl) && inputs.hasControl
+
+	// Type-only cfg (purifySpec): the specs are attached later, by the frame stage.
+	importData := func(file, columns) {
+		cfg := columnSpecs.featurePropertiesImportCfg({ type: "String" }, columns)
+		return xsv.importFile(file, "csv", pUtil.purifySpec(cfg), { dataOnly: true })
+	}
+
+	// No import where there are no columns: an empty `columns` list fails the import's validation.
+	propertyData := smart.mapBuilder().lockAndBuild()
+	if len(propertyColumns) > 0 {
+		propertyData = importData(inputs.propertiesFile,
+			columnSpecs.featurePropertyImportColumns(propertyColumns, valuesByColumn))
+	}
+
+	controlData := smart.mapBuilder().lockAndBuild()
+	if hasControl {
+		controlData = importData(inputs.negativeControlFile, [columnSpecs.negativeControlColumn()])
+	}
+
+	return {
+		propertyData: propertyData,
+		controlData: controlData
+	}
+})

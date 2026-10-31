@@ -1,0 +1,61 @@
+// Per-feature properties: runs emit_feature_properties.py on the panel CSV and imports what it writes.
+//
+// Every tag-CSV column beyond the barcode-sequence and feature-name roles becomes a property on the shared
+// feature axis. The panel is the same for every sample, so this runs once, outside the per-sample fan-out.
+// The sample column, where set, is a role rather than a property, and is excluded.
+//
+// Pure (main is ephemeral), so a later run over the same panel and settings reuses the exec and the import.
+// main keeps all three outputs for that.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+exec := import("@platforma-sdk/workflow-tengo:exec")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+render := import("@platforma-sdk/workflow-tengo:render")
+
+featurePropsSw := assets.importSoftware("@platforma-open/milaboratories.feature-integration.feature-properties:main")
+featurePropsImportTpl := assets.importTemplate(":fb-feature-properties")
+
+self.defineOutputs("propertyData", "controlData", "propertyMeta")
+
+self.body(func(inputs) {
+	controls := inputs.controls
+
+	featurePropsBuilder := exec.builder().
+		software(featurePropsSw).
+		cpu(1).mem("1GiB").
+		addFile("tags.csv", inputs.tagsCsv).
+		arg("tags.csv").
+		arg("--csv-barcode-col").arg(inputs.barcodeSeqColumn).
+		arg("--csv-feature-col").arg(inputs.featureNameColumn).
+		arg("--sample-col").arg(inputs.sampleColumn)
+	// One --control-feature per chosen control, for the negative-control marker CSV (header-only when there
+	// is none). Repeated rather than comma-joined, since a feature name may contain a comma.
+	for c in controls {
+		if c != "" {
+			featurePropsBuilder = featurePropsBuilder.arg("--control-feature").arg(c)
+		}
+	}
+	featurePropsRun := featurePropsBuilder.
+		arg("--output-prefix").arg("result").
+		saveFile("result_feature_properties.csv").
+		saveFileContent("result_feature_property_meta.json").
+		saveFile("result_negative_control.csv").
+		run()
+
+	propertyMeta := featurePropsRun.getFileContent("result_feature_property_meta.json")
+
+	// Separate template: the import reads the meta's content to know the property columns.
+	importRun := render.create(featurePropsImportTpl, {
+		propertiesFile: featurePropsRun.getFile("result_feature_properties.csv"),
+		propertyMeta: propertyMeta,
+		negativeControlFile: featurePropsRun.getFile("result_negative_control.csv"),
+		hasControl: len(controls) > 0
+	})
+
+	return {
+		propertyData: importRun.output("propertyData"),
+		controlData: importRun.output("controlData"),
+		// The frame stage reads the same meta to build the specs.
+		propertyMeta: propertyMeta
+	}
+})

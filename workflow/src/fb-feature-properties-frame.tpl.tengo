@@ -1,0 +1,64 @@
+// Builds the `featureProperties` export: the specs, on the block-scoped feature axis
+// (pl7.app/feature/featureId) and with the trace, attached to the data fb-feature-properties.tpl.tengo
+// imported.
+//
+// Ephemeral because it takes blockId; it only builds specs, so running it every time is cheap.
+//
+// Returns a built p-frame, empty where the CSV has no extra columns.
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+pframes := import("@platforma-sdk/workflow-tengo:pframes")
+pSpec := import("@platforma-sdk/workflow-tengo:pframes.spec")
+columnSpecs := import(":column-specs")
+
+json := import("json")
+
+// The meta is read as content; the two data maps only by key (they arrive as plain {columnId: data} maps).
+self.awaitState("propertyMeta", "ResourceReady")
+self.awaitState("propertyData", "InputsLocked")
+self.awaitState("controlData", "InputsLocked")
+
+self.body(func(inputs) {
+	blockId := inputs.blockId
+
+	meta := json.decode(string(inputs.propertyMeta.getData()))
+	propertyColumns := is_undefined(meta.columns) ? [] : meta.columns
+	valuesByColumn := is_undefined(meta.valuesByColumn) ? {} : meta.valuesByColumn
+	hasControl := !is_undefined(inputs.hasControl) && inputs.hasControl
+
+	fb := pframes.pFrameBuilder()
+
+	if len(propertyColumns) > 0 || hasControl {
+		// Same trace step as the per-cell contract columns, deterministic and seeded from the input FASTQ spec
+		// plus blockId.
+		trace := pSpec.makeTrace(inputs.traceSeedSpec, {
+			type: "milaboratories.feature-integration",
+			id: blockId,
+			importance: 30,
+			label: "Feature Barcode Profiling"
+		})
+
+		featureAxis := columnSpecs.featureAxis(blockId)
+
+		// The specs xsv.importFile would have built with a full import.
+		addColumns := func(data, columns) {
+			for column in columnSpecs.importedColumns(columnSpecs.featurePropertiesImportCfg(featureAxis, columns)) {
+				fb.add(column.id, trace.inject(column.spec), data[column.id])
+			}
+		}
+
+		if len(propertyColumns) > 0 {
+			addColumns(inputs.propertyData, columnSpecs.featurePropertyImportColumns(propertyColumns, valuesByColumn))
+		}
+
+		// The negative-control marker column: hidden, and not a filter. It rides pl7.app/feature/featureId into
+		// VDJ Multiomic Integration, which removes the control from its antigen metrics.
+		if hasControl {
+			addColumns(inputs.controlData, [columnSpecs.negativeControlColumn()])
+		}
+	}
+
+	return {
+		featureProperties: fb.build()
+	}
+})

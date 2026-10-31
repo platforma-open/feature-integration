@@ -1,0 +1,87 @@
+// mitool parse sub-template (render.create boundary).
+//
+// Runs mitool parse and returns parsed.mic, parse_report.json and a live stdout stream (parseLogStream).
+// Capturing stdout through saveStdoutStream injects the rate-dependent stdout into the exec's
+// content-hashed files map and drifts every getFile off it, which throws CIDConflictError on a stale
+// re-render. It is safe here only because main.tpl persists parsedMic, parseReport and the refine and
+// tag-stat intermediates by content hash, pinning their CIDs. MI_PROGRESS_PREFIX makes mitool prefix its
+// progress lines with [==PROGRESS==], which the model scrapes for a live 0-100% parse bar
+// (getProgressLogWithInfo).
+
+self := import("@platforma-sdk/workflow-tengo:tpl")
+exec := import("@platforma-sdk/workflow-tengo:exec")
+assets := import("@platforma-sdk/workflow-tengo:assets")
+maps := import("@platforma-sdk/workflow-tengo:maps")
+
+json := import("json")
+
+self.defineOutputs("parsedMic", "parseReport", "parseLogStream")
+
+// :memory-from-limits sizes the JVM heap from the granted limits, which avoids an end-of-parse OOM as many
+// tag writers flush.
+mitoolSw := assets.importSoftware("@platforma-open/milaboratories.software-mitool:memory-from-limits")
+
+// mitool prefixes its progress lines with this marker (MI_PROGRESS_PREFIX) so the model can scrape a live
+// per-sample parse %.
+progressPrefix := "[==PROGRESS==]"
+
+self.body(func(inputs) {
+	pattern := inputs.pattern
+	inputArg := inputs.inputArg
+	inputFiles := inputs.inputFiles
+	mitoolCPUs := inputs.mitoolCPUs
+	memBaseGB := inputs.mitoolBaseMemGB
+	// 0 = no user override in Advanced Settings, so RAM is sized from the input reads' blob size on a floor.
+	// >0 = a fixed request. parse OOMs at end-of-parse as tag writers flush, which scales with input volume.
+	// size("reads") reads only blob metadata.
+	memOverrideGB := inputs.mitoolMemOverrideGB
+	// Preview read cap. 0 = full run. >0 = mitool parse reads only the first N reads, through --limit.
+	limitInput := is_undefined(inputs.limitInput) ? 0 : inputs.limitInput
+
+	// RAM = base + reads*4, capped at 256 GiB, mirroring mixcr-analyze. The static fallback is base, for a
+	// backend that cannot evaluate resource formulas at run time.
+	formula := exec.formula
+	memFormula := formula.gib(memBaseGB).
+		plus(formula.size("reads").times(4)).
+		between(formula.gib(memBaseGB), formula.gib(256)).
+		staticFallback(formula.gib(memBaseGB))
+
+	parse := exec.builder().
+		writeFile("parsed.mic", bytes(0), { writable: true }).
+		printErrStreamToStdout().
+		saveStdoutStream().
+		env("MI_PROGRESS_PREFIX", progressPrefix).
+		software(mitoolSw)
+	if memOverrideGB > 0 {
+		parse = parse.cpu(mitoolCPUs).mem(string(memOverrideGB) + "GiB")
+	} else {
+		parse = parse.resources({ onCPU: { cpu: mitoolCPUs, ram: memFormula } })
+	}
+	parse = parse.
+		arg("parse").
+		arg("--pattern").arg(pattern).
+		arg("--threads").argWithVar("{system.cpu}")
+	// Preview (dry-run): cap parse to the first N reads per file so the user can check settings fast.
+	if limitInput > 0 {
+		parse = parse.arg("--limit").arg(string(limitInput))
+	}
+
+	// inputFiles is a ResourceMap keyed by JSON-encoded [filename] arrays. Decode to recover the
+	// mitool-expected filename, such as "input_R1.fastq.gz". Tag "reads" feeds the size formula above.
+	filesMap := inputFiles.inputs()
+	for encKey in maps.getKeys(filesMap) {
+		key := json.decode(encKey)
+		parse = parse.addFile(key[0], filesMap[encKey], { tag: "reads" })
+	}
+
+	parse = parse.
+		arg("--json-report").arg("parse_report.json").saveFile("parse_report.json").
+		arg(inputArg).arg("parsed.mic").saveFile("parsed.mic").
+		run()
+
+	return {
+		parsedMic: parse.getFile("parsed.mic"),
+		parseReport: parse.getFile("parse_report.json"),
+		parseLogStream: parse.getStdoutStream()
+	}
+})

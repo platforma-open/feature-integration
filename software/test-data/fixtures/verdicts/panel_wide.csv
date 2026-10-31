@@ -1,0 +1,21 @@
+Samples,Name,Barcode,Sequence,Channel,Residues,Type
+S01,Ag01,T0100,AGAACCCCCCTT,PE,constant,Target (Main)
+S01,Ag02,T0101,AGTTAAGAACAA,PE,constant,Target (Main)
+S01,Ag03,T0102,AAGCAACAATCT,APC,constant,Off-Target
+S02,Ag11,T0100,AGAACCCCCCTT,PE,constant,Target (main)
+S02,Ag02,T0101,AGTTAAGAACAA,PE,constant,Target (Main)
+S02,Ag04,T0103,TCGTGGTCCTGG,APC,constant,Target (Backup)
+S02,Ag05,T0104,TCCGTGACTTTG,FITC,constant,Target (Backup)
+S03,Ag01,T0100,AGAACCCCCCTT,PE,constant,Target (Main)
+S03,Ag03,T0102,AAGCAACAATCT,APC,constant,Off-Target
+S03,Ag14,T0103,TCGTGGTCCTGG,APC,constant,Target (Backup)
+S03,Ag06,T0105,ACCTTACGGGCT,FITC,constant,Off-target
+S04,Ag11,T0100,AGAACCCCCCTT,PE,constant,Target (main)
+S04,Ag12,T0101,AGTTAAGAACAA,PE,constant,Target (Main)
+S04,Ag15,T0104,TCCGTGACTTTG,FITC,constant,Target (Backup)
+S04,Ag07,T0106,CTTTTTGCCGTT,FITC-A,constant,Target (Main)
+S04,Ag07,T0107,CATCTCTAGTCT,FITC-A,constant,Target (Main)
+S01,Ctrl1,T0108,TGTAGACGCATA,APC,constant,Off-Target
+S02,Ctrl1,T0108,TGTAGACGCATA,APC,constant,Off-Target
+S03,Ctrl1,T0108,TGTAGACGCATA,APC,constant,Off-Target
+S04,Ctrl1,T0108,TGTAGACGCATA,APC,constant,Off-Target

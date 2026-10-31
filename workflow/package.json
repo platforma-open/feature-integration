@@ -1,0 +1,27 @@
+{
+  "name": "@platforma-open/milaboratories.feature-integration.workflow",
+  "version": "3.10.2",
+  "private": true,
+  "description": "Block Workflow",
+  "type": "module",
+  "scripts": {
+    "build": "shx rm -rf dist && pl-tengo build",
+    "format": "/usr/bin/env emacs --script ./format.el || echo 'No emacs.'",
+    "check": "pl-tengo imports && pl-tengo check",
+    "test": "pl-tengo test"
+  },
+  "dependencies": {
+    "@platforma-open/milaboratories.feature-integration.feature-properties": "workspace:*",
+    "@platforma-open/milaboratories.feature-integration.mitool-support": "workspace:*",
+    "@platforma-open/milaboratories.feature-integration.per-cell-metrics": "workspace:*",
+    "@platforma-open/milaboratories.feature-integration.verdicts": "workspace:*",
+    "@platforma-open/milaboratories.software-mitool": "catalog:",
+    "@platforma-sdk/workflow-tengo": "catalog:"
+  },
+  "devDependencies": {
+    "@platforma-sdk/tengo-builder": "catalog:",
+    "@platforma-sdk/test": "catalog:",
+    "shx": "catalog:"
+  },
+  "peerDependencies": {}
+}
