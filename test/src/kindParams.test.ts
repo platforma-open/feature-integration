@@ -329,7 +329,7 @@ function configuredData(): BlockData {
     runMode: "dry",
     presetId: "tenx-beam",
     cellWhitelist: "737K-august-2016",
-    defaultBlockLabel: "",
+    subtitleLabel: "",
     fbFastqRef: A_REF,
     datasetRef: A_REF,
     tagFeatureCsvHandle: INDEX_CSV,
@@ -360,6 +360,6 @@ function blankData(): BlockData {
     runMode: "full",
     presetId: "tenx-beam",
     cellWhitelist: "",
-    defaultBlockLabel: "",
+    subtitleLabel: "",
   };
 }

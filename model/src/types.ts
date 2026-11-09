@@ -258,7 +258,7 @@ export type BlockData = {
   // Optional mitool resource overrides (Advanced Settings). Undefined means workflow defaults.
   perProcessCPUs?: number;
   perProcessMemGB?: number;
-  defaultBlockLabel?: string; // UI-only: sidebar subtitle, mirrored from the suggestedBlockLabel output
+  subtitleLabel?: string; // UI-only: sidebar subtitle, the picked FASTQ dataset's label, kept in sync by the UI
   tableState: PlDataTableStateV2; // per-cell results grid state (UI-only, never projected to args)
   qcSummaryTableState: PlDataTableStateV2; // per-sample QC summary grid state (UI-only)
   // GraphMaker's own chart configuration, one per plot. Opaque to this block: the widget owns the shape and

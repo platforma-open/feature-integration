@@ -657,9 +657,12 @@ const INITIAL_GRAPH_STATES = {
   | "antigenCountsGraphState"
 >;
 
+// v14 data shape: the sidebar subtitle under its old name, written by a UI watch from an output.
+type BlockDataV14 = Omit<BlockData, "subtitleLabel"> & { defaultBlockLabel?: string };
+
 // v13 data shape: v14 without the panel-assignment and antigen-counts plots' states, which arrived with
 // those tabs.
-type BlockDataV13 = Omit<BlockData, "panelAssignmentGraphState" | "antigenCountsGraphState">;
+type BlockDataV13 = Omit<BlockDataV14, "panelAssignmentGraphState" | "antigenCountsGraphState">;
 
 // v12 data shape: the grouping rule could also be { by: "tag" }, one identity per barcode, which v13 maps to
 // the absent rule that means the same.
@@ -826,9 +829,14 @@ export const dataModel = new DataModelBuilder({ kind })
   // v13 -> v14. The Panel QC plots are GraphMaker charts, and every one of them opens on the state a new
   // project is seeded with, so a migrated project lands on the identical charts. The panel-assignment and
   // antigen-counts plots arrive with their own states.
-  .migrate<BlockData>("v14", (rest) => ({
+  .migrate<BlockDataV14>("v14", (rest) => ({
     ...rest,
     ...INITIAL_GRAPH_STATES,
+  }))
+  // v14 -> v15. The stored value was exactly the dataset's label, so it carries over as the subtitle.
+  .migrate<BlockData>("v15", ({ defaultBlockLabel, ...rest }) => ({
+    ...rest,
+    subtitleLabel: defaultBlockLabel,
   }))
   // `params` is the kind's init-params contract, and it is optional: a block created by hand receives
   // none, and a template may seed any subset of one. Every field therefore keeps its shipped default as
@@ -854,7 +862,7 @@ export function initialData(params?: BlockParams): BlockData {
     // The geometry the block shipped with, 10x 5' v2 BEAM (16 / 10 / 15).
     presetId: params?.presetId ?? "tenx-beam",
     cellWhitelist: params?.cellWhitelist ?? "", // de-novo CELL correction by default
-    defaultBlockLabel: "",
+    subtitleLabel: "",
     // minAgreement and gateThreshold are absent by design. Off means absent rather than zero.
     ...VERDICT_DEFAULTS,
     // Last of the value-bearing spreads, so a supplied param wins over the default it replaces. A field
@@ -1248,35 +1256,6 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
     const column = grouped[0] ?? ctx.data.barcodeSeqColumn;
     if (!column) return [];
     return (readCsvMeta(ctx)?.valuesByColumn?.[column] ?? []).map((v) => ({ value: v, label: v }));
-  })
-  // Computed here and not in .subtitle, because the subtitle context has no result pool. A UI watchEffect
-  // copies this value into data.defaultBlockLabel.
-  .output("suggestedBlockLabel", (ctx): string | undefined => {
-    const parts: string[] = [];
-    const ref = ctx.data?.fbFastqRef;
-    if (ref) {
-      const label = ctx.resultPool
-        .getOptions((spec) => {
-          if (!isPColumnSpec(spec)) return false;
-          const ext = spec.domain?.["pl7.app/fileExtension"];
-          return (
-            spec.name === "pl7.app/sequencing/data" &&
-            (spec.valueType as string) === "File" &&
-            (ext === "fastq" || ext === "fastq.gz")
-          );
-        })
-        .find((o) => o.ref.blockId === ref.blockId && o.ref.name === ref.name)?.label;
-      if (label) parts.push(label);
-    }
-    // The dataset name and nothing else, as the other preprocessing blocks do. The panel's column names
-    // used to be appended, and they failed the test import-vdj-data states: they are not a choice the
-    // scientist made -- the block detects them where it can -- and they name the spelling of a CSV header
-    // rather than anything about what was profiled.
-    if (parts.length === 0) return undefined;
-    // The default subtitle must never render with dots. Periods come from a dotted dataset or file label, and
-    // the " / " and " - " separators survive a strip of ".". A subtitle the user types in the sidebar does not
-    // pass through this output.
-    return parts.join(" / ").replace(/\./g, " ").replace(/ {2,}/g, " ").trim();
   })
   // Retentive, so the dropdowns do not blank on a rerun.
   .retentiveOutput("csvColumnOptions", (ctx): { value: string; label: string }[] =>
@@ -2097,10 +2076,9 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   })
   .title(() => "Feature Barcode Profiling")
   // The subtitle render context is args-only. A touch of the result pool or of outputs renders "Invalid
-  // subtitle". The dynamic string is derived in the `suggestedBlockLabel` OUTPUT, which HAS the pool, and a UI
-  // watchEffect copies it into `defaultBlockLabel`. Guard `ctx.data`: it can be undefined before the app
-  // parses block storage.
-  .subtitle((ctx) => ctx.data?.defaultBlockLabel || "Feature-barcode - per-cell antigen counts")
+  // subtitle". The UI, which has the options, resolves the dataset's label and keeps it in
+  // `subtitleLabel`. Guard `ctx.data`: it can be undefined before the app parses block storage.
+  .subtitle((ctx) => ctx.data?.subtitleLabel || "Feature-barcode - per-cell antigen counts")
   // ctx.outputs settles when the workflow starts emitting, the same signal as the `started` output.
   .sections((ctx) => {
     const hasRun = ctx.outputs !== undefined;
