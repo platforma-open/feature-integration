@@ -68,7 +68,7 @@ describe("the migration chain from the last released version", () => {
   // a new block seeds but an old project may legitimately lack, because they are OPTIONAL in `BlockData`
   // and every reader defaults them. Adding to this list is a claim that the same is true of the new
   // entry -- check the `?` on its declaration before doing so.
-  const SEEDED_BUT_OPTIONAL = new Set(["defaultBlockLabel", "boundProbability"]);
+  const SEEDED_BUT_OPTIONAL = new Set(["subtitleLabel", "boundProbability"]);
 
   test("carries every required field a new block is seeded with", () => {
     const seeded = initialData() as Record<string, unknown>;
@@ -107,5 +107,20 @@ describe("the migration chain from the last released version", () => {
     const current = initialData();
     const again = dataModel.migrate({ version: dataModel.version, data: current });
     expect(again.data).toBe(current);
+  });
+});
+
+// The sidebar subtitle used to be stored as `defaultBlockLabel`. Its value was the dataset's label and nothing
+// else, so an existing project keeps its subtitle under the new name.
+describe("the subtitle stored before v15", () => {
+  test("carries over as subtitleLabel", () => {
+    const { subtitleLabel: _s, ...v14 } = initialData();
+    const migrated = dataModel.migrate({
+      version: "v14",
+      data: { ...v14, defaultBlockLabel: "Antigen reads run 1" },
+    });
+    const result = migrated.data as Record<string, unknown>;
+    expect(result.subtitleLabel).toBe("Antigen reads run 1");
+    expect("defaultBlockLabel" in result).toBe(false);
   });
 });
