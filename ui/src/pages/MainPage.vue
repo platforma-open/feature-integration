@@ -8,8 +8,7 @@ import {
   groupingColumns,
   QC_LINE_DEFAULTS,
 } from "@platforma-open/milaboratories.feature-integration.model";
-import type { ImportFileHandle, PlRef } from "@platforma-sdk/model";
-import { plRefsEqual } from "@platforma-sdk/model";
+import type { ImportFileHandle } from "@platforma-sdk/model";
 import type { PlAgHeaderComponentParams } from "@platforma-sdk/ui-vue";
 import {
   AgGridTheme,
@@ -410,21 +409,7 @@ function snapshotDatasetSampleIds(fastqRef: unknown, vdjRef: unknown) {
   app.model.data.vdjSampleIds = sampleIdsOf(byDataset?.vdj, vdjRef);
 }
 
-// The sidebar subtitle is the picked dataset's label and nothing else. The panel's column names are not a
-// choice the scientist made -- the block detects them where it can -- and they name the spelling of a CSV
-// header rather than anything about what was profiled.
-//
-// The subtitle never renders with dots. Periods come from a dotted dataset or file label. A subtitle the user
-// types in the sidebar does not pass through here.
-function setSubtitleLabel(fastqRef: PlRef | undefined) {
-  const label = fastqRef
-    ? app.model.outputs.fastqOptions?.find((o) => plRefsEqual(o.ref, fastqRef))?.label
-    : undefined;
-  app.model.data.subtitleLabel = (label ?? "").replace(/\./g, " ").replace(/ {2,}/g, " ").trim();
-}
-
-function onFastqRefChanged(next: PlRef | undefined) {
-  setSubtitleLabel(next);
+function onFastqRefChanged(next: unknown) {
   snapshotDatasetSampleIds(next, app.model.data.datasetRef);
   if (!changed(seenFastqRef, next)) return;
   clearSampleAwareState();

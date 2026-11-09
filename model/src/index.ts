@@ -2076,8 +2076,8 @@ export const platforma = BlockModelV3.create({ dataModel, kind })
   })
   .title(() => "Feature Barcode Profiling")
   // The subtitle render context is args-only. A touch of the result pool or of outputs renders "Invalid
-  // subtitle". The dataset's label is resolved where the user picks the dataset, which has the options, and
-  // stored in `subtitleLabel`. Guard `ctx.data`: it can be undefined before the app parses block storage.
+  // subtitle". The UI, which has the options, resolves the dataset's label and keeps it in
+  // `subtitleLabel`. Guard `ctx.data`: it can be undefined before the app parses block storage.
   .subtitle((ctx) => ctx.data?.subtitleLabel || "Feature-barcode - per-cell antigen counts")
   // ctx.outputs settles when the workflow starts emitting, the same signal as the `started` output.
   .sections((ctx) => {
