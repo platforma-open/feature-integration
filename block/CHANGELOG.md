@@ -1,5 +1,7 @@
 # @platforma-open/milaboratories.feature-integration
 
+## 3.10.3
+
 ## 3.10.2
 
 ### Patch Changes
