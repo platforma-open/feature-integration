@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import {
-  PL_PLACEHOLDER_TEXTS,
   PlAgDataTableV2,
   PlAlert,
   PlBlockPage,
   PlAgTextAndButtonCell,
-  PlPlaceholder,
   PlSlideModal,
   PlTabs,
   usePlDataTableSettingsV2,
@@ -186,8 +184,6 @@ const expansionTab = ref<ExpansionTab>("identity");
 
 function openExpansion(key?: PTableKey) {
   if (key === undefined) return;
-  app.model.data.expansionTableState = undefined;
-  app.model.data.cellExpansionTableState = undefined;
   app.model.data.expandedSet = key as (string | number)[];
   expansionTab.value = "identity";
 }
@@ -223,16 +219,6 @@ const expansionSettings = usePlDataTableSettingsV2({
   // component holds the previous source's cached state and the grid sits in Loading until a window reload.
   sourceId: () => app.model.data.expandedSet?.join(" "),
 });
-
-// Each expansion table mounts only once its output holds a table. While the modal is closed `expandedSet` is
-// undefined and the model returns none, so an open renders before the model has built the new one. A grid
-// mounted then stays on its first overlay, "Data is not computed", until the table arrives; one mounted with
-// the table in hand opens on the loading animation. A failed output mounts at once, so the grid shows the
-// error.
-const holdsTable = (out: { ok: boolean; value?: unknown } | undefined) =>
-  out !== undefined && (!out.ok || out.value !== undefined);
-const expansionReady = computed(() => holdsTable(app.model.outputs.expansionTable));
-const cellExpansionReady = computed(() => holdsTable(app.model.outputs.cellExpansionTable));
 
 // The slide-over's title names the VIEW, never the raw `expandedSet[0]`. That is the scClonotypeKey axis
 // value, `04zdk2ezKgFGCgckfLw5H` against a card showing `C-ZDKEZ`, and it names nothing to a reader.
@@ -392,15 +378,9 @@ const cellCardSkipped = computed(() => runMeta.value?.cellPunchEmitted === false
       <template v-if="expansionTab === 'identity'">
         <PlAlert v-if="setAsideLine" type="info">{{ setAsideLine }}</PlAlert>
         <PlAgDataTableV2
-          v-if="expansionReady"
+          v-if="app.model.outputs.expansionTable"
           v-model="expansionTableState"
           :settings="expansionSettings"
-        />
-        <PlPlaceholder
-          v-else
-          variant="table"
-          :title="PL_PLACEHOLDER_TEXTS.LOADING.title"
-          :subtitle="PL_PLACEHOLDER_TEXTS.LOADING.subtitle"
         />
       </template>
 
@@ -410,7 +390,7 @@ const cellCardSkipped = computed(() => runMeta.value?.cellPunchEmitted === false
             cellGate
           }}. The card needs one row per cell for every antigen, so larger runs skip it.
         </PlAlert>
-        <template v-else-if="cellExpansionReady">
+        <template v-else>
           <PunchLegend variant="cell" />
           <PlAgDataTableV2
             v-model="cellExpansionTableState"
@@ -419,12 +399,6 @@ const cellCardSkipped = computed(() => runMeta.value?.cellPunchEmitted === false
             show-export-button
           />
         </template>
-        <PlPlaceholder
-          v-else
-          variant="table"
-          :title="PL_PLACEHOLDER_TEXTS.LOADING.title"
-          :subtitle="PL_PLACEHOLDER_TEXTS.LOADING.subtitle"
-        />
       </template>
     </PlSlideModal>
   </PlBlockPage>
